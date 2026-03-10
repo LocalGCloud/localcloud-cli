@@ -17,13 +17,14 @@ repositories {
     mavenCentral()
 }
 
-def armeriaVersion = '1.28.2'
-def grpcVersion = '1.62.2'
+def armeriaVersion = '1.31.3'
+def grpcVersion = '1.68.2'
 def jacksonVersion = '2.17.0'
 dependencies {
-    // Armeria
-    implementation "com.linecorp.armeria:armeria:${armeriaVersion}"
-    implementation "com.linecorp.armeria:armeria-grpc:${armeriaVersion}"
+    // Armeria BOM for dependency alignment
+    implementation platform("com.linecorp.armeria:armeria-bom:${armeriaVersion}")
+    implementation "com.linecorp.armeria:armeria"
+    implementation "com.linecorp.armeria:armeria-grpc"
 
     // Facade service stubs (services we implement ourselves)
     implementation 'com.google.api.grpc:proto-google-cloud-secretmanager-v1:2.86.0'
