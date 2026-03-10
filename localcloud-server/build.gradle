@@ -1,0 +1,84 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'com.github.johnrengelman.shadow' version '8.1.1'
+}
+
+group = 'com.localcloud'
+version = '0.1.0-SNAPSHOT'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+def armeriaVersion = '1.28.2'
+def grpcVersion = '1.62.2'
+def jacksonVersion = '2.17.0'
+dependencies {
+    // Armeria
+    implementation "com.linecorp.armeria:armeria:${armeriaVersion}"
+    implementation "com.linecorp.armeria:armeria-grpc:${armeriaVersion}"
+
+    // Facade service stubs (services we implement ourselves)
+    implementation 'com.google.api.grpc:proto-google-cloud-secretmanager-v1:2.86.0'
+    implementation 'com.google.api.grpc:grpc-google-cloud-secretmanager-v1:2.86.0'
+    implementation 'com.google.api.grpc:proto-google-cloud-tasks-v2:2.86.0'
+    implementation 'com.google.api.grpc:grpc-google-cloud-tasks-v2:2.86.0'
+    implementation 'com.google.api.grpc:proto-google-cloud-logging-v2:0.116.0'
+    implementation 'com.google.api.grpc:grpc-google-cloud-logging-v2:0.116.0'
+    implementation 'com.google.api.grpc:proto-google-cloud-monitoring-v3:3.87.0'
+    implementation 'com.google.api.grpc:grpc-google-cloud-monitoring-v3:3.87.0'
+
+    // gRPC
+    implementation "io.grpc:grpc-netty-shaded:${grpcVersion}"
+    implementation "io.grpc:grpc-protobuf:${grpcVersion}"
+    implementation "io.grpc:grpc-stub:${grpcVersion}"
+    implementation "io.grpc:grpc-services:${grpcVersion}"
+
+    // PostgreSQL JDBC driver
+    implementation 'org.postgresql:postgresql:42.7.3'
+
+    // HikariCP
+    implementation 'com.zaxxer:HikariCP:5.1.0'
+
+    // Jackson
+    implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
+    implementation "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${jacksonVersion}"
+    implementation "com.fasterxml.jackson.datatype:jackson-datatype-jsr310:${jacksonVersion}"
+
+    // SLF4J + Logback
+    implementation 'org.slf4j:slf4j-api:2.0.12'
+    implementation 'ch.qos.logback:logback-classic:1.5.3'
+
+    // JUnit 5
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+application {
+    mainClass = 'com.localcloud.LocalCloudApplication'
+}
+
+shadowJar {
+    archiveBaseName.set('localcloud-server')
+    archiveClassifier.set('all')
+    archiveVersion.set(project.version.toString())
+    mergeServiceFiles()
+    manifest {
+        attributes 'Main-Class': application.mainClass
+    }
+}
+
+test {
+    useJUnitPlatform()
+}
+
+tasks.named('build') {
+    dependsOn tasks.named('shadowJar')
+}
