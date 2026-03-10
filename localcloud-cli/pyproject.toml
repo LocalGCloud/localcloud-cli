@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "localcloud"
+version = "0.1.0"
+description = "LocalCloud - Local GCP Emulator CLI"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.1.0",
+    "docker>=7.0.0",
+    "pyyaml>=6.0",
+    "requests>=2.31.0",
+    "rich>=13.0.0",
+    "google-cloud-storage>=2.14.0",
+    "google-cloud-pubsub>=2.19.0",
+    "google-cloud-firestore>=2.14.0",
+    "google-cloud-bigquery>=3.14.0",
+    "google-cloud-secret-manager>=2.18.0",
+]
+
+[project.scripts]
+localcloud = "localcloud.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]

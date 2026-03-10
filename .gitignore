@@ -1,0 +1,44 @@
+# Java
+localcloud-server/build/
+localcloud-server/.gradle/
+localcloud-server/out/
+*.class
+*.jar
+*.war
+*.ear
+*.iml
+
+# Python
+localcloud-cli/__pycache__/
+localcloud-cli/.venv/
+localcloud-cli/venv/
+localcloud-cli/dist/
+localcloud-cli/*.egg-info/
+localcloud-cli/src/*.egg-info/
+*.pyc
+*.pyo
+__pycache__/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+localcloud-data/
+
+# Environment
+.env
+.env.*
+
+# Specify
+.specify/
+
+# LocalCloud data
+/var/lib/localcloud/

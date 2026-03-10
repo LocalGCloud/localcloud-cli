@@ -1,0 +1,29 @@
+# LocalCloud Seed File
+# Load on startup: localcloud start --seed seed.yaml
+# Load manually: localcloud seed seed.yaml
+
+version: "1.0"
+project: "local-project"
+
+gcs:
+  buckets:
+    - name: "example-uploads"
+      location: "US"
+      objects:
+        - key: "welcome.txt"
+          content: "Welcome to LocalCloud!"
+          contentType: "text/plain"
+
+pubsub:
+  topics:
+    - name: "example-events"
+      subscriptions:
+        - name: "example-events-sub"
+          ackDeadlineSeconds: 30
+
+secretmanager:
+  secrets:
+    - name: "example-api-key"
+      versions:
+        - data: "sk_test_local_development_key"
+          state: "ENABLED"
