@@ -55,7 +55,8 @@ public class ProcessHealthChecker {
      * Polls all configured emulators and updates the internal status map.
      */
     public void checkAll() {
-        checkHttp("gcs", "http://localhost:4443/storage/v1/b?project=test", true);
+        // fake-gcs-server uses HTTPS with self-signed cert; use TCP check instead
+        checkTcp("gcs", "localhost", 4443);
         checkHttp("pubsub", "http://localhost:8085", false);
         checkHttp("firestore", "http://localhost:8086", false);
         checkTcp("bigtable", "localhost", 8087);
