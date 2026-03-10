@@ -102,7 +102,7 @@ public class LocalCloudApplication {
                 """.formatted(config.getProjectId())));
 
         // Register facade gRPC services (backed by PostgreSQL, running in-process)
-        GrpcService.GrpcServiceBuilder grpcBuilder = GrpcService.builder();
+        var grpcBuilder = GrpcService.builder();
         boolean hasGrpcServices = false;
 
         if (config.isServiceEnabled("secretmanager")) {
