@@ -1,0 +1,17 @@
+.git/
+.github/
+.idea/
+.vscode/
+*.md
+!README.md
+localcloud-cli/
+localcloud-data/
+specs/
+.specify/
+.env*
+*.log
+.DS_Store
+Thumbs.db
+localcloud-server/build/*/
+!localcloud-server/build/libs/
+localcloud-server/.gradle/

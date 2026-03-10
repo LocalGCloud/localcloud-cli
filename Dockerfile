@@ -1,8 +1,15 @@
 # Stage 1: Build Java server
-FROM eclipse-temurin:21-jdk-jammy AS build
-WORKDIR /app
-COPY localcloud-server/ .
-RUN chmod +x gradlew && ./gradlew shadowJar --no-daemon
+# Option A: Build inside Docker (requires network access for Gradle)
+# FROM eclipse-temurin:21-jdk-jammy AS build
+# WORKDIR /app
+# COPY localcloud-server/ .
+# RUN chmod +x gradlew && ./gradlew shadowJar --no-daemon
+
+# Option B: Use pre-built JAR (run `cd localcloud-server && ./gradlew shadowJar` first)
+# The pre-built JAR is copied directly in the runtime stage below.
+
+# Pull bigquery-emulator binary (amd64-only image)
+FROM --platform=linux/amd64 ghcr.io/goccy/bigquery-emulator:latest AS bigquery-emulator
 
 # Stage 2: Runtime
 FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
@@ -20,8 +27,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy third-party emulator binaries
 COPY --from=fsouza/fake-gcs-server:latest /bin/fake-gcs-server /usr/local/bin/fake-gcs-server
-COPY --from=ghcr.io/goccy/bigquery-emulator:latest /bin/bigquery-emulator /usr/local/bin/bigquery-emulator
-COPY --from=gcr.io/cloud-spanner-emulator/emulator:latest /gateway_main /usr/local/bin/spanner-emulator
+# bigquery-emulator is amd64-only; copied from named stage above
+COPY --from=bigquery-emulator /bin/bigquery-emulator /usr/local/bin/bigquery-emulator
+# Spanner emulator requires both gateway_main and emulator_main
+COPY --from=gcr.io/cloud-spanner-emulator/emulator:latest /gateway_main /usr/local/bin/spanner-gateway
+COPY --from=gcr.io/cloud-spanner-emulator/emulator:latest /emulator_main /usr/local/bin/spanner-emulator-main
 
 # Create localcloud user, group, and directories
 RUN groupadd -r localcloud && useradd -r -g localcloud -m localcloud \
@@ -29,9 +39,11 @@ RUN groupadd -r localcloud && useradd -r -g localcloud -m localcloud \
                 /var/lib/localcloud/gcs-data \
                 /var/log/localcloud \
                 /opt/localcloud \
+                /var/run/postgresql \
     && chown -R localcloud:localcloud /var/lib/localcloud \
                                       /var/log/localcloud \
-                                      /opt/localcloud
+                                      /opt/localcloud \
+                                      /var/run/postgresql
 
 # Initialize PostgreSQL data directory
 RUN su - localcloud -s /bin/bash -c "/usr/lib/postgresql/15/bin/initdb -D /var/lib/localcloud/pgdata"
@@ -39,11 +51,11 @@ RUN su - localcloud -s /bin/bash -c "/usr/lib/postgresql/15/bin/initdb -D /var/l
 # Create the localcloud database
 RUN su - localcloud -s /bin/bash -c " \
     /usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/localcloud/pgdata start && \
-    /usr/lib/postgresql/15/bin/createdb -h /tmp localcloud && \
+    /usr/lib/postgresql/15/bin/createdb -h /var/run/postgresql localcloud && \
     /usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/localcloud/pgdata stop"
 
-# Copy server JAR from build stage
-COPY --from=build /app/build/libs/localcloud-server-*-all.jar /opt/localcloud/server.jar
+# Copy pre-built server JAR (run `cd localcloud-server && ./gradlew shadowJar` before docker build)
+COPY localcloud-server/build/libs/localcloud-server-*-all.jar /opt/localcloud/server.jar
 
 # Copy supervisor and entrypoint configuration
 COPY supervisord.conf /etc/supervisor/conf.d/localcloud.conf
