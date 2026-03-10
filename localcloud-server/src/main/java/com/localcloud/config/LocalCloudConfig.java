@@ -13,10 +13,6 @@ public class LocalCloudConfig {
     private Path dataDir;
     private List<String> enabledServices;
     private int gatewayPort;
-    private int firestorePort;
-    private int pubsubPort;
-    private int spannerPort;
-    private int bigtablePort;
     private String iamMode;
     private String logVerbosity;
     private boolean persistenceEnabled;
@@ -35,13 +31,9 @@ public class LocalCloudConfig {
     public static LocalCloudConfig fromEnvironment() {
         LocalCloudConfig config = new LocalCloudConfig();
 
-        config.projectId = env("LOCALCLOUD_PROJECT_ID", "local-project");
+        config.projectId = env("LOCALCLOUD_PROJECT", "local-project");
         config.dataDir = Path.of(env("LOCALCLOUD_DATA_DIR", "/var/lib/localcloud"));
         config.gatewayPort = intEnv("LOCALCLOUD_PORT", 8080);
-        config.firestorePort = intEnv("LOCALCLOUD_FIRESTORE_PORT", 9010);
-        config.pubsubPort = intEnv("LOCALCLOUD_PUBSUB_PORT", 9020);
-        config.spannerPort = intEnv("LOCALCLOUD_SPANNER_PORT", 9030);
-        config.bigtablePort = intEnv("LOCALCLOUD_BIGTABLE_PORT", 9040);
         config.iamMode = env("LOCALCLOUD_IAM_MODE", "permissive");
         config.logVerbosity = env("LOCALCLOUD_LOG_VERBOSITY", "info");
         config.persistenceEnabled = Boolean.parseBoolean(env("LOCALCLOUD_PERSISTENCE", "true"));
@@ -92,22 +84,6 @@ public class LocalCloudConfig {
 
     public int getGatewayPort() {
         return gatewayPort;
-    }
-
-    public int getFirestorePort() {
-        return firestorePort;
-    }
-
-    public int getPubsubPort() {
-        return pubsubPort;
-    }
-
-    public int getSpannerPort() {
-        return spannerPort;
-    }
-
-    public int getBigtablePort() {
-        return bigtablePort;
     }
 
     public String getIamMode() {

@@ -100,7 +100,7 @@ class DockerManager:
 
         # Build environment variables
         env = {
-            "LOCALCLOUD_PROJECT_ID": project_id,
+            "LOCALCLOUD_PROJECT": project_id,
         }
         if services:
             env["LOCALCLOUD_SERVICES"] = ",".join(services)

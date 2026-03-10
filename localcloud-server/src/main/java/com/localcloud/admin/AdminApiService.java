@@ -52,6 +52,8 @@ public class AdminApiService {
         ENV_MAPPINGS.put("bigquery",       new String[]{"BIGQUERY_EMULATOR_HOST",        "http://localhost:9050"});
         ENV_MAPPINGS.put("secretmanager",  new String[]{"SECRET_MANAGER_EMULATOR_HOST",  "localhost:8080"});
         ENV_MAPPINGS.put("cloudtasks",     new String[]{"CLOUD_TASKS_EMULATOR_HOST",     "localhost:8080"});
+        ENV_MAPPINGS.put("logging",        new String[]{"CLOUD_LOGGING_EMULATOR_HOST",    "localhost:8080"});
+        ENV_MAPPINGS.put("monitoring",     new String[]{"CLOUD_MONITORING_EMULATOR_HOST",  "localhost:8080"});
     }
 
     public AdminApiService(LocalCloudConfig config, RequestLogger requestLogger) {
@@ -109,8 +111,8 @@ public class AdminApiService {
                     // shell format
                     StringBuilder sb = new StringBuilder();
                     for (Map.Entry<String, String> e : envVars.entrySet()) {
-                        sb.append("export ").append(e.getKey()).append("=")
-                          .append(e.getValue()).append("\n");
+                        sb.append("export ").append(e.getKey()).append("=\"")
+                          .append(e.getValue()).append("\"\n");
                     }
                     yield HttpResponse.of(HttpStatus.OK, MediaType.PLAIN_TEXT_UTF_8, sb.toString());
                 }

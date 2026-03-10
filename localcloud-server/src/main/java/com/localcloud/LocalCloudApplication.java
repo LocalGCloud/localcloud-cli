@@ -59,7 +59,7 @@ public class LocalCloudApplication {
         this.processHealthChecker = new ProcessHealthChecker(config);
         this.healthCheckService = new HealthCheckService(config, gateway, processHealthChecker);
         this.adminApiService = new AdminApiService(config, requestLogger);
-        this.browseService = new BrowseService(dataSource.getDataSource());
+        this.browseService = new BrowseService();
         this.seedService = new SeedService(config);
     }
 

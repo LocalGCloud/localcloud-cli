@@ -5,8 +5,6 @@ import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
 import com.linecorp.armeria.server.annotation.Get;
 
-import javax.sql.DataSource;
-
 /**
  * Placeholder browse service for the LocalCloud dashboard.
  * In orchestrator mode, data browsing is not available because each
@@ -15,8 +13,7 @@ import javax.sql.DataSource;
  */
 public class BrowseService {
 
-    // DataSource kept for constructor compatibility with LocalCloudApplication
-    public BrowseService(DataSource dataSource) {
+    public BrowseService() {
         // no-op in orchestrator mode
     }
 

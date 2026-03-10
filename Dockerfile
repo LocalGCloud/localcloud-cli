@@ -36,8 +36,14 @@ RUN groupadd -r localcloud && useradd -r -g localcloud -m localcloud \
 # Initialize PostgreSQL data directory
 RUN su - localcloud -s /bin/bash -c "/usr/lib/postgresql/15/bin/initdb -D /var/lib/localcloud/pgdata"
 
+# Create the localcloud database
+RUN su - localcloud -s /bin/bash -c " \
+    /usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/localcloud/pgdata start && \
+    /usr/lib/postgresql/15/bin/createdb -h /tmp localcloud && \
+    /usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/localcloud/pgdata stop"
+
 # Copy server JAR from build stage
-COPY --from=build /app/build/libs/localcloud-server-*-all.jar /opt/localcloud/localcloud.jar
+COPY --from=build /app/build/libs/localcloud-server-*-all.jar /opt/localcloud/server.jar
 
 # Copy supervisor and entrypoint configuration
 COPY supervisord.conf /etc/supervisor/conf.d/localcloud.conf
