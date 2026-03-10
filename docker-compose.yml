@@ -1,0 +1,32 @@
+services:
+  localcloud:
+    container_name: "${LOCALCLOUD_CONTAINER_NAME:-localcloud-main}"
+    image: localcloud/localcloud:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8080:8080"    # LocalCloud Gateway (admin API, REST)
+      - "127.0.0.1:4443:4443"    # Cloud Storage (fake-gcs-server, REST)
+      - "127.0.0.1:8085:8085"    # Pub/Sub gRPC
+      - "127.0.0.1:8086:8086"    # Firestore gRPC
+      - "127.0.0.1:8087:8087"    # Bigtable gRPC
+      - "127.0.0.1:9010:9010"    # Spanner gRPC
+      - "127.0.0.1:9020:9020"    # Spanner REST
+      - "127.0.0.1:9050:9050"    # BigQuery REST
+      - "127.0.0.1:9060:9060"    # BigQuery gRPC
+    environment:
+      LOCALCLOUD_PROJECT: "${LOCALCLOUD_PROJECT:-local-project}"
+      LOCALCLOUD_SERVICES: "${LOCALCLOUD_SERVICES:-gcs,pubsub,firestore,bigquery,secretmanager,cloudtasks,logging,monitoring}"
+      LOCALCLOUD_DATA_DIR: "/var/lib/localcloud"
+    volumes:
+      - localcloud-data:/var/lib/localcloud
+      - "${LOCALCLOUD_SEED_FILE:-./seed.yaml}:/etc/localcloud/seed.yaml:ro"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/_localcloud/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  localcloud-data:

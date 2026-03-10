@@ -1,0 +1,19 @@
+# Example: Configure your application to use LocalCloud
+# Usage: docker compose -f docker-compose.yml -f docker-compose.override.yml up
+#
+# Uncomment and modify the 'app' service below for your application:
+#
+# services:
+#   app:
+#     build: ./my-app
+#     environment:
+#       STORAGE_EMULATOR_HOST: "http://localcloud:4443"
+#       PUBSUB_EMULATOR_HOST: "localcloud:8085"
+#       FIRESTORE_EMULATOR_HOST: "localcloud:8086"
+#       BIGTABLE_EMULATOR_HOST: "localcloud:8087"
+#       SPANNER_EMULATOR_HOST: "localcloud:9010"
+#       BIGQUERY_EMULATOR_HOST: "http://localcloud:9050"
+#       GOOGLE_CLOUD_PROJECT: "local-project"
+#     depends_on:
+#       localcloud:
+#         condition: service_healthy
