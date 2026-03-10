@@ -15,10 +15,12 @@ services:
       - "127.0.0.1:9020:9020"    # Spanner REST
       - "127.0.0.1:9050:9050"    # BigQuery REST
       - "127.0.0.1:9060:9060"    # BigQuery gRPC
+    mem_limit: 4g
     environment:
       LOCALCLOUD_PROJECT: "${LOCALCLOUD_PROJECT:-local-project}"
       LOCALCLOUD_SERVICES: "${LOCALCLOUD_SERVICES:-gcs,pubsub,firestore,bigquery,secretmanager,cloudtasks,logging,monitoring}"
       LOCALCLOUD_DATA_DIR: "/var/lib/localcloud"
+      JAVA_OPTS: "-Xmx512m -Xms128m -XX:+UseZGC -XX:+ZGenerational -Xss256k -XX:MaxMetaspaceSize=128m -XX:+ExitOnOutOfMemoryError"
     volumes:
       - localcloud-data:/var/lib/localcloud
       - "${LOCALCLOUD_SEED_FILE:-./seed.yaml}:/etc/localcloud/seed.yaml:ro"
