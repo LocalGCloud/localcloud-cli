@@ -29,8 +29,8 @@ def console(ctx, port, open):
     """
     try:
         # Get console path relative to this file
-        cli_src_dir = Path(__file__).parent.parent.parent  # src/localcloud
-        project_root = cli_src_dir.parent.parent.parent  # project root
+        cli_src_dir = Path(__file__).parent.parent.parent  # localcloud-cli/src
+        project_root = cli_src_dir.parent.parent  # project root (localcloud/)
         console_dir = project_root / "localcloud-console"
         backend_app = console_dir / "backend" / "app.py"
 
