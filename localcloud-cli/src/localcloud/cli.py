@@ -2,7 +2,7 @@
 
 import click
 
-from localcloud.commands import env, logs, reset, seed, start, status, stop
+from localcloud.commands import env, logs, reset, seed, start, status, stop, console
 
 
 class LocalCloudContext:
@@ -48,3 +48,4 @@ cli.add_command(env.env)
 cli.add_command(seed.seed)
 cli.add_command(reset.reset)
 cli.add_command(logs.logs)
+cli.add_command(console.console)

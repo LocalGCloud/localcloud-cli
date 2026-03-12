@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "python backend/app.py",
-    "build": "esbuild src/app.jsx --bundle --outfile=dist/app.js --minify"
+    "build": "npm run build:js && npm run build:css && npm run copy:html",
+    "build:js": "esbuild src/app.jsx --bundle --outfile=dist/app.js --minify",
+    "build:css": "cat src/styles/main.css src/styles/layout.css src/styles/components.css > dist/styles.css",
+    "copy:html": "cp src/index.html dist/index.html"
   },
   "dependencies": {
     "solid-js": "^1.8.0"

@@ -20,7 +20,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__, static_folder='../frontend/dist', static_url_path='/')
+app = Flask(__name__, static_folder='../dist', static_url_path='/')
 app.config['JSON_SORT_KEYS'] = False
 CORS(app)
 
