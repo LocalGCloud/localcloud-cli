@@ -15,6 +15,9 @@ if [ -n "${LOCALCLOUD_SERVICES}" ]; then
     export LOCALCLOUD_ENABLE_CLOUDTASKS="false"
     export LOCALCLOUD_ENABLE_LOGGING="false"
     export LOCALCLOUD_ENABLE_MONITORING="false"
+    export LOCALCLOUD_ENABLE_GKE="false"
+    export LOCALCLOUD_ENABLE_COMPUTE="false"
+    export LOCALCLOUD_ENABLE_CLOUDRUN="false"
 
     # Parse comma-separated service list and enable matching services
     IFS=',' read -ra SERVICES <<< "${LOCALCLOUD_SERVICES}"
@@ -32,6 +35,9 @@ if [ -n "${LOCALCLOUD_SERVICES}" ]; then
             cloudtasks)     export LOCALCLOUD_ENABLE_CLOUDTASKS="true" ;;
             logging)        export LOCALCLOUD_ENABLE_LOGGING="true" ;;
             monitoring)     export LOCALCLOUD_ENABLE_MONITORING="true" ;;
+            gke)            export LOCALCLOUD_ENABLE_GKE="true" ;;
+            compute)        export LOCALCLOUD_ENABLE_COMPUTE="true" ;;
+            cloudrun)       export LOCALCLOUD_ENABLE_CLOUDRUN="true" ;;
             *)
                 echo "WARNING: Unknown service '${service}' in LOCALCLOUD_SERVICES" >&2
                 ;;

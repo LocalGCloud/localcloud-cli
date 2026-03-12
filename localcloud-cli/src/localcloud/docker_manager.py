@@ -20,6 +20,7 @@ DEFAULT_PORT_MAPPINGS = {
     9020: 9020,   # Spanner REST
     9050: 9050,   # BigQuery REST
     9060: 9060,   # BigQuery gRPC
+    6443: 6443,   # GKE k3d Kubernetes API
 }
 
 # Service -> (port, env_var)
@@ -108,9 +109,10 @@ class DockerManager:
         # Port bindings
         ports = {f"{cp}/tcp": hp for hp, cp in DEFAULT_PORT_MAPPINGS.items()}
 
-        # Volume mount
+        # Volume mounts
         volumes = {
             abs_data_dir: {"bind": "/var/lib/localcloud", "mode": "rw"},
+            "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
         }
 
         container = self.client.containers.run(

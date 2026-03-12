@@ -191,7 +191,7 @@
 
 ### Supported gRPC Services
 
-- `google.logging.v2.LoggingServiceV2` - WriteLogEntries, ListLogEntries, ListLogs
+- `google.logging.v2.LoggingServiceV2` - WriteLogEntries, ListLogEntries, ListLogs, DeleteLog
 
 ### Behavior
 - All log entries are accepted and stored locally
@@ -213,3 +213,84 @@
 - All time series data is accepted and stored locally
 - Metrics are queryable via the admin browse API and dashboard
 - No alerting policies, uptime checks, or dashboards
+
+---
+
+## GKE (Google Kubernetes Engine)
+
+**Protocol**: gRPC
+**Port**: 8080 (via gateway)
+**Env Var**: `GKE_EMULATOR_HOST=localhost:8080`
+
+### Supported gRPC Services
+
+- `google.cloud.container.v1.ClusterManager` - CreateCluster, GetCluster, ListClusters, DeleteCluster, GetServerConfig
+
+### Orchestration
+- Creates real k3d (lightweight k3s) clusters when k3d is available
+- Falls back to simulated mode when k3d is not installed
+- Kubernetes API exposed on port 6443
+- All cluster names prefixed with `lc-` to avoid collisions
+
+### Not Supported (v1)
+- Node pool auto-scaling
+- Cluster upgrades
+- Workload identity
+- Node pool management
+
+---
+
+## Compute Engine
+
+**Protocol**: REST
+**Port**: 8080 (via gateway)
+**Base Path**: `/compute/v1`
+**Env Var**: `COMPUTE_EMULATOR_HOST=http://localhost:8080`
+
+### Supported Operations
+
+| Operation | Method | Path |
+|-----------|--------|------|
+| Create instance | POST | `/compute/v1/projects/{project}/zones/{zone}/instances` |
+| Get instance | GET | `/compute/v1/projects/{project}/zones/{zone}/instances/{instance}` |
+| List instances | GET | `/compute/v1/projects/{project}/zones/{zone}/instances` |
+| Start instance | POST | `/compute/v1/projects/{project}/zones/{zone}/instances/{instance}/start` |
+| Stop instance | POST | `/compute/v1/projects/{project}/zones/{zone}/instances/{instance}/stop` |
+| Delete instance | DELETE | `/compute/v1/projects/{project}/zones/{zone}/instances/{instance}` |
+
+### Orchestration
+- Creates real Docker containers as VM instances when Docker socket is available
+- Falls back to simulated mode when Docker is not available
+- Containers labelled with `localcloud.service=compute` for lifecycle management
+
+### Not Supported (v1)
+- Persistent disks
+- Snapshots
+- Instance templates
+- Managed instance groups
+- Custom networks/subnets
+
+---
+
+## Cloud Run v2
+
+**Protocol**: gRPC
+**Port**: 8080 (via gateway)
+**Env Var**: `CLOUD_RUN_EMULATOR_HOST=localhost:8080`
+
+### Supported gRPC Services
+
+- `google.cloud.run.v2.Services` - CreateService, GetService, ListServices, UpdateService, DeleteService
+- `google.cloud.run.v2.Revisions` - GetRevision, ListRevisions
+
+### Orchestration
+- Deploys real Docker containers for each service
+- Each service gets a dynamically assigned host port (starting from 10000)
+- Service URI returned as `http://localhost:{port}`
+- Revision tracking for service updates
+
+### Not Supported (v1)
+- Traffic splitting between revisions
+- Custom domains
+- Jobs (Cloud Run Jobs)
+- IAM authentication on services

@@ -46,6 +46,28 @@ public class LoggingEmulator extends AbstractEmulator {
 
     public LoggingService getLoggingService() { return loggingService; }
 
+    private static final java.util.Map<String, Integer> SEVERITY_ORDINALS = java.util.Map.of(
+            "DEFAULT", 0, "DEBUG", 100, "INFO", 200, "NOTICE", 300,
+            "WARNING", 400, "ERROR", 500, "CRITICAL", 600, "ALERT", 700
+    );
+    // Map.of supports max 10 entries; add EMERGENCY separately
+    private static final int EMERGENCY_ORDINAL = 800;
+
+    private static List<String> severitiesAtOrAbove(String level) {
+        int threshold = level.equals("EMERGENCY") ? EMERGENCY_ORDINAL
+                : SEVERITY_ORDINALS.getOrDefault(level, 0);
+        List<String> result = new ArrayList<>();
+        for (var entry : SEVERITY_ORDINALS.entrySet()) {
+            if (entry.getValue() >= threshold) {
+                result.add(entry.getKey());
+            }
+        }
+        if (EMERGENCY_ORDINAL >= threshold) {
+            result.add("EMERGENCY");
+        }
+        return result;
+    }
+
     public class LoggingService extends LoggingServiceV2Grpc.LoggingServiceV2ImplBase {
 
         @Override
@@ -107,8 +129,15 @@ public class LoggingEmulator extends AbstractEmulator {
                     }
                     if (filter.contains("severity>=")) {
                         String sev = filter.split("severity>=")[1].trim().replace("\"", "").split("\\s")[0];
-                        sql.append(" AND severity=?");
-                        params.add(sev);
+                        List<String> atOrAbove = severitiesAtOrAbove(sev);
+                        if (!atOrAbove.isEmpty()) {
+                            sql.append(" AND severity IN (");
+                            for (int i = 0; i < atOrAbove.size(); i++) {
+                                sql.append(i == 0 ? "?" : ",?");
+                                params.add(atOrAbove.get(i));
+                            }
+                            sql.append(")");
+                        }
                     }
                 }
                 sql.append(" ORDER BY timestamp DESC");

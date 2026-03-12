@@ -42,6 +42,9 @@ public class HealthCheckService {
         SERVICE_DEFS.put("cloudtasks",     new ServiceDef(8080,  "CLOUD_TASKS_EMULATOR_HOST"));
         SERVICE_DEFS.put("logging",        new ServiceDef(8080,  "CLOUD_LOGGING_EMULATOR_HOST"));
         SERVICE_DEFS.put("monitoring",     new ServiceDef(8080,  "CLOUD_MONITORING_EMULATOR_HOST"));
+        SERVICE_DEFS.put("gke",            new ServiceDef(8080,  "GKE_EMULATOR_HOST"));
+        SERVICE_DEFS.put("compute",        new ServiceDef(8080,  "COMPUTE_EMULATOR_HOST"));
+        SERVICE_DEFS.put("cloudrun",       new ServiceDef(8080,  "CLOUD_RUN_EMULATOR_HOST"));
     }
 
     private record ServiceDef(int port, String envVar) {}

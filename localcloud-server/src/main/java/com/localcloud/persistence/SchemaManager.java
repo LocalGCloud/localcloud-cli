@@ -115,6 +115,73 @@ public class SchemaManager {
                 ")"
             );
 
+            // Compute Engine: instances
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS compute_instances (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    zone VARCHAR(255) NOT NULL," +
+                "    instance_name VARCHAR(255) NOT NULL," +
+                "    machine_type VARCHAR(255) DEFAULT 'e2-medium'," +
+                "    status VARCHAR(20) DEFAULT 'PROVISIONING'," +
+                "    container_id VARCHAR(255)," +
+                "    container_image VARCHAR(512) DEFAULT 'ubuntu:22.04'," +
+                "    network_ip VARCHAR(45)," +
+                "    metadata TEXT DEFAULT '{}'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, zone, instance_name)" +
+                ")"
+            );
+
+            // Cloud Run: services
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS cloudrun_services (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location VARCHAR(255) NOT NULL," +
+                "    service_id VARCHAR(255) NOT NULL," +
+                "    container_image VARCHAR(512) NOT NULL," +
+                "    container_port INT DEFAULT 8080," +
+                "    container_id VARCHAR(255)," +
+                "    host_port INT," +
+                "    uri VARCHAR(1024)," +
+                "    env_vars TEXT DEFAULT '{}'," +
+                "    revision_count INT DEFAULT 1," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location, service_id)" +
+                ")"
+            );
+
+            // Cloud Run: revisions
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS cloudrun_revisions (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location VARCHAR(255) NOT NULL," +
+                "    service_id VARCHAR(255) NOT NULL," +
+                "    revision_id VARCHAR(255) NOT NULL," +
+                "    container_image VARCHAR(512) NOT NULL," +
+                "    container_id VARCHAR(255)," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location, service_id, revision_id)" +
+                ")"
+            );
+
+            // GKE: clusters
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS gke_clusters (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location VARCHAR(255) NOT NULL," +
+                "    cluster_id VARCHAR(255) NOT NULL," +
+                "    status VARCHAR(20) DEFAULT 'PROVISIONING'," +
+                "    k3d_cluster_name VARCHAR(255)," +
+                "    endpoint VARCHAR(512)," +
+                "    cluster_version VARCHAR(20) DEFAULT '1.28'," +
+                "    node_count INT DEFAULT 1," +
+                "    kubeconfig TEXT," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location, cluster_id)" +
+                ")"
+            );
+
             logger.info("Database schema initialized");
         }
     }

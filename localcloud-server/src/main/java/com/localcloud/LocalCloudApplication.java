@@ -17,6 +17,12 @@ import com.localcloud.emulators.secretmanager.SecretManagerEmulator;
 import com.localcloud.emulators.cloudtasks.CloudTasksEmulator;
 import com.localcloud.emulators.logging.LoggingEmulator;
 import com.localcloud.emulators.monitoring.MonitoringEmulator;
+import com.localcloud.emulators.compute.ComputeEmulator;
+import com.localcloud.emulators.cloudrun.CloudRunEmulator;
+import com.localcloud.emulators.gke.GkeEmulator;
+import com.localcloud.emulators.gke.K3dManager;
+import com.localcloud.docker.ContainerManager;
+import com.localcloud.docker.DockerClientProvider;
 import com.localcloud.gateway.ApiGateway;
 import com.localcloud.gateway.HealthCheckService;
 import com.localcloud.gateway.ProcessHealthChecker;
@@ -139,6 +145,51 @@ public class LocalCloudApplication {
             gateway.registerGrpcEmulator(monitoringEmulator, monitoringEmulator.getMonitoringService());
             hasGrpcServices = true;
             logger.info("Cloud Monitoring facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // Infrastructure services (require Docker socket)
+        ContainerManager containerManager = null;
+        boolean needsDocker = config.isServiceEnabled("compute")
+                || config.isServiceEnabled("cloudrun")
+                || config.isServiceEnabled("gke");
+        if (needsDocker) {
+            try {
+                containerManager = new ContainerManager(DockerClientProvider.getClient());
+                logger.info("Docker client initialized for infrastructure services");
+            } catch (Exception e) {
+                logger.warn("Docker not available — infrastructure services will use simulated mode: {}", e.getMessage());
+            }
+        }
+
+        if (config.isServiceEnabled("compute")) {
+            ContainerManager cm = containerManager != null ? containerManager : new ContainerManager(null);
+            ComputeEmulator computeEmulator = new ComputeEmulator(dataSource, cm);
+            computeEmulator.start();
+            sb.annotatedService("/compute/v1", computeEmulator.getRestService());
+            gateway.registerRestEmulator("/compute/v1", computeEmulator, null);
+            logger.info("Compute Engine facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        if (config.isServiceEnabled("cloudrun")) {
+            ContainerManager cm = containerManager != null ? containerManager : new ContainerManager(null);
+            CloudRunEmulator cloudRunEmulator = new CloudRunEmulator(dataSource, cm);
+            cloudRunEmulator.start();
+            grpcBuilder.addService(cloudRunEmulator.getServicesService());
+            grpcBuilder.addService(cloudRunEmulator.getRevisionsService());
+            gateway.registerGrpcEmulator(cloudRunEmulator,
+                    cloudRunEmulator.getServicesService(), cloudRunEmulator.getRevisionsService());
+            hasGrpcServices = true;
+            logger.info("Cloud Run facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        if (config.isServiceEnabled("gke")) {
+            K3dManager k3dManager = new K3dManager();
+            GkeEmulator gkeEmulator = new GkeEmulator(dataSource, k3dManager);
+            gkeEmulator.start();
+            grpcBuilder.addService(gkeEmulator.getClusterManagerService());
+            gateway.registerGrpcEmulator(gkeEmulator, gkeEmulator.getClusterManagerService());
+            hasGrpcServices = true;
+            logger.info("GKE facade registered on gateway port {}", config.getGatewayPort());
         }
 
         if (hasGrpcServices) {

@@ -25,6 +25,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Docker CLI (for container management by infrastructure emulators)
+RUN curl -fsSL https://get.docker.com | sh
+
+# Install k3d (lightweight k3s wrapper for GKE emulation)
+RUN curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+
 # Copy third-party emulator binaries
 COPY --from=fsouza/fake-gcs-server:latest /bin/fake-gcs-server /usr/local/bin/fake-gcs-server
 # bigquery-emulator is amd64-only; copied from named stage above
@@ -85,13 +91,16 @@ ENV LOCALCLOUD_PROJECT="local-project" \
     LOCALCLOUD_ENABLE_SECRETMANAGER="true" \
     LOCALCLOUD_ENABLE_CLOUDTASKS="true" \
     LOCALCLOUD_ENABLE_LOGGING="true" \
-    LOCALCLOUD_ENABLE_MONITORING="true"
+    LOCALCLOUD_ENABLE_MONITORING="true" \
+    LOCALCLOUD_ENABLE_GKE="false" \
+    LOCALCLOUD_ENABLE_COMPUTE="false" \
+    LOCALCLOUD_ENABLE_CLOUDRUN="false"
 
 # Data persistence volume
 VOLUME /var/lib/localcloud
 
 # Ports: gateway, GCS, Pub/Sub, Firestore, BigQuery, Spanner, Bigtable, SecretManager, CloudTasks
-EXPOSE 8080 4443 8085 8086 8087 9010 9020 9050 9060
+EXPOSE 8080 4443 6443 8085 8086 8087 9010 9020 9050 9060
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
   CMD curl -f http://localhost:8080/_localcloud/health || exit 1

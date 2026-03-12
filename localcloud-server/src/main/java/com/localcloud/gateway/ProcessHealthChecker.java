@@ -37,7 +37,8 @@ public class ProcessHealthChecker {
 
     /** Services that run in-process and are always healthy if the server is up. */
     private static final Set<String> IN_PROCESS_SERVICES = Set.of(
-            "secretmanager", "cloudtasks", "logging", "monitoring"
+            "secretmanager", "cloudtasks", "logging", "monitoring",
+            "gke", "compute", "cloudrun"
     );
 
     private final LocalCloudConfig config;

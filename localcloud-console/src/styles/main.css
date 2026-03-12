@@ -31,7 +31,7 @@ body {
 }
 
 /* Typography */
-h1 { font-size: 20px; font-weight: 600; margin-bottom: 12px; }
+h1 { font-size: 20px; font-weight: 600; margin: 0 0 12px 0; }
 h2 { font-size: 16px; font-weight: 600; margin-bottom: 10px; }
 h3 { font-size: 14px; font-weight: 500; margin-bottom: 8px; }
 p { font-size: 13px; line-height: 1.5; }
@@ -52,6 +52,8 @@ button {
 
 button:hover { filter: brightness(1.1); }
 button:active { filter: brightness(0.9); }
+button:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 button.secondary {
     background: transparent;
@@ -97,7 +99,7 @@ input:focus, select:focus, textarea:focus {
 
 .status-badge.stopped {
     background: rgba(100, 100, 100, 0.2);
-    color: #a0a0a0;
+    color: #b4b6b8;
 }
 
 .status-badge.error {

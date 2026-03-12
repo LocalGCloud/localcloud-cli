@@ -13,6 +13,10 @@ java {
     }
 }
 
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs << '-parameters'
+}
+
 repositories {
     mavenCentral()
 }
@@ -35,6 +39,18 @@ dependencies {
     implementation 'com.google.api.grpc:grpc-google-cloud-logging-v2:0.116.0'
     implementation 'com.google.api.grpc:proto-google-cloud-monitoring-v3:3.87.0'
     implementation 'com.google.api.grpc:grpc-google-cloud-monitoring-v3:3.87.0'
+
+    // GKE Container API stubs
+    implementation 'com.google.api.grpc:proto-google-cloud-container-v1:2.55.0'
+    implementation 'com.google.api.grpc:grpc-google-cloud-container-v1:2.55.0'
+
+    // Cloud Run v2 API stubs
+    implementation 'com.google.api.grpc:proto-google-cloud-run-v2:0.58.0'
+    implementation 'com.google.api.grpc:grpc-google-cloud-run-v2:0.58.0'
+
+    // Docker Java client
+    implementation 'com.github.docker-java:docker-java-core:3.3.6'
+    implementation 'com.github.docker-java:docker-java-transport-httpclient5:3.3.6'
 
     // gRPC
     implementation "io.grpc:grpc-netty-shaded:${grpcVersion}"

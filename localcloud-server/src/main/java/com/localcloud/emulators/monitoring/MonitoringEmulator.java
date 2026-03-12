@@ -169,10 +169,23 @@ public class MonitoringEmulator extends AbstractEmulator {
                     ListTimeSeriesResponse.Builder resp = ListTimeSeriesResponse.newBuilder();
                     // Simplified: each row becomes a time series with one point
                     while (rs.next()) {
+                        com.google.api.Metric.Builder metricBuilder = com.google.api.Metric.newBuilder()
+                                .setType(rs.getString("metric_type"));
+                        // Restore metric labels from stored string (format: {key=value, key2=value2})
+                        String labelsStr = rs.getString("metric_labels");
+                        if (labelsStr != null && labelsStr.length() > 2) {
+                            String inner = labelsStr.substring(1, labelsStr.length() - 1); // strip { }
+                            if (!inner.isEmpty()) {
+                                for (String pair : inner.split(", ")) {
+                                    int eq = pair.indexOf('=');
+                                    if (eq > 0) {
+                                        metricBuilder.putLabels(pair.substring(0, eq), pair.substring(eq + 1));
+                                    }
+                                }
+                            }
+                        }
                         TimeSeries.Builder tsBuilder = TimeSeries.newBuilder()
-                                .setMetric(com.google.api.Metric.newBuilder()
-                                        .setType(rs.getString("metric_type"))
-                                        .build());
+                                .setMetric(metricBuilder.build());
                         String valueType = rs.getString("value_type");
                         TypedValue.Builder val = TypedValue.newBuilder();
                         if ("INT64".equals(valueType)) {

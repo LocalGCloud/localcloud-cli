@@ -15,6 +15,7 @@ services:
       - "127.0.0.1:9020:9020"    # Spanner REST
       - "127.0.0.1:9050:9050"    # BigQuery REST
       - "127.0.0.1:9060:9060"    # BigQuery gRPC
+      - "127.0.0.1:16443:6443"   # GKE k3d Kubernetes API (remapped to avoid Rancher Desktop conflict)
     mem_limit: 4g
     environment:
       LOCALCLOUD_PROJECT: "${LOCALCLOUD_PROJECT:-local-project}"
@@ -24,6 +25,7 @@ services:
     volumes:
       - localcloud-data:/var/lib/localcloud
       - "${LOCALCLOUD_SEED_FILE:-./seed.yaml}:/etc/localcloud/seed.yaml:ro"
+      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/_localcloud/health"]
       interval: 10s
