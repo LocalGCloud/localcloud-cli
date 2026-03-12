@@ -1,0 +1,16 @@
+{
+  "name": "localcloud-console",
+  "version": "0.1.0",
+  "description": "Web console for LocalCloud GCP emulator",
+  "type": "module",
+  "scripts": {
+    "dev": "python backend/app.py",
+    "build": "esbuild src/app.jsx --bundle --outfile=dist/app.js --minify"
+  },
+  "dependencies": {
+    "solid-js": "^1.8.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0"
+  }
+}
