@@ -8,12 +8,13 @@
 # Option B: Use pre-built JAR (run `cd localcloud-server && ./gradlew shadowJar` first)
 # The pre-built JAR is copied directly in the runtime stage below.
 
-# Pull bigquery-emulator binary (amd64-only)
-FROM --platform=linux/amd64 ghcr.io/goccy/bigquery-emulator:latest AS bigquery-emulator-amd64
-
 # Spanner emulator source: google (official) or local (fork with persistence)
 # Set via: docker compose build --build-arg SPANNER_EMULATOR_IMAGE=google
+# Must be declared before the first FROM for use in FROM line interpolation
 ARG SPANNER_EMULATOR_IMAGE=local
+
+# Pull bigquery-emulator binary (amd64-only)
+FROM --platform=linux/amd64 ghcr.io/goccy/bigquery-emulator:latest AS bigquery-emulator-amd64
 
 FROM gcr.io/cloud-spanner-emulator/emulator:latest AS spanner-emulator-upstream
 # Fork stage: only pulled by BuildKit when SPANNER_EMULATOR_IMAGE=local
