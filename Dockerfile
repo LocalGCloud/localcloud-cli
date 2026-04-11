@@ -11,12 +11,26 @@
 # Pull bigquery-emulator binary (amd64-only)
 FROM --platform=linux/amd64 ghcr.io/goccy/bigquery-emulator:latest AS bigquery-emulator-amd64
 
-# Spanner emulator: upstream gateway + local fork with persistence
+# Spanner emulator source: google (official) or local (fork with persistence)
+# Set via: docker compose build --build-arg SPANNER_EMULATOR_IMAGE=google
+ARG SPANNER_EMULATOR_IMAGE=local
+
 FROM gcr.io/cloud-spanner-emulator/emulator:latest AS spanner-emulator-upstream
+# Fork stage: only pulled by BuildKit when SPANNER_EMULATOR_IMAGE=local
 FROM spanner-emulator-build:latest AS spanner-emulator-fork
+
+# Normalize emulator binary path for each mode
+FROM spanner-emulator-upstream AS spanner-bin-google
+FROM spanner-emulator-fork AS spanner-bin-local
+RUN cp /build/output/emulator_main /emulator_main
+# Select the right emulator binary source based on build arg
+FROM spanner-bin-${SPANNER_EMULATOR_IMAGE} AS spanner-bin
 
 # Stage 2: Runtime
 FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+
+# Re-declare ARG after FROM so it's available in this stage
+ARG SPANNER_EMULATOR_IMAGE=local
 
 LABEL maintainer="Jay Sen <jaysen@apache.org>"
 LABEL description="LocalCloud - Local GCP Emulator Orchestrator"
@@ -48,9 +62,9 @@ COPY --from=fsouza/fake-gcs-server:latest /bin/fake-gcs-server /usr/local/bin/fa
 # bigquery-emulator is amd64-only
 # On arm64 this copies the amd64 binary which requires QEMU; BigQuery may not work on arm64
 COPY --from=bigquery-emulator-amd64 /bin/bigquery-emulator /usr/local/bin/bigquery-emulator
-# Spanner emulator: gateway from upstream (unchanged), emulator from fork (with persistence)
+# Spanner emulator: gateway always from upstream, emulator from selected source (google or local fork)
 COPY --from=spanner-emulator-upstream /gateway_main /usr/local/bin/spanner-gateway
-COPY --from=spanner-emulator-fork /build/output/emulator_main /usr/local/bin/spanner-emulator-main
+COPY --from=spanner-bin /emulator_main /usr/local/bin/spanner-emulator-main
 
 # Create localcloud user, group, and directories
 RUN groupadd -r localcloud && useradd -r -g localcloud -m localcloud \
@@ -66,8 +80,8 @@ RUN groupadd -r localcloud && useradd -r -g localcloud -m localcloud \
                                       /opt/localcloud \
                                       /var/run/postgresql
 
-# Spanner emulator wrapper: passes --data_dir for persistent LevelDB storage
-RUN printf '#!/bin/bash\nif [ ! -x /usr/local/bin/spanner-emulator-main ]; then\n  echo "ERROR: spanner-emulator-main not found or not executable" >&2\n  exit 1\nfi\nexec /usr/local/bin/spanner-emulator-main --data_dir=/var/lib/localcloud/spanner-data "$@"\n' \
+# Spanner emulator wrapper: passes --data_dir only for local fork (persistence support)
+RUN printf '#!/bin/bash\nif [ ! -x /usr/local/bin/spanner-emulator-main ]; then\n  echo "ERROR: spanner-emulator-main not found or not executable" >&2\n  exit 1\nfi\nif [ "${SPANNER_EMULATOR_IMAGE}" = "google" ]; then\n  exec /usr/local/bin/spanner-emulator-main "$@"\nelse\n  exec /usr/local/bin/spanner-emulator-main --data_dir=/var/lib/localcloud/spanner-data "$@"\nfi\n' \
     > /usr/local/bin/spanner-emulator-wrapper \
     && chmod +x /usr/local/bin/spanner-emulator-wrapper
 
@@ -104,6 +118,9 @@ ENV JAVA_OPTS="\
   -XX:MaxMetaspaceSize=96m \
   -XX:+ExitOnOutOfMemoryError \
   -Djava.security.egd=file:/dev/./urandom"
+
+# Spanner emulator mode (baked in from build arg, used by wrapper script and entrypoint)
+ENV SPANNER_EMULATOR_IMAGE=${SPANNER_EMULATOR_IMAGE}
 
 # Default project and service enable flags
 ENV LOCALCLOUD_PROJECT="local-project" \

@@ -19,11 +19,17 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 # Pre-check: Verify spanner-emulator-build image exists (built manually from fork)
-if ! docker image inspect spanner-emulator-build:latest >/dev/null 2>&1; then
-    echo "WARNING: spanner-emulator-build:latest image not found."
-    echo "  Spanner persistence requires the forked emulator."
-    echo "  Build it manually: cd ../local_cloud_dependencies/cloud-spanner-emulator && ./build-offline.sh"
-    echo ""
+# Skipped when using Google's standard emulator (SPANNER_EMULATOR_IMAGE=google)
+if [ "${SPANNER_EMULATOR_IMAGE}" != "google" ]; then
+    if ! docker image inspect spanner-emulator-build:latest >/dev/null 2>&1; then
+        echo "WARNING: spanner-emulator-build:latest image not found."
+        echo "  Spanner persistence requires the forked emulator."
+        echo "  Build it manually: cd ../local_cloud_dependencies/cloud-spanner-emulator && ./build-offline.sh"
+        echo "  Or use Google's standard emulator: SPANNER_EMULATOR_IMAGE=google ./build.sh"
+        echo ""
+    fi
+else
+    echo "  Using Google's standard Spanner emulator (no persistence)"
 fi
 
 # 1. Build Java server

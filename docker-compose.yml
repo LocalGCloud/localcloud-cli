@@ -6,6 +6,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        SPANNER_EMULATOR_IMAGE: "${SPANNER_EMULATOR_IMAGE:-local}"
     ports:
       - "127.0.0.1:8080:8080"    # LocalCloud Gateway (admin API, REST)
       - "127.0.0.1:4443:4443"    # Cloud Storage (fake-gcs-server, REST)

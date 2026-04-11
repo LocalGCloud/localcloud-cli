@@ -56,6 +56,11 @@ if [ -n "${LOCALCLOUD_SERVICES}" ]; then
     done
 fi
 
+# Warn if using Google's standard Spanner emulator (no persistence)
+if [ "${SPANNER_EMULATOR_IMAGE}" = "google" ] && [ "${LOCALCLOUD_ENABLE_SPANNER:-true}" = "true" ]; then
+    echo "WARNING: Using Google's standard Spanner emulator — persistence is NOT supported. Data will be lost on container restart."
+fi
+
 # Auto-seed: load seed data after services are healthy (runs in background)
 SEED_FILE="${LOCALCLOUD_SEED_FILE:-/etc/localcloud/seed.yaml}"
 if [ -f "$SEED_FILE" ]; then
