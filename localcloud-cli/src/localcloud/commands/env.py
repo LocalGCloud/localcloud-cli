@@ -5,15 +5,13 @@ import sys
 
 import click
 
-from localcloud.docker_manager import DockerManager, SERVICE_ENV_VARS
+from localcloud.docker_manager import DockerManager
+from localcloud.service_registry import get_registry
 
 
-def _build_env_vars(host: str = "localhost") -> dict[str, str]:
-    """Build the mapping of env-var name -> value from SERVICE_ENV_VARS."""
-    result = {}
-    for _svc, (port, env_var) in SERVICE_ENV_VARS.items():
-        result[env_var] = f"{host}:{port}"
-    return result
+def _build_env_vars(host: str = "localhost", project_id: str = "local-project") -> dict[str, str]:
+    """Build the mapping of env-var name -> value from the service registry."""
+    return get_registry().get_env_vars(host=host, project_id=project_id)
 
 
 def _format_env_vars(env_vars: dict[str, str], fmt: str) -> str:
@@ -26,7 +24,7 @@ def _format_env_vars(env_vars: dict[str, str], fmt: str) -> str:
             lines.append(f"  - {k}={v}")
         return "\n".join(lines)
     else:  # shell
-        lines = [f"export {k}={v}" for k, v in env_vars.items()]
+        lines = [f'export {k}="{v}"' for k, v in env_vars.items()]
         return "\n".join(lines) + "\n"
 
 
@@ -47,5 +45,5 @@ def env(ctx, fmt):
         click.echo(output, nl=False)
     except Exception:
         # Server endpoint unavailable – generate locally from known ports
-        env_vars = _build_env_vars(host="localhost")
+        env_vars = _build_env_vars(host="localhost", project_id=ctx.project_id)
         click.echo(_format_env_vars(env_vars, fmt), nl=False)

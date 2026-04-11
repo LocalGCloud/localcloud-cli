@@ -24,7 +24,7 @@ def _make_client() -> InstancesClient:
     )
 
 
-def run(project_id: str) -> list[tuple[str, bool, str]]:
+def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
     """Run Compute Engine demo operations. Returns list of (operation, success, detail)."""
     results = []
     zone = "us-central1-a"
@@ -141,19 +141,25 @@ def run(project_id: str) -> list[tuple[str, bool, str]]:
         results.append(("Status transitions", False, str(e)))
 
     # 8. Delete instance 1
-    try:
-        resp = requests.delete(f"{base}/{instance_name_1}")
-        resp.raise_for_status()
-        results.append(("Delete instance 1", True, instance_name_1))
-    except Exception as e:
-        results.append(("Delete instance 1", False, str(e)))
+    if not keep_data:
+        try:
+            resp = requests.delete(f"{base}/{instance_name_1}")
+            resp.raise_for_status()
+            results.append(("Delete instance 1", True, instance_name_1))
+        except Exception as e:
+            results.append(("Delete instance 1", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     # 9. Delete instance 2
-    try:
-        resp = requests.delete(f"{base}/{instance_name_2}")
-        resp.raise_for_status()
-        results.append(("Delete instance 2", True, instance_name_2))
-    except Exception as e:
-        results.append(("Delete instance 2", False, str(e)))
+    if not keep_data:
+        try:
+            resp = requests.delete(f"{base}/{instance_name_2}")
+            resp.raise_for_status()
+            results.append(("Delete instance 2", True, instance_name_2))
+        except Exception as e:
+            results.append(("Delete instance 2", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     return results

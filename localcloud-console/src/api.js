@@ -1,50 +1,76 @@
 /**
- * API wrapper for fetching from Flask backend.
+ * LocalCloud Console API client.
+ * All calls proxy through Flask backend to LocalCloud Admin API.
+ * Project-aware: passes ?project= on browse/env/reset calls.
  */
 
-const BASE_URL = '';  // Relative to current host
+const BASE = '';
 
-export async function apiGet(path) {
-    try {
-        const resp = await fetch(`${BASE_URL}${path}`);
-        if (!resp.ok) throw new Error(`${resp.status}: ${resp.statusText}`);
-        return await resp.json();
-    } catch (err) {
-        console.error(`API GET ${path}:`, err);
-        throw err;
-    }
+let _activeProject = null;
+
+export function setActiveProject(projectId) {
+    _activeProject = projectId;
 }
 
-export async function apiPost(path, data = {}) {
-    try {
-        const resp = await fetch(`${BASE_URL}${path}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        });
-        if (!resp.ok) throw new Error(`${resp.status}: ${resp.statusText}`);
-        return await resp.json();
-    } catch (err) {
-        console.error(`API POST ${path}:`, err);
-        throw err;
-    }
+export function getActiveProject() {
+    return _activeProject;
 }
 
-// Service API calls
-export const services = {
-    getStatus: () => apiGet('/api/status'),
-    listServices: () => apiGet('/api/services'),
-    getService: (name) => apiGet(`/api/services/${name}`),
-    startService: (name) => apiPost(`/api/services/${name}/start`),
-    stopService: (name) => apiPost(`/api/services/${name}/stop`),
-    restartService: (name) => apiPost(`/api/services/${name}/restart`),
-    reset: () => apiPost('/api/reset'),
-    getLogs: (service, lines = 100) => apiGet(`/api/logs/${service}?lines=${lines}`),
-};
+function projectParam() {
+    return _activeProject ? `?project=${encodeURIComponent(_activeProject)}` : '';
+}
 
-// Data API calls
-export const data = {
-    getFirestoreCollections: () => apiGet('/api/firestore/collections'),
-    getBigQueryDatasets: () => apiGet('/api/bigquery/datasets'),
-    getGCSBuckets: () => apiGet('/api/gcs/buckets'),
+function appendProject(path) {
+    if (!_activeProject) return path;
+    const sep = path.includes('?') ? '&' : '?';
+    return `${path}${sep}project=${encodeURIComponent(_activeProject)}`;
+}
+
+async function get(path) {
+    const r = await fetch(`${BASE}${path}`);
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json();
+}
+
+async function post(path, body) {
+    const opts = { method: 'POST' };
+    if (body) {
+        opts.headers = { 'Content-Type': 'application/json' };
+        opts.body = JSON.stringify(body);
+    }
+    const r = await fetch(`${BASE}${path}`, opts);
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json();
+}
+
+async function del(path) {
+    const r = await fetch(`${BASE}${path}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json();
+}
+
+async function postJson(path, body) {
+    const r = await fetch(`${BASE}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json();
+}
+
+export const api = {
+    health: () => get('/api/health'),
+    services: () => get('/api/services'),
+    requests: () => get('/api/requests'),
+    env: () => get(appendProject('/api/env')),
+    reset: () => post(appendProject('/api/reset')),
+    browse: (service, sub) => get(appendProject(`/api/browse/${service}${sub ? '/' + sub : ''}`)),
+    mutate: (service, operation, data) => postJson(`/api/mutate/${service}/${operation}`, data),
+    resetService: (service, restoreSeed) => post(appendProject(`/api/reset/${service}`), { restore_seed: restoreSeed }),
+    export: () => get('/api/export'),
+    // Project management
+    projects: () => get('/api/projects'),
+    createProject: (projectId, displayName) => post('/api/projects', { project_id: projectId, display_name: displayName }),
+    deleteProject: (projectId) => del(`/api/projects/${encodeURIComponent(projectId)}`),
 };

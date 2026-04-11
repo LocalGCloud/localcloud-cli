@@ -7,7 +7,7 @@ from google.auth.credentials import AnonymousCredentials
 from google.cloud import spanner
 
 
-def run(project_id: str) -> list[tuple[str, bool, str]]:
+def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
     """Run Spanner demo operations. Returns list of (operation, success, detail)."""
     results = []
 
@@ -198,17 +198,23 @@ def run(project_id: str) -> list[tuple[str, bool, str]]:
         results.append(("Secondary index", False, str(e)))
 
     # 11. Drop database
-    try:
-        database.drop()
-        results.append(("Drop database", True, database_id))
-    except Exception as e:
-        results.append(("Drop database", False, str(e)))
+    if not keep_data:
+        try:
+            database.drop()
+            results.append(("Drop database", True, database_id))
+        except Exception as e:
+            results.append(("Drop database", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     # 12. Delete instance
-    try:
-        instance.delete()
-        results.append(("Delete instance", True, instance_id))
-    except Exception as e:
-        results.append(("Delete instance", False, str(e)))
+    if not keep_data:
+        try:
+            instance.delete()
+            results.append(("Delete instance", True, instance_id))
+        except Exception as e:
+            results.append(("Delete instance", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     return results

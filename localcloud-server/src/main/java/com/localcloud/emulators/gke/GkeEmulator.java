@@ -8,10 +8,14 @@ import com.localcloud.persistence.PostgresDataSource;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 /**
  * GKE emulator. Creates real k3d (lightweight k3s) clusters via the k3d CLI.
  */
 public class GkeEmulator extends AbstractEmulator {
+
+    private static final AtomicInteger nextK8sPort = new AtomicInteger(6443);
 
     private final PostgresDataSource dataSource;
     private final K3dManager k3dManager;
@@ -140,18 +144,19 @@ public class GkeEmulator extends AbstractEmulator {
                 String version = reqCluster.getInitialClusterVersion().isEmpty()
                         ? "1.28" : reqCluster.getInitialClusterVersion();
 
-                // Create k3d cluster
+                // Create k3d cluster with dynamic port allocation
+                int apiPort = nextK8sPort.getAndIncrement();
                 String k3dName;
                 String endpoint;
                 String kubeconfig;
                 try {
-                    k3dName = k3dManager.createCluster(clusterId, 6443);
-                    endpoint = "https://localhost:6443";
+                    k3dName = k3dManager.createCluster(clusterId, apiPort);
+                    endpoint = "https://localhost:" + apiPort;
                     kubeconfig = k3dManager.getKubeconfig(k3dName);
                 } catch (Exception e) {
                     logger.warn("k3d not available, using simulated cluster: {}", e.getMessage());
                     k3dName = "simulated-" + clusterId;
-                    endpoint = "https://localhost:6443";
+                    endpoint = "https://localhost:" + apiPort;
                     kubeconfig = "";
                 }
 

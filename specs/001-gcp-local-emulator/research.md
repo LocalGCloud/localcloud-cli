@@ -17,13 +17,14 @@
 
 ## Decision 2: Embedded Database
 
-**Decision**: H2 (embedded mode, file-backed) as primary persistence engine + ConcurrentHashMap for transient/simple data
+**Decision**: PostgreSQL (via Docker container, managed by supervisord) as primary persistence engine + ConcurrentHashMap for transient/simple data
 
-**Rationale**: H2 provides full SQL (needed for BigQuery and Spanner), JSON column type (needed for Firestore documents), and VARBINARY support (needed for Bigtable cells and GCS metadata). Using a single database engine minimizes complexity. Cloud Storage blob data is stored on the filesystem with metadata in H2. Pub/Sub messages, Cloud Tasks queues, and Secret Manager entries use in-memory ConcurrentHashMap with optional H2 persistence for durability.
+**Rationale**: PostgreSQL provides full SQL (needed for BigQuery and Spanner emulation), JSONB columns (needed for Firestore documents), and robust concurrent access. Running as a companion service inside the Docker container keeps the deployment self-contained while providing production-grade persistence. Cloud Storage blob data is stored on the filesystem with metadata in PostgreSQL. Pub/Sub messages, Cloud Tasks queues use in-memory ConcurrentHashMap with PostgreSQL persistence for durability.
 
 **Alternatives considered**:
+- H2 embedded: Full SQL and zero-config but single-connection limitations under concurrent load; may revisit for lightweight deployment mode in future.
 - SQLite via JDBC: Single-writer limitation, native wrapper adds platform concerns in Docker.
-- RocksDB: Excellent for key-value but no SQL; would require H2 anyway for BigQuery/Spanner.
+- RocksDB: Excellent for key-value but no SQL; would still require a SQL engine for BigQuery/Spanner.
 - MapDB: Unmaintained, memory-mapped file issues, no SQL.
 
 ## Decision 3: Docker Base Image & JVM Configuration
@@ -61,13 +62,13 @@
 - Typer for CLI: Built on Click but adds a dependency layer with no significant advantage for Docker-management CLIs.
 - Python inside the container for dashboard: Would bloat the image with a second runtime. Dashboard is better served as a static SPA from the Java gateway.
 
-## Decision 6: Web Dashboard Architecture
+## Decision 6: Web Console Architecture
 
-**Decision**: Java-embedded admin REST API + minimal static SPA (Preact or Alpine.js) bundled in the JAR
+**Decision**: Separate web console with Solid.js SPA frontend + Flask backend, launched via `localcloud console` CLI command
 
-**Rationale**: The gateway exposes admin endpoints at `/_localcloud/` (health, service status, request logs, data browsing). A lightweight SPA is served as static files from the JAR. No Python runtime needed in the container. The dashboard is read-only.
+**Rationale**: A dedicated console process (port 9090) with Flask proxying admin API calls to the Java gateway provides better developer experience than embedding a static SPA in the JAR. Solid.js offers reactive state management with minimal bundle size (~26KB minified). The console includes data browsing, service management, log viewing, and settings.
 
-**Admin API endpoints**:
+**Admin API endpoints** (served by Java gateway, proxied by Flask):
 - `GET /_localcloud/health` - service health
 - `GET /_localcloud/services` - running services with ports
 - `GET /_localcloud/requests` - recent request log (ring buffer)
@@ -102,24 +103,28 @@
 
 | Port | Service | Protocol |
 |------|---------|----------|
-| 8080 | REST gateway (GCS, BigQuery, Secret Manager, Cloud Tasks, admin dashboard) | HTTP/REST |
-| 9010 | Firestore | gRPC |
-| 9020 | Pub/Sub | gRPC |
-| 9030 | Spanner | gRPC |
-| 9040 | Bigtable | gRPC |
+| 8080 | REST gateway (GCS browse, SecretManager, CloudTasks, Logging, Monitoring, GKE, Compute, Cloud Run, admin dashboard) | HTTP/REST + gRPC transcoding |
+| 4443 | Cloud Storage (fake-gcs-server) | HTTP/HTTPS |
+| 8085 | Pub/Sub emulator | gRPC |
+| 8086 | Firestore emulator | gRPC |
+| 8087 | Bigtable emulator | gRPC |
+| 9010 | Spanner emulator (gRPC) | gRPC |
+| 9020 | Spanner emulator (REST gateway) | HTTP/REST |
+| 9050 | BigQuery emulator (REST) | HTTP/REST |
+| 9060 | BigQuery emulator (gRPC) | gRPC |
+| 6443 | GKE / k3d Kubernetes API | HTTPS |
 
-**Rationale**: REST services share the gateway port via path-based routing. gRPC services get dedicated ports because Google Cloud client libraries for these services connect to `host:port` directly (the `*_EMULATOR_HOST` env vars expect a `host:port` value, not a URL path).
+**Rationale**: External emulators (fake-gcs-server, gcloud emulators, spanner-emulator, bigquery-emulator) use their own default ports since Google Cloud client libraries connect to `host:port` directly via `*_EMULATOR_HOST` env vars. Facade services (Secret Manager, Cloud Tasks, Logging, Monitoring, GKE, Compute, Cloud Run) share the Armeria gateway on port 8080 via path-based and gRPC service routing. The Spanner emulator exposes both a gRPC port (9010) and a REST gateway (9020). BigQuery similarly exposes separate REST (9050) and gRPC (9060) ports.
 
 ## Decision 10: State Persistence Strategy
 
-**Decision**: H2 file-backed database + filesystem blobs, stored under `/var/lib/localcloud/` in the container, exposed as a Docker volume mount
+**Decision**: PostgreSQL database (managed by supervisord) + filesystem blobs, stored under `/var/lib/localcloud/` in the container, exposed as a Docker volume mount
 
 **Directory structure**:
 ```
 /var/lib/localcloud/
-├── db/                    # H2 database files
-│   └── localcloud.mv.db
-├── blobs/                 # GCS object data
+├── postgresql/            # PostgreSQL data directory
+├── blobs/                 # GCS object data (managed by external GCS emulator)
 │   └── {bucket}/{object-path}
 ├── logs/                  # Cloud Logging entries
 └── metrics/               # Cloud Monitoring data

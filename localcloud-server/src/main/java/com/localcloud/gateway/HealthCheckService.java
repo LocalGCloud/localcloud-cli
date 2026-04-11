@@ -2,8 +2,11 @@ package com.localcloud.gateway;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -12,7 +15,10 @@ import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
 import com.linecorp.armeria.server.annotation.Get;
+import com.linecorp.armeria.server.annotation.Param;
 import com.localcloud.config.LocalCloudConfig;
+import com.localcloud.config.ServiceRegistry;
+import com.localcloud.config.ServiceRegistry.ServiceDefinition;
 
 /**
  * REST endpoint handler for the LocalCloud admin health check.
@@ -27,27 +33,7 @@ public class HealthCheckService {
     private final ProcessHealthChecker processHealthChecker;
     private final Instant startTime;
     private final ObjectMapper mapper;
-
-    /** Service definitions: name -> {port, envVar} */
-    private static final Map<String, ServiceDef> SERVICE_DEFS = new LinkedHashMap<>();
-
-    static {
-        SERVICE_DEFS.put("gcs",            new ServiceDef(4443,  "STORAGE_EMULATOR_HOST"));
-        SERVICE_DEFS.put("pubsub",         new ServiceDef(8085,  "PUBSUB_EMULATOR_HOST"));
-        SERVICE_DEFS.put("firestore",      new ServiceDef(8086,  "FIRESTORE_EMULATOR_HOST"));
-        SERVICE_DEFS.put("bigtable",       new ServiceDef(8087,  "BIGTABLE_EMULATOR_HOST"));
-        SERVICE_DEFS.put("spanner",        new ServiceDef(9010,  "SPANNER_EMULATOR_HOST"));
-        SERVICE_DEFS.put("bigquery",       new ServiceDef(9050,  "BIGQUERY_EMULATOR_HOST"));
-        SERVICE_DEFS.put("secretmanager",  new ServiceDef(8080,  "SECRET_MANAGER_EMULATOR_HOST"));
-        SERVICE_DEFS.put("cloudtasks",     new ServiceDef(8080,  "CLOUD_TASKS_EMULATOR_HOST"));
-        SERVICE_DEFS.put("logging",        new ServiceDef(8080,  "CLOUD_LOGGING_EMULATOR_HOST"));
-        SERVICE_DEFS.put("monitoring",     new ServiceDef(8080,  "CLOUD_MONITORING_EMULATOR_HOST"));
-        SERVICE_DEFS.put("gke",            new ServiceDef(8080,  "GKE_EMULATOR_HOST"));
-        SERVICE_DEFS.put("compute",        new ServiceDef(8080,  "COMPUTE_EMULATOR_HOST"));
-        SERVICE_DEFS.put("cloudrun",       new ServiceDef(8080,  "CLOUD_RUN_EMULATOR_HOST"));
-    }
-
-    private record ServiceDef(int port, String envVar) {}
+    private final ServiceRegistry registry;
 
     public HealthCheckService(LocalCloudConfig config, ApiGateway gateway,
                               ProcessHealthChecker processHealthChecker) {
@@ -58,94 +44,159 @@ public class HealthCheckService {
         this.mapper = new ObjectMapper();
         this.mapper.registerModule(new JavaTimeModule());
         this.mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        this.registry = config.getServiceRegistry();
     }
 
     @Get("/health")
     public HttpResponse health() {
-        try {
-            // Poll all external emulators and update statuses
-            processHealthChecker.checkAll();
-            Map<String, String> statuses = processHealthChecker.getAllStatuses();
-
-            // Determine overall health
-            boolean allHealthy = true;
-            Map<String, Object> services = new LinkedHashMap<>();
-
-            for (Map.Entry<String, ServiceDef> entry : SERVICE_DEFS.entrySet()) {
-                String serviceName = entry.getKey();
-                ServiceDef def = entry.getValue();
-
-                if (!config.isServiceEnabled(serviceName)) {
-                    continue;
-                }
-
-                String status = statuses.getOrDefault(serviceName, "unknown");
-                Map<String, Object> svc = new LinkedHashMap<>();
-                svc.put("status", status);
-                svc.put("port", def.port());
-                svc.put("env_var", def.envVar());
-                services.put(serviceName, svc);
-
-                if (!"healthy".equals(status)) {
-                    allHealthy = false;
-                }
-            }
-
-            Map<String, Object> response = new LinkedHashMap<>();
-            response.put("status", allHealthy ? "healthy" : "degraded");
-            response.put("uptime_seconds", Duration.between(startTime, Instant.now()).getSeconds());
-            response.put("services", services);
-            response.put("project_id", config.getProjectId());
-            response.put("persistence", config.isPersistenceEnabled());
-            response.put("data_dir", config.getDataDir().toString());
-
-            String json = mapper.writeValueAsString(response);
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
-        } catch (Exception e) {
-            Map<String, Object> error = Map.of(
-                    "status", "error",
-                    "message", e.getMessage() != null ? e.getMessage() : "Unknown error"
-            );
+        return HttpResponse.of(CompletableFuture.supplyAsync(() -> {
             try {
-                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR,
-                        MediaType.JSON, mapper.writeValueAsString(error));
-            } catch (Exception ex) {
+                // Poll all external emulators and update statuses
+                processHealthChecker.checkAll();
+                Map<String, String> statuses = processHealthChecker.getAllStatuses();
+
+                // Determine overall health
+                boolean allHealthy = true;
+                Map<String, Object> services = new LinkedHashMap<>();
+
+                for (Map.Entry<String, ServiceDefinition> entry : registry.getAllServices().entrySet()) {
+                    String serviceName = entry.getKey();
+                    ServiceDefinition def = entry.getValue();
+
+                    if (!config.isServiceEnabled(serviceName)) {
+                        continue;
+                    }
+
+                    String status = statuses.getOrDefault(serviceName, "unknown");
+                    Map<String, Object> svc = new LinkedHashMap<>();
+                    svc.put("status", status);
+                    svc.put("port", def.port());
+                    svc.put("protocol", def.protocol());
+                    services.put(serviceName, svc);
+
+                    if (!"healthy".equals(status)) {
+                        allHealthy = false;
+                    }
+                }
+
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("status", allHealthy ? "healthy" : "degraded");
+                response.put("uptime_seconds", Duration.between(startTime, Instant.now()).getSeconds());
+                response.put("services", services);
+                response.put("project_id", config.getProjectId());
+                response.put("persistence", config.isPersistenceEnabled());
+                response.put("data_dir", config.getDataDir().toString());
+
+                String json = mapper.writeValueAsString(response);
+                return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
+            } catch (Exception e) {
                 return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR,
                         MediaType.PLAIN_TEXT_UTF_8, "Internal server error");
             }
-        }
+        }));
+    }
+
+    /**
+     * Returns health status for a single service by name.
+     * Example: GET /_localcloud/health/gcs
+     */
+    @Get("/health/{service}")
+    public HttpResponse serviceHealth(@Param("service") String service) {
+        return HttpResponse.of(CompletableFuture.supplyAsync(() -> {
+            try {
+                ServiceDefinition def = registry.getService(service);
+                if (def == null) {
+                    Map<String, Object> error = Map.of(
+                            "error", true,
+                            "message", "Unknown service: " + service
+                    );
+                    return HttpResponse.of(HttpStatus.NOT_FOUND, MediaType.JSON,
+                            mapper.writeValueAsString(error));
+                }
+
+                if (!config.isServiceEnabled(service)) {
+                    Map<String, Object> resp = new LinkedHashMap<>();
+                    resp.put("service", service);
+                    resp.put("status", "disabled");
+                    resp.put("port", def.port());
+                    resp.put("protocol", def.protocol());
+                    return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                            mapper.writeValueAsString(resp));
+                }
+
+                // Check this specific service
+                processHealthChecker.checkAll();
+                String status = processHealthChecker.getStatus(service);
+
+                Map<String, Object> resp = new LinkedHashMap<>();
+                resp.put("service", service);
+                resp.put("status", status);
+                resp.put("port", def.port());
+                resp.put("protocol", def.protocol());
+                resp.put("type", def.type());
+                if (def.additionalPorts() != null && !def.additionalPorts().isEmpty()) {
+                    resp.put("additional_ports", def.additionalPorts());
+                }
+
+                HttpStatus httpStatus = "healthy".equals(status) ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE;
+                return HttpResponse.of(httpStatus, MediaType.JSON,
+                        mapper.writeValueAsString(resp));
+            } catch (Exception e) {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR,
+                        MediaType.PLAIN_TEXT_UTF_8, "Internal server error");
+            }
+        }));
     }
 
     @Get("/services")
     public HttpResponse services() {
-        try {
-            // Get latest statuses
-            processHealthChecker.checkAll();
-            Map<String, String> statuses = processHealthChecker.getAllStatuses();
+        return HttpResponse.of(CompletableFuture.supplyAsync(() -> {
+            try {
+                // Get latest statuses
+                processHealthChecker.checkAll();
+                Map<String, String> statuses = processHealthChecker.getAllStatuses();
 
-            Map<String, Object> response = new LinkedHashMap<>();
-            for (Map.Entry<String, ServiceDef> entry : SERVICE_DEFS.entrySet()) {
-                String serviceName = entry.getKey();
-                ServiceDef def = entry.getValue();
+                List<Map<String, Object>> serviceList = new ArrayList<>();
+                for (Map.Entry<String, ServiceDefinition> entry : registry.getAllServices().entrySet()) {
+                    String serviceName = entry.getKey();
+                    ServiceDefinition def = entry.getValue();
 
-                boolean enabled = config.isServiceEnabled(serviceName);
-                String status = enabled
-                        ? statuses.getOrDefault(serviceName, "unknown")
-                        : "disabled";
+                    if (!config.isServiceEnabled(serviceName)) {
+                        continue;
+                    }
 
-                Map<String, Object> svc = new LinkedHashMap<>();
-                svc.put("enabled", enabled);
-                svc.put("status", status);
-                svc.put("port", def.port());
-                svc.put("env_var", def.envVar());
-                response.put(serviceName, svc);
+                    String status = statuses.getOrDefault(serviceName, "unknown");
+
+                    // Look up request count from the gateway's registered emulator
+                    long requestCount = 0;
+                    var emulator = gateway.getEmulator(serviceName);
+                    if (emulator.isPresent()) {
+                        requestCount = emulator.get().getRequestCount();
+                    }
+
+                    String envValue = def.envValue("localhost");
+                    Map<String, Object> svc = new LinkedHashMap<>();
+                    svc.put("id", serviceName);
+                    svc.put("name", def.displayName());
+                    svc.put("status", status);
+                    svc.put("port", def.port());
+                    svc.put("protocol", def.protocol());
+                    svc.put("endpoint", envValue);
+                    svc.put("env_var", def.envVar());
+                    svc.put("env_value", envValue);
+                    svc.put("request_count", requestCount);
+                    serviceList.add(svc);
+                }
+
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("services", serviceList);
+
+                String json = mapper.writeValueAsString(response);
+                return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
+            } catch (Exception e) {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR,
+                        MediaType.PLAIN_TEXT_UTF_8, "Internal server error");
             }
-
-            String json = mapper.writeValueAsString(response);
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
-        } catch (Exception e) {
-            return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR,
-                    MediaType.PLAIN_TEXT_UTF_8, "Internal server error");
-        }
+        }));
     }
 }

@@ -23,10 +23,21 @@ public class SchemaManager {
 
     /**
      * Initialize the database schema, creating tables if they do not exist.
+     *
+     * @param defaultProjectId the default project ID to auto-insert into the projects table
      */
-    public void initialize() throws SQLException {
+    public void initialize(String defaultProjectId) throws SQLException {
         try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement()) {
+
+            // Projects table (must be created before service tables that reference project_id)
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS projects (" +
+                "    project_id VARCHAR(255) NOT NULL PRIMARY KEY," +
+                "    display_name VARCHAR(255)," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                ")"
+            );
 
             // Schema version tracking
             stmt.execute(
@@ -79,12 +90,14 @@ public class SchemaManager {
             stmt.execute(
                 "CREATE TABLE IF NOT EXISTS log_entries (" +
                 "    id VARCHAR(255) NOT NULL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL DEFAULT ''," +
                 "    log_name VARCHAR(1024) NOT NULL," +
                 "    resource_type VARCHAR(255) DEFAULT ''," +
                 "    resource_labels TEXT DEFAULT '{}'," +
                 "    severity VARCHAR(20) DEFAULT 'DEFAULT'," +
                 "    text_payload TEXT DEFAULT ''," +
                 "    json_payload TEXT DEFAULT ''," +
+                "    labels TEXT DEFAULT '{}'," +
                 "    timestamp BIGINT DEFAULT 0," +
                 "    insert_id VARCHAR(255) DEFAULT ''" +
                 ")"
@@ -94,6 +107,7 @@ public class SchemaManager {
             stmt.execute(
                 "CREATE TABLE IF NOT EXISTS time_series (" +
                 "    id VARCHAR(255) NOT NULL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL DEFAULT 'local-project'," +
                 "    project_name VARCHAR(1024) NOT NULL," +
                 "    metric_type VARCHAR(1024) NOT NULL," +
                 "    metric_labels TEXT DEFAULT '{}'," +
@@ -106,6 +120,7 @@ public class SchemaManager {
             stmt.execute(
                 "CREATE TABLE IF NOT EXISTS metric_points (" +
                 "    id VARCHAR(255) NOT NULL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL DEFAULT 'local-project'," +
                 "    series_id VARCHAR(255) NOT NULL," +
                 "    start_time BIGINT DEFAULT 0," +
                 "    end_time BIGINT DEFAULT 0," +
@@ -180,6 +195,69 @@ public class SchemaManager {
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
                 "    PRIMARY KEY (project_id, location, cluster_id)" +
                 ")"
+            );
+
+            // Cloud Tasks: cloud_tasks
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS cloud_tasks (" +
+                "    task_id VARCHAR(500) PRIMARY KEY," +
+                "    queue_name VARCHAR(255) NOT NULL," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    http_method VARCHAR(10)," +
+                "    url VARCHAR(2000)," +
+                "    headers TEXT," +
+                "    body BYTEA," +
+                "    schedule_time TIMESTAMP," +
+                "    dispatch_count INT DEFAULT 0," +
+                "    response_count INT DEFAULT 0," +
+                "    state VARCHAR(20) DEFAULT 'PENDING'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    CONSTRAINT fk_task_queue FOREIGN KEY (project_id, location_id, queue_name) " +
+                "        REFERENCES task_queues(project_id, location_id, queue_id) ON DELETE CASCADE" +
+                ")"
+            );
+
+            // Memorystore (Redis): redis_data
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS redis_data (" +
+                "    project_id VARCHAR(255) NOT NULL DEFAULT 'local-project'," +
+                "    db_number INT NOT NULL DEFAULT 0," +
+                "    key_name TEXT NOT NULL," +
+                "    data_type VARCHAR(10) NOT NULL," +
+                "    value JSONB NOT NULL DEFAULT '\"\"'," +
+                "    ttl_expires_at TIMESTAMPTZ," +
+                "    PRIMARY KEY (project_id, db_number, key_name)" +
+                ")"
+            );
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_redis_ttl ON redis_data (ttl_expires_at) WHERE ttl_expires_at IS NOT NULL");
+
+            // Bigtable: bigtable_data
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS bigtable_data (" +
+                "    project_id VARCHAR(255) NOT NULL DEFAULT 'local-project'," +
+                "    instance_id VARCHAR(255) NOT NULL," +
+                "    table_name VARCHAR(255) NOT NULL," +
+                "    row_key VARCHAR(1024) NOT NULL," +
+                "    cells JSONB NOT NULL DEFAULT '{}'," +
+                "    PRIMARY KEY (project_id, instance_id, table_name, row_key)" +
+                ")"
+            );
+
+            // Cloud Storage: storage_objects (referenced by index below)
+            // Indexes for high-volume tables
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_log_entries_log_name ON log_entries (log_name)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_log_entries_timestamp ON log_entries (timestamp)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_log_entries_severity ON log_entries (severity)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_metric_points_series_id ON metric_points (series_id)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_metric_points_timestamp ON metric_points (end_time)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_secret_versions_secret ON secret_versions (project_id, secret_id)");
+
+            // Auto-insert default project
+            stmt.execute(
+                "INSERT INTO projects (project_id, display_name) " +
+                "VALUES ('" + defaultProjectId + "', 'Default Project') " +
+                "ON CONFLICT (project_id) DO NOTHING"
             );
 
             logger.info("Database schema initialized");

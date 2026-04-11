@@ -9,6 +9,28 @@ import webbrowser
 from pathlib import Path
 
 
+def find_console_dir():
+    """Locate the localcloud-console directory.
+
+    Checks in order:
+    1. Development layout (relative to source tree)
+    2. LOCALCLOUD_CONSOLE_DIR environment variable
+    """
+    # Try development layout (running from source)
+    source_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
+    console_dir = source_dir / "localcloud-console"
+    if console_dir.exists():
+        return console_dir
+
+    # Try environment variable
+    env_dir = os.environ.get("LOCALCLOUD_CONSOLE_DIR")
+    if env_dir and Path(env_dir).exists():
+        return Path(env_dir)
+
+    # Not found
+    return None
+
+
 @click.command()
 @click.option(
     '--port',
@@ -28,14 +50,15 @@ def console(ctx, port, open):
     Starts a lightweight Flask server on port 9090 serving the Solid.js UI.
     """
     try:
-        # Get console path relative to this file
-        cli_src_dir = Path(__file__).parent.parent.parent  # localcloud-cli/src
-        project_root = cli_src_dir.parent.parent  # project root (localcloud/)
-        console_dir = project_root / "localcloud-console"
-        backend_app = console_dir / "backend" / "app.py"
+        console_dir = find_console_dir()
+        if console_dir is None:
+            click.echo("Error: LocalCloud Console not found.", err=True)
+            click.echo("Set LOCALCLOUD_CONSOLE_DIR environment variable to the console directory.", err=True)
+            sys.exit(1)
 
+        backend_app = console_dir / "backend" / "app.py"
         if not backend_app.exists():
-            click.echo("Error: Console not found. Please build it first.", err=True)
+            click.echo("Error: Console backend not found. Please build it first.", err=True)
             sys.exit(1)
 
         click.echo(f"Starting LocalCloud Console on http://localhost:{port}")

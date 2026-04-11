@@ -11,6 +11,9 @@ import com.linecorp.armeria.server.file.FileService;
 import com.linecorp.armeria.server.grpc.GrpcService;
 import com.localcloud.admin.AdminApiService;
 import com.localcloud.admin.BrowseService;
+import com.localcloud.admin.ExportService;
+import com.localcloud.admin.MutateService;
+import com.localcloud.admin.ProjectService;
 import com.localcloud.admin.SeedService;
 import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.emulators.secretmanager.SecretManagerEmulator;
@@ -21,10 +24,12 @@ import com.localcloud.emulators.compute.ComputeEmulator;
 import com.localcloud.emulators.cloudrun.CloudRunEmulator;
 import com.localcloud.emulators.gke.GkeEmulator;
 import com.localcloud.emulators.gke.K3dManager;
+import com.localcloud.emulators.memorystore.MemorystoreEmulator;
 import com.localcloud.docker.ContainerManager;
 import com.localcloud.docker.DockerClientProvider;
 import com.localcloud.gateway.ApiGateway;
 import com.localcloud.gateway.HealthCheckService;
+import com.localcloud.gateway.IamMiddleware;
 import com.localcloud.gateway.ProcessHealthChecker;
 import com.localcloud.gateway.RequestLogger;
 import com.localcloud.persistence.PostgresDataSource;
@@ -51,9 +56,13 @@ public class LocalCloudApplication {
     private final RequestLogger requestLogger;
     private final ProcessHealthChecker processHealthChecker;
     private final HealthCheckService healthCheckService;
+    private final ProjectService projectService;
     private final AdminApiService adminApiService;
     private final BrowseService browseService;
+    private final MutateService mutateService;
     private final SeedService seedService;
+    private final ExportService exportService;
+    private IamMiddleware iamMiddleware;
     private Server server;
 
     public LocalCloudApplication(LocalCloudConfig config) {
@@ -62,11 +71,14 @@ public class LocalCloudApplication {
         this.schemaManager = new SchemaManager(dataSource);
         this.gateway = new ApiGateway();
         this.requestLogger = new RequestLogger();
-        this.processHealthChecker = new ProcessHealthChecker(config);
+        this.processHealthChecker = new ProcessHealthChecker(config, config.getServiceRegistry());
         this.healthCheckService = new HealthCheckService(config, gateway, processHealthChecker);
-        this.adminApiService = new AdminApiService(config, requestLogger);
-        this.browseService = new BrowseService();
-        this.seedService = new SeedService(config);
+        this.projectService = new ProjectService(dataSource);
+        this.adminApiService = new AdminApiService(config, requestLogger, projectService);
+        this.browseService = new BrowseService(config, dataSource, config.getServiceRegistry());
+        this.mutateService = new MutateService(config, dataSource, config.getServiceRegistry());
+        this.seedService = new SeedService(config, dataSource, config.getServiceRegistry());
+        this.exportService = new ExportService(config, dataSource, config.getServiceRegistry());
     }
 
     /**
@@ -79,24 +91,39 @@ public class LocalCloudApplication {
         }
 
         // Initialize database schema
-        schemaManager.initialize();
+        try {
+            schemaManager.initialize(config.getProjectId());
+        } catch (Exception e) {
+            if (config.isPersistenceEnabled()) {
+                throw e; // Required — fail hard
+            }
+            logger.warn("Database unavailable (persistence disabled): {}", e.getMessage());
+        }
 
         // Build Armeria server
         ServerBuilder sb = Server.builder();
         sb.http(config.getGatewayPort());
 
+        // IAM middleware — applied to all services
+        iamMiddleware = new IamMiddleware(config);
+        sb.decorator(iamMiddleware);
+
         // Register admin/health check annotated services
         sb.annotatedService("/_localcloud", healthCheckService);
         sb.annotatedService("/_localcloud", adminApiService);
         sb.annotatedService("/_localcloud/browse", browseService);
+        sb.annotatedService("/_localcloud/mutate", mutateService);
         sb.annotatedService("/_localcloud", seedService);
+        sb.annotatedService("/_localcloud", exportService);
 
         // Dashboard static files (served from classpath resources)
         sb.serviceUnder("/_localcloud/dashboard/",
                 FileService.of(ClassLoader.getSystemClassLoader(), "dashboard"));
 
         // Root endpoint - simple info response
-        sb.service("/", (ctx, req) -> HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+        sb.service("/", (ctx, req) -> {
+            String escapedProjectId = config.getProjectId().replace("\\", "\\\\").replace("\"", "\\\"");
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
                 """
                 {
                   "name": "LocalCloud",
@@ -105,10 +132,14 @@ public class LocalCloudApplication {
                   "health": "/_localcloud/health",
                   "dashboard": "/_localcloud/dashboard/"
                 }
-                """.formatted(config.getProjectId())));
+                """.formatted(escapedProjectId));
+        });
 
         // Register facade gRPC services (backed by PostgreSQL, running in-process)
-        var grpcBuilder = GrpcService.builder();
+        // Enable HTTP/JSON transcoding so gRPC services are also accessible via REST
+        // (uses google.api.http annotations from proto files — enables gcloud CLI support)
+        var grpcBuilder = GrpcService.builder()
+                .enableHttpJsonTranscoding(true);
         boolean hasGrpcServices = false;
 
         if (config.isServiceEnabled("secretmanager")) {
@@ -192,9 +223,43 @@ public class LocalCloudApplication {
             logger.info("GKE facade registered on gateway port {}", config.getGatewayPort());
         }
 
+        if (config.isServiceEnabled("memorystore")) {
+            int redisPort = config.getServiceRegistry().getService("memorystore").port();
+            MemorystoreEmulator memorystoreEmulator = new MemorystoreEmulator(dataSource, redisPort, config.getProjectId());
+            memorystoreEmulator.start();
+            gateway.registerRestEmulator("/redis", memorystoreEmulator, null);
+            logger.info("Memorystore (Redis) emulator started on port {}", redisPort);
+        }
+
         if (hasGrpcServices) {
             sb.service(grpcBuilder.build());
         }
+
+        // Global fallback for unsupported GCP API paths (Principle IV: Transparent Limitations)
+        sb.serviceUnder("/", (ctx, req) -> {
+            String method = req.method().toString().replace("\\", "\\\\").replace("\"", "\\\"");
+            String path = ctx.path().replace("\\", "\\\\").replace("\"", "\\\"");
+            return HttpResponse.of(HttpStatus.NOT_IMPLEMENTED, MediaType.JSON,
+                """
+                {
+                  "error": {
+                    "code": 501,
+                    "message": "This API endpoint is not emulated by LocalCloud: %s %s",
+                    "status": "UNIMPLEMENTED",
+                    "details": [
+                      {
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": "ENDPOINT_NOT_EMULATED",
+                        "domain": "localcloud",
+                        "metadata": {
+                          "suggestion": "Check /_localcloud/services for available emulated services, or see contracts/emulated-services.md for supported operations."
+                        }
+                      }
+                    ]
+                  }
+                }
+                """.formatted(method, path));
+        });
 
         server = sb.build();
         server.start().join();
@@ -221,6 +286,12 @@ public class LocalCloudApplication {
      * Gracefully stop the server and release resources.
      */
     public void stop() {
+        // Stop Armeria server first (stop accepting new requests)
+        if (server != null) {
+            server.stop().join();
+            logger.info("LocalCloud server stopped");
+        }
+
         // Stop all registered emulators (facade services)
         for (var emulator : gateway.getEmulators()) {
             try {
@@ -230,14 +301,15 @@ public class LocalCloudApplication {
             }
         }
 
-        // Close database
-        dataSource.close();
-
-        // Stop Armeria server
-        if (server != null) {
-            server.stop().join();
-            logger.info("LocalCloud server stopped");
+        // Close HTTP clients
+        processHealthChecker.close();
+        if (iamMiddleware != null) {
+            iamMiddleware.close();
         }
+        seedService.close();
+
+        // Close database last
+        dataSource.close();
     }
 
     // --- Accessors for components ---

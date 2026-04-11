@@ -8,23 +8,25 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import com.localcloud.config.LocalCloudConfig;
+import com.localcloud.config.ServiceRegistry;
+import com.localcloud.config.ServiceRegistry.HealthCheckDef;
+import com.localcloud.config.ServiceRegistry.ServiceDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * Polls external emulator processes to check if they're healthy.
- * Used by HealthCheckService to provide aggregated health status.
+ * Uses the {@link ServiceRegistry} to determine health check strategy
+ * for each service (TCP vs HTTP, ports, paths).
  *
- * <p>External emulators (gcs, pubsub, firestore, bigtable, spanner, bigquery)
- * are checked via HTTP GET or TCP connect. In-process facades (secretmanager,
- * cloudtasks, logging, monitoring) are always reported as "healthy" when the
- * server is running.</p>
+ * <p>External emulators are checked via HTTP GET or TCP connect based on
+ * their health check definition. In-process facades are always reported
+ * as "healthy" when the server is running.</p>
  */
-public class ProcessHealthChecker {
+public class ProcessHealthChecker implements AutoCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(ProcessHealthChecker.class);
 
@@ -35,18 +37,14 @@ public class ProcessHealthChecker {
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(2);
 
-    /** Services that run in-process and are always healthy if the server is up. */
-    private static final Set<String> IN_PROCESS_SERVICES = Set.of(
-            "secretmanager", "cloudtasks", "logging", "monitoring",
-            "gke", "compute", "cloudrun"
-    );
-
     private final LocalCloudConfig config;
+    private final ServiceRegistry registry;
     private final ConcurrentHashMap<String, String> statuses = new ConcurrentHashMap<>();
     private final HttpClient httpClient;
 
-    public ProcessHealthChecker(LocalCloudConfig config) {
+    public ProcessHealthChecker(LocalCloudConfig config, ServiceRegistry registry) {
         this.config = config;
+        this.registry = registry;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(CONNECT_TIMEOUT)
                 .build();
@@ -56,20 +54,37 @@ public class ProcessHealthChecker {
      * Polls all configured emulators and updates the internal status map.
      */
     public void checkAll() {
-        // fake-gcs-server uses HTTPS with self-signed cert; use TCP check instead
-        checkTcp("gcs", "localhost", 4443);
-        checkHttp("pubsub", "http://localhost:8085", false);
-        checkHttp("firestore", "http://localhost:8086", false);
-        checkTcp("bigtable", "localhost", 8087);
-        checkHttp("spanner", "http://localhost:9020/v1/projects/test/instances", false);
-        checkHttp("bigquery", "http://localhost:9050/bigquery/v2/projects/test/datasets", false);
+        for (Map.Entry<String, ServiceDefinition> entry : registry.getAllServices().entrySet()) {
+            String serviceName = entry.getKey();
+            ServiceDefinition def = entry.getValue();
 
-        // In-process facades are always healthy when the server is running
-        for (String service : IN_PROCESS_SERVICES) {
-            if (config.isServiceEnabled(service)) {
-                statuses.put(service, HEALTHY);
-            } else {
-                statuses.put(service, DISABLED);
+            if (!config.isServiceEnabled(serviceName)) {
+                statuses.put(serviceName, DISABLED);
+                continue;
+            }
+
+            if (def.isFacade()) {
+                // In-process facades are always healthy when the server is running
+                statuses.put(serviceName, HEALTHY);
+            } else if (def.isExternal()) {
+                // External services: use health check definition
+                HealthCheckDef hc = def.healthCheck();
+                if (hc == null) {
+                    // No health check defined, try TCP on the service port
+                    checkTcp(serviceName, "localhost", def.port());
+                } else {
+                    int checkPort = hc.port() != null ? hc.port() : def.port();
+                    if ("http".equals(hc.type())) {
+                        String path = hc.path() != null
+                                ? hc.path().replace("{projectId}", config.getProjectId())
+                                : "";
+                        String url = "http://localhost:" + checkPort + path;
+                        checkHttp(serviceName, url, false);
+                    } else {
+                        // tcp (default)
+                        checkTcp(serviceName, "localhost", checkPort);
+                    }
+                }
             }
         }
     }
@@ -140,5 +155,10 @@ public class ProcessHealthChecker {
             logger.debug("Health check failed for {}: {}", service, e.getMessage());
             statuses.put(service, UNHEALTHY);
         }
+    }
+
+    @Override
+    public void close() {
+        httpClient.close();
     }
 }

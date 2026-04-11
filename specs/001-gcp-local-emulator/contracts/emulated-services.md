@@ -6,7 +6,7 @@
 
 **Protocol**: REST (JSON API v1)
 **Base Path**: `/storage/v1`
-**Env Var**: `STORAGE_EMULATOR_HOST=http://localhost:8080`
+**Env Var**: `STORAGE_EMULATOR_HOST=http://localhost:4443`
 
 ### Supported Operations
 
@@ -34,8 +34,8 @@
 ## Pub/Sub
 
 **Protocol**: gRPC
-**Port**: 9020
-**Env Var**: `PUBSUB_EMULATOR_HOST=localhost:9020`
+**Port**: 8085
+**Env Var**: `PUBSUB_EMULATOR_HOST=localhost:8085`
 
 ### Supported gRPC Services
 
@@ -53,8 +53,8 @@
 ## Firestore
 
 **Protocol**: gRPC
-**Port**: 9010
-**Env Var**: `FIRESTORE_EMULATOR_HOST=localhost:9010`
+**Port**: 8086
+**Env Var**: `FIRESTORE_EMULATOR_HOST=localhost:8086`
 
 ### Supported gRPC Services
 
@@ -71,7 +71,7 @@
 
 **Protocol**: REST (Discovery API v2)
 **Base Path**: `/bigquery/v2`
-**Env Var**: `BIGQUERY_EMULATOR_HOST=http://localhost:8080`
+**Env Var**: `BIGQUERY_EMULATOR_HOST=http://localhost:9050`
 
 ### Supported Operations
 
@@ -149,8 +149,8 @@
 ## Spanner
 
 **Protocol**: gRPC
-**Port**: 9030
-**Env Var**: `SPANNER_EMULATOR_HOST=localhost:9030`
+**Port**: 9010
+**Env Var**: `SPANNER_EMULATOR_HOST=localhost:9010`
 
 ### Supported gRPC Services
 
@@ -169,8 +169,8 @@
 ## Bigtable
 
 **Protocol**: gRPC
-**Port**: 9040
-**Env Var**: `BIGTABLE_EMULATOR_HOST=localhost:9040`
+**Port**: 8087
+**Env Var**: `BIGTABLE_EMULATOR_HOST=localhost:8087`
 
 ### Supported gRPC Services
 
@@ -196,7 +196,13 @@
 ### Behavior
 - All log entries are accepted and stored locally
 - Entries are queryable via the admin browse API and dashboard
-- No log-based metrics, sinks, or exclusions
+
+### Not Supported (v1)
+- Log-based metrics
+- Log sinks and exclusions
+- Log Router configuration
+- Audit log configuration
+- Log views and scopes
 
 ---
 
@@ -212,7 +218,13 @@
 ### Behavior
 - All time series data is accepted and stored locally
 - Metrics are queryable via the admin browse API and dashboard
-- No alerting policies, uptime checks, or dashboards
+
+### Not Supported (v1)
+- Alerting policies and notification channels
+- Uptime checks
+- Monitoring dashboards (use LocalCloud console instead)
+- Metric aggregation and alignment
+- Service Level Objectives (SLOs)
 
 ---
 

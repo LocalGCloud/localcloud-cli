@@ -45,7 +45,7 @@ def _create_or_update_service_raw(channel, request_bytes, method):
     return stub(request_bytes, timeout=30)
 
 
-def run(project_id: str) -> list[tuple[str, bool, str]]:
+def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
     """Run Cloud Run demo operations. Returns list of (operation, success, detail)."""
     results = []
     services_client = _make_services_client()
@@ -191,30 +191,33 @@ def run(project_id: str) -> list[tuple[str, bool, str]]:
         results.append(("Verify single service", False, str(e)))
 
     # 8. Delete service — use raw gRPC to avoid LRO polling
-    delete_succeeded = False
-    try:
+    if not keep_data:
+        delete_succeeded = False
         try:
-            channel, host = _get_channel()
-            del_req = DeleteServiceRequest(name=service_name)
-            stub = channel.unary_unary(
-                "/google.cloud.run.v2.Services/DeleteService",
-                request_serializer=DeleteServiceRequest.serialize,
-                response_deserializer=lambda resp: resp,
-            )
-            stub(del_req, timeout=30)
-            delete_succeeded = True
-        except grpc.RpcError as e:
-            if e.code() == grpc.StatusCode.NOT_FOUND:
-                # Service not found — already deleted or never existed
+            try:
+                channel, host = _get_channel()
+                del_req = DeleteServiceRequest(name=service_name)
+                stub = channel.unary_unary(
+                    "/google.cloud.run.v2.Services/DeleteService",
+                    request_serializer=DeleteServiceRequest.serialize,
+                    response_deserializer=lambda resp: resp,
+                )
+                stub(del_req, timeout=30)
                 delete_succeeded = True
-            else:
-                raise
+            except grpc.RpcError as e:
+                if e.code() == grpc.StatusCode.NOT_FOUND:
+                    # Service not found — already deleted or never existed
+                    delete_succeeded = True
+                else:
+                    raise
 
-        if delete_succeeded:
-            results.append(("Delete service", True, f"{service_id} (deleted)"))
-        else:
-            results.append(("Delete service", False, "delete failed"))
-    except Exception as e:
-        results.append(("Delete service", False, str(e)))
+            if delete_succeeded:
+                results.append(("Delete service", True, f"{service_id} (deleted)"))
+            else:
+                results.append(("Delete service", False, "delete failed"))
+        except Exception as e:
+            results.append(("Delete service", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     return results

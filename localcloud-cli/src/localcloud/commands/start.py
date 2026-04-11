@@ -4,7 +4,8 @@ import sys
 
 import click
 
-from localcloud.docker_manager import DockerManager, SERVICE_ENV_VARS
+from localcloud.docker_manager import DockerManager
+from localcloud.service_registry import get_registry
 
 
 @click.command()
@@ -77,8 +78,12 @@ def start(ctx, services, seed_file, detach, port, data_dir, image):
     table.add_column("Port", justify="right")
     table.add_column("Env Var", style="dim")
 
-    # Build a lookup: service_name -> env_var
-    env_var_lookup = {svc: env_var for svc, (_port, env_var) in SERVICE_ENV_VARS.items()}
+    # Build a lookup: service_name -> env_var from the registry
+    registry = get_registry()
+    env_var_lookup = {}
+    for svc in registry.all_services().values():
+        key = "storage" if svc.id == "gcs" else svc.id
+        env_var_lookup[key] = svc.env_var
 
     services_info = health.get("services", {})
     if services_info:

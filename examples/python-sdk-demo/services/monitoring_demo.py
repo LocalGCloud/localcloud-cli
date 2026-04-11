@@ -23,7 +23,7 @@ def _make_metric_client() -> monitoring_v3.MetricServiceClient:
     return monitoring_v3.MetricServiceClient(transport=transport)
 
 
-def run(project_id: str) -> list[tuple[str, bool, str]]:
+def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
     """Run Cloud Monitoring demo operations. Returns list of (operation, success, detail)."""
     results = []
     client = _make_metric_client()
@@ -167,12 +167,15 @@ def run(project_id: str) -> list[tuple[str, bool, str]]:
         results.append(("Multiple metric labels", False, str(e)))
 
     # 6. Delete metric descriptor
-    try:
-        descriptor_name = f"{project_name}/metricDescriptors/{descriptor_type}"
-        client.delete_metric_descriptor(request={"name": descriptor_name})
-        results.append(("Delete metric descriptor", True, descriptor_type))
-    except Exception as e:
-        results.append(("Delete metric descriptor", False, str(e)))
+    if not keep_data:
+        try:
+            descriptor_name = f"{project_name}/metricDescriptors/{descriptor_type}"
+            client.delete_metric_descriptor(request={"name": descriptor_name})
+            results.append(("Delete metric descriptor", True, descriptor_type))
+        except Exception as e:
+            results.append(("Delete metric descriptor", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     # 7. List metric descriptors
     try:

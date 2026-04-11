@@ -8,41 +8,58 @@
 # Option B: Use pre-built JAR (run `cd localcloud-server && ./gradlew shadowJar` first)
 # The pre-built JAR is copied directly in the runtime stage below.
 
-# Pull bigquery-emulator binary (amd64-only image)
-FROM --platform=linux/amd64 ghcr.io/goccy/bigquery-emulator:latest AS bigquery-emulator
+# Pull bigquery-emulator binary (amd64-only, skipped on arm64)
+FROM --platform=linux/amd64 ghcr.io/goccy/bigquery-emulator:latest AS bigquery-emulator-amd64
+
+# Pull spanner-emulator: upstream for gateway, fork for persistent emulator_main
+FROM gcr.io/cloud-spanner-emulator/emulator:latest AS spanner-emulator-upstream
+FROM spanner-emulator-build:latest AS spanner-emulator-fork
 
 # Stage 2: Runtime
 FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
 
-LABEL maintainer="localcloud"
+LABEL maintainer="Jay Sen <jaysen@apache.org>"
 LABEL description="LocalCloud - Local GCP Emulator Orchestrator"
+LABEL org.opencontainers.image.authors="Jay Sen <jaysen@apache.org>"
+LABEL org.opencontainers.image.title="LocalCloud"
+LABEL org.opencontainers.image.description="Local GCP Emulator Orchestrator"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # Install runtime dependencies
+# Note: Java 21 is already included in the base image (google-cloud-cli:emulators)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         postgresql-15 \
         supervisor \
-        openjdk-21-jre-headless \
         curl \
-    && rm -rf /var/lib/apt/lists/*
+        python3-flask \
+        python3-requests \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Install Docker CLI (for container management by infrastructure emulators)
-RUN curl -fsSL https://get.docker.com | sh
+# Docker CLI only (not the full engine — daemon runs on host via mounted docker.sock)
+COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
 
 # Install k3d (lightweight k3s wrapper for GKE emulation)
-RUN curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+# Set --build-arg INCLUDE_K3D=false for slim images without GKE support
+ARG INCLUDE_K3D=true
+RUN if [ "$INCLUDE_K3D" = "true" ]; then \
+      curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash; \
+    fi
 
 # Copy third-party emulator binaries
 COPY --from=fsouza/fake-gcs-server:latest /bin/fake-gcs-server /usr/local/bin/fake-gcs-server
-# bigquery-emulator is amd64-only; copied from named stage above
-COPY --from=bigquery-emulator /bin/bigquery-emulator /usr/local/bin/bigquery-emulator
-# Spanner emulator requires both gateway_main and emulator_main
-COPY --from=gcr.io/cloud-spanner-emulator/emulator:latest /gateway_main /usr/local/bin/spanner-gateway
-COPY --from=gcr.io/cloud-spanner-emulator/emulator:latest /emulator_main /usr/local/bin/spanner-emulator-main
+# bigquery-emulator is amd64-only
+# On arm64 this copies the amd64 binary which requires QEMU; BigQuery may not work on arm64
+COPY --from=bigquery-emulator-amd64 /bin/bigquery-emulator /usr/local/bin/bigquery-emulator
+# Spanner emulator: gateway from upstream (unchanged), emulator from fork (with persistence)
+COPY --from=spanner-emulator-upstream /gateway_main /usr/local/bin/spanner-gateway
+COPY --from=spanner-emulator-fork /build/output/emulator_main /usr/local/bin/spanner-emulator-main
 
 # Create localcloud user, group, and directories
 RUN groupadd -r localcloud && useradd -r -g localcloud -m localcloud \
     && mkdir -p /var/lib/localcloud/pgdata \
                 /var/lib/localcloud/gcs-data \
+                /var/lib/localcloud/spanner-data \
+                /var/lib/localcloud/bigquery-data \
                 /var/log/localcloud \
                 /opt/localcloud \
                 /var/run/postgresql \
@@ -50,6 +67,11 @@ RUN groupadd -r localcloud && useradd -r -g localcloud -m localcloud \
                                       /var/log/localcloud \
                                       /opt/localcloud \
                                       /var/run/postgresql
+
+# Spanner emulator wrapper: passes --data_dir for persistent LevelDB storage
+RUN printf '#!/bin/bash\nif [ ! -x /usr/local/bin/spanner-emulator-main ]; then\n  echo "ERROR: spanner-emulator-main not found or not executable" >&2\n  exit 1\nfi\nexec /usr/local/bin/spanner-emulator-main --data_dir=/var/lib/localcloud/spanner-data "$@"\n' \
+    > /usr/local/bin/spanner-emulator-wrapper \
+    && chmod +x /usr/local/bin/spanner-emulator-wrapper
 
 # Initialize PostgreSQL data directory
 RUN su - localcloud -s /bin/bash -c "/usr/lib/postgresql/15/bin/initdb -D /var/lib/localcloud/pgdata"
@@ -63,20 +85,26 @@ RUN su - localcloud -s /bin/bash -c " \
 # Copy pre-built server JAR (run `cd localcloud-server && ./gradlew shadowJar` before docker build)
 COPY localcloud-server/build/libs/localcloud-server-*-all.jar /opt/localcloud/server.jar
 
-# Copy supervisor and entrypoint configuration
+# Copy console (pre-built frontend + Flask backend)
+# Run `cd localcloud-console && npm run build` before docker build
+COPY localcloud-console/dist/ /opt/localcloud/console/dist/
+COPY localcloud-console/backend/ /opt/localcloud/console/backend/
+# Copy service registry and configuration
+COPY services.yaml /etc/localcloud/services.yaml
 COPY supervisord.conf /etc/supervisor/conf.d/localcloud.conf
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# JVM tuning for container environment with ZGC
+# JVM tuning for container environment
+# Fixed heap sizes to coexist with PostgreSQL + emulator processes within the container.
+# Override via: docker run -e JAVA_OPTS="-Xmx2g -Xms512m" ...
 ENV JAVA_OPTS="\
-  -XX:+UseContainerSupport \
-  -XX:MaxRAMPercentage=75.0 \
-  -XX:InitialRAMPercentage=50.0 \
+  -Xmx512m \
+  -Xms128m \
   -XX:+UseZGC \
   -XX:+ZGenerational \
   -Xss256k \
-  -XX:MaxMetaspaceSize=128m \
+  -XX:MaxMetaspaceSize=96m \
   -XX:+ExitOnOutOfMemoryError \
   -Djava.security.egd=file:/dev/./urandom"
 
@@ -86,21 +114,22 @@ ENV LOCALCLOUD_PROJECT="local-project" \
     LOCALCLOUD_ENABLE_PUBSUB="true" \
     LOCALCLOUD_ENABLE_FIRESTORE="true" \
     LOCALCLOUD_ENABLE_BIGQUERY="true" \
-    LOCALCLOUD_ENABLE_SPANNER="false" \
-    LOCALCLOUD_ENABLE_BIGTABLE="false" \
+    LOCALCLOUD_ENABLE_SPANNER="true" \
+    LOCALCLOUD_ENABLE_BIGTABLE="true" \
     LOCALCLOUD_ENABLE_SECRETMANAGER="true" \
     LOCALCLOUD_ENABLE_CLOUDTASKS="true" \
     LOCALCLOUD_ENABLE_LOGGING="true" \
     LOCALCLOUD_ENABLE_MONITORING="true" \
     LOCALCLOUD_ENABLE_GKE="false" \
     LOCALCLOUD_ENABLE_COMPUTE="false" \
-    LOCALCLOUD_ENABLE_CLOUDRUN="false"
+    LOCALCLOUD_ENABLE_CLOUDRUN="false" \
+    LOCALCLOUD_ENABLE_MEMORYSTORE="true"
 
 # Data persistence volume
 VOLUME /var/lib/localcloud
 
-# Ports: gateway, GCS, Pub/Sub, Firestore, BigQuery, Spanner, Bigtable, SecretManager, CloudTasks
-EXPOSE 8080 4443 6443 8085 8086 8087 9010 9020 9050 9060
+# Ports: gateway, GCS, Memorystore, GKE/k3d, Pub/Sub, Firestore, Bigtable, Spanner, BigQuery, Console
+EXPOSE 8080 4443 6379 6443 8085 8086 8087 9010 9020 9050 9060 9090
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
   CMD curl -f http://localhost:8080/_localcloud/health || exit 1

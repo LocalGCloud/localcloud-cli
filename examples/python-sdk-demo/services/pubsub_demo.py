@@ -32,7 +32,7 @@ def _make_subscriber() -> pubsub_v1.SubscriberClient:
     return pubsub_v1.SubscriberClient(transport=transport)
 
 
-def run(project_id: str) -> list[tuple[str, bool, str]]:
+def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
     """Run Pub/Sub demo operations. Returns list of (operation, success, detail)."""
     results = []
     publisher = _make_publisher()
@@ -191,17 +191,23 @@ def run(project_id: str) -> list[tuple[str, bool, str]]:
         results.append(("Fanout (2 subscriptions)", False, str(e)))
 
     # 11. Delete subscription
-    try:
-        subscriber.delete_subscription(request={"subscription": sub_path})
-        results.append(("Delete subscription", True, sub_id))
-    except Exception as e:
-        results.append(("Delete subscription", False, str(e)))
+    if not keep_data:
+        try:
+            subscriber.delete_subscription(request={"subscription": sub_path})
+            results.append(("Delete subscription", True, sub_id))
+        except Exception as e:
+            results.append(("Delete subscription", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     # 12. Delete topic
-    try:
-        publisher.delete_topic(request={"topic": topic_path})
-        results.append(("Delete topic", True, topic_id))
-    except Exception as e:
-        results.append(("Delete topic", False, str(e)))
+    if not keep_data:
+        try:
+            publisher.delete_topic(request={"topic": topic_path})
+            results.append(("Delete topic", True, topic_id))
+        except Exception as e:
+            results.append(("Delete topic", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     return results

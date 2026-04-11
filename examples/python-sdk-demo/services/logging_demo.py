@@ -21,7 +21,7 @@ def _make_client() -> LoggingServiceV2Client:
     return LoggingServiceV2Client(transport=transport)
 
 
-def run(project_id: str) -> list[tuple[str, bool, str]]:
+def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
     """Run Cloud Logging demo operations. Returns list of (operation, success, detail)."""
     results = []
     client = _make_client()
@@ -220,10 +220,13 @@ def run(project_id: str) -> list[tuple[str, bool, str]]:
         results.append(("Batch write (5 entries)", False, str(e)))
 
     # 10. Delete log
-    try:
-        client.delete_log(request={"log_name": log_name})
-        results.append(("Delete log", True, log_id))
-    except Exception as e:
-        results.append(("Delete log", False, str(e)))
+    if not keep_data:
+        try:
+            client.delete_log(request={"log_name": log_name})
+            results.append(("Delete log", True, log_id))
+        except Exception as e:
+            results.append(("Delete log", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     return results

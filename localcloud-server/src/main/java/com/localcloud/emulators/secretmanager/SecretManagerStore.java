@@ -65,11 +65,18 @@ public class SecretManagerStore {
     }
 
     public List<Map<String, Object>> listSecrets(String projectId) throws SQLException {
+        return listSecrets(projectId, 0, 0);
+    }
+
+    public List<Map<String, Object>> listSecrets(String projectId, int limit, int offset) throws SQLException {
         List<Map<String, Object>> secrets = new ArrayList<>();
+        String sql = "SELECT project_id, secret_id, labels, created_at " +
+                     "FROM secrets WHERE project_id = ? ORDER BY secret_id";
+        if (limit > 0) {
+            sql += " LIMIT " + limit + " OFFSET " + offset;
+        }
         try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "SELECT project_id, secret_id, labels, created_at " +
-                     "FROM secrets WHERE project_id = ?")) {
+             PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, projectId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -113,28 +120,21 @@ public class SecretManagerStore {
 
     public Map<String, Object> addSecretVersion(String projectId, String secretId, byte[] data) throws SQLException {
         try (Connection conn = dataSource.getConnection()) {
-            // Get next version number
+            // Atomic insert with subquery to compute next version number, avoiding race conditions
             int versionNumber;
             try (PreparedStatement ps = conn.prepareStatement(
-                    "SELECT COALESCE(MAX(version_number), 0) + 1 FROM secret_versions " +
-                    "WHERE project_id = ? AND secret_id = ?")) {
+                    "INSERT INTO secret_versions (project_id, secret_id, version_number, payload, state, created_at) " +
+                    "VALUES (?, ?, COALESCE((SELECT MAX(version_number) FROM secret_versions WHERE project_id = ? AND secret_id = ?), 0) + 1, ?, 'ENABLED', CURRENT_TIMESTAMP) " +
+                    "RETURNING version_number")) {
                 ps.setString(1, projectId);
                 ps.setString(2, secretId);
+                ps.setString(3, projectId);
+                ps.setString(4, secretId);
+                ps.setBytes(5, data);
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
                     versionNumber = rs.getInt(1);
                 }
-            }
-
-            // Insert the new version
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO secret_versions (project_id, secret_id, version_number, payload, state, created_at) " +
-                    "VALUES (?, ?, ?, ?, 'ENABLED', CURRENT_TIMESTAMP)")) {
-                ps.setString(1, projectId);
-                ps.setString(2, secretId);
-                ps.setInt(3, versionNumber);
-                ps.setBytes(4, data);
-                ps.executeUpdate();
             }
 
             Map<String, Object> result = new HashMap<>();
@@ -181,12 +181,19 @@ public class SecretManagerStore {
     }
 
     public List<Map<String, Object>> listSecretVersions(String projectId, String secretId) throws SQLException {
+        return listSecretVersions(projectId, secretId, 0, 0);
+    }
+
+    public List<Map<String, Object>> listSecretVersions(String projectId, String secretId, int limit, int offset) throws SQLException {
         List<Map<String, Object>> versions = new ArrayList<>();
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "SELECT project_id, secret_id, version_number, state, created_at " +
+        String sql = "SELECT project_id, secret_id, version_number, state, created_at " +
                      "FROM secret_versions WHERE project_id = ? AND secret_id = ? " +
-                     "ORDER BY version_number ASC")) {
+                     "ORDER BY version_number ASC";
+        if (limit > 0) {
+            sql += " LIMIT " + limit + " OFFSET " + offset;
+        }
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, projectId);
             ps.setString(2, secretId);
             try (ResultSet rs = ps.executeQuery()) {
@@ -290,6 +297,23 @@ public class SecretManagerStore {
             logger.info("Cleared all Secret Manager data");
         } catch (SQLException e) {
             logger.error("Failed to clear Secret Manager data: {}", e.getMessage(), e);
+        }
+    }
+
+    public int getLatestVersionNumber(String projectId, String secretId) {
+        String sql = "SELECT MAX(version_number) FROM secret_versions WHERE project_id = ? AND secret_id = ? AND state != 'DESTROYED'";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, projectId);
+            ps.setString(2, secretId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt(1);
+                }
+                throw new RuntimeException("No versions found");
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to resolve latest version", e);
         }
     }
 

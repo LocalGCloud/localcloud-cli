@@ -22,7 +22,7 @@ def _make_client() -> secretmanager.SecretManagerServiceClient:
     return secretmanager.SecretManagerServiceClient(transport=transport)
 
 
-def run(project_id: str) -> list[tuple[str, bool, str]]:
+def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
     """Run Secret Manager demo operations. Returns list of (operation, success, detail)."""
     results = []
     client = _make_client()
@@ -153,10 +153,13 @@ def run(project_id: str) -> list[tuple[str, bool, str]]:
         results.append(("Destroy version", False, str(e)))
 
     # 12. Delete secret
-    try:
-        client.delete_secret(request={"name": secret_name})
-        results.append(("Delete secret", True, secret_id))
-    except Exception as e:
-        results.append(("Delete secret", False, str(e)))
+    if not keep_data:
+        try:
+            client.delete_secret(request={"name": secret_name})
+            results.append(("Delete secret", True, secret_id))
+        except Exception as e:
+            results.append(("Delete secret", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     return results

@@ -6,7 +6,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Thread-safe ring buffer that stores recent API requests for debugging
@@ -51,9 +50,8 @@ public class RequestLogger {
 
     private static final int DEFAULT_CAPACITY = 1000;
 
-    private final int capacity;
+    private final int maxSize;
     private final ConcurrentLinkedDeque<RequestLogEntry> entries;
-    private final AtomicInteger size;
 
     public RequestLogger() {
         this(DEFAULT_CAPACITY);
@@ -63,9 +61,8 @@ public class RequestLogger {
         if (capacity <= 0) {
             throw new IllegalArgumentException("Capacity must be positive, got: " + capacity);
         }
-        this.capacity = capacity;
+        this.maxSize = capacity;
         this.entries = new ConcurrentLinkedDeque<>();
-        this.size = new AtomicInteger(0);
     }
 
     /**
@@ -73,9 +70,9 @@ public class RequestLogger {
      */
     public void log(RequestLogEntry entry) {
         entries.addFirst(entry);
-        if (size.incrementAndGet() > capacity) {
+        // Trim to max size
+        while (entries.size() > maxSize) {
             entries.pollLast();
-            size.decrementAndGet();
         }
     }
 
@@ -129,20 +126,19 @@ public class RequestLogger {
      */
     public void clear() {
         entries.clear();
-        size.set(0);
     }
 
     /**
      * Current number of stored entries.
      */
     public int getSize() {
-        return size.get();
+        return entries.size();
     }
 
     /**
      * Maximum capacity of this ring buffer.
      */
     public int getCapacity() {
-        return capacity;
+        return maxSize;
     }
 }

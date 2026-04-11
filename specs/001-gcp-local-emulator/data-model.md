@@ -291,7 +291,7 @@ Tracks delivery state per subscription.
 
 **Primary Key**: (project_id, instance_id, database_id)
 
-*Spanner tables and data are stored as dynamic H2 tables scoped by database.*
+*Spanner tables and data are stored as dynamic PostgreSQL tables scoped by database.*
 
 ---
 
@@ -373,6 +373,84 @@ Tracks delivery state per subscription.
 
 ---
 
+## GKE Entities
+
+### GkeCluster
+
+| Field | Type | Constraints |
+|-------|------|------------|
+| project_id | String | FK → Project |
+| location | String | e.g., "us-central1" |
+| cluster_id | String | Cluster name |
+| status | Enum | PROVISIONING, RUNNING, STOPPING, ERROR |
+| k3d_cluster_name | String | Actual k3d cluster name (prefixed with "lc-") |
+| kubernetes_endpoint | String | Kubernetes API URL (e.g., "https://localhost:6443") |
+| node_count | Integer | Default 1 |
+| created_at | Timestamp | Auto-set |
+
+**Primary Key**: (project_id, location, cluster_id)
+
+---
+
+## Compute Engine Entities
+
+### ComputeInstance
+
+| Field | Type | Constraints |
+|-------|------|------------|
+| project_id | String | FK → Project |
+| zone | String | e.g., "us-central1-a" |
+| instance_id | String | Auto-generated numeric ID |
+| name | String | Instance name |
+| machine_type | String | e.g., "n1-standard-1" |
+| status | Enum | STAGING, RUNNING, STOPPED, TERMINATED |
+| container_id | String | Docker container ID (nullable in simulated mode) |
+| network_ip | String | Container IP address |
+| metadata | JSON | Key-value metadata |
+| created_at | Timestamp | Auto-set |
+
+**Primary Key**: (project_id, zone, name)
+**State transitions**: STAGING → RUNNING → STOPPED → RUNNING (restart) or TERMINATED
+
+---
+
+## Cloud Run Entities
+
+### CloudRunService
+
+| Field | Type | Constraints |
+|-------|------|------------|
+| project_id | String | FK → Project |
+| location | String | e.g., "us-central1" |
+| service_id | String | Service name |
+| uri | String | Service URL (e.g., "http://localhost:10001") |
+| latest_revision | String | FK → CloudRunRevision |
+| container_image | String | Docker image for the service |
+| container_port | Integer | Internal container port |
+| host_port | Integer | Dynamically assigned host port |
+| status | Enum | ACTIVE, DEPLOYING, FAILED |
+| created_at | Timestamp | Auto-set |
+| updated_at | Timestamp | Auto-set |
+
+**Primary Key**: (project_id, location, service_id)
+
+### CloudRunRevision
+
+| Field | Type | Constraints |
+|-------|------|------------|
+| project_id | String | FK → Project |
+| location | String | e.g., "us-central1" |
+| service_id | String | FK → CloudRunService |
+| revision_id | String | Revision name (auto-generated) |
+| container_image | String | Docker image for this revision |
+| container_id | String | Docker container ID |
+| status | Enum | ACTIVE, RETIRED |
+| created_at | Timestamp | Auto-set |
+
+**Primary Key**: (project_id, location, service_id, revision_id)
+
+---
+
 ## Configuration Entity
 
 ### PlatformConfig
@@ -410,4 +488,7 @@ Project 1──* SpannerInstance 1──* SpannerDatabase
 Project 1──* BigtableInstance 1──* BigtableTable 1──* BigtableCell
 Project 1──* LogEntry
 Project 1──* TimeSeries 1──* MetricPoint
+Project 1──* GkeCluster
+Project 1──* ComputeInstance
+Project 1──* CloudRunService 1──* CloudRunRevision
 ```

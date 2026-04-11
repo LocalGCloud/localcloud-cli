@@ -142,9 +142,9 @@ A developer wants to enqueue and process Cloud Tasks locally to test asynchronou
 
 ---
 
-### User Story 8 - Use Cloud Functions / Cloud Run Locally (Priority: P2)
+### User Story 8 - Use Cloud Run Locally (Priority: P2)
 
-A developer wants to run Cloud Functions and Cloud Run services locally with proper trigger wiring so event-driven functions (e.g., Pub/Sub triggers, GCS triggers) execute automatically.
+A developer wants to deploy and manage Cloud Run services locally using the Cloud Run v2 API so containerized microservices can be tested with real Docker containers and proper revision tracking.
 
 **Why this priority**: While Functions Framework handles the runtime, there is no unified trigger wiring. The value is in connecting emulated services (e.g., a GCS upload triggers a function via Pub/Sub).
 
@@ -204,6 +204,38 @@ A developer wants basic IAM simulation so their application's permission-checkin
 
 ---
 
+### User Story 12 - GKE Emulation (Priority: P3)
+
+A developer wants to create and manage lightweight Kubernetes clusters locally using the GKE API so they can test container orchestration workflows without provisioning real GKE clusters.
+
+**Why this priority**: GKE is critical for container-based architectures but can be emulated using k3d (lightweight k3s). Value comes from unified management and GCP API compatibility.
+
+**Independent Test**: Can be fully tested by creating a cluster via the GKE client library, verifying a Kubernetes API endpoint is accessible, and deleting the cluster.
+
+**Acceptance Scenarios**:
+
+1. **Given** the platform is running with k3d available, **When** a developer creates a cluster via the GKE API, **Then** a real k3d cluster is provisioned with a functional Kubernetes API.
+2. **Given** a cluster exists, **When** the developer lists clusters, **Then** the cluster appears with its status and Kubernetes endpoint.
+3. **Given** k3d is not installed, **When** a developer creates a cluster, **Then** the platform falls back to simulated mode and returns a cluster object without a real Kubernetes API.
+
+---
+
+### User Story 13 - Compute Engine Emulation (Priority: P3)
+
+A developer wants to create and manage virtual machine instances locally using the Compute Engine REST API so they can test infrastructure provisioning workflows.
+
+**Why this priority**: Compute Engine is foundational GCP infrastructure. Docker containers serve as lightweight VM stand-ins for testing API-level interactions.
+
+**Independent Test**: Can be fully tested by creating an instance via the Compute Engine API, verifying a Docker container is running, and deleting the instance.
+
+**Acceptance Scenarios**:
+
+1. **Given** the platform is running with Docker available, **When** a developer creates a Compute Engine instance, **Then** a Docker container is started as a VM stand-in.
+2. **Given** an instance exists, **When** the developer stops and starts it, **Then** the underlying Docker container is stopped and restarted.
+3. **Given** Docker is not available, **When** a developer creates an instance, **Then** the platform falls back to simulated mode with instance metadata tracked in the database.
+
+---
+
 ### Edge Cases
 
 - What happens when a developer starts the platform while another instance is already running on the same ports?
@@ -246,6 +278,9 @@ A developer wants basic IAM simulation so their application's permission-checkin
 - **FR-027**: System MUST provide a `reset` command that clears all current service state and restores it to the defined seed state. If no seed file exists, reset clears all data entirely.
 - **FR-028**: System MUST accept Cloud Logging API calls and store log entries locally, viewable in the web dashboard. No log-based metrics or alerting.
 - **FR-029**: System MUST accept Cloud Monitoring API calls and store custom metrics locally, viewable in the web dashboard. No alerting policies or complex metric queries.
+- **FR-030**: System MUST emulate Compute Engine with support for instance CRUD, start/stop operations, using Docker containers as VM stand-ins.
+- **FR-031**: System MUST emulate GKE with support for cluster CRUD operations, using k3d for real Kubernetes clusters when available or simulated mode as fallback.
+- **FR-032**: System MUST emulate Cloud Run v2 with support for service CRUD, revision tracking, and Docker-based container deployment.
 
 ### Key Entities
 
@@ -261,19 +296,40 @@ A developer wants basic IAM simulation so their application's permission-checkin
 
 - **SC-001**: Developers can start the full local emulation environment in under 60 seconds on a standard development laptop.
 - **SC-002**: Applications using Google Cloud client libraries require only an endpoint configuration change (environment variable) to switch between local and cloud environments, with zero code changes.
-- **SC-003**: The platform emulates at least 10 GCP services (Cloud Storage, Pub/Sub, Firestore, BigQuery, Secret Manager, Cloud Tasks, Spanner, Bigtable, Cloud Logging, Cloud Monitoring) with sufficient fidelity for development and integration testing.
-- **SC-004**: API responses from emulated services match the structure and error format of real GCP APIs with at least 95% compatibility for common operations.
+- **SC-003**: The platform emulates at least 13 GCP services (Cloud Storage, Pub/Sub, Firestore, BigQuery, Secret Manager, Cloud Tasks, Spanner, Bigtable, Cloud Logging, Cloud Monitoring, GKE, Compute Engine, Cloud Run) with sufficient fidelity for development and integration testing.
+- **SC-004**: API responses from emulated services match the structure and error format of real GCP APIs for all operations listed in `contracts/emulated-services.md`. Compatibility is validated by running official Google Cloud client library operations (CRUD, list, query) against the emulated endpoints.
 - **SC-005**: Organizations adopting this tool reduce their cloud development environment costs by at least 60% by eliminating the need for always-on cloud resources during development.
 - **SC-006**: A developer new to the project can install and run their first successful API call against the local platform within 10 minutes.
-- **SC-007**: The platform runs reliably on macOS, Linux, and Windows development machines with no more than 2 GB of memory usage for 8 concurrent service emulators.
+- **SC-007**: The platform runs reliably on macOS, Linux, and Windows development machines with no more than 2 GB of memory usage for all configured service emulators (up to 13 services including GKE, Compute Engine, and Cloud Run).
 - **SC-008**: Cross-service event wiring works end-to-end (e.g., a GCS upload triggers a Pub/Sub notification which invokes a Cloud Function) with events delivered within 5 seconds.
 - **SC-009**: The platform supports at least 100 concurrent API requests without request failures or significant latency degradation (response times under 500ms for standard operations).
+
+## External Emulators
+
+The platform delegates to proven open-source emulators for services where high-fidelity implementations already exist, rather than re-implementing from scratch. The Java gateway orchestrates these as child processes within the Docker container.
+
+| Service | Emulator | Source | Notes |
+|---------|----------|--------|-------|
+| Cloud Storage | fake-gcs-server | https://github.com/fsouza/fake-gcs-server | Implements the GCS JSON API and XML API. Supports bucket/object CRUD, prefix filtering, metadata, and filesystem-backed persistence. |
+| Pub/Sub | Google Cloud Pub/Sub Emulator | `gcloud beta emulators pubsub` | Official Google-provided emulator bundled with gcloud SDK. |
+| Firestore | Google Cloud Firestore Emulator | `gcloud emulators firestore` | Official Google-provided emulator bundled with gcloud SDK. |
+| Bigtable | Google Cloud Bigtable Emulator | `gcloud beta emulators bigtable` | Official Google-provided emulator bundled with gcloud SDK. |
+| Spanner | Google Cloud Spanner Emulator | `gcr.io/cloud-spanner-emulator/emulator` | Official Google-provided emulator, gateway + emulator binary. |
+| BigQuery | bigquery-emulator | https://github.com/goccy/bigquery-emulator | Community emulator implementing BigQuery REST and gRPC APIs. |
+| Secret Manager | LocalCloud (built-in) | — | Facade emulator implemented in Java using proto-google-cloud-secretmanager gRPC stubs. |
+| Cloud Tasks | LocalCloud (built-in) | — | Facade emulator implemented in Java using proto-google-cloud-tasks gRPC stubs. |
+| Cloud Logging | LocalCloud (built-in) | — | Sink-mode facade accepting all logging API calls, storing entries in PostgreSQL. |
+| Cloud Monitoring | LocalCloud (built-in) | — | Sink-mode facade accepting all monitoring API calls, storing metrics in PostgreSQL. |
+| GKE | LocalCloud + k3d | https://github.com/k3d-io/k3d | Facade emulator using k3d to provision real lightweight k3s clusters. |
+| Compute Engine | LocalCloud + Docker | — | Facade emulator using Docker containers as VM stand-ins. |
+| Cloud Run | LocalCloud + Docker | — | Facade emulator deploying real Docker containers per service. |
 
 ## Assumptions
 
 - Developers are using official Google Cloud client libraries (Python, Java, Go, Node.js, etc.) which support endpoint override via environment variables or client configuration.
 - The platform runs as a single Docker container with all services packaged together. State is persisted via Docker volume mounts by default.
-- Database emulations (BigQuery, Spanner, Bigtable) will use an underlying general-purpose database engine to provide SQL capabilities without implementing storage engines from scratch.
+- Where official or high-quality open-source emulators exist (GCS, Pub/Sub, Firestore, Bigtable, Spanner, BigQuery), the platform delegates to them rather than reimplementing. The Java gateway provides facade emulators only for services without existing alternatives (Secret Manager, Cloud Tasks, Logging, Monitoring, GKE, Compute Engine, Cloud Run).
+- Database emulations (BigQuery, Spanner, Bigtable) use PostgreSQL as the underlying persistence engine to provide SQL capabilities without implementing storage engines from scratch.
 - The abstraction layer and service emulators are implemented primarily in Java (with Python as secondary). Go is not used.
 - Full GCP API parity is not a goal. The platform targets the most commonly used API operations (estimated 80% of developer use cases) rather than edge-case features.
 - IAM emulation in permissive mode (default) means the platform accepts any credentials or no credentials. Strict mode is an opt-in advanced feature.

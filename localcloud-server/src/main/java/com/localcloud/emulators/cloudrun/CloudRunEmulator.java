@@ -37,7 +37,10 @@ public class CloudRunEmulator extends AbstractEmulator {
 
     @Override
     protected void doStart() throws Exception {
-        logger.info("Cloud Run emulator gRPC services ready");
+        // Initialize port counter from database to avoid conflicts with surviving containers
+        int maxPort = store.getMaxUsedPort();
+        nextPort.set(Math.max(10000, maxPort + 1));
+        logger.info("Cloud Run emulator gRPC services ready (next port: {})", nextPort.get());
     }
 
     @Override
@@ -316,7 +319,7 @@ public class CloudRunEmulator extends AbstractEmulator {
                     uri = "http://localhost:" + hostPort;
                 }
 
-                store.updateService(projectId, location, serviceId, newImage, containerId, hostPort, uri);
+                store.updateService(projectId, location, serviceId, newImage, containerPort, containerId, hostPort, uri);
 
                 // Create new revision
                 String revisionId = serviceId + "-" + String.format("%05d", old.revisionCount() + 1);

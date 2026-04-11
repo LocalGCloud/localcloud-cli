@@ -24,7 +24,6 @@ public final class DockerClientProvider {
             synchronized (DockerClientProvider.class) {
                 if (instance == null) {
                     DockerClientConfig config = DefaultDockerClientConfig.createDefaultConfigBuilder()
-                            .withDockerHost("unix:///var/run/docker.sock")
                             .build();
 
                     DockerHttpClient httpClient = new ApacheDockerHttpClient.Builder()

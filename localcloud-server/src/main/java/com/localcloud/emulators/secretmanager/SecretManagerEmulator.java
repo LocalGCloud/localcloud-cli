@@ -29,6 +29,9 @@ import com.google.protobuf.Timestamp;
 import com.localcloud.emulators.AbstractEmulator;
 import com.localcloud.persistence.PostgresDataSource;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 
@@ -169,12 +172,26 @@ public class SecretManagerEmulator extends AbstractEmulator {
             incrementRequestCount();
             try {
                 String projectId = SecretManagerStore.extractProject(request.getParent());
-                List<Map<String, Object>> secrets = store.listSecrets(projectId);
+
+                int pageSize = request.getPageSize() > 0 ? request.getPageSize() : 100;
+                int offset = 0;
+                String pageToken = request.getPageToken();
+                if (pageToken != null && !pageToken.isEmpty()) {
+                    offset = Integer.parseInt(new String(Base64.getDecoder().decode(pageToken), StandardCharsets.UTF_8));
+                }
+
+                List<Map<String, Object>> secrets = store.listSecrets(projectId, pageSize, offset);
 
                 ListSecretsResponse.Builder builder = ListSecretsResponse.newBuilder();
                 for (Map<String, Object> data : secrets) {
                     String fullName = "projects/" + data.get("project_id") + "/secrets/" + data.get("secret_id");
                     builder.addSecrets(buildSecret(fullName, data));
+                }
+
+                if (secrets.size() == pageSize) {
+                    String nextToken = Base64.getEncoder().encodeToString(
+                            String.valueOf(offset + pageSize).getBytes(StandardCharsets.UTF_8));
+                    builder.setNextPageToken(nextToken);
                 }
 
                 responseObserver.onNext(builder.build());
@@ -302,7 +319,14 @@ public class SecretManagerEmulator extends AbstractEmulator {
                 String parent = request.getParent(); // projects/{project}/secrets/{secret}
                 String[] parts = SecretManagerStore.parseSecretName(parent);
 
-                List<Map<String, Object>> versions = store.listSecretVersions(parts[0], parts[1]);
+                int pageSize = request.getPageSize() > 0 ? request.getPageSize() : 100;
+                int offset = 0;
+                String pageToken = request.getPageToken();
+                if (pageToken != null && !pageToken.isEmpty()) {
+                    offset = Integer.parseInt(new String(Base64.getDecoder().decode(pageToken), StandardCharsets.UTF_8));
+                }
+
+                List<Map<String, Object>> versions = store.listSecretVersions(parts[0], parts[1], pageSize, offset);
 
                 ListSecretVersionsResponse.Builder builder = ListSecretVersionsResponse.newBuilder();
                 for (Map<String, Object> data : versions) {
@@ -311,6 +335,12 @@ public class SecretManagerEmulator extends AbstractEmulator {
                             .setName(versionName)
                             .setState(mapState((String) data.get("state")))
                             .build());
+                }
+
+                if (versions.size() == pageSize) {
+                    String nextToken = Base64.getEncoder().encodeToString(
+                            String.valueOf(offset + pageSize).getBytes(StandardCharsets.UTF_8));
+                    builder.setNextPageToken(nextToken);
                 }
 
                 responseObserver.onNext(builder.build());
@@ -410,11 +440,19 @@ public class SecretManagerEmulator extends AbstractEmulator {
             handleVersionStateChange(request.getName(), "destroy", responseObserver);
         }
 
+        private int resolveVersionNumber(String projectId, String secretId, String versionStr) {
+            if ("latest".equalsIgnoreCase(versionStr)) {
+                // Resolve "latest" to the highest version number
+                return store.getLatestVersionNumber(projectId, secretId);
+            }
+            return Integer.parseInt(versionStr);
+        }
+
         private void handleVersionStateChange(String fullName, String action,
                                                StreamObserver<SecretVersion> responseObserver) {
             try {
                 String[] parts = SecretManagerStore.parseVersionName(fullName);
-                int versionNumber = Integer.parseInt(parts[2]);
+                int versionNumber = resolveVersionNumber(parts[0], parts[1], parts[2]);
 
                 boolean success = switch (action) {
                     case "disable" -> store.disableSecretVersion(parts[0], parts[1], versionNumber);

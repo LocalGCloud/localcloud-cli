@@ -186,6 +186,27 @@ public class CloudTasksStore {
         }
     }
 
+    public int getQueueMaxAttempts(String queueFullName) {
+        try {
+            String[] parts = parseQueueName(queueFullName);
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                         "SELECT max_attempts FROM task_queues WHERE project_id = ? AND location_id = ? AND queue_id = ?")) {
+                ps.setString(1, parts[0]);
+                ps.setString(2, parts[1]);
+                ps.setString(3, parts[2]);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        return rs.getInt("max_attempts");
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            logger.warn("Failed to get max_attempts for queue {}: {}", queueFullName, e.getMessage());
+        }
+        return 100; // GCP default
+    }
+
     private Map<String, Object> extractQueueRow(ResultSet rs) throws SQLException {
         Map<String, Object> row = new HashMap<>();
         row.put("project_id", rs.getString("project_id"));

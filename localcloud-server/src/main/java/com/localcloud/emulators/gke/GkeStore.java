@@ -56,11 +56,12 @@ public class GkeStore {
             ps.setString(1, projectId);
             ps.setString(2, location);
             ps.setString(3, clusterId);
-            ResultSet rs = ps.executeQuery();
-            if (rs.next()) {
-                return Optional.of(rowToCluster(rs));
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.of(rowToCluster(rs));
+                }
+                return Optional.empty();
             }
-            return Optional.empty();
         }
     }
 
@@ -70,12 +71,13 @@ public class GkeStore {
                      "SELECT * FROM gke_clusters WHERE project_id=? AND location=? ORDER BY created_at")) {
             ps.setString(1, projectId);
             ps.setString(2, location);
-            ResultSet rs = ps.executeQuery();
-            List<Cluster> clusters = new ArrayList<>();
-            while (rs.next()) {
-                clusters.add(rowToCluster(rs));
+            try (ResultSet rs = ps.executeQuery()) {
+                List<Cluster> clusters = new ArrayList<>();
+                while (rs.next()) {
+                    clusters.add(rowToCluster(rs));
+                }
+                return clusters;
             }
-            return clusters;
         }
     }
 

@@ -9,13 +9,19 @@ import java.util.Map;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.linecorp.armeria.common.AggregatedHttpRequest;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
 import com.linecorp.armeria.common.QueryParams;
 import com.linecorp.armeria.server.ServiceRequestContext;
+import com.linecorp.armeria.server.annotation.Delete;
 import com.linecorp.armeria.server.annotation.Get;
+import com.linecorp.armeria.server.annotation.Param;
+import com.linecorp.armeria.server.annotation.Post;
 import com.localcloud.config.LocalCloudConfig;
+import com.localcloud.config.ServiceRegistry;
+import com.localcloud.config.ServiceRegistry.ServiceDefinition;
 import com.localcloud.gateway.RequestLogger;
 import com.localcloud.gateway.RequestLogger.RequestLogEntry;
 
@@ -35,30 +41,13 @@ public class AdminApiService {
 
     private final LocalCloudConfig config;
     private final RequestLogger requestLogger;
+    private final ProjectService projectService;
     private final ObjectMapper mapper;
 
-    /**
-     * Hardcoded env var mappings for all emulator services.
-     * Each entry: service name -> {envVarName, envVarValue}
-     */
-    private static final Map<String, String[]> ENV_MAPPINGS = new LinkedHashMap<>();
-
-    static {
-        ENV_MAPPINGS.put("gcs",            new String[]{"STORAGE_EMULATOR_HOST",         "http://localhost:4443"});
-        ENV_MAPPINGS.put("pubsub",         new String[]{"PUBSUB_EMULATOR_HOST",          "localhost:8085"});
-        ENV_MAPPINGS.put("firestore",      new String[]{"FIRESTORE_EMULATOR_HOST",       "localhost:8086"});
-        ENV_MAPPINGS.put("bigtable",       new String[]{"BIGTABLE_EMULATOR_HOST",        "localhost:8087"});
-        ENV_MAPPINGS.put("spanner",        new String[]{"SPANNER_EMULATOR_HOST",         "localhost:9010"});
-        ENV_MAPPINGS.put("bigquery",       new String[]{"BIGQUERY_EMULATOR_HOST",        "http://localhost:9050"});
-        ENV_MAPPINGS.put("secretmanager",  new String[]{"SECRET_MANAGER_EMULATOR_HOST",  "localhost:8080"});
-        ENV_MAPPINGS.put("cloudtasks",     new String[]{"CLOUD_TASKS_EMULATOR_HOST",     "localhost:8080"});
-        ENV_MAPPINGS.put("logging",        new String[]{"CLOUD_LOGGING_EMULATOR_HOST",    "localhost:8080"});
-        ENV_MAPPINGS.put("monitoring",     new String[]{"CLOUD_MONITORING_EMULATOR_HOST",  "localhost:8080"});
-    }
-
-    public AdminApiService(LocalCloudConfig config, RequestLogger requestLogger) {
+    public AdminApiService(LocalCloudConfig config, RequestLogger requestLogger, ProjectService projectService) {
         this.config = config;
         this.requestLogger = requestLogger;
+        this.projectService = projectService;
         this.mapper = new ObjectMapper();
         this.mapper.registerModule(new JavaTimeModule());
         this.mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -79,18 +68,39 @@ public class AdminApiService {
             QueryParams params = ctx.queryParams();
             String format = params.get("format", "shell");
 
-            // Build env vars from hardcoded mappings, only for enabled services
+            // Build env vars from service registry, only for enabled services
             Map<String, String> envVars = new LinkedHashMap<>();
-            for (Map.Entry<String, String[]> entry : ENV_MAPPINGS.entrySet()) {
+            ServiceRegistry registry = config.getServiceRegistry();
+            for (Map.Entry<String, ServiceDefinition> entry : registry.getAllServices().entrySet()) {
                 String service = entry.getKey();
                 if (config.isServiceEnabled(service)) {
-                    String[] mapping = entry.getValue();
-                    envVars.put(mapping[0], mapping[1]);
+                    ServiceDefinition def = entry.getValue();
+                    envVars.put(def.envVar(), def.envValue("localhost"));
                 }
             }
 
-            // Always include the project ID
-            envVars.put("GCLOUD_PROJECT", config.getProjectId());
+            // Resolve project ID: use ?project= query param if provided, else config default
+            String projectParam = params.get("project");
+            String projectId = (projectParam != null && !projectParam.isBlank())
+                    ? projectParam : config.getProjectId();
+
+            // Always include the project ID (both standard names)
+            envVars.put("GOOGLE_CLOUD_PROJECT", projectId);
+            envVars.put("GCLOUD_PROJECT", projectId);
+
+            // gcloud CLI support: add CLOUDSDK_* endpoint overrides for enabled services
+            for (Map.Entry<String, ServiceDefinition> entry : registry.getAllServices().entrySet()) {
+                String service = entry.getKey();
+                if (config.isServiceEnabled(service)) {
+                    ServiceDefinition def = entry.getValue();
+                    String gcloudVar = def.gcloudEnvVar();
+                    if (gcloudVar != null) {
+                        envVars.put(gcloudVar, def.gcloudEndpoint("localhost"));
+                    }
+                }
+            }
+            envVars.put("CLOUDSDK_CORE_PROJECT", projectId);
+            envVars.put("CLOUDSDK_AUTH_ACCESS_TOKEN", "localcloud-dev-token");
 
             return switch (format) {
                 case "json" -> {
@@ -175,6 +185,83 @@ public class AdminApiService {
             return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
         } catch (Exception e) {
             logger.error("Error retrieving request log", e);
+            return errorResponse(e);
+        }
+    }
+
+    /**
+     * List all projects.
+     */
+    @Get("/projects")
+    public HttpResponse listProjects() {
+        try {
+            var projects = projectService.listProjects();
+            String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(projects);
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
+        } catch (Exception e) {
+            logger.error("Error listing projects", e);
+            return errorResponse(e);
+        }
+    }
+
+    /**
+     * Create a new project. Expects JSON body with {@code project_id} and
+     * optional {@code display_name}.
+     */
+    @Post("/projects")
+    public HttpResponse createProject(AggregatedHttpRequest request) {
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> body = mapper.readValue(
+                    request.contentUtf8(), Map.class);
+            String projectId = (String) body.get("project_id");
+            String displayName = (String) body.getOrDefault("display_name", projectId);
+
+            if (projectId == null || projectId.isBlank()) {
+                Map<String, Object> error = Map.of(
+                        "error", true,
+                        "message", "project_id is required"
+                );
+                return HttpResponse.of(HttpStatus.BAD_REQUEST,
+                        MediaType.JSON, mapper.writeValueAsString(error));
+            }
+
+            var project = projectService.createProject(projectId, displayName);
+            String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(project);
+            return HttpResponse.of(HttpStatus.CREATED, MediaType.JSON, json);
+        } catch (Exception e) {
+            logger.error("Error creating project", e);
+            return errorResponse(e);
+        }
+    }
+
+    /**
+     * Delete a project and all associated data. The default project cannot be deleted.
+     */
+    @Delete("/projects/{id}")
+    public HttpResponse deleteProject(@Param("id") String projectId) {
+        try {
+            projectService.deleteProject(projectId, config.getProjectId());
+            Map<String, Object> result = Map.of(
+                    "deleted", true,
+                    "project_id", projectId
+            );
+            String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result);
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
+        } catch (IllegalArgumentException e) {
+            try {
+                Map<String, Object> error = Map.of(
+                        "error", true,
+                        "message", e.getMessage()
+                );
+                return HttpResponse.of(HttpStatus.BAD_REQUEST,
+                        MediaType.JSON, mapper.writeValueAsString(error));
+            } catch (Exception ex) {
+                return HttpResponse.of(HttpStatus.BAD_REQUEST,
+                        MediaType.PLAIN_TEXT_UTF_8, e.getMessage());
+            }
+        } catch (Exception e) {
+            logger.error("Error deleting project '{}'", projectId, e);
             return errorResponse(e);
         }
     }

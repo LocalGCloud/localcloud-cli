@@ -2,18 +2,18 @@
   "name": "localcloud-console",
   "version": "0.1.0",
   "description": "Web console for LocalCloud GCP emulator",
+  "author": "Jay Sen <jaysen@apache.org>",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "python backend/app.py",
-    "build": "npm run build:js && npm run build:css && npm run copy:html",
-    "build:js": "esbuild src/app.jsx --bundle --outfile=dist/app.js --minify",
-    "build:css": "cat src/styles/main.css src/styles/layout.css src/styles/components.css > dist/styles.css",
-    "copy:html": "cp src/index.html dist/index.html"
+    "build": "node build.js"
   },
   "dependencies": {
     "solid-js": "^1.8.0"
   },
   "devDependencies": {
-    "esbuild": "^0.20.0"
+    "esbuild": "^0.28.0",
+    "esbuild-plugin-solid": "^0.6.0"
   }
 }

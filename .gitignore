@@ -19,6 +19,10 @@ localcloud-cli/src/*.egg-info/
 *.pyo
 __pycache__/
 
+# Console frontend
+localcloud-console/dist/
+localcloud-console/node_modules/
+
 # IDE
 .idea/
 .vscode/
@@ -38,7 +42,7 @@ localcloud-data/
 .env.*
 
 # Specify
-.specify/
+
 
 # LocalCloud data
 /var/lib/localcloud/

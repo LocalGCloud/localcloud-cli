@@ -30,15 +30,15 @@ def _patch_ssl_for_self_signed_cert():
     warnings.filterwarnings("ignore", category=urllib3.exceptions.InsecureRequestWarning)
 
 
-def run(project_id: str) -> list[tuple[str, bool, str]]:
+def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
     """Run GCS demo operations. Returns list of (operation, success, detail)."""
     results = []
 
     # fake-gcs-server uses HTTPS with a self-signed cert.
     # Rewrite emulator host to https:// and disable SSL verification.
     host = os.environ.get("STORAGE_EMULATOR_HOST", "http://localhost:4443")
-    if host.startswith("http://"):
-        os.environ["STORAGE_EMULATOR_HOST"] = "https://" + host[len("http://"):]
+    # if host.startswith("http://"):
+    #     os.environ["STORAGE_EMULATOR_HOST"] = "https://" + host[len("http://"):]
 
     _patch_ssl_for_self_signed_cert()
 
@@ -123,11 +123,14 @@ def run(project_id: str) -> list[tuple[str, bool, str]]:
         results.append(("List buckets", False, str(e)))
 
     # 9. Delete object
-    try:
-        bucket.blob(blob_name).delete()
-        results.append(("Delete object", True, blob_name))
-    except Exception as e:
-        results.append(("Delete object", False, str(e)))
+    if not keep_data:
+        try:
+            bucket.blob(blob_name).delete()
+            results.append(("Delete object", True, blob_name))
+        except Exception as e:
+            results.append(("Delete object", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     # 10. Upload with content-type (JSON file)
     try:
@@ -158,10 +161,13 @@ def run(project_id: str) -> list[tuple[str, bool, str]]:
         results.append(("Folder simulation with delimiter", False, str(e)))
 
     # 12. Delete bucket (force=True to delete remaining objects)
-    try:
-        bucket.delete(force=True)
-        results.append(("Delete bucket", True, bucket_name))
-    except Exception as e:
-        results.append(("Delete bucket", False, str(e)))
+    if not keep_data:
+        try:
+            bucket.delete(force=True)
+            results.append(("Delete bucket", True, bucket_name))
+        except Exception as e:
+            results.append(("Delete bucket", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     return results

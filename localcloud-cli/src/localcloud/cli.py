@@ -2,7 +2,7 @@
 
 import click
 
-from localcloud.commands import env, logs, reset, seed, start, status, stop, console
+from localcloud.commands import compose, env, gcloud_setup, logs, reset, seed, start, status, stop, console
 
 
 class LocalCloudContext:
@@ -29,9 +29,16 @@ class LocalCloudContext:
     default="localcloud-main",
     help="Docker container name",
 )
+@click.option(
+    "--port",
+    type=int,
+    envvar="LOCALCLOUD_PORT",
+    default=8080,
+    help="Gateway port",
+)
 @click.version_option(version="0.1.0", prog_name="localcloud")
 @click.pass_context
-def cli(ctx, project, container_name):
+def cli(ctx, project, container_name, port):
     """LocalCloud - Local GCP Emulator.
 
     Simulate Google Cloud Platform services locally for development and testing.
@@ -39,6 +46,7 @@ def cli(ctx, project, container_name):
     ctx.ensure_object(LocalCloudContext)
     ctx.obj.project_id = project
     ctx.obj.container_name = container_name
+    ctx.obj.gateway_port = port
 
 
 cli.add_command(start.start)
@@ -49,3 +57,5 @@ cli.add_command(seed.seed)
 cli.add_command(reset.reset)
 cli.add_command(logs.logs)
 cli.add_command(console.console)
+cli.add_command(compose.compose)
+cli.add_command(gcloud_setup.gcloud_setup)

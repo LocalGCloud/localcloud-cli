@@ -56,11 +56,12 @@ public class ComputeStore {
             ps.setString(1, projectId);
             ps.setString(2, zone);
             ps.setString(3, instanceName);
-            ResultSet rs = ps.executeQuery();
-            if (rs.next()) {
-                return Optional.of(rowToInstance(rs));
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.of(rowToInstance(rs));
+                }
+                return Optional.empty();
             }
-            return Optional.empty();
         }
     }
 
@@ -70,12 +71,13 @@ public class ComputeStore {
                      "SELECT * FROM compute_instances WHERE project_id=? AND zone=? ORDER BY created_at")) {
             ps.setString(1, projectId);
             ps.setString(2, zone);
-            ResultSet rs = ps.executeQuery();
-            List<Instance> instances = new ArrayList<>();
-            while (rs.next()) {
-                instances.add(rowToInstance(rs));
+            try (ResultSet rs = ps.executeQuery()) {
+                List<Instance> instances = new ArrayList<>();
+                while (rs.next()) {
+                    instances.add(rowToInstance(rs));
+                }
+                return instances;
             }
-            return instances;
         }
     }
 

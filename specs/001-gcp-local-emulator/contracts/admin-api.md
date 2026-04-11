@@ -4,6 +4,8 @@
 **Base Path**: `/_localcloud`
 **Port**: 8080 (shared with REST gateway)
 
+**Note on Blob Storage**: GCS blob/object data is stored by the external GCS emulator process (fake-gcs-server). The admin API's data browsing endpoints proxy to the external emulator for GCS data. No separate BlobStore component exists in the Java server.
+
 ## Endpoints
 
 ### Health Check
@@ -18,14 +20,14 @@ GET /_localcloud/health
   "status": "healthy",
   "uptime_seconds": 1234,
   "services": {
-    "gcs": { "status": "running", "port": 8080, "protocol": "rest" },
-    "pubsub": { "status": "running", "port": 9020, "protocol": "grpc" },
-    "firestore": { "status": "running", "port": 9010, "protocol": "grpc" },
-    "bigquery": { "status": "running", "port": 8080, "protocol": "rest" },
+    "gcs": { "status": "running", "port": 4443, "protocol": "rest" },
+    "pubsub": { "status": "running", "port": 8085, "protocol": "grpc" },
+    "firestore": { "status": "running", "port": 8086, "protocol": "grpc" },
+    "bigquery": { "status": "running", "port": 9050, "protocol": "rest" },
     "secretmanager": { "status": "running", "port": 8080, "protocol": "grpc" },
     "cloudtasks": { "status": "running", "port": 8080, "protocol": "grpc" },
-    "spanner": { "status": "running", "port": 9030, "protocol": "grpc" },
-    "bigtable": { "status": "running", "port": 9040, "protocol": "grpc" },
+    "spanner": { "status": "running", "port": 9010, "protocol": "grpc" },
+    "bigtable": { "status": "running", "port": 8087, "protocol": "grpc" },
     "logging": { "status": "running", "port": 8080, "protocol": "grpc" },
     "monitoring": { "status": "running", "port": 8080, "protocol": "grpc" }
   },
@@ -48,12 +50,12 @@ GET /_localcloud/services
     {
       "id": "gcs",
       "name": "Cloud Storage",
-      "status": "running",
-      "port": 8080,
+      "status": "healthy",
+      "port": 4443,
       "protocol": "rest",
-      "endpoint": "http://localhost:8080",
+      "endpoint": "http://localhost:4443",
       "env_var": "STORAGE_EMULATOR_HOST",
-      "env_value": "http://localhost:8080",
+      "env_value": "http://localhost:4443",
       "request_count": 42
     }
   ]
@@ -122,16 +124,13 @@ Content-Type: application/yaml
 **Response** (200 OK):
 ```json
 {
-  "status": "success",
-  "resources_created": {
-    "gcs_buckets": 2,
-    "gcs_objects": 5,
-    "pubsub_topics": 3,
-    "pubsub_subscriptions": 4,
-    "firestore_documents": 10,
-    "bigquery_datasets": 1,
-    "bigquery_tables": 2,
-    "secrets": 3
+  "status": "seeded",
+  "total_records": 16,
+  "services": {
+    "gcs": 7,
+    "pubsub": 4,
+    "bigquery": 3,
+    "secretmanager": 2
   }
 }
 ```
@@ -151,8 +150,8 @@ Content-Type: application/json
 ```json
 {
   "status": "success",
-  "cleared": ["gcs", "pubsub", "firestore", "bigquery", "secretmanager", "cloudtasks", "spanner", "bigtable", "logging", "monitoring"],
-  "seed_restored": true
+  "seed_restored": true,
+  "records_restored": 5
 }
 ```
 
@@ -166,11 +165,12 @@ GET /_localcloud/env?format=json
 
 **Response** (200 OK, format=shell):
 ```bash
-export STORAGE_EMULATOR_HOST=http://localhost:8080
-export PUBSUB_EMULATOR_HOST=localhost:9020
-export FIRESTORE_EMULATOR_HOST=localhost:9010
-export BIGTABLE_EMULATOR_HOST=localhost:9040
-export SPANNER_EMULATOR_HOST=localhost:9030
+export STORAGE_EMULATOR_HOST=http://localhost:4443
+export PUBSUB_EMULATOR_HOST=localhost:8085
+export FIRESTORE_EMULATOR_HOST=localhost:8086
+export BIGTABLE_EMULATOR_HOST=localhost:8087
+export SPANNER_EMULATOR_HOST=localhost:9010
+export BIGQUERY_EMULATOR_HOST=http://localhost:9050
 export GOOGLE_CLOUD_PROJECT=local-project
 ```
 

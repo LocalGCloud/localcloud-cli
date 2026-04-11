@@ -7,7 +7,7 @@ from google.auth.credentials import AnonymousCredentials
 from google.cloud import bigquery
 
 
-def run(project_id: str) -> list[tuple[str, bool, str]]:
+def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
     """Run BigQuery demo operations. Returns list of (operation, success, detail)."""
     results = []
 
@@ -170,10 +170,13 @@ def run(project_id: str) -> list[tuple[str, bool, str]]:
         results.append(("UNION query", False, str(e)))
 
     # 12. Delete dataset (and contents)
-    try:
-        client.delete_dataset(dataset_ref, delete_contents=True)
-        results.append(("Delete dataset", True, dataset_id))
-    except Exception as e:
-        results.append(("Delete dataset", False, str(e)))
+    if not keep_data:
+        try:
+            client.delete_dataset(dataset_ref, delete_contents=True)
+            results.append(("Delete dataset", True, dataset_id))
+        except Exception as e:
+            results.append(("Delete dataset", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     return results

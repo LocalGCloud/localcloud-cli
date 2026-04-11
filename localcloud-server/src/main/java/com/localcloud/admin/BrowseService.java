@@ -1,39 +1,835 @@
 package com.localcloud.admin;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse.BodyHandlers;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.server.ServiceRequestContext;
 import com.linecorp.armeria.server.annotation.Get;
+import com.linecorp.armeria.server.annotation.Param;
+import com.localcloud.config.LocalCloudConfig;
+import com.localcloud.config.ServiceRegistry;
+import com.localcloud.config.ServiceRegistry.ServiceDefinition;
+import com.localcloud.persistence.PostgresDataSource;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * Placeholder browse service for the LocalCloud dashboard.
- * In orchestrator mode, data browsing is not available because each
- * external emulator manages its own storage independently.
+ * Browse service for the LocalCloud dashboard. Proxies read-only data
+ * requests to external emulators (GCS, Pub/Sub, BigQuery) and queries
+ * the local PostgreSQL database for in-process facade data (Secret Manager,
+ * Cloud Tasks, Logging, Monitoring).
+ * <p>
  * Registered at the {@code /_localcloud/browse} path prefix.
  */
 public class BrowseService {
 
-    public BrowseService() {
-        // no-op in orchestrator mode
+    private static final Logger logger = LoggerFactory.getLogger(BrowseService.class);
+
+    private final LocalCloudConfig config;
+    private final PostgresDataSource dataSource;
+    private final ServiceRegistry registry;
+    private final HttpClient httpClient;
+    private final ObjectMapper mapper;
+
+    // Base URLs computed from registry
+    private final String gcsBase;
+    private final String pubsubBase;
+    private final String bigqueryBase;
+    private final String spannerBase;
+    private final int bigtablePort;
+    private final int firestorePort;
+
+    public BrowseService(LocalCloudConfig config, PostgresDataSource dataSource, ServiceRegistry registry) {
+        this.config = config;
+        this.dataSource = dataSource;
+        this.registry = registry;
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5))
+                .build();
+        this.mapper = new ObjectMapper();
+
+        // Compute base URLs from registry definitions
+        this.gcsBase = baseUrl(registry.getService("gcs"));
+        this.pubsubBase = baseUrl(registry.getService("pubsub"));
+        this.bigqueryBase = baseUrl(registry.getService("bigquery"));
+
+        ServiceDefinition spannerDef = registry.getService("spanner");
+        int spannerRestPort = spannerDef != null && spannerDef.additionalPorts().containsKey("rest")
+                ? spannerDef.additionalPorts().get("rest") : 9020;
+        this.spannerBase = "http://localhost:" + spannerRestPort;
+
+        ServiceDefinition bigtableDef = registry.getService("bigtable");
+        this.bigtablePort = bigtableDef != null ? bigtableDef.port() : 8087;
+
+        ServiceDefinition firestoreDef = registry.getService("firestore");
+        this.firestorePort = firestoreDef != null ? firestoreDef.port() : 8086;
+    }
+
+    private static String baseUrl(ServiceDefinition def) {
+        if (def == null) return "http://localhost:0";
+        // Always use http:// for internal service-to-service calls
+        return "http://localhost:" + def.port();
     }
 
     @Get("/{service}")
-    public HttpResponse browse() {
-        return notAvailable();
+    public HttpResponse browse(ServiceRequestContext ctx, @Param("service") String service) {
+        return browseService(service, null, null, resolveProject(ctx));
     }
 
-    @Get("/{service}/{path:.*}")
-    public HttpResponse browseWithPath() {
-        return notAvailable();
+    @Get("/{service}/{resourceType}")
+    public HttpResponse browseResource(ServiceRequestContext ctx,
+                                       @Param("service") String service,
+                                       @Param("resourceType") String resourceType) {
+        return browseService(service, resourceType, null, resolveProject(ctx));
     }
 
-    private HttpResponse notAvailable() {
-        return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
-                """
-                {
-                  "message": "Browse is not available in orchestrator mode. Each external emulator manages its own data store.",
-                  "hint": "Use the emulator-specific APIs or CLI tools to inspect data."
+    @Get("/{service}/{resourceType}/{resourceId}")
+    public HttpResponse browseResourceById(ServiceRequestContext ctx,
+                                           @Param("service") String service,
+                                           @Param("resourceType") String resourceType,
+                                           @Param("resourceId") String resourceId) {
+        return browseService(service, resourceType, resourceId, resolveProject(ctx));
+    }
+
+    @Get("/{service}/{a}/{b}/{c}")
+    public HttpResponse browse4(ServiceRequestContext ctx,
+                                @Param("service") String service,
+                                @Param("a") String a,
+                                @Param("b") String b,
+                                @Param("c") String c) {
+        return browseService4(service, a, b, c, resolveProject(ctx));
+    }
+
+    @Get("/{service}/{a}/{b}/{c}/{d}/{e}")
+    public HttpResponse browse6(ServiceRequestContext ctx,
+                                @Param("service") String service,
+                                @Param("a") String a,
+                                @Param("b") String b,
+                                @Param("c") String c,
+                                @Param("d") String d,
+                                @Param("e") String e) {
+        return browseService6(service, a, b, c, d, e, resolveProject(ctx));
+    }
+
+    /**
+     * Resolve the project ID from the {@code ?project=} query parameter,
+     * falling back to the configured default project.
+     */
+    private String resolveProject(ServiceRequestContext ctx) {
+        String project = ctx.queryParams().get("project");
+        return (project != null && !project.isBlank()) ? project : config.getProjectId();
+    }
+
+    private HttpResponse browseService6(String service, String a, String b, String c, String d, String e, String projectId) {
+        try {
+            String json = switch (service) {
+                case "spanner" -> browseSpannerTableData(a, b, c, d, e, projectId);
+                case "bigquery" -> browseBigQueryTableData(a, b, c, d, e, projectId);
+                default -> mapper.writeValueAsString(Map.of(
+                        "error", true,
+                        "message", "Unsupported 6-segment browse for service: " + service));
+            };
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
+        } catch (Exception e1) {
+            logger.warn("Browse6 error for {}: {}", service, e1.getMessage());
+            try {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
+                        mapper.writeValueAsString(Map.of("error", true, "message", e1.getMessage())));
+            } catch (Exception ex) {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR,
+                        MediaType.PLAIN_TEXT_UTF_8, "Browse error");
+            }
+        }
+    }
+
+    private HttpResponse browseService4(String service, String a, String b, String c, String projectId) {
+        try {
+            String json = switch (service) {
+                case "spanner" -> browseSpannerDatabase(a, b, c, projectId);
+                default -> mapper.writeValueAsString(Map.of(
+                        "error", true,
+                        "message", "Unsupported 4-segment browse for service: " + service));
+            };
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
+        } catch (Exception e) {
+            logger.warn("Browse4 error for {}: {}", service, e.getMessage());
+            try {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
+                        mapper.writeValueAsString(Map.of("error", true, "message", e.getMessage())));
+            } catch (Exception ex) {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR,
+                        MediaType.PLAIN_TEXT_UTF_8, "Browse error");
+            }
+        }
+    }
+
+    private HttpResponse browseService(String service, String resourceType, String resourceId, String projectId) {
+        try {
+            String json = switch (service) {
+                case "gcs" -> browseGcs(resourceType, resourceId, projectId);
+                case "pubsub" -> browsePubSub(resourceType, resourceId, projectId);
+                case "bigquery" -> browseBigQuery(resourceType, resourceId, projectId);
+                case "secretmanager" -> browseSecretManager(resourceType, resourceId, projectId);
+                case "cloudtasks" -> browseCloudTasks(resourceType, resourceId, projectId);
+                case "logging" -> browseLogging(resourceType, resourceId, projectId);
+                case "monitoring" -> browseMonitoring(resourceType, resourceId, projectId);
+                case "memorystore" -> browseMemorystore(resourceType, resourceId, projectId);
+                case "spanner" -> browseSpanner(resourceType, resourceId, projectId);
+                case "firestore" -> browseFirestore(resourceType, resourceId, projectId);
+                case "bigtable" -> browseBigtable(resourceType, resourceId, projectId);
+                default -> mapper.writeValueAsString(Map.of(
+                        "error", true,
+                        "message", "Unknown service: " + service));
+            };
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
+        } catch (Exception e) {
+            logger.warn("Browse error for {}: {}", service, e.getMessage());
+            try {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
+                        mapper.writeValueAsString(Map.of("error", true, "message", e.getMessage())));
+            } catch (Exception ex) {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR,
+                        MediaType.PLAIN_TEXT_UTF_8, "Browse error");
+            }
+        }
+    }
+
+    // ========== GCS ==========
+
+    private String browseGcs(String resourceType, String resourceId, String projectId) throws Exception {
+        if (resourceType == null || "buckets".equals(resourceType) && resourceId == null) {
+            // List buckets
+            String url = gcsBase + "/storage/v1/b?project=" + projectId;
+            return proxyGet(url);
+        }
+        if ("buckets".equals(resourceType) && resourceId != null) {
+            // List objects in bucket
+            String url = gcsBase + "/storage/v1/b/" + resourceId + "/o";
+            return proxyGet(url);
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid GCS browse path"));
+    }
+
+    // ========== Pub/Sub ==========
+
+    private String browsePubSub(String resourceType, String resourceId, String projectId) throws Exception {
+        if (resourceType == null || "topics".equals(resourceType) && resourceId == null) {
+            // List topics
+            String url = pubsubBase + "/v1/projects/" + projectId + "/topics";
+            return proxyGet(url);
+        }
+        if ("subscriptions".equals(resourceType) && resourceId == null) {
+            // List subscriptions
+            String url = pubsubBase + "/v1/projects/" + projectId + "/subscriptions";
+            return proxyGet(url);
+        }
+        if ("topics".equals(resourceType) && resourceId != null) {
+            // Get topic
+            String url = pubsubBase + "/v1/projects/" + projectId + "/topics/" + resourceId;
+            return proxyGet(url);
+        }
+        if ("messages".equals(resourceType) && resourceId != null) {
+            // Pull messages from subscription without acknowledging
+            String pullUrl = pubsubBase + "/v1/projects/" + projectId + "/subscriptions/" + resourceId + ":pull";
+            String pullBody = "{\"maxMessages\": 100, \"returnImmediately\": true}";
+            try {
+                String response = proxyPost(pullUrl, pullBody);
+                @SuppressWarnings("unchecked")
+                Map<String, Object> pullResp = mapper.readValue(response, Map.class);
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> receivedMessages = (List<Map<String, Object>>) pullResp.get("receivedMessages");
+
+                List<Map<String, Object>> messages = new ArrayList<>();
+                if (receivedMessages != null) {
+                    for (Map<String, Object> rm : receivedMessages) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> msg = (Map<String, Object>) rm.get("message");
+                        if (msg != null) {
+                            Map<String, Object> decoded = new LinkedHashMap<>();
+                            decoded.put("messageId", msg.get("messageId"));
+                            decoded.put("publishTime", msg.get("publishTime"));
+                            // Decode base64 data
+                            String data = (String) msg.get("data");
+                            if (data != null) {
+                                try {
+                                    decoded.put("data", new String(java.util.Base64.getDecoder().decode(data), java.nio.charset.StandardCharsets.UTF_8));
+                                } catch (Exception e) {
+                                    decoded.put("data", data);
+                                }
+                            }
+                            decoded.put("attributes", msg.get("attributes"));
+                            messages.add(decoded);
+                        }
+                    }
                 }
-                """);
+                return mapper.writeValueAsString(Map.of("messages", messages, "subscription", resourceId));
+            } catch (Exception e) {
+                logger.warn("Failed to pull Pub/Sub messages: {}", e.getMessage());
+                return mapper.writeValueAsString(Map.of("messages", List.of(), "subscription", resourceId));
+            }
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Pub/Sub browse path"));
+    }
+
+    // ========== BigQuery ==========
+
+    private String browseBigQuery(String resourceType, String resourceId, String projectId) throws Exception {
+        if (resourceType == null || "datasets".equals(resourceType) && resourceId == null) {
+            String url = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/datasets";
+            return proxyGet(url);
+        }
+        if ("datasets".equals(resourceType) && resourceId != null) {
+            // List tables in dataset
+            String url = bigqueryBase + "/bigquery/v2/projects/" + projectId
+                    + "/datasets/" + resourceId + "/tables";
+            return proxyGet(url);
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid BigQuery browse path"));
+    }
+
+    // ========== Secret Manager (in-process, query PostgreSQL) ==========
+
+    private String browseSecretManager(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+
+        if (resourceType == null || "secrets".equals(resourceType) && resourceId == null) {
+            List<Map<String, Object>> secrets = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT secret_id, labels, created_at FROM secrets WHERE project_id = ?")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> s = new LinkedHashMap<>();
+                        s.put("name", rs.getString("secret_id"));
+                        s.put("labels", rs.getString("labels"));
+                        s.put("created_at", rs.getTimestamp("created_at").toString());
+                        secrets.add(s);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("secrets", secrets));
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid browse path"));
+    }
+
+    // ========== Cloud Tasks (in-process, query PostgreSQL) ==========
+
+    private String browseCloudTasks(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+
+        if (resourceType == null || "queues".equals(resourceType) && resourceId == null) {
+            List<Map<String, Object>> queues = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT queue_id, location_id, state, max_attempts, created_at FROM task_queues WHERE project_id = ?")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> q = new LinkedHashMap<>();
+                        q.put("name", rs.getString("queue_id"));
+                        q.put("location", rs.getString("location_id"));
+                        q.put("state", rs.getString("state"));
+                        q.put("max_attempts", rs.getInt("max_attempts"));
+                        q.put("created_at", rs.getTimestamp("created_at").toString());
+                        queues.add(q);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("queues", queues));
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid browse path"));
+    }
+
+    // ========== Logging (in-process, query PostgreSQL) ==========
+
+    private String browseLogging(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+
+        if (resourceType == null || "entries".equals(resourceType)) {
+            List<Map<String, Object>> entries = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT id, log_name, severity, text_payload, timestamp FROM log_entries WHERE project_id = ? ORDER BY timestamp DESC LIMIT 100")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> e = new LinkedHashMap<>();
+                        e.put("id", rs.getString("id"));
+                        e.put("log_name", rs.getString("log_name"));
+                        e.put("severity", rs.getString("severity"));
+                        e.put("text_payload", rs.getString("text_payload"));
+                        e.put("timestamp", rs.getLong("timestamp"));
+                        entries.add(e);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("entries", entries));
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid browse path"));
+    }
+
+    // ========== Monitoring (in-process, query PostgreSQL) ==========
+
+    private String browseMonitoring(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+
+        if (resourceType == null || "timeseries".equals(resourceType)) {
+            List<Map<String, Object>> series = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT id, metric_type, metric_labels, resource_type FROM time_series WHERE project_name = ? LIMIT 100")) {
+                ps.setString(1, "projects/" + projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> ts = new LinkedHashMap<>();
+                        ts.put("id", rs.getString("id"));
+                        ts.put("metric_type", rs.getString("metric_type"));
+                        ts.put("metric_labels", rs.getString("metric_labels"));
+                        ts.put("resource_type", rs.getString("resource_type"));
+                        series.add(ts);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("time_series", series));
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid browse path"));
+    }
+
+    // ========== Memorystore (Redis) ==========
+
+    private String browseMemorystore(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+
+        List<Map<String, Object>> keys = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "SELECT key_name, data_type, value, ttl_expires_at FROM redis_data " +
+                 "WHERE project_id = ? AND db_number = 0 AND (ttl_expires_at IS NULL OR ttl_expires_at > NOW()) " +
+                 "ORDER BY key_name LIMIT 200")) {
+            ps.setString(1, projectId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> k = new LinkedHashMap<>();
+                    k.put("key", rs.getString("key_name"));
+                    k.put("type", rs.getString("data_type"));
+                    k.put("value", rs.getString("value"));
+                    var ttl = rs.getTimestamp("ttl_expires_at");
+                    k.put("ttl", ttl != null ? ttl.toString() : null);
+                    keys.add(k);
+                }
+            }
+        }
+        return mapper.writeValueAsString(Map.of("keys", keys, "total", keys.size()));
+    }
+
+    // ========== Spanner (proxy to Spanner REST API) ==========
+
+    private String browseSpanner(String resourceType, String resourceId, String projectId) throws Exception {
+        if (resourceType == null || "instances".equals(resourceType) && resourceId == null) {
+            // List instances
+            String url = spannerBase + "/v1/projects/" + projectId + "/instances";
+            return proxyGet(url);
+        }
+        if ("instances".equals(resourceType) && resourceId != null) {
+            // List databases in instance
+            String url = spannerBase + "/v1/projects/" + projectId + "/instances/" + resourceId + "/databases";
+            return proxyGet(url);
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Spanner browse path"));
+    }
+
+    /**
+     * Browse a specific Spanner database: returns DDL (table schemas).
+     * Path: spanner/instances/{instance}/{database}
+     * @param a should be "instances"
+     * @param b instance name
+     * @param c database name
+     */
+    private String browseSpannerDatabase(String a, String b, String c, String projectId) throws Exception {
+        if (!"instances".equals(a)) {
+            return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Spanner browse path"));
+        }
+        String url = spannerBase + "/v1/projects/" + projectId + "/instances/" + b + "/databases/" + c + "/ddl";
+        return proxyGet(url);
+    }
+
+    // ========== Spanner table data (proxy to Spanner REST API) ==========
+
+    /**
+     * Query data from a specific Spanner table.
+     * Path: spanner/instances/{instance}/databases/{db}/tables/{table}
+     * @param a should be "instances"
+     * @param b instance name
+     * @param c database name
+     * @param d should be "tables"
+     * @param e table name
+     */
+    private String browseSpannerTableData(String a, String b, String c, String d, String e, String projectId) throws Exception {
+        if (!"instances".equals(a) || !"tables".equals(d)) {
+            return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Spanner table data browse path"));
+        }
+        String instance = b;
+        String database = c;
+        String table = e;
+
+        // 1. Create session
+        String sessionUrl = spannerBase + "/v1/projects/" + projectId + "/instances/" + instance
+                + "/databases/" + database + "/sessions";
+        String sessionBody = proxyPost(sessionUrl, "{}");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> sessionResp = mapper.readValue(sessionBody, Map.class);
+        String sessionName = (String) sessionResp.get("name");
+
+        try {
+            // 2. Execute SQL
+            String sqlUrl = spannerBase + "/v1/" + sessionName + ":executeSql";
+            String sqlPayload = mapper.writeValueAsString(Map.of("sql", "SELECT * FROM " + table + " LIMIT 50"));
+            String sqlBody = proxyPost(sqlUrl, sqlPayload);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> sqlResp = mapper.readValue(sqlBody, Map.class);
+
+            // 3. Parse result into columns and rows
+            List<String> columns = new ArrayList<>();
+            @SuppressWarnings("unchecked")
+            Map<String, Object> metadata = (Map<String, Object>) sqlResp.get("metadata");
+            if (metadata != null) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> rowType = (Map<String, Object>) metadata.get("rowType");
+                if (rowType != null) {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> fields = (List<Map<String, Object>>) rowType.get("fields");
+                    if (fields != null) {
+                        for (Map<String, Object> field : fields) {
+                            columns.add((String) field.get("name"));
+                        }
+                    }
+                }
+            }
+
+            @SuppressWarnings("unchecked")
+            List<List<Object>> rawRows = (List<List<Object>>) sqlResp.get("rows");
+            List<Map<String, Object>> rows = new ArrayList<>();
+            if (rawRows != null) {
+                for (List<Object> rawRow : rawRows) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    for (int i = 0; i < columns.size() && i < rawRow.size(); i++) {
+                        row.put(columns.get(i), rawRow.get(i));
+                    }
+                    rows.add(row);
+                }
+            }
+
+            return mapper.writeValueAsString(Map.of("columns", columns, "rows", rows));
+        } finally {
+            // 3. Delete session
+            try {
+                proxyDelete(spannerBase + "/v1/" + sessionName);
+            } catch (Exception ignored) {
+                logger.debug("Failed to delete Spanner session: {}", ignored.getMessage());
+            }
+        }
+    }
+
+    // ========== BigQuery table data (proxy to BigQuery REST API) ==========
+
+    /**
+     * Query data from a specific BigQuery table.
+     * Path: bigquery/datasets/{dataset}/tables/{table}/data
+     * @param a should be "datasets"
+     * @param b dataset ID
+     * @param c should be "tables"
+     * @param d table ID
+     * @param e should be "data"
+     */
+    private String browseBigQueryTableData(String a, String b, String c, String d, String e, String projectId) throws Exception {
+        if (!"datasets".equals(a) || !"tables".equals(c) || !"data".equals(e)) {
+            return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid BigQuery table data browse path"));
+        }
+        String dataset = b;
+        String tableId = d;
+
+        // Execute query via jobs.query
+        String queryUrl = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/queries";
+        String queryPayload = mapper.writeValueAsString(Map.of(
+                "query", "SELECT * FROM `" + dataset + "." + tableId + "` LIMIT 50",
+                "useLegacySql", false));
+        String queryBody = proxyPost(queryUrl, queryPayload);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> queryResp = mapper.readValue(queryBody, Map.class);
+
+        // Parse schema fields into columns
+        List<String> columns = new ArrayList<>();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> schema = (Map<String, Object>) queryResp.get("schema");
+        if (schema != null) {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> fields = (List<Map<String, Object>>) schema.get("fields");
+            if (fields != null) {
+                for (Map<String, Object> field : fields) {
+                    columns.add((String) field.get("name"));
+                }
+            }
+        }
+
+        // Parse rows (BigQuery returns rows as {f: [{v: value}, ...]})
+        List<Map<String, Object>> rows = new ArrayList<>();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rawRows = (List<Map<String, Object>>) queryResp.get("rows");
+        if (rawRows != null) {
+            for (Map<String, Object> rawRow : rawRows) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> cells = (List<Map<String, Object>>) rawRow.get("f");
+                Map<String, Object> row = new LinkedHashMap<>();
+                if (cells != null) {
+                    for (int i = 0; i < columns.size() && i < cells.size(); i++) {
+                        row.put(columns.get(i), cells.get(i).get("v"));
+                    }
+                }
+                rows.add(row);
+            }
+        }
+
+        return mapper.writeValueAsString(Map.of("columns", columns, "rows", rows));
+    }
+
+    // ========== Firestore (proxy to Firestore REST API) ==========
+
+    private String browseFirestore(String resourceType, String resourceId, String projectId) throws Exception {
+        String firestoreBase = "http://localhost:" + firestorePort;
+
+        if (resourceType == null) {
+            // List root collections - Firestore REST API doesn't have a direct "list collections" endpoint
+            // We use the document listing with a shallow query
+            String url = firestoreBase + "/v1/projects/" + projectId + "/databases/(default)/documents";
+            try {
+                String response = proxyGet(url);
+                @SuppressWarnings("unchecked")
+                Map<String, Object> resp = mapper.readValue(response, Map.class);
+                // Extract collection names from document paths
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> documents = (List<Map<String, Object>>) resp.get("documents");
+                java.util.Set<String> collections = new java.util.LinkedHashSet<>();
+                if (documents != null) {
+                    for (Map<String, Object> doc : documents) {
+                        String name = (String) doc.get("name");
+                        if (name != null) {
+                            // Extract collection name from path like projects/x/databases/(default)/documents/collection/docId
+                            String[] parts = name.split("/");
+                            if (parts.length >= 7) {
+                                collections.add(parts[parts.length - 2]);
+                            }
+                        }
+                    }
+                }
+                return mapper.writeValueAsString(Map.of("collections", collections));
+            } catch (Exception e) {
+                logger.warn("Failed to list Firestore collections: {}", e.getMessage());
+                return mapper.writeValueAsString(Map.of("collections", List.of()));
+            }
+        }
+
+        if (resourceType != null && resourceId == null) {
+            // List documents in collection
+            String url = firestoreBase + "/v1/projects/" + projectId + "/databases/(default)/documents/" + resourceType;
+            String response = proxyGet(url);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> resp = mapper.readValue(response, Map.class);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> documents = (List<Map<String, Object>>) resp.get("documents");
+            List<Map<String, Object>> result = new ArrayList<>();
+            if (documents != null) {
+                for (Map<String, Object> doc : documents) {
+                    Map<String, Object> simplified = new LinkedHashMap<>();
+                    String name = (String) doc.get("name");
+                    if (name != null) {
+                        simplified.put("id", name.substring(name.lastIndexOf('/') + 1));
+                    }
+                    // Convert Firestore field format to simple key-value
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> fields = (Map<String, Object>) doc.get("fields");
+                    if (fields != null) {
+                        Map<String, Object> simpleFields = new LinkedHashMap<>();
+                        for (Map.Entry<String, Object> entry : fields.entrySet()) {
+                            simpleFields.put(entry.getKey(), extractFirestoreValue(entry.getValue()));
+                        }
+                        simplified.put("fields", simpleFields);
+                    }
+                    simplified.put("createTime", doc.get("createTime"));
+                    simplified.put("updateTime", doc.get("updateTime"));
+                    result.add(simplified);
+                }
+            }
+            return mapper.writeValueAsString(Map.of("documents", result, "collection", resourceType));
+        }
+
+        if (resourceType != null && resourceId != null) {
+            // Get specific document
+            String url = firestoreBase + "/v1/projects/" + projectId + "/databases/(default)/documents/" + resourceType + "/" + resourceId;
+            String response = proxyGet(url);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> doc = mapper.readValue(response, Map.class);
+            Map<String, Object> simplified = new LinkedHashMap<>();
+            simplified.put("id", resourceId);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> fields = (Map<String, Object>) doc.get("fields");
+            if (fields != null) {
+                Map<String, Object> simpleFields = new LinkedHashMap<>();
+                for (Map.Entry<String, Object> entry : fields.entrySet()) {
+                    simpleFields.put(entry.getKey(), extractFirestoreValue(entry.getValue()));
+                }
+                simplified.put("fields", simpleFields);
+            }
+            return mapper.writeValueAsString(simplified);
+        }
+
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Firestore browse path"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object extractFirestoreValue(Object firestoreValue) {
+        if (!(firestoreValue instanceof Map)) return firestoreValue;
+        Map<String, Object> val = (Map<String, Object>) firestoreValue;
+        if (val.containsKey("stringValue")) return val.get("stringValue");
+        if (val.containsKey("integerValue")) return val.get("integerValue");
+        if (val.containsKey("doubleValue")) return val.get("doubleValue");
+        if (val.containsKey("booleanValue")) return val.get("booleanValue");
+        if (val.containsKey("nullValue")) return null;
+        if (val.containsKey("mapValue")) {
+            Map<String, Object> mapVal = (Map<String, Object>) val.get("mapValue");
+            Map<String, Object> fields = (Map<String, Object>) mapVal.get("fields");
+            if (fields != null) {
+                Map<String, Object> result = new LinkedHashMap<>();
+                for (Map.Entry<String, Object> entry : fields.entrySet()) {
+                    result.put(entry.getKey(), extractFirestoreValue(entry.getValue()));
+                }
+                return result;
+            }
+        }
+        if (val.containsKey("arrayValue")) {
+            Map<String, Object> arrVal = (Map<String, Object>) val.get("arrayValue");
+            List<Object> values = (List<Object>) arrVal.get("values");
+            if (values != null) {
+                List<Object> result = new ArrayList<>();
+                for (Object v : values) {
+                    result.add(extractFirestoreValue(v));
+                }
+                return result;
+            }
+        }
+        return firestoreValue;
+    }
+
+    // ========== Bigtable (query PostgreSQL for seeded data) ==========
+
+    private String browseBigtable(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            // Fallback to connection info
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("info", "Bigtable emulator runs on port " + bigtablePort + " (gRPC). Persistence not enabled.");
+            info.put("port", bigtablePort);
+            return mapper.writeValueAsString(info);
+        }
+
+        if (resourceType == null || "tables".equals(resourceType) && resourceId == null) {
+            // List all tables from bigtable_data
+            List<Map<String, Object>> tables = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT DISTINCT instance_id, table_name FROM bigtable_data WHERE project_id = ? ORDER BY instance_id, table_name")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> t = new LinkedHashMap<>();
+                        t.put("instance", rs.getString("instance_id"));
+                        t.put("table", rs.getString("table_name"));
+                        tables.add(t);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("tables", tables));
+        }
+
+        if ("tables".equals(resourceType) && resourceId != null) {
+            // List rows in a table
+            List<Map<String, Object>> rows = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT row_key, cells FROM bigtable_data WHERE project_id = ? AND table_name = ? ORDER BY row_key LIMIT 50")) {
+                ps.setString(1, projectId);
+                ps.setString(2, resourceId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("rowKey", rs.getString("row_key"));
+                        row.put("cells", mapper.readValue(rs.getString("cells"), Map.class));
+                        rows.add(row);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("rows", rows, "table", resourceId));
+        }
+
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Bigtable browse path"));
+    }
+
+    // ========== HTTP proxy helper ==========
+
+    private String proxyGet(String url) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(Duration.ofSeconds(10))
+                .GET()
+                .build();
+
+        java.net.http.HttpResponse<String> response = httpClient.send(request, BodyHandlers.ofString());
+        return response.body();
+    }
+
+    private String proxyPost(String url, String body) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(Duration.ofSeconds(10))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+
+        java.net.http.HttpResponse<String> response = httpClient.send(request, BodyHandlers.ofString());
+        return response.body();
+    }
+
+    private void proxyDelete(String url) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(Duration.ofSeconds(10))
+                .DELETE()
+                .build();
+
+        httpClient.send(request, BodyHandlers.ofString());
     }
 }

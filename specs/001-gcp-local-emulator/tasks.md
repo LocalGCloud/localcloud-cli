@@ -25,7 +25,7 @@
 
 **Purpose**: Initialize both Java and Python projects with all dependencies
 
-- [x] T001 Create Java project with Gradle build file including Armeria, proto-google-cloud-*, H2, HikariCP dependencies in `localcloud-server/build.gradle`
+- [x] T001 Create Java project with Gradle build file including Armeria, proto-google-cloud-*, PostgreSQL, HikariCP dependencies in `localcloud-server/build.gradle`
 - [x] T002 [P] Create Python CLI project with pyproject.toml including Click, docker, pyyaml, google-cloud-storage dependencies in `localcloud-cli/pyproject.toml`
 - [x] T003 [P] Create directory structure for Java server per plan.md: `localcloud-server/src/main/java/com/localcloud/{gateway,admin,persistence,emulators,events,config}/`
 - [x] T004 [P] Create directory structure for Python CLI per plan.md: `localcloud-cli/src/localcloud/{commands}/`
@@ -42,9 +42,9 @@
 **CRITICAL**: No user story work can begin until this phase is complete
 
 - [x] T008 Implement configuration loading from environment variables and YAML in `localcloud-server/src/main/java/com/localcloud/config/LocalCloudConfig.java`
-- [x] T009 Implement H2 embedded database setup with HikariCP connection pool, file-backed persistence to `/var/lib/localcloud/db/` in `localcloud-server/src/main/java/com/localcloud/persistence/H2DataSource.java`
-- [x] T010 Implement schema manager with DDL initialization for all service tables (buckets, topics, documents, datasets, secrets, queues, log_entries, time_series, etc.) in `localcloud-server/src/main/java/com/localcloud/persistence/SchemaManager.java`
-- [x] T011 Implement filesystem blob store for GCS object data with read/write/delete operations in `localcloud-server/src/main/java/com/localcloud/persistence/BlobStore.java`
+- [x] T009 Implement PostgreSQL database setup with HikariCP connection pool, file-backed persistence to `/var/lib/localcloud/db/` in `localcloud-server/src/main/java/com/localcloud/persistence/PostgresDataSource.java`
+- [x] T010 Implement schema manager with PostgreSQL DDL initialization for all service tables (buckets, topics, documents, datasets, secrets, queues, log_entries, time_series, etc.) in `localcloud-server/src/main/java/com/localcloud/persistence/SchemaManager.java`
+- [x] T011 Blob storage for GCS objects is handled by the external GCS emulator process; no separate BlobStore.java needed
 - [x] T012 Implement EmulatorBase interface with lifecycle methods (start, stop, healthCheck, getName, getPort, getProtocol) in `localcloud-server/src/main/java/com/localcloud/emulators/EmulatorBase.java`
 - [x] T013 Implement request logger with ring buffer (last 1000 requests) and query methods in `localcloud-server/src/main/java/com/localcloud/gateway/RequestLogger.java`
 - [x] T014 Implement internal event bus for cross-service event wiring (GCS→Pub/Sub, Pub/Sub→Functions) in `localcloud-server/src/main/java/com/localcloud/events/EventBus.java`
@@ -87,12 +87,12 @@
 
 ### Implementation for User Story 2
 
-- [x] T028 [US2] Implement Bucket and StorageObject H2 table DDL and DAO methods (create, get, list, delete) in `localcloud-server/src/main/java/com/localcloud/emulators/gcs/StorageDao.java`
-- [x] T029 [US2] Implement GCS REST handlers for bucket CRUD (POST/GET/DELETE `/storage/v1/b`) in `localcloud-server/src/main/java/com/localcloud/emulators/gcs/StorageEmulator.java`
-- [x] T030 [US2] Implement GCS REST handlers for object upload (POST `/upload/storage/v1/b/{bucket}/o`) with multipart and media upload support in `localcloud-server/src/main/java/com/localcloud/emulators/gcs/StorageEmulator.java`
-- [x] T031 [US2] Implement GCS REST handlers for object get (GET `/storage/v1/b/{bucket}/o/{object}` metadata and `?alt=media` data), list (GET `/storage/v1/b/{bucket}/o` with prefix/delimiter), delete, and copy in `localcloud-server/src/main/java/com/localcloud/emulators/gcs/StorageEmulator.java`
-- [x] T032 [US2] Implement GCS error responses matching real GCP format (404 Not Found, 409 Conflict, 400 Bad Request) in `localcloud-server/src/main/java/com/localcloud/emulators/gcs/StorageEmulator.java`
-- [x] T033 [US2] Register GCS emulator with API gateway on REST path `/storage/v1` and `/upload/storage/v1` in `localcloud-server/src/main/java/com/localcloud/LocalCloudApplication.java`
+- [x] T028 [US2] Implement Bucket and StorageObject PostgreSQL table DDL and DAO methods (create, get, list, delete) in `localcloud-server/src/main/java/com/localcloud/emulators/gcs/StorageDao.java` (via external emulator process managed by supervisord)
+- [x] T029 [US2] Implement GCS REST handlers for bucket CRUD (POST/GET/DELETE `/storage/v1/b`) in `localcloud-server/src/main/java/com/localcloud/emulators/gcs/StorageEmulator.java` (via external emulator process managed by supervisord)
+- [x] T030 [US2] Implement GCS REST handlers for object upload (POST `/upload/storage/v1/b/{bucket}/o`) with multipart and media upload support in `localcloud-server/src/main/java/com/localcloud/emulators/gcs/StorageEmulator.java` (via external emulator process managed by supervisord)
+- [x] T031 [US2] Implement GCS REST handlers for object get (GET `/storage/v1/b/{bucket}/o/{object}` metadata and `?alt=media` data), list (GET `/storage/v1/b/{bucket}/o` with prefix/delimiter), delete, and copy in `localcloud-server/src/main/java/com/localcloud/emulators/gcs/StorageEmulator.java` (via external emulator process managed by supervisord)
+- [x] T032 [US2] Implement GCS error responses matching real GCP format (404 Not Found, 409 Conflict, 400 Bad Request) in `localcloud-server/src/main/java/com/localcloud/emulators/gcs/StorageEmulator.java` (via external emulator process managed by supervisord)
+- [x] T033 [US2] Register GCS emulator with API gateway on REST path `/storage/v1` and `/upload/storage/v1` in `localcloud-server/src/main/java/com/localcloud/LocalCloudApplication.java` (via external emulator process managed by supervisord)
 
 **Checkpoint**: Google Cloud Storage Python/Java client library can create buckets, upload, list, download, and delete objects against localhost:8080
 
@@ -106,12 +106,12 @@
 
 ### Implementation for User Story 3
 
-- [x] T034 [US3] Implement Topic, Subscription, Message, MessageDelivery in-memory stores with H2 persistence for topics/subscriptions in `localcloud-server/src/main/java/com/localcloud/emulators/pubsub/PubSubStore.java`
-- [x] T035 [US3] Implement Publisher gRPC service (CreateTopic, GetTopic, ListTopics, DeleteTopic, Publish) extending `PublisherGrpc.PublisherImplBase` in `localcloud-server/src/main/java/com/localcloud/emulators/pubsub/PubSubEmulator.java`
-- [x] T036 [US3] Implement Subscriber gRPC service (CreateSubscription, GetSubscription, ListSubscriptions, DeleteSubscription, Pull, Acknowledge, ModifyAckDeadline) extending `SubscriberGrpc.SubscriberImplBase` in `localcloud-server/src/main/java/com/localcloud/emulators/pubsub/PubSubEmulator.java`
-- [x] T037 [US3] Implement StreamingPull with bidirectional streaming, ack deadline management, and message redelivery on timeout in `localcloud-server/src/main/java/com/localcloud/emulators/pubsub/PubSubEmulator.java`
-- [x] T038 [US3] Implement push subscription delivery (HTTP POST to push endpoint when message is published) in `localcloud-server/src/main/java/com/localcloud/emulators/pubsub/PushDeliveryService.java`
-- [x] T039 [US3] Register Pub/Sub gRPC service on dedicated port 9020 in `localcloud-server/src/main/java/com/localcloud/LocalCloudApplication.java`
+- [x] T034 [US3] Implement Topic, Subscription, Message, MessageDelivery in-memory stores with PostgreSQL persistence for topics/subscriptions in `localcloud-server/src/main/java/com/localcloud/emulators/pubsub/PubSubStore.java` (via external emulator process managed by supervisord)
+- [x] T035 [US3] Implement Publisher gRPC service (CreateTopic, GetTopic, ListTopics, DeleteTopic, Publish) extending `PublisherGrpc.PublisherImplBase` in `localcloud-server/src/main/java/com/localcloud/emulators/pubsub/PubSubEmulator.java` (via external emulator process managed by supervisord)
+- [x] T036 [US3] Implement Subscriber gRPC service (CreateSubscription, GetSubscription, ListSubscriptions, DeleteSubscription, Pull, Acknowledge, ModifyAckDeadline) extending `SubscriberGrpc.SubscriberImplBase` in `localcloud-server/src/main/java/com/localcloud/emulators/pubsub/PubSubEmulator.java` (via external emulator process managed by supervisord)
+- [x] T037 [US3] Implement StreamingPull with bidirectional streaming, ack deadline management, and message redelivery on timeout in `localcloud-server/src/main/java/com/localcloud/emulators/pubsub/PubSubEmulator.java` (via external emulator process managed by supervisord)
+- [x] T038 [US3] Implement push subscription delivery (HTTP POST to push endpoint when message is published) in `localcloud-server/src/main/java/com/localcloud/emulators/pubsub/PushDeliveryService.java` (via external emulator process managed by supervisord)
+- [x] T039 [US3] Register Pub/Sub gRPC service on dedicated port 9020 in `localcloud-server/src/main/java/com/localcloud/LocalCloudApplication.java` (via external emulator process managed by supervisord)
 
 **Checkpoint**: Google Cloud Pub/Sub client library can publish and pull messages against localhost:9020
 
@@ -125,12 +125,12 @@
 
 ### Implementation for User Story 4
 
-- [x] T040 [US4] Implement FirestoreDocument H2 storage with JSON data column, path-based lookups, and collection queries in `localcloud-server/src/main/java/com/localcloud/emulators/firestore/FirestoreStore.java`
-- [x] T041 [US4] Implement Firestore gRPC service (GetDocument, CreateDocument, UpdateDocument, DeleteDocument, ListDocuments) extending `FirestoreGrpc.FirestoreImplBase` in `localcloud-server/src/main/java/com/localcloud/emulators/firestore/FirestoreEmulator.java`
-- [x] T042 [US4] Implement RunQuery with WHERE filter evaluation (equality, less-than, greater-than, in, array-contains), ORDER BY, and LIMIT against JSON document fields in `localcloud-server/src/main/java/com/localcloud/emulators/firestore/FirestoreEmulator.java`
-- [x] T043 [US4] Implement BatchGetDocuments and BatchWrite with atomic success/failure semantics in `localcloud-server/src/main/java/com/localcloud/emulators/firestore/FirestoreEmulator.java`
-- [x] T044 [US4] Implement Listen (real-time document change notifications) using gRPC server streaming in `localcloud-server/src/main/java/com/localcloud/emulators/firestore/FirestoreEmulator.java`
-- [x] T045 [US4] Register Firestore gRPC service on dedicated port 9010 in `localcloud-server/src/main/java/com/localcloud/LocalCloudApplication.java`
+- [x] T040 [US4] Implement FirestoreDocument PostgreSQL storage with JSONB column, path-based lookups, and collection queries in `localcloud-server/src/main/java/com/localcloud/emulators/firestore/FirestoreStore.java` (via external emulator process managed by supervisord)
+- [x] T041 [US4] Implement Firestore gRPC service (GetDocument, CreateDocument, UpdateDocument, DeleteDocument, ListDocuments) extending `FirestoreGrpc.FirestoreImplBase` in `localcloud-server/src/main/java/com/localcloud/emulators/firestore/FirestoreEmulator.java` (via external emulator process managed by supervisord)
+- [x] T042 [US4] Implement RunQuery with WHERE filter evaluation (equality, less-than, greater-than, in, array-contains), ORDER BY, and LIMIT against JSON document fields in `localcloud-server/src/main/java/com/localcloud/emulators/firestore/FirestoreEmulator.java` (via external emulator process managed by supervisord)
+- [x] T043 [US4] Implement BatchGetDocuments and BatchWrite with atomic success/failure semantics in `localcloud-server/src/main/java/com/localcloud/emulators/firestore/FirestoreEmulator.java` (via external emulator process managed by supervisord)
+- [x] T044 [US4] Implement Listen (real-time document change notifications) using gRPC server streaming in `localcloud-server/src/main/java/com/localcloud/emulators/firestore/FirestoreEmulator.java` (via external emulator process managed by supervisord)
+- [x] T045 [US4] Register Firestore gRPC service on dedicated port 9010 in `localcloud-server/src/main/java/com/localcloud/LocalCloudApplication.java` (via external emulator process managed by supervisord)
 
 **Checkpoint**: Google Cloud Firestore client library can perform CRUD, queries, batch writes, and real-time listeners against localhost:9010
 
@@ -163,13 +163,13 @@
 
 ### Implementation for User Story 5
 
-- [x] T050 [P] [US5] Implement Dataset and Table H2 storage with schema JSON column and row storage using dynamic H2 tables in `localcloud-server/src/main/java/com/localcloud/emulators/bigquery/BigQueryStore.java`
-- [x] T051 [P] [US5] Implement BigQueryJob H2 storage with state transitions (PENDING→RUNNING→DONE) in `localcloud-server/src/main/java/com/localcloud/emulators/bigquery/BigQueryStore.java`
-- [x] T052 [US5] Implement BigQuery REST handlers for dataset CRUD (POST/GET/DELETE `/bigquery/v2/projects/{project}/datasets`) in `localcloud-server/src/main/java/com/localcloud/emulators/bigquery/BigQueryEmulator.java`
-- [x] T053 [US5] Implement BigQuery REST handlers for table CRUD and row insert (`/bigquery/v2/projects/{project}/datasets/{dataset}/tables`) in `localcloud-server/src/main/java/com/localcloud/emulators/bigquery/BigQueryEmulator.java`
-- [x] T054 [US5] Implement BigQuery SQL query execution via H2: translate BigQuery SQL to H2 SQL, execute against dynamic tables, format results as BigQuery job response in `localcloud-server/src/main/java/com/localcloud/emulators/bigquery/SqlQueryEngine.java`
-- [x] T055 [US5] Implement BigQuery job endpoints (POST create job, GET job status, GET query results) with async execution model in `localcloud-server/src/main/java/com/localcloud/emulators/bigquery/BigQueryEmulator.java`
-- [x] T056 [US5] Register BigQuery emulator with API gateway on REST path `/bigquery/v2` in `localcloud-server/src/main/java/com/localcloud/LocalCloudApplication.java`
+- [x] T050 [P] [US5] Implement Dataset and Table PostgreSQL storage with schema JSON column and row storage using dynamic PostgreSQL tables in `localcloud-server/src/main/java/com/localcloud/emulators/bigquery/BigQueryStore.java` (via external emulator process managed by supervisord)
+- [x] T051 [P] [US5] Implement BigQueryJob PostgreSQL storage with state transitions (PENDING→RUNNING→DONE) in `localcloud-server/src/main/java/com/localcloud/emulators/bigquery/BigQueryStore.java` (via external emulator process managed by supervisord)
+- [x] T052 [US5] Implement BigQuery REST handlers for dataset CRUD (POST/GET/DELETE `/bigquery/v2/projects/{project}/datasets`) in `localcloud-server/src/main/java/com/localcloud/emulators/bigquery/BigQueryEmulator.java` (via external emulator process managed by supervisord)
+- [x] T053 [US5] Implement BigQuery REST handlers for table CRUD and row insert (`/bigquery/v2/projects/{project}/datasets/{dataset}/tables`) in `localcloud-server/src/main/java/com/localcloud/emulators/bigquery/BigQueryEmulator.java` (via external emulator process managed by supervisord)
+- [x] T054 [US5] Implement BigQuery SQL query execution via PostgreSQL: translate BigQuery SQL to PostgreSQL SQL, execute against dynamic tables, format results as BigQuery job response in `localcloud-server/src/main/java/com/localcloud/emulators/bigquery/SqlQueryEngine.java` (via external emulator process managed by supervisord)
+- [x] T055 [US5] Implement BigQuery job endpoints (POST create job, GET job status, GET query results) with async execution model in `localcloud-server/src/main/java/com/localcloud/emulators/bigquery/BigQueryEmulator.java` (via external emulator process managed by supervisord)
+- [x] T056 [US5] Register BigQuery emulator with API gateway on REST path `/bigquery/v2` in `localcloud-server/src/main/java/com/localcloud/LocalCloudApplication.java` (via external emulator process managed by supervisord)
 
 **Checkpoint**: Google Cloud BigQuery client library can create datasets/tables, insert data, and execute SQL queries against localhost:8080
 
@@ -183,7 +183,7 @@
 
 ### Implementation for User Story 6
 
-- [x] T057 [P] [US6] Implement Secret and SecretVersion H2 storage with version numbering and state management in `localcloud-server/src/main/java/com/localcloud/emulators/secretmanager/SecretManagerStore.java`
+- [x] T057 [P] [US6] Implement Secret and SecretVersion PostgreSQL storage with version numbering and state management in `localcloud-server/src/main/java/com/localcloud/emulators/secretmanager/SecretManagerStore.java`
 - [x] T058 [US6] Implement SecretManagerService gRPC service (CreateSecret, GetSecret, ListSecrets, DeleteSecret, AddSecretVersion, GetSecretVersion, ListSecretVersions, AccessSecretVersion, DisableSecretVersion, EnableSecretVersion, DestroySecretVersion) extending `SecretManagerServiceGrpc.SecretManagerServiceImplBase` in `localcloud-server/src/main/java/com/localcloud/emulators/secretmanager/SecretManagerEmulator.java`
 - [x] T059 [US6] Register Secret Manager gRPC service on gateway port 8080 (via Armeria gRPC transcoding) in `localcloud-server/src/main/java/com/localcloud/LocalCloudApplication.java`
 
@@ -199,7 +199,7 @@
 
 ### Implementation for User Story 7
 
-- [x] T060 [P] [US7] Implement Queue and Task in-memory stores with H2 persistence for queue configuration in `localcloud-server/src/main/java/com/localcloud/emulators/cloudtasks/CloudTasksStore.java`
+- [x] T060 [P] [US7] Implement Queue and Task in-memory stores with PostgreSQL persistence for queue configuration in `localcloud-server/src/main/java/com/localcloud/emulators/cloudtasks/CloudTasksStore.java`
 - [x] T061 [US7] Implement CloudTasks gRPC service (CreateQueue, GetQueue, ListQueues, DeleteQueue, PauseQueue, ResumeQueue, CreateTask, GetTask, ListTasks, DeleteTask, RunTask) extending `CloudTasksGrpc.CloudTasksImplBase` in `localcloud-server/src/main/java/com/localcloud/emulators/cloudtasks/CloudTasksEmulator.java`
 - [x] T062 [US7] Implement task dispatcher: scheduled executor that dispatches HTTP requests to task target URLs with retry logic (exponential backoff per queue config) in `localcloud-server/src/main/java/com/localcloud/emulators/cloudtasks/TaskDispatcher.java`
 - [x] T063 [US7] Register Cloud Tasks gRPC service on gateway port 8080 in `localcloud-server/src/main/java/com/localcloud/LocalCloudApplication.java`
@@ -218,10 +218,10 @@
 
 ### Implementation for User Story 8
 
-- [x] T064 [US8] Implement trigger registration: API to register local function URLs with trigger type (Pub/Sub topic, GCS bucket, HTTP) in `localcloud-server/src/main/java/com/localcloud/emulators/functions/TriggerRegistry.java`
-- [x] T065 [US8] Implement GCS→Pub/Sub event wiring: on object create/delete in GCS, publish notification to configured Pub/Sub topic via EventBus in `localcloud-server/src/main/java/com/localcloud/emulators/gcs/StorageEmulator.java`
-- [x] T066 [US8] Implement Pub/Sub→Function trigger: when message published to a trigger topic, dispatch HTTP POST to registered function URL in `localcloud-server/src/main/java/com/localcloud/emulators/functions/FunctionTriggerService.java`
-- [x] T067 [US8] Implement admin endpoints for trigger management (POST/GET/DELETE `/_localcloud/triggers`) in `localcloud-server/src/main/java/com/localcloud/admin/AdminApiService.java`
+- [ ] T064 [US8] Implement trigger registration: API to register local function URLs with trigger type (Pub/Sub topic, GCS bucket, HTTP) in `localcloud-server/src/main/java/com/localcloud/emulators/functions/TriggerRegistry.java` (DEFERRED: Cloud Run emulator implemented as Docker-based container orchestrator; trigger wiring not yet implemented)
+- [ ] T065 [US8] Implement GCS→Pub/Sub event wiring: on object create/delete in GCS, publish notification to configured Pub/Sub topic via EventBus in `localcloud-server/src/main/java/com/localcloud/emulators/gcs/StorageEmulator.java` (DEFERRED: trigger wiring not yet implemented)
+- [ ] T066 [US8] Implement Pub/Sub→Function trigger: when message published to a trigger topic, dispatch HTTP POST to registered function URL in `localcloud-server/src/main/java/com/localcloud/emulators/functions/FunctionTriggerService.java` (DEFERRED: trigger wiring not yet implemented)
+- [ ] T067 [US8] Implement admin endpoints for trigger management (POST/GET/DELETE `/_localcloud/triggers`) in `localcloud-server/src/main/java/com/localcloud/admin/AdminApiService.java` (DEFERRED: trigger wiring not yet implemented)
 
 **Checkpoint**: GCS upload triggers Pub/Sub notification which invokes registered Cloud Function endpoint end-to-end
 
@@ -235,12 +235,12 @@
 
 ### Implementation for User Story 10
 
-- [x] T068 [P] [US10] Implement SpannerInstance and SpannerDatabase H2 storage with DDL tracking (inline in SpannerEmulator) in `localcloud-server/src/main/java/com/localcloud/emulators/spanner/SpannerEmulator.java`
-- [x] T069 [P] [US10] Implement BigtableTable and BigtableCell H2 storage with row key indexing (inline in BigtableEmulator) in `localcloud-server/src/main/java/com/localcloud/emulators/bigtable/BigtableEmulator.java`
-- [x] T070 [US10] Implement Spanner gRPC services: InstanceAdmin (CreateInstance, GetInstance, ListInstances, DeleteInstance), DatabaseAdmin (CreateDatabase, GetDatabase, ListDatabases, DropDatabase, UpdateDatabaseDdl, GetDatabaseDdl), Spanner (CreateSession, ExecuteSql, Read, BeginTransaction, Commit, Rollback) in `localcloud-server/src/main/java/com/localcloud/emulators/spanner/SpannerEmulator.java`
-- [x] T071 [US10] Implement Spanner DDL execution: translate CREATE TABLE/ALTER TABLE/DROP TABLE to H2 DDL scoped by database (inline in SpannerEmulator) in `localcloud-server/src/main/java/com/localcloud/emulators/spanner/SpannerEmulator.java`
-- [x] T072 [US10] Implement Bigtable gRPC services: BigtableTableAdmin (CreateTable, GetTable, ListTables, DeleteTable, ModifyColumnFamilies), Bigtable (ReadRows, MutateRow, MutateRows, CheckAndMutateRow, ReadModifyWriteRow, SampleRowKeys) in `localcloud-server/src/main/java/com/localcloud/emulators/bigtable/BigtableEmulator.java`
-- [x] T073 [US10] Register Spanner gRPC service on dedicated port 9030 and Bigtable gRPC service on dedicated port 9040 in `localcloud-server/src/main/java/com/localcloud/LocalCloudApplication.java`
+- [x] T068 [P] [US10] Implement SpannerInstance and SpannerDatabase PostgreSQL storage with DDL tracking (inline in SpannerEmulator) in `localcloud-server/src/main/java/com/localcloud/emulators/spanner/SpannerEmulator.java` (via external emulator process managed by supervisord)
+- [x] T069 [P] [US10] Implement BigtableTable and BigtableCell PostgreSQL storage with row key indexing (inline in BigtableEmulator) in `localcloud-server/src/main/java/com/localcloud/emulators/bigtable/BigtableEmulator.java` (via external emulator process managed by supervisord)
+- [x] T070 [US10] Implement Spanner gRPC services: InstanceAdmin (CreateInstance, GetInstance, ListInstances, DeleteInstance), DatabaseAdmin (CreateDatabase, GetDatabase, ListDatabases, DropDatabase, UpdateDatabaseDdl, GetDatabaseDdl), Spanner (CreateSession, ExecuteSql, Read, BeginTransaction, Commit, Rollback) in `localcloud-server/src/main/java/com/localcloud/emulators/spanner/SpannerEmulator.java` (via external emulator process managed by supervisord)
+- [x] T071 [US10] Implement Spanner DDL execution: translate CREATE TABLE/ALTER TABLE/DROP TABLE to PostgreSQL DDL scoped by database (inline in SpannerEmulator) in `localcloud-server/src/main/java/com/localcloud/emulators/spanner/SpannerEmulator.java` (via external emulator process managed by supervisord)
+- [x] T072 [US10] Implement Bigtable gRPC services: BigtableTableAdmin (CreateTable, GetTable, ListTables, DeleteTable, ModifyColumnFamilies), Bigtable (ReadRows, MutateRow, MutateRows, CheckAndMutateRow, ReadModifyWriteRow, SampleRowKeys) in `localcloud-server/src/main/java/com/localcloud/emulators/bigtable/BigtableEmulator.java` (via external emulator process managed by supervisord)
+- [x] T073 [US10] Register Spanner gRPC service on dedicated port 9030 and Bigtable gRPC service on dedicated port 9040 in `localcloud-server/src/main/java/com/localcloud/LocalCloudApplication.java` (via external emulator process managed by supervisord)
 
 **Checkpoint**: Spanner and Bigtable client libraries work against localhost:9030 and localhost:9040 respectively
 
@@ -254,8 +254,8 @@
 
 ### Implementation for User Story 11
 
-- [x] T074 [P] [US11] Implement LogEntry H2 storage with severity filtering and listing (inline in LoggingEmulator) in `localcloud-server/src/main/java/com/localcloud/emulators/logging/LoggingEmulator.java`
-- [x] T075 [P] [US11] Implement TimeSeries and MetricPoint H2 storage with time-range queries (inline in MonitoringEmulator) in `localcloud-server/src/main/java/com/localcloud/emulators/monitoring/MonitoringEmulator.java`
+- [x] T074 [P] [US11] Implement LogEntry PostgreSQL storage with severity filtering and listing (inline in LoggingEmulator) in `localcloud-server/src/main/java/com/localcloud/emulators/logging/LoggingEmulator.java`
+- [x] T075 [P] [US11] Implement TimeSeries and MetricPoint PostgreSQL storage with time-range queries (inline in MonitoringEmulator) in `localcloud-server/src/main/java/com/localcloud/emulators/monitoring/MonitoringEmulator.java`
 - [x] T076 [US11] Implement Cloud Logging gRPC service (WriteLogEntries, ListLogEntries, ListLogs) extending `LoggingServiceV2Grpc.LoggingServiceV2ImplBase` in `localcloud-server/src/main/java/com/localcloud/emulators/logging/LoggingEmulator.java`
 - [x] T077 [US11] Implement Cloud Monitoring gRPC service (CreateTimeSeries, ListTimeSeries, GetMetricDescriptor, ListMetricDescriptors, CreateMetricDescriptor) extending `MetricServiceGrpc.MetricServiceImplBase` in `localcloud-server/src/main/java/com/localcloud/emulators/monitoring/MonitoringEmulator.java`
 - [x] T078 [US11] Implement IAM permissive mode middleware: accept all requests regardless of credentials, log auth bypass in `localcloud-server/src/main/java/com/localcloud/gateway/IamMiddleware.java`
@@ -276,6 +276,7 @@
 - [x] T082 [P] Implement request log query endpoint at `GET /_localcloud/requests` with filters (service, since, limit) in `localcloud-server/src/main/java/com/localcloud/admin/AdminApiService.java`
 - [x] T083 Create lightweight web dashboard SPA (HTML/JS/CSS) with service status panel, request log viewer, and data browser in `localcloud-server/src/main/resources/dashboard/index.html`, `app.js`, `style.css`
 - [x] T084 Serve dashboard static files from Armeria at `/_localcloud/dashboard/` in `localcloud-server/src/main/java/com/localcloud/LocalCloudApplication.java`
+- [x] T112 Implement `localcloud console` CLI command launching Flask backend + Solid.js frontend on port 9090 in `localcloud-cli/src/localcloud/commands/console.py` and `localcloud-console/`
 
 ### Seed & Reset
 
@@ -298,6 +299,35 @@
 - [ ] T095 Validate quickstart.md scenarios work end-to-end: install CLI, start platform, run Python SDK example, run Java SDK example, use Docker Compose
 - [ ] T096 Verify all 10 services start within 60 seconds and consume under 2GB memory total
 - [ ] T097 Verify state persistence: create resources, restart container, verify resources still exist
+
+### Edge Cases
+
+- [ ] T102 Handle port conflict detection: check if gateway port is already in use before starting and provide clear error message
+- [ ] T103 Handle unsupported service requests: return helpful error response for GCP API paths that are not yet emulated
+- [ ] T104 Handle disk space exhaustion: detect low disk space during storage operations and return appropriate error
+- [ ] T105 Handle concurrent requests to same resource: ensure thread-safe access to shared state across emulators
+- [ ] T106 Handle platform version upgrades: support data migration when persistent data exists from older version
+- [ ] T107 Handle malformed API requests: validate request format and return GCP-compatible error responses
+
+### Non-Functional Requirement Validation
+
+- [ ] T108 Validate startup time: measure and verify all configured services start within 60 seconds (SC-001)
+- [ ] T109 Validate memory usage: verify platform consumes under 2GB with all services running (SC-007)
+- [ ] T110 Validate concurrent request handling: load test with 100 concurrent requests and verify <500ms p95 (SC-009)
+- [ ] T111 Validate cross-service event latency: verify events delivered within 5 seconds (SC-008)
+
+---
+
+## Phase 15: Infrastructure Emulators (GKE, Compute Engine, Cloud Run)
+
+**Purpose**: Emulate GCP infrastructure services using real Docker containers and k3d clusters
+
+- [x] T098 [P] Implement Compute Engine REST emulator with Docker-backed VM instances (create, start, stop, delete) in `localcloud-server/src/main/java/com/localcloud/emulators/compute/ComputeEmulator.java`, `ComputeRestService.java`, `ComputeStore.java`
+- [x] T099 [P] Implement Cloud Run gRPC emulator with Docker-backed service deployment and revision tracking in `localcloud-server/src/main/java/com/localcloud/emulators/cloudrun/CloudRunEmulator.java`, `CloudRunStore.java`
+- [x] T100 [P] Implement GKE gRPC emulator with k3d-backed Kubernetes clusters (create, get, list, delete) in `localcloud-server/src/main/java/com/localcloud/emulators/gke/GkeEmulator.java`, `GkeStore.java`, `K3dManager.java`
+- [x] T101 Register Compute Engine REST service on gateway path `/compute/v1`, Cloud Run and GKE gRPC services on gateway port 8080 in `LocalCloudApplication.java`
+
+**Checkpoint**: Compute Engine creates Docker containers, Cloud Run deploys services, GKE creates k3d clusters
 
 ---
 
@@ -408,4 +438,4 @@ With multiple developers:
 - Each user story is independently completable and testable
 - Commit after each task or logical group
 - Stop at any checkpoint to validate story independently
-- Total: 97 tasks across 14 phases covering 11 user stories
+- Total: 111 tasks across 15 phases covering 11 user stories + infrastructure emulators

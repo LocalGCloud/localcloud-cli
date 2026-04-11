@@ -1,6 +1,7 @@
 package com.localcloud.config;
 
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -14,6 +15,7 @@ public class LocalCloudConfig {
     private List<String> enabledServices;
     private int gatewayPort;
     private String iamMode;
+    private String iamPolicyFile;
     private String logVerbosity;
     private boolean persistenceEnabled;
     private String postgresHost;
@@ -21,6 +23,7 @@ public class LocalCloudConfig {
     private String postgresDatabase;
     private String postgresUser;
     private String postgresPassword;
+    private ServiceRegistry serviceRegistry;
 
     private LocalCloudConfig() {
     }
@@ -35,12 +38,19 @@ public class LocalCloudConfig {
         config.dataDir = Path.of(env("LOCALCLOUD_DATA_DIR", "/var/lib/localcloud"));
         config.gatewayPort = intEnv("LOCALCLOUD_PORT", 8080);
         config.iamMode = env("LOCALCLOUD_IAM_MODE", "permissive");
+        config.iamPolicyFile = env("LOCALCLOUD_IAM_POLICY_FILE", "");
         config.logVerbosity = env("LOCALCLOUD_LOG_VERBOSITY", "info");
         config.persistenceEnabled = Boolean.parseBoolean(env("LOCALCLOUD_PERSISTENCE", "true"));
 
+        // Load service registry from services.yaml
+        config.serviceRegistry = ServiceRegistry.load(config.gatewayPort);
+
         String services = env("LOCALCLOUD_SERVICES",
-                "gcs,pubsub,firestore,bigquery,secretmanager,cloudtasks,spanner,bigtable,logging,monitoring");
-        config.enabledServices = List.of(services.split(","));
+                String.join(",", config.serviceRegistry.getDefaultEnabledNames()));
+        config.enabledServices = Arrays.stream(services.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
 
         config.postgresHost = env("LOCALCLOUD_PG_HOST", "localhost");
         config.postgresPort = intEnv("LOCALCLOUD_PG_PORT", 5432);
@@ -90,6 +100,10 @@ public class LocalCloudConfig {
         return iamMode;
     }
 
+    public String getIamPolicyFile() {
+        return iamPolicyFile;
+    }
+
     public String getLogVerbosity() {
         return logVerbosity;
     }
@@ -120,5 +134,9 @@ public class LocalCloudConfig {
 
     public String getPostgresPassword() {
         return postgresPassword;
+    }
+
+    public ServiceRegistry getServiceRegistry() {
+        return serviceRegistry;
     }
 }

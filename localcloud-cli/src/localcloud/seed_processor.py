@@ -16,6 +16,7 @@ SUPPORTED_SECTIONS = frozenset({
     "cloudtasks",
     "spanner",
     "bigtable",
+    "memorystore",
 })
 
 

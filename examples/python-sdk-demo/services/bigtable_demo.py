@@ -10,7 +10,7 @@ from google.cloud.bigtable import column_family
 from google.cloud.bigtable import row_filters
 
 
-def run(project_id: str) -> list[tuple[str, bool, str]]:
+def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
     """Run Bigtable demo operations. Returns list of (operation, success, detail)."""
     results = []
 
@@ -150,10 +150,13 @@ def run(project_id: str) -> list[tuple[str, bool, str]]:
         results.append(("List tables", False, str(e)))
 
     # 11. Delete table
-    try:
-        table.delete()
-        results.append(("Delete table", True, table_id))
-    except Exception as e:
-        results.append(("Delete table", False, str(e)))
+    if not keep_data:
+        try:
+            table.delete()
+            results.append(("Delete table", True, table_id))
+        except Exception as e:
+            results.append(("Delete table", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     return results

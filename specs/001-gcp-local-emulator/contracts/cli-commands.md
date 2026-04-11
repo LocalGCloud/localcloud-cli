@@ -124,6 +124,27 @@ Options:
   --name TEXT     Container name (default: localcloud-main)
 ```
 
+### `localcloud console`
+
+Open the LocalCloud web console.
+
+```
+localcloud console [OPTIONS]
+
+Options:
+  -p, --port INTEGER   Console server port (default: 9090)
+  --open / --no-open   Open browser automatically (default: --open)
+  --name TEXT          Container name (default: localcloud-main)
+```
+
+**Output**:
+```
+LocalCloud Console starting on http://localhost:9090
+Opening browser...
+```
+
+**Note**: The console is a separate Solid.js SPA with Flask backend that proxies API calls to the running LocalCloud container. The container must be running (`localcloud start`) before launching the console.
+
 ## Global Options
 
 ```

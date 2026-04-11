@@ -74,9 +74,13 @@ public class ComputeRestService {
                 containerId = "simulated-" + name;
             }
 
+            // Generate a pseudo-unique IP in the 10.128.0.0/20 range
+            int ipSuffix = (name.hashCode() & 0xFF) + 2; // 2-257
+            String networkIp = "10.128.0." + Math.min(ipSuffix, 254);
+
             var instance = new ComputeStore.Instance(
                     project, zone, name, machineType, "RUNNING",
-                    containerId, containerImage, "10.128.0.2",
+                    containerId, containerImage, networkIp,
                     reqBody.has("metadata") ? reqBody.get("metadata").toString() : "{}",
                     null);
             store.insertInstance(instance);
@@ -190,7 +194,7 @@ public class ComputeRestService {
     private ObjectNode instanceToJson(ComputeStore.Instance inst) {
         ObjectNode json = mapper.createObjectNode();
         json.put("kind", "compute#instance");
-        json.put("id", Math.abs(inst.instanceName().hashCode()));
+        json.put("id", inst.instanceName().hashCode() & 0x7FFFFFFF);
         json.put("name", inst.instanceName());
         json.put("zone", "projects/" + inst.projectId() + "/zones/" + inst.zone());
         json.put("machineType", "projects/" + inst.projectId() + "/zones/" + inst.zone() + "/machineTypes/" + inst.machineType());

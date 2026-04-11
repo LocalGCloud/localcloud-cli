@@ -24,7 +24,7 @@ def _make_client() -> tasks_v2.CloudTasksClient:
     return tasks_v2.CloudTasksClient(transport=transport)
 
 
-def run(project_id: str) -> list[tuple[str, bool, str]]:
+def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
     """Run Cloud Tasks demo operations. Returns list of (operation, success, detail)."""
     results = []
     client = _make_client()
@@ -158,10 +158,13 @@ def run(project_id: str) -> list[tuple[str, bool, str]]:
         results.append(("Scheduled task with headers", False, str(e)))
 
     # 12. Delete queue
-    try:
-        client.delete_queue(request={"name": queue_name})
-        results.append(("Delete queue", True, queue_id))
-    except Exception as e:
-        results.append(("Delete queue", False, str(e)))
+    if not keep_data:
+        try:
+            client.delete_queue(request={"name": queue_name})
+            results.append(("Delete queue", True, queue_id))
+        except Exception as e:
+            results.append(("Delete queue", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     return results

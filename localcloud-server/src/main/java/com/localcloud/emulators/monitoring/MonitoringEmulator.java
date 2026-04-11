@@ -5,8 +5,15 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.UUID;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.google.api.MetricDescriptor;
 import com.google.monitoring.v3.*;
@@ -21,6 +28,7 @@ public class MonitoringEmulator extends AbstractEmulator {
 
     private final PostgresDataSource dataSource;
     private final MonitoringService monitoringService;
+    private final ObjectMapper mapper = new ObjectMapper();
 
     public MonitoringEmulator(PostgresDataSource dataSource) {
         super("monitoring", "Cloud Monitoring", 8080, "grpc", "MONITORING_EMULATOR_HOST");
@@ -39,8 +47,8 @@ public class MonitoringEmulator extends AbstractEmulator {
     @Override
     protected void doReset() {
         try (Connection conn = dataSource.getConnection(); Statement stmt = conn.createStatement()) {
-            stmt.execute("DELETE FROM time_series");
             stmt.execute("DELETE FROM metric_points");
+            stmt.execute("DELETE FROM time_series");
         } catch (SQLException e) {
             logger.error("Failed to reset Monitoring data", e);
         }
@@ -54,32 +62,41 @@ public class MonitoringEmulator extends AbstractEmulator {
         public void createTimeSeries(CreateTimeSeriesRequest request, StreamObserver<Empty> responseObserver) {
             incrementRequestCount();
             try (Connection conn = dataSource.getConnection()) {
+                // Extract project_id from request name (format: projects/{project})
+                String projectId = "";
+                String reqName = request.getName();
+                if (reqName != null && reqName.startsWith("projects/")) {
+                    projectId = reqName.split("/")[1];
+                }
+
                 for (TimeSeries ts : request.getTimeSeriesList()) {
                     String metricType = ts.getMetric().getType();
-                    String metricLabels = ts.getMetric().getLabelsMap().toString();
+                    String metricLabels = mapper.writeValueAsString(new TreeMap<>(ts.getMetric().getLabelsMap()));
                     String resourceType = ts.hasResource() ? ts.getResource().getType() : "";
-                    String resourceLabels = ts.hasResource() ? ts.getResource().getLabelsMap().toString() : "{}";
+                    String resourceLabels = ts.hasResource() ? mapper.writeValueAsString(new TreeMap<>(ts.getResource().getLabelsMap())) : "{}";
 
                     // Upsert time_series
                     String seriesId;
                     try (PreparedStatement ps = conn.prepareStatement(
-                            "SELECT id FROM time_series WHERE metric_type=? AND metric_labels=? AND resource_type=?")) {
-                        ps.setString(1, metricType);
-                        ps.setString(2, metricLabels);
-                        ps.setString(3, resourceType);
+                            "SELECT id FROM time_series WHERE project_id=? AND metric_type=? AND metric_labels=? AND resource_type=?")) {
+                        ps.setString(1, projectId);
+                        ps.setString(2, metricType);
+                        ps.setString(3, metricLabels);
+                        ps.setString(4, resourceType);
                         java.sql.ResultSet rs = ps.executeQuery();
                         if (rs.next()) {
                             seriesId = rs.getString("id");
                         } else {
                             seriesId = UUID.randomUUID().toString();
                             try (PreparedStatement insert = conn.prepareStatement(
-                                    "INSERT INTO time_series(id, project_name, metric_type, metric_labels, resource_type, resource_labels) VALUES(?,?,?,?,?,?)")) {
+                                    "INSERT INTO time_series(id, project_id, project_name, metric_type, metric_labels, resource_type, resource_labels) VALUES(?,?,?,?,?,?,?)")) {
                                 insert.setString(1, seriesId);
-                                insert.setString(2, request.getName());
-                                insert.setString(3, metricType);
-                                insert.setString(4, metricLabels);
-                                insert.setString(5, resourceType);
-                                insert.setString(6, resourceLabels);
+                                insert.setString(2, projectId);
+                                insert.setString(3, request.getName());
+                                insert.setString(4, metricType);
+                                insert.setString(5, metricLabels);
+                                insert.setString(6, resourceType);
+                                insert.setString(7, resourceLabels);
                                 insert.executeUpdate();
                             }
                         }
@@ -123,7 +140,7 @@ public class MonitoringEmulator extends AbstractEmulator {
                 }
                 responseObserver.onNext(Empty.getDefaultInstance());
                 responseObserver.onCompleted();
-            } catch (SQLException e) {
+            } catch (SQLException | JsonProcessingException e) {
                 logger.error("createTimeSeries failed", e);
                 responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
             }
@@ -138,14 +155,26 @@ public class MonitoringEmulator extends AbstractEmulator {
                     "FROM time_series ts LEFT JOIN metric_points mp ON ts.id = mp.series_id WHERE 1=1");
                 List<Object> params = new ArrayList<>();
 
+                // Filter by project_id from request name (format: projects/{project})
+                String reqName = request.getName();
+                if (reqName != null && reqName.startsWith("projects/")) {
+                    String projectId = reqName.split("/")[1];
+                    sql.append(" AND ts.project_id=?");
+                    params.add(projectId);
+                }
+
                 String filter = request.getFilter();
-                if (filter != null && !filter.isEmpty()) {
-                    // Simple filter: metric.type = "xxx"
-                    if (filter.contains("metric.type")) {
-                        String metricType = filter.split("\"")[1];
-                        sql.append(" AND ts.metric_type=?");
-                        params.add(metricType);
+                String metricType = null;
+                if (filter != null && !filter.isEmpty() && filter.contains("metric.type")) {
+                    // Handle both quoted and unquoted: metric.type = "foo" or metric.type = foo
+                    String value = filter.replaceAll(".*metric\\.type\\s*=\\s*\"?", "").replaceAll("\".*", "").trim();
+                    if (!value.isEmpty()) {
+                        metricType = value;
                     }
+                }
+                if (metricType != null) {
+                    sql.append(" AND ts.metric_type=?");
+                    params.add(metricType);
                 }
 
                 if (request.hasInterval()) {
@@ -167,25 +196,41 @@ public class MonitoringEmulator extends AbstractEmulator {
                     }
                     java.sql.ResultSet rs = ps.executeQuery();
                     ListTimeSeriesResponse.Builder resp = ListTimeSeriesResponse.newBuilder();
-                    // Simplified: each row becomes a time series with one point
+                    // Group points by series_id so each TimeSeries contains all its points
+                    Map<String, TimeSeries.Builder> seriesMap = new LinkedHashMap<>();
                     while (rs.next()) {
-                        com.google.api.Metric.Builder metricBuilder = com.google.api.Metric.newBuilder()
-                                .setType(rs.getString("metric_type"));
-                        // Restore metric labels from stored string (format: {key=value, key2=value2})
-                        String labelsStr = rs.getString("metric_labels");
-                        if (labelsStr != null && labelsStr.length() > 2) {
-                            String inner = labelsStr.substring(1, labelsStr.length() - 1); // strip { }
-                            if (!inner.isEmpty()) {
-                                for (String pair : inner.split(", ")) {
-                                    int eq = pair.indexOf('=');
-                                    if (eq > 0) {
-                                        metricBuilder.putLabels(pair.substring(0, eq), pair.substring(eq + 1));
-                                    }
-                                }
+                        String seriesId = rs.getString("id");
+                        TimeSeries.Builder tsBuilder = seriesMap.get(seriesId);
+                        if (tsBuilder == null) {
+                            com.google.api.Metric.Builder metricBuilder = com.google.api.Metric.newBuilder()
+                                    .setType(rs.getString("metric_type"));
+                            // Restore metric labels from stored JSON
+                            String labelsStr = rs.getString("metric_labels");
+                            if (labelsStr != null && !labelsStr.isEmpty()) {
+                                try {
+                                    Map<String, String> labels = mapper.readValue(labelsStr, new TypeReference<Map<String, String>>() {});
+                                    metricBuilder.putAllLabels(labels);
+                                } catch (JsonProcessingException ignored) {}
                             }
+                            // Restore resource from stored JSON
+                            com.google.api.MonitoredResource.Builder resourceBuilder = com.google.api.MonitoredResource.newBuilder();
+                            String resType = rs.getString("resource_type");
+                            if (resType != null && !resType.isEmpty()) {
+                                resourceBuilder.setType(resType);
+                            }
+                            String resLabelsStr = rs.getString("resource_labels");
+                            if (resLabelsStr != null && !resLabelsStr.isEmpty()) {
+                                try {
+                                    Map<String, String> resLabels = mapper.readValue(resLabelsStr, new TypeReference<Map<String, String>>() {});
+                                    resourceBuilder.putAllLabels(resLabels);
+                                } catch (JsonProcessingException ignored) {}
+                            }
+                            tsBuilder = TimeSeries.newBuilder()
+                                    .setMetric(metricBuilder.build())
+                                    .setResource(resourceBuilder.build());
+                            seriesMap.put(seriesId, tsBuilder);
                         }
-                        TimeSeries.Builder tsBuilder = TimeSeries.newBuilder()
-                                .setMetric(metricBuilder.build());
+                        // Add the point to the existing builder
                         String valueType = rs.getString("value_type");
                         TypedValue.Builder val = TypedValue.newBuilder();
                         if ("INT64".equals(valueType)) {
@@ -200,7 +245,10 @@ public class MonitoringEmulator extends AbstractEmulator {
                                         .build())
                                 .setValue(val.build())
                                 .build());
-                        resp.addTimeSeries(tsBuilder.build());
+                    }
+                    // Convert all builders to TimeSeries protos
+                    for (TimeSeries.Builder builder : seriesMap.values()) {
+                        resp.addTimeSeries(builder.build());
                     }
                     responseObserver.onNext(resp.build());
                     responseObserver.onCompleted();

@@ -96,8 +96,14 @@ public abstract class AbstractEmulator implements EmulatorBase {
     public void start() throws Exception {
         if (running.compareAndSet(false, true)) {
             logger.info("{} emulator starting on port {}", displayName, port);
-            doStart();
-            logger.info("{} emulator started", displayName);
+            try {
+                doStart();
+                logger.info("{} emulator started", displayName);
+            } catch (Exception e) {
+                running.set(false);
+                logger.error("{} emulator failed to start: {}", displayName, e.getMessage());
+                throw e;
+            }
         } else {
             logger.warn("{} emulator is already running", displayName);
         }

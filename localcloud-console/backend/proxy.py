@@ -1,4 +1,4 @@
-"""Proxy requests to LocalCloud backend."""
+"""Proxy requests to LocalCloud Admin API and emulator endpoints."""
 
 import logging
 import requests
@@ -8,104 +8,162 @@ logger = logging.getLogger(__name__)
 
 
 class BackendProxy:
-    """Make requests to LocalCloud Java backend."""
+    """Proxy to LocalCloud Admin API and emulator-specific endpoints."""
 
-    def __init__(self, host: str = "localhost", port: int = 8080) -> None:
-        """Initialize backend proxy.
-
-        Args:
-            host: Hostname of the backend server
-            port: Port number of the backend server
-        """
-        self.base_url = f"http://{host}:{port}"
+    def __init__(self, gateway_url: str = "http://localhost:8080",
+                 gcs_url: str = "http://localhost:4443") -> None:
+        self.gateway_url = gateway_url
+        self.gcs_url = gcs_url
         self.timeout = 5.0
 
-    def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Make GET request to backend.
-
-        Args:
-            path: API endpoint path
-            params: Optional query parameters
-
-        Returns:
-            JSON response from backend or error dict
-        """
+    def _get(self, url: str, params: Optional[Dict] = None, verify_ssl: bool = True) -> Dict[str, Any]:
         try:
-            resp = requests.get(
-                f"{self.base_url}{path}",
-                params=params,
-                timeout=self.timeout
-            )
+            resp = requests.get(url, params=params, timeout=self.timeout, verify=verify_ssl)
             resp.raise_for_status()
             return resp.json()
         except requests.Timeout:
-            logger.error(f"Request timeout to {path}")
-            return {"error": "Backend request timed out"}
-        except requests.ConnectionError as e:
-            logger.error(f"Connection error to backend: {e}")
+            return {"error": "Request timed out"}
+        except requests.ConnectionError:
             return {"error": "Failed to connect to backend"}
         except requests.RequestException as e:
-            logger.error(f"Request error: {e}")
-            return {"error": "Backend error"}
-        except Exception as e:
-            logger.error(f"Unexpected error in _get: {e}", exc_info=True)
-            return {"error": "An unexpected error occurred"}
+            return {"error": str(e)}
 
-    def get_status(self) -> Dict[str, Any]:
-        """Get system status from /_localcloud/health.
+    def _post(self, url: str, data: Any = None, headers: Optional[Dict] = None) -> Dict[str, Any]:
+        try:
+            resp = requests.post(url, data=data, headers=headers, timeout=self.timeout)
+            resp.raise_for_status()
+            return resp.json() if resp.content else {"success": True}
+        except requests.Timeout:
+            return {"error": "Request timed out"}
+        except requests.ConnectionError:
+            return {"error": "Failed to connect to backend"}
+        except requests.RequestException as e:
+            return {"error": str(e)}
 
-        Returns:
-            Status dict with services and health information
-        """
-        return self._get("/_localcloud/health")
+    # --- Admin API ---
+
+    def get_health(self) -> Dict[str, Any]:
+        return self._get(f"{self.gateway_url}/_localcloud/health")
 
     def get_services(self) -> Dict[str, Any]:
-        """Get service list from /_localcloud/health.
+        return self._get(f"{self.gateway_url}/_localcloud/services")
 
-        Returns:
-            Dict with services array
-        """
-        data = self._get("/_localcloud/health")
-        return {"services": data.get("services", [])}
+    def get_requests(self) -> Dict[str, Any]:
+        return self._get(f"{self.gateway_url}/_localcloud/requests")
 
-    def get_service(self, service_name: str) -> Dict[str, Any]:
-        """Get single service from service list.
+    def get_env(self, fmt: str = "json", project: str = None) -> Dict[str, Any]:
+        params = {"format": fmt}
+        if project:
+            params["project"] = project
+        return self._get(f"{self.gateway_url}/_localcloud/env", params=params)
 
-        Args:
-            service_name: Name of the service to retrieve
+    def reset(self, project: str = None) -> Dict[str, Any]:
+        url = f"{self.gateway_url}/_localcloud/reset"
+        if project:
+            url += f"?project={project}"
+        return self._post(url)
 
-        Returns:
-            Service details or error dict
-        """
-        data = self.get_services()
-        for svc in data.get("services", []):
-            if svc.get("name") == service_name:
-                return svc
-        return {"error": f"Service {service_name} not found"}
+    # --- Projects ---
 
-    def get_firestore_collections(self) -> Dict[str, Any]:
-        """Get Firestore collections.
+    def list_projects(self) -> Dict[str, Any]:
+        return self._get(f"{self.gateway_url}/_localcloud/projects")
 
-        Returns:
-            Dict with collections array (currently empty pending API implementation)
-        """
-        # TODO: Implement via Firestore API
-        return {"collections": []}
+    def create_project(self, data: str) -> Dict[str, Any]:
+        return self._post(f"{self.gateway_url}/_localcloud/projects",
+                          data=data, headers={"Content-Type": "application/json"})
 
-    def get_bigquery_datasets(self) -> Dict[str, Any]:
-        """Get BigQuery datasets.
+    def delete_project(self, project_id: str) -> Dict[str, Any]:
+        try:
+            resp = requests.delete(f"{self.gateway_url}/_localcloud/projects/{project_id}",
+                                   timeout=self.timeout)
+            resp.raise_for_status()
+            return resp.json() if resp.content else {"success": True}
+        except requests.RequestException as e:
+            return {"error": str(e)}
 
-        Returns:
-            Dict with datasets array (currently empty pending API implementation)
-        """
-        # TODO: Implement via BigQuery API
-        return {"datasets": []}
+    def seed(self, yaml_data: str) -> Dict[str, Any]:
+        return self._post(f"{self.gateway_url}/_localcloud/seed",
+                          data=yaml_data, headers={"Content-Type": "application/yaml"})
 
-    def get_gcs_buckets(self) -> Dict[str, Any]:
-        """Get GCS buckets.
+    # --- Data Browse (direct emulator APIs) ---
 
-        Returns:
-            Dict with buckets array (currently empty pending API implementation)
-        """
-        # TODO: Implement via GCS API
-        return {"buckets": []}
+    def browse_gcs(self, project: str = "local-project") -> Dict[str, Any]:
+        data = self._get(f"{self.gateway_url}/_localcloud/browse/gcs")
+        if "error" in data:
+            return data
+        # The gateway browse endpoint returns raw GCS API format
+        items = data.get("items", [])
+        if items:
+            return {"buckets": [{"name": b["name"], "timeCreated": b.get("timeCreated", ""),
+                                 "location": b.get("location", "")} for b in items]}
+        return data
+
+    def browse_gcs_objects(self, bucket: str) -> Dict[str, Any]:
+        data = self._get(f"{self.gateway_url}/_localcloud/browse/gcs/buckets/{bucket}")
+        if "error" in data:
+            return data
+        items = data.get("items", [])
+        if items:
+            return {"objects": [{"name": o["name"], "size": o.get("size", "0"),
+                                 "contentType": o.get("contentType", ""),
+                                 "updated": o.get("updated", "")} for o in items]}
+        return data
+
+    def browse_pubsub_topics(self) -> Dict[str, Any]:
+        return self._get(f"{self.gateway_url}/_localcloud/browse/pubsub")
+
+    def browse_pubsub_subscriptions(self) -> Dict[str, Any]:
+        return self._get(f"{self.gateway_url}/_localcloud/browse/pubsub/subscriptions")
+
+    def browse_secrets(self) -> Dict[str, Any]:
+        return self._get(f"{self.gateway_url}/_localcloud/browse/secretmanager")
+
+    def browse_cloudtasks_queues(self) -> Dict[str, Any]:
+        return self._get(f"{self.gateway_url}/_localcloud/browse/cloudtasks")
+
+    def browse_logging(self) -> Dict[str, Any]:
+        return self._get(f"{self.gateway_url}/_localcloud/browse/logging")
+
+    def browse_monitoring(self) -> Dict[str, Any]:
+        return self._get(f"{self.gateway_url}/_localcloud/browse/monitoring")
+
+    def browse_bigquery(self) -> Dict[str, Any]:
+        return self._get(f"{self.gateway_url}/_localcloud/browse/bigquery")
+
+    def browse_generic(self, service: str, path: str = "") -> Dict[str, Any]:
+        url = f"{self.gateway_url}/_localcloud/browse/{service}"
+        if path:
+            url += f"/{path}"
+        return self._get(url)
+
+    # --- Data Mutation ---
+
+    def _post_json(self, url: str, data: Any = None) -> Dict[str, Any]:
+        try:
+            resp = requests.post(url, json=data, timeout=self.timeout)
+            resp.raise_for_status()
+            return resp.json() if resp.content else {"success": True}
+        except requests.Timeout:
+            return {"error": "Request timed out"}
+        except requests.ConnectionError:
+            return {"error": "Failed to connect to backend"}
+        except requests.RequestException as e:
+            return {"error": str(e)}
+
+    def mutate(self, service: str, path: str = "", data: Any = None) -> Dict[str, Any]:
+        url = f"{self.gateway_url}/_localcloud/mutate/{service}"
+        if path:
+            url += f"/{path}"
+        return self._post_json(url, data)
+
+    def reset_service(self, service: str, data: Any = None) -> Dict[str, Any]:
+        return self._post_json(f"{self.gateway_url}/_localcloud/reset/{service}", data)
+
+    def export_state(self) -> str:
+        try:
+            resp = requests.get(f"{self.gateway_url}/_localcloud/export", timeout=10.0)
+            resp.raise_for_status()
+            return resp.text
+        except requests.RequestException as e:
+            logger.warning("Export failed: %s", e)
+            return ""

@@ -1,3 +1,4 @@
+# Port mappings and service config defined in services.yaml (source of truth)
 services:
   localcloud:
     container_name: "${LOCALCLOUD_CONTAINER_NAME:-localcloud-main}"
@@ -15,16 +16,20 @@ services:
       - "127.0.0.1:9020:9020"    # Spanner REST
       - "127.0.0.1:9050:9050"    # BigQuery REST
       - "127.0.0.1:9060:9060"    # BigQuery gRPC
+      - "127.0.0.1:6379:6379"    # Memorystore (Redis)
+      - "127.0.0.1:9090:9090"    # Web Console
       - "127.0.0.1:16443:6443"   # GKE k3d Kubernetes API (remapped to avoid Rancher Desktop conflict)
     mem_limit: 4g
     environment:
       LOCALCLOUD_PROJECT: "${LOCALCLOUD_PROJECT:-local-project}"
-      LOCALCLOUD_SERVICES: "${LOCALCLOUD_SERVICES:-gcs,pubsub,firestore,bigquery,secretmanager,cloudtasks,logging,monitoring}"
+      LOCALCLOUD_SERVICES: "${LOCALCLOUD_SERVICES:-gcs,pubsub,firestore,bigquery,secretmanager,cloudtasks,spanner,bigtable,logging,monitoring,memorystore}"
       LOCALCLOUD_DATA_DIR: "/var/lib/localcloud"
-      JAVA_OPTS: "-Xmx512m -Xms128m -XX:+UseZGC -XX:+ZGenerational -Xss256k -XX:MaxMetaspaceSize=128m -XX:+ExitOnOutOfMemoryError"
+      # JAVA_OPTS are set in the Dockerfile with container-aware percentage-based memory allocation
+      # Override only if you need specific heap sizing: JAVA_OPTS: "-Xmx1g -Xms256m"
     volumes:
       - localcloud-data:/var/lib/localcloud
       - "${LOCALCLOUD_SEED_FILE:-./seed.yaml}:/etc/localcloud/seed.yaml:ro"
+      - ./services.yaml:/etc/localcloud/services.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/_localcloud/health"]

@@ -6,6 +6,12 @@ plugins {
 
 group = 'com.localcloud'
 version = '0.1.0-SNAPSHOT'
+description = 'LocalCloud - Local GCP Emulator Server'
+
+ext {
+    author = 'Jay Sen'
+    authorEmail = 'jaysen@apache.org'
+}
 
 java {
     toolchain {
@@ -69,13 +75,22 @@ dependencies {
     implementation "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${jacksonVersion}"
     implementation "com.fasterxml.jackson.datatype:jackson-datatype-jsr310:${jacksonVersion}"
 
+    // Netty Redis codec (aligned with Netty version from Armeria)
+    implementation 'io.netty:netty-codec-redis:4.1.115.Final'
+
     // SLF4J + Logback
     implementation 'org.slf4j:slf4j-api:2.0.12'
     implementation 'ch.qos.logback:logback-classic:1.5.3'
 
-    // JUnit 5
+    // JUnit 5 + Mockito
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    testImplementation 'org.mockito:mockito-core:5.11.0'
+    testImplementation 'org.mockito:mockito-junit-jupiter:5.11.0'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // Integration test dependencies
+    testImplementation "com.linecorp.armeria:armeria-junit5"
+    testImplementation 'com.h2database:h2:2.2.224'
 }
 
 application {
@@ -94,6 +109,12 @@ shadowJar {
 
 test {
     useJUnitPlatform()
+}
+
+processResources {
+    from('../services.yaml') {
+        into '.'
+    }
 }
 
 tasks.named('build') {

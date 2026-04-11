@@ -1,0 +1,179 @@
+# LocalCloud Service Registry
+# Single source of truth for all service definitions.
+# Read by: Java (Jackson YAML), Python (PyYAML)
+#
+# Fields:
+#   port: integer or "gateway" (resolved to gateway.port at load time)
+#   protocol: "rest" or "grpc"
+#   type: "external" (supervisord process) or "facade" (in-process on gateway)
+#   envValuePrefix: "" for grpc (host:port), "http://" for rest (http://host:port)
+#   additionalPorts: optional map of extra ports the service exposes
+#   healthCheck: how to verify the external service is running
+
+gateway:
+  port: 8080
+
+services:
+  gcs:
+    displayName: "Cloud Storage"
+    port: 4443
+    protocol: rest
+    envVar: STORAGE_EMULATOR_HOST
+    envValuePrefix: "http://"
+    type: external
+    defaultEnabled: true
+    gcloudApiName: storage
+    healthCheck:
+      type: tcp
+
+  pubsub:
+    displayName: "Pub/Sub"
+    port: 8085
+    protocol: grpc
+    envVar: PUBSUB_EMULATOR_HOST
+    envValuePrefix: ""
+    type: external
+    defaultEnabled: true
+    gcloudApiName: pubsub
+    healthCheck:
+      type: http
+
+  firestore:
+    displayName: "Firestore"
+    port: 8086
+    protocol: grpc
+    envVar: FIRESTORE_EMULATOR_HOST
+    envValuePrefix: ""
+    type: external
+    defaultEnabled: true
+    gcloudApiName: firestore
+    healthCheck:
+      type: http
+
+  bigtable:
+    displayName: "Bigtable"
+    port: 8087
+    protocol: grpc
+    envVar: BIGTABLE_EMULATOR_HOST
+    envValuePrefix: ""
+    type: external
+    defaultEnabled: true
+    # No gcloudApiName: Bigtable emulator is gRPC data-plane only; gcloud bigtable
+    # commands use the bigtableadmin REST API which the emulator does not serve.
+    healthCheck:
+      type: tcp
+
+  spanner:
+    displayName: "Spanner"
+    port: 9010
+    protocol: grpc
+    envVar: SPANNER_EMULATOR_HOST
+    envValuePrefix: ""
+    type: external
+    defaultEnabled: true
+    gcloudApiName: spanner
+    gcloudPort: 9020
+    persistence: true
+    dataDir: "/var/lib/localcloud/spanner-data"
+    additionalPorts:
+      rest: 9020
+    healthCheck:
+      type: http
+      port: 9020
+      path: "/v1/projects/{projectId}/instances"
+
+  bigquery:
+    displayName: "BigQuery"
+    port: 9050
+    protocol: rest
+    envVar: BIGQUERY_EMULATOR_HOST
+    envValuePrefix: "http://"
+    type: external
+    defaultEnabled: true
+    gcloudApiName: bigquery
+    additionalPorts:
+      grpc: 9060
+    healthCheck:
+      type: http
+      path: "/bigquery/v2/projects/{projectId}/datasets"
+
+  secretmanager:
+    displayName: "Secret Manager"
+    port: gateway
+    protocol: grpc
+    envVar: SECRET_MANAGER_EMULATOR_HOST
+    envValuePrefix: ""
+    type: facade
+    defaultEnabled: true
+    gcloudApiName: secretmanager
+
+  cloudtasks:
+    displayName: "Cloud Tasks"
+    port: gateway
+    protocol: grpc
+    envVar: CLOUD_TASKS_EMULATOR_HOST
+    envValuePrefix: ""
+    type: facade
+    defaultEnabled: true
+    gcloudApiName: cloudtasks
+
+  logging:
+    displayName: "Cloud Logging"
+    port: gateway
+    protocol: grpc
+    envVar: CLOUD_LOGGING_EMULATOR_HOST
+    envValuePrefix: ""
+    type: facade
+    defaultEnabled: true
+    gcloudApiName: logging
+
+  monitoring:
+    displayName: "Cloud Monitoring"
+    port: gateway
+    protocol: grpc
+    envVar: CLOUD_MONITORING_EMULATOR_HOST
+    envValuePrefix: ""
+    type: facade
+    defaultEnabled: true
+    gcloudApiName: monitoring
+
+  gke:
+    displayName: "GKE"
+    port: gateway
+    protocol: grpc
+    envVar: GKE_EMULATOR_HOST
+    envValuePrefix: ""
+    type: facade
+    defaultEnabled: false
+    gcloudApiName: container
+    additionalPorts:
+      k3d: 6443
+
+  compute:
+    displayName: "Compute Engine"
+    port: gateway
+    protocol: rest
+    envVar: COMPUTE_EMULATOR_HOST
+    envValuePrefix: "http://"
+    type: facade
+    defaultEnabled: false
+    gcloudApiName: compute
+
+  cloudrun:
+    displayName: "Cloud Run"
+    port: gateway
+    protocol: grpc
+    envVar: CLOUD_RUN_EMULATOR_HOST
+    envValuePrefix: ""
+    type: facade
+    defaultEnabled: false
+    gcloudApiName: run
+
+  memorystore:
+    displayName: "Memorystore (Redis)"
+    port: 6379
+    protocol: redis
+    envVar: REDIS_HOST
+    envValuePrefix: ""
+    type: facade
+    defaultEnabled: true

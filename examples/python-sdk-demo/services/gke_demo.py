@@ -20,7 +20,7 @@ def _make_client() -> ClusterManagerClient:
     return ClusterManagerClient(transport=transport)
 
 
-def run(project_id: str) -> list[tuple[str, bool, str]]:
+def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
     """Run GKE demo operations. Returns list of (operation, success, detail)."""
     results = []
     client = _make_client()
@@ -99,21 +99,27 @@ def run(project_id: str) -> list[tuple[str, bool, str]]:
         results.append(("Get server config", False, str(e)))
 
     # 6. Delete cluster 1
-    try:
-        operation = client.delete_cluster(
-            request={"name": f"{parent}/clusters/{cluster_id_1}"}
-        )
-        results.append(("Delete cluster 1", True, cluster_id_1))
-    except Exception as e:
-        results.append(("Delete cluster 1", False, str(e)))
+    if not keep_data:
+        try:
+            operation = client.delete_cluster(
+                request={"name": f"{parent}/clusters/{cluster_id_1}"}
+            )
+            results.append(("Delete cluster 1", True, cluster_id_1))
+        except Exception as e:
+            results.append(("Delete cluster 1", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     # 7. Delete cluster 2
-    try:
-        operation = client.delete_cluster(
-            request={"name": f"{parent}/clusters/{cluster_id_2}"}
-        )
-        results.append(("Delete cluster 2", True, cluster_id_2))
-    except Exception as e:
-        results.append(("Delete cluster 2", False, str(e)))
+    if not keep_data:
+        try:
+            operation = client.delete_cluster(
+                request={"name": f"{parent}/clusters/{cluster_id_2}"}
+            )
+            results.append(("Delete cluster 2", True, cluster_id_2))
+        except Exception as e:
+            results.append(("Delete cluster 2", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     return results

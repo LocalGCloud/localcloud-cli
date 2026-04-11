@@ -2,6 +2,9 @@ package com.localcloud.emulators.cloudrun;
 
 import com.localcloud.persistence.PostgresDataSource;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -12,10 +15,24 @@ import java.util.Optional;
  */
 public class CloudRunStore {
 
+    private static final Logger logger = LoggerFactory.getLogger(CloudRunStore.class);
+
     private final PostgresDataSource dataSource;
 
     public CloudRunStore(PostgresDataSource dataSource) {
         this.dataSource = dataSource;
+    }
+
+    public int getMaxUsedPort() {
+        String sql = "SELECT COALESCE(MAX(host_port), 0) FROM cloudrun_services";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            return rs.next() ? rs.getInt(1) : 0;
+        } catch (SQLException e) {
+            logger.warn("Failed to query max port: {}", e.getMessage());
+            return 0;
+        }
     }
 
     public record Service(
@@ -74,11 +91,12 @@ public class CloudRunStore {
             ps.setString(1, projectId);
             ps.setString(2, location);
             ps.setString(3, serviceId);
-            ResultSet rs = ps.executeQuery();
-            if (rs.next()) {
-                return Optional.of(rowToService(rs));
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.of(rowToService(rs));
+                }
+                return Optional.empty();
             }
-            return Optional.empty();
         }
     }
 
@@ -88,33 +106,35 @@ public class CloudRunStore {
                      "SELECT * FROM cloudrun_services WHERE project_id=? AND location=? ORDER BY created_at")) {
             ps.setString(1, projectId);
             ps.setString(2, location);
-            ResultSet rs = ps.executeQuery();
-            List<Service> services = new ArrayList<>();
-            while (rs.next()) {
-                services.add(rowToService(rs));
+            try (ResultSet rs = ps.executeQuery()) {
+                List<Service> services = new ArrayList<>();
+                while (rs.next()) {
+                    services.add(rowToService(rs));
+                }
+                return services;
             }
-            return services;
         }
     }
 
     public void updateService(String projectId, String location, String serviceId,
-                              String containerImage, String containerId, Integer hostPort, String uri) throws SQLException {
+                              String containerImage, int containerPort, String containerId, Integer hostPort, String uri) throws SQLException {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "UPDATE cloudrun_services SET container_image=?, container_id=?, host_port=?, uri=?, " +
+                     "UPDATE cloudrun_services SET container_image=?, container_port=?, container_id=?, host_port=?, uri=?, " +
                      "revision_count=revision_count+1, updated_at=CURRENT_TIMESTAMP " +
                      "WHERE project_id=? AND location=? AND service_id=?")) {
             ps.setString(1, containerImage);
-            ps.setString(2, containerId);
+            ps.setInt(2, containerPort);
+            ps.setString(3, containerId);
             if (hostPort != null) {
-                ps.setInt(3, hostPort);
+                ps.setInt(4, hostPort);
             } else {
-                ps.setNull(3, Types.INTEGER);
+                ps.setNull(4, Types.INTEGER);
             }
-            ps.setString(4, uri);
-            ps.setString(5, projectId);
-            ps.setString(6, location);
-            ps.setString(7, serviceId);
+            ps.setString(5, uri);
+            ps.setString(6, projectId);
+            ps.setString(7, location);
+            ps.setString(8, serviceId);
             ps.executeUpdate();
         }
     }
@@ -171,11 +191,12 @@ public class CloudRunStore {
             ps.setString(2, location);
             ps.setString(3, serviceId);
             ps.setString(4, revisionId);
-            ResultSet rs = ps.executeQuery();
-            if (rs.next()) {
-                return Optional.of(rowToRevision(rs));
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.of(rowToRevision(rs));
+                }
+                return Optional.empty();
             }
-            return Optional.empty();
         }
     }
 
@@ -186,12 +207,13 @@ public class CloudRunStore {
             ps.setString(1, projectId);
             ps.setString(2, location);
             ps.setString(3, serviceId);
-            ResultSet rs = ps.executeQuery();
-            List<Revision> revisions = new ArrayList<>();
-            while (rs.next()) {
-                revisions.add(rowToRevision(rs));
+            try (ResultSet rs = ps.executeQuery()) {
+                List<Revision> revisions = new ArrayList<>();
+                while (rs.next()) {
+                    revisions.add(rowToRevision(rs));
+                }
+                return revisions;
             }
-            return revisions;
         }
     }
 

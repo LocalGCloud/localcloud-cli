@@ -1,3 +1,7 @@
+# Reference configuration for LocalCloud server.
+# NOTE: This file is NOT automatically loaded by LocalCloudConfig.
+# Configuration is read from environment variables (see LocalCloudConfig.java).
+# This file serves as documentation of available settings and their defaults.
 localcloud:
   project: ${LOCALCLOUD_PROJECT:local-project}
   gateway:

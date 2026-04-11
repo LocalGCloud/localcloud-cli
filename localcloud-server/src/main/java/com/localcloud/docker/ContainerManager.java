@@ -90,7 +90,7 @@ public class ContainerManager {
                 .exec();
 
         docker.startContainerCmd(container.getId()).exec();
-        logger.info("Started container {} ({})", name, container.getId().substring(0, 12));
+        logger.info("Started container {} ({})", name, container.getId().substring(0, Math.min(container.getId().length(), 12)));
         return container.getId();
     }
 
@@ -100,9 +100,9 @@ public class ContainerManager {
     public void stop(String containerId) {
         try {
             docker.stopContainerCmd(containerId).withTimeout(10).exec();
-            logger.info("Stopped container {}", containerId.substring(0, 12));
+            logger.info("Stopped container {}", containerId.substring(0, Math.min(containerId.length(), 12)));
         } catch (Exception e) {
-            logger.warn("Failed to stop container {}: {}", containerId.substring(0, 12), e.getMessage());
+            logger.warn("Failed to stop container {}: {}", containerId.substring(0, Math.min(containerId.length(), 12)), e.getMessage());
         }
     }
 
@@ -112,9 +112,9 @@ public class ContainerManager {
     public void remove(String containerId) {
         try {
             docker.removeContainerCmd(containerId).withForce(true).exec();
-            logger.info("Removed container {}", containerId.substring(0, 12));
+            logger.info("Removed container {}", containerId.substring(0, Math.min(containerId.length(), 12)));
         } catch (Exception e) {
-            logger.warn("Failed to remove container {}: {}", containerId.substring(0, 12), e.getMessage());
+            logger.warn("Failed to remove container {}: {}", containerId.substring(0, Math.min(containerId.length(), 12)), e.getMessage());
         }
     }
 

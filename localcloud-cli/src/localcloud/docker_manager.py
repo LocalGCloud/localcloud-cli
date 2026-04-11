@@ -8,30 +8,24 @@ import docker
 import docker.errors
 import requests
 
+from localcloud.service_registry import get_registry as _get_registry
 
-# Default port mappings: host_port -> container_port
-DEFAULT_PORT_MAPPINGS = {
-    8080: 8080,   # Gateway (admin API)
-    4443: 4443,   # Cloud Storage
-    8085: 8085,   # Pub/Sub
-    8086: 8086,   # Firestore
-    8087: 8087,   # Bigtable
-    9010: 9010,   # Spanner gRPC
-    9020: 9020,   # Spanner REST
-    9050: 9050,   # BigQuery REST
-    9060: 9060,   # BigQuery gRPC
-    6443: 6443,   # GKE k3d Kubernetes API
-}
 
-# Service -> (port, env_var)
-SERVICE_ENV_VARS = {
-    "storage":   (4443, "STORAGE_EMULATOR_HOST"),
-    "pubsub":    (8085, "PUBSUB_EMULATOR_HOST"),
-    "firestore": (8086, "FIRESTORE_EMULATOR_HOST"),
-    "bigtable":  (8087, "BIGTABLE_EMULATOR_HOST"),
-    "spanner":   (9010, "SPANNER_EMULATOR_HOST"),
-    "bigquery":  (9050, "BIGQUERY_EMULATOR_HOST"),
-}
+def _build_compat():
+    """Build backward-compatible module-level constants from the service registry."""
+    r = _get_registry()
+    # DEFAULT_PORT_MAPPINGS: all external service ports + additional ports + gateway
+    port_mappings = r.get_port_mappings(enabled_services=list(r.all_services().keys()))
+    # SERVICE_ENV_VARS: service_key -> (port, env_var_name)
+    # Special case: "gcs" is exposed as "storage" for backward compatibility
+    env_vars = {}
+    for svc in r.all_services().values():
+        key = "storage" if svc.id == "gcs" else svc.id
+        env_vars[key] = (svc.port, svc.env_var)
+    return port_mappings, env_vars
+
+
+DEFAULT_PORT_MAPPINGS, SERVICE_ENV_VARS = _build_compat()
 
 
 class DockerManager:
@@ -46,6 +40,7 @@ class DockerManager:
         self.image = image
         self.container_name = container_name
         self.gateway_port = gateway_port
+        self.registry = _get_registry()
         self._client = None
 
     @property
@@ -106,8 +101,9 @@ class DockerManager:
         if services:
             env["LOCALCLOUD_SERVICES"] = ",".join(services)
 
-        # Port bindings
-        ports = {f"{cp}/tcp": hp for hp, cp in DEFAULT_PORT_MAPPINGS.items()}
+        # Port bindings - use registry to get ports for enabled services
+        port_mappings = self.registry.get_port_mappings(enabled_services=services)
+        ports = {f"{cp}/tcp": hp for hp, cp in port_mappings.items()}
 
         # Volume mounts
         volumes = {

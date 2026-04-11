@@ -6,7 +6,13 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.UUID;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.google.logging.v2.*;
 import com.google.protobuf.Empty;
@@ -20,6 +26,7 @@ public class LoggingEmulator extends AbstractEmulator {
 
     private final PostgresDataSource dataSource;
     private final LoggingService loggingService;
+    private final ObjectMapper mapper = new ObjectMapper();
 
     public LoggingEmulator(PostgresDataSource dataSource) {
         super("logging", "Cloud Logging", 8080, "grpc", "LOGGING_EMULATOR_HOST");
@@ -74,39 +81,53 @@ public class LoggingEmulator extends AbstractEmulator {
         public void writeLogEntries(WriteLogEntriesRequest request, StreamObserver<WriteLogEntriesResponse> responseObserver) {
             incrementRequestCount();
             try (Connection conn = dataSource.getConnection()) {
+                // Extract project_id from logName (format: projects/{project}/logs/{log})
+                String requestLogName = request.getLogName();
+                String projectId = "";
+                if (requestLogName != null && requestLogName.startsWith("projects/")) {
+                    projectId = requestLogName.split("/")[1];
+                }
+
                 for (LogEntry entry : request.getEntriesList()) {
                     try (PreparedStatement ps = conn.prepareStatement(
-                            "INSERT INTO log_entries(id, log_name, resource_type, resource_labels, severity, text_payload, json_payload, timestamp, insert_id) " +
-                            "VALUES(?,?,?,?,?,?,?,?,?)")) {
+                            "INSERT INTO log_entries(id, project_id, log_name, resource_type, resource_labels, severity, text_payload, json_payload, timestamp, insert_id) " +
+                            "VALUES(?,?,?,?,?,?,?,?,?,?)")) {
                         String id = UUID.randomUUID().toString();
                         ps.setString(1, id);
-                        String logName = entry.getLogName().isEmpty() ? request.getLogName() : entry.getLogName();
-                        ps.setString(2, logName);
+                        // Derive project_id from entry logName if available, else from request logName
+                        String entryLogName = entry.getLogName().isEmpty() ? requestLogName : entry.getLogName();
+                        String entryProjectId = projectId;
+                        if (!entry.getLogName().isEmpty() && entry.getLogName().startsWith("projects/")) {
+                            entryProjectId = entry.getLogName().split("/")[1];
+                        }
+                        ps.setString(2, entryProjectId);
+                        String logName = entryLogName;
+                        ps.setString(3, logName);
                         String resourceType = "";
                         String resourceLabels = "{}";
                         if (entry.hasResource()) {
                             resourceType = entry.getResource().getType();
-                            resourceLabels = entry.getResource().getLabelsMap().toString();
+                            resourceLabels = mapper.writeValueAsString(new TreeMap<>(entry.getResource().getLabelsMap()));
                         } else if (request.hasResource()) {
                             resourceType = request.getResource().getType();
-                            resourceLabels = request.getResource().getLabelsMap().toString();
+                            resourceLabels = mapper.writeValueAsString(new TreeMap<>(request.getResource().getLabelsMap()));
                         }
-                        ps.setString(3, resourceType);
-                        ps.setString(4, resourceLabels);
-                        ps.setString(5, entry.getSeverity().name());
-                        ps.setString(6, entry.getTextPayload());
-                        ps.setString(7, entry.hasJsonPayload() ? entry.getJsonPayload().toString() : "");
+                        ps.setString(4, resourceType);
+                        ps.setString(5, resourceLabels);
+                        ps.setString(6, entry.getSeverity().name());
+                        ps.setString(7, entry.getTextPayload());
+                        ps.setString(8, entry.hasJsonPayload() ? entry.getJsonPayload().toString() : "");
                         long ts = entry.hasTimestamp()
                                 ? entry.getTimestamp().getSeconds() * 1000 + entry.getTimestamp().getNanos() / 1000000
                                 : System.currentTimeMillis();
-                        ps.setLong(8, ts);
-                        ps.setString(9, entry.getInsertId().isEmpty() ? id : entry.getInsertId());
+                        ps.setLong(9, ts);
+                        ps.setString(10, entry.getInsertId().isEmpty() ? id : entry.getInsertId());
                         ps.executeUpdate();
                     }
                 }
                 responseObserver.onNext(WriteLogEntriesResponse.getDefaultInstance());
                 responseObserver.onCompleted();
-            } catch (SQLException e) {
+            } catch (SQLException | JsonProcessingException e) {
                 logger.error("writeLogEntries failed", e);
                 responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
             }
@@ -118,6 +139,16 @@ public class LoggingEmulator extends AbstractEmulator {
             try (Connection conn = dataSource.getConnection()) {
                 StringBuilder sql = new StringBuilder("SELECT * FROM log_entries WHERE 1=1");
                 List<Object> params = new ArrayList<>();
+
+                // Filter by project_id from resourceNames (format: projects/{project})
+                if (request.getResourceNamesCount() > 0) {
+                    String resourceName = request.getResourceNames(0);
+                    if (resourceName.startsWith("projects/")) {
+                        String projectId = resourceName.split("/")[1];
+                        sql.append(" AND project_id=?");
+                        params.add(projectId);
+                    }
+                }
 
                 String filter = request.getFilter();
                 if (filter != null && !filter.isEmpty()) {
@@ -177,15 +208,28 @@ public class LoggingEmulator extends AbstractEmulator {
         @Override
         public void listLogs(ListLogsRequest request, StreamObserver<ListLogsResponse> responseObserver) {
             incrementRequestCount();
-            try (Connection conn = dataSource.getConnection();
-                 Statement stmt = conn.createStatement();
-                 java.sql.ResultSet rs = stmt.executeQuery("SELECT DISTINCT log_name FROM log_entries")) {
-                ListLogsResponse.Builder resp = ListLogsResponse.newBuilder();
-                while (rs.next()) {
-                    resp.addLogNames(rs.getString("log_name"));
+            try (Connection conn = dataSource.getConnection()) {
+                // Filter by project_id from parent (format: projects/{project})
+                String sql = "SELECT DISTINCT log_name FROM log_entries";
+                String parent = request.getParent();
+                String projectId = null;
+                if (parent != null && parent.startsWith("projects/")) {
+                    projectId = parent.split("/")[1];
+                    sql += " WHERE project_id=?";
                 }
-                responseObserver.onNext(resp.build());
-                responseObserver.onCompleted();
+                try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                    if (projectId != null) {
+                        pstmt.setString(1, projectId);
+                    }
+                    try (java.sql.ResultSet rs = pstmt.executeQuery()) {
+                        ListLogsResponse.Builder resp = ListLogsResponse.newBuilder();
+                        while (rs.next()) {
+                            resp.addLogNames(rs.getString("log_name"));
+                        }
+                        responseObserver.onNext(resp.build());
+                        responseObserver.onCompleted();
+                    }
+                }
             } catch (SQLException e) {
                 responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
             }

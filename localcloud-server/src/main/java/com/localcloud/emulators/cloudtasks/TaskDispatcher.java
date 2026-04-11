@@ -146,14 +146,16 @@ public class TaskDispatcher {
     }
 
     private void handleFailure(CloudTasksStore.TaskEntry task, String reason) {
+        // Look up the queue's configured max attempts (defaults to 100, the GCP default)
+        int maxAttempts = store.getQueueMaxAttempts(task.queueName);
         // Simple retry with exponential backoff
-        if (task.dispatchCount < 3) {
+        if (task.dispatchCount < maxAttempts) {
             // Reschedule with backoff: 2^dispatchCount seconds
             long backoffSeconds = (long) Math.pow(2, task.dispatchCount);
             task.scheduleTime = Instant.now().plusSeconds(backoffSeconds);
             task.state = "PENDING";
-            logger.debug("Task {} failed ({}), retrying in {}s (attempt {}/3)",
-                    task.taskId, reason, backoffSeconds, task.dispatchCount);
+            logger.debug("Task {} failed ({}), retrying in {}s (attempt {}/{})",
+                    task.taskId, reason, backoffSeconds, task.dispatchCount, maxAttempts);
         } else {
             task.state = "FAILED";
             logger.warn("Task {} permanently failed after {} attempts: {}",

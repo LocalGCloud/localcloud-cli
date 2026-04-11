@@ -7,7 +7,7 @@ from google.auth.credentials import AnonymousCredentials
 from google.cloud import firestore
 
 
-def run(project_id: str) -> list[tuple[str, bool, str]]:
+def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
     """Run Firestore demo operations. Returns list of (operation, success, detail)."""
     results = []
 
@@ -151,12 +151,15 @@ def run(project_id: str) -> list[tuple[str, bool, str]]:
         results.append(("Transaction", False, str(e)))
 
     # 12. Delete document
-    try:
-        col_ref.document(doc_id).delete()
-        deleted = col_ref.document(doc_id).get()
-        assert not deleted.exists, "document still exists after delete"
-        results.append(("Delete document", True, doc_id))
-    except Exception as e:
-        results.append(("Delete document", False, str(e)))
+    if not keep_data:
+        try:
+            col_ref.document(doc_id).delete()
+            deleted = col_ref.document(doc_id).get()
+            assert not deleted.exists, "document still exists after delete"
+            results.append(("Delete document", True, doc_id))
+        except Exception as e:
+            results.append(("Delete document", False, str(e)))
+    else:
+        results.append(("Skip cleanup", True, "data preserved for inspection"))
 
     return results
