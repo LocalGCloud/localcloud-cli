@@ -68,6 +68,7 @@ fi
 
 # 4. Build Docker image
 echo "[4/4] Building Docker image..."
+docker volume create localcloud-data >/dev/null 2>&1 || true
 if ! docker compose build; then
     echo "ERROR: Docker image build failed."
     echo "  Check that Docker daemon is running and has enough resources."
@@ -83,5 +84,5 @@ echo "  Build complete! (image: ${IMAGE_SIZE:-unknown})"
 echo ""
 echo "  Start:   docker compose up -d"
 echo "  Health:  curl localhost:8080/_localcloud/health"
-echo "  Console: http://localhost:9090"
+echo "  Console: http://localhost:8080"
 echo "============================================"

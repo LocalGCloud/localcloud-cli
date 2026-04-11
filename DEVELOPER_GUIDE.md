@@ -582,17 +582,17 @@ The web console includes a project dropdown in the topbar. Click the project nam
 
 ## Web Console
 
-LocalCloud includes a web-based management console (Solid.js + Flask) for monitoring and debugging. The console runs on the host machine, not inside the Docker container.
+LocalCloud includes a web-based management console (Solid.js) for monitoring and debugging. The console is served directly by the Armeria gateway on port 8080 — no separate server process needed.
 
 ```bash
-# Install the CLI with console support
-cd localcloud-cli && pip install -e ".[console]"
+# Open the console in your browser
+localcloud console
 
-# Start the console (connects to running LocalCloud container)
-localcloud console --port 9090 --open
+# Or navigate directly to:
+# http://localhost:8080
 ```
 
-**Console URL:** http://localhost:9090
+**Console URL:** http://localhost:8080
 
 ### Console Features
 

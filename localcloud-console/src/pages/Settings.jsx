@@ -378,7 +378,7 @@ export default function Settings(props) {
                 </p>
                 <button class="btn btn-secondary" onClick={async () => {
                     try {
-                        const resp = await fetch('/api/export');
+                        const resp = await fetch('/_localcloud/export');
                         const text = await resp.text();
                         const blob = new Blob([text], { type: 'application/yaml' });
                         const url = URL.createObjectURL(blob);

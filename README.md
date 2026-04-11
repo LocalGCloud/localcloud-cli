@@ -211,7 +211,7 @@ curl -X POST http://localhost:8080/_localcloud/reset
 ```
 localcloud-server/    Java API gateway + emulators (Armeria, gRPC, PostgreSQL)
 localcloud-cli/       Python CLI tool (Click)
-localcloud-console/   Web console (Solid.js + Flask)
+localcloud-console/   Web console (Solid.js, served by gateway)
 specs/                Feature specifications
 ```
 

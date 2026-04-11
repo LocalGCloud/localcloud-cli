@@ -17,6 +17,8 @@ const SERVICE_NAMES = {
     cloudrun: 'Cloud Run',
 };
 
+const BETA_SERVICES = new Set(['firestore', 'gke', 'compute']);
+
 // All services — includes disabled-by-default ones
 const ALL_SERVICES = [
     { id: 'gcs', port: 4443, protocol: 'REST', env_var: 'STORAGE_EMULATOR_HOST', endpoint: 'http://localhost:4443', defaultEnabled: true },
@@ -150,6 +152,7 @@ export default function Services(props) {
                                             </td>
                                             <td style={{ "font-weight": "600", "font-size": "13px" }}>
                                                 {svc.displayName}
+                                                {BETA_SERVICES.has(svc.id) && <span class="badge badge-beta" style={{ "margin-left": "6px" }}>Beta</span>}
                                             </td>
                                             <td>
                                                 <span class="status-indicator">

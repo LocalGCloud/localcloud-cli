@@ -1,7 +1,6 @@
 """Docker container management for LocalCloud."""
 
 import time
-from pathlib import Path
 from typing import Optional
 
 import docker
@@ -69,11 +68,13 @@ class DockerManager:
     # Container lifecycle
     # -----------------------------------------------------------------
 
+    # Named volume used for persistent data (same as docker-compose.yml)
+    VOLUME_NAME = "localcloud-data"
+
     def start(
         self,
         project_id: str = "local-project",
         services: Optional[list[str]] = None,
-        data_dir: str = "./localcloud-data",
         detach: bool = True,
     ) -> docker.models.containers.Container:
         """Create and start the LocalCloud container.
@@ -91,8 +92,11 @@ class DockerManager:
                 )
             existing.remove(force=True)
 
-        # Resolve data directory to an absolute path
-        abs_data_dir = str(Path(data_dir).resolve())
+        # Ensure the named volume exists (created once, reused always)
+        try:
+            self.client.volumes.get(self.VOLUME_NAME)
+        except docker.errors.NotFound:
+            self.client.volumes.create(self.VOLUME_NAME)
 
         # Build environment variables
         env = {
@@ -105,9 +109,9 @@ class DockerManager:
         port_mappings = self.registry.get_port_mappings(enabled_services=services)
         ports = {f"{cp}/tcp": hp for hp, cp in port_mappings.items()}
 
-        # Volume mounts
+        # Volume mounts — use named volume for data persistence
         volumes = {
-            abs_data_dir: {"bind": "/var/lib/localcloud", "mode": "rw"},
+            self.VOLUME_NAME: {"bind": "/var/lib/localcloud", "mode": "rw"},
             "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
         }
 

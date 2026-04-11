@@ -13,10 +13,9 @@ from localcloud.service_registry import get_registry
 @click.option("--seed", "seed_file", type=click.Path(exists=True), help="Seed file to load on startup")
 @click.option("--detach/--no-detach", "-d", default=True, help="Run in background")
 @click.option("--port", "-p", default=8080, type=int, help="Gateway port")
-@click.option("--data-dir", default="./localcloud-data", type=click.Path(), help="Data directory")
 @click.option("--image", default="localcloud/localcloud:latest", help="Docker image")
 @click.pass_obj
-def start(ctx, services, seed_file, detach, port, data_dir, image):
+def start(ctx, services, seed_file, detach, port, image):
     """Start the LocalCloud emulator."""
     from rich.console import Console
     from rich.table import Table
@@ -48,7 +47,6 @@ def start(ctx, services, seed_file, detach, port, data_dir, image):
         dm.start(
             project_id=ctx.project_id,
             services=list(services) if services else None,
-            data_dir=data_dir,
             detach=detach,
         )
     except RuntimeError as exc:

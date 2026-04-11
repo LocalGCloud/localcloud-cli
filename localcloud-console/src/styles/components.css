@@ -319,6 +319,23 @@
   border: 1px solid var(--border);
 }
 
+.badge-beta {
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+
+[data-theme="dark"] .badge-beta {
+  background: #78350f;
+  color: #fde68a;
+}
+
 /* Method badges for logs */
 .badge-method {
   display: inline-flex;

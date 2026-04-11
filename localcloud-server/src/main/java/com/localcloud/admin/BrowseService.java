@@ -211,16 +211,46 @@ public class BrowseService {
 
     // ========== GCS ==========
 
+    @SuppressWarnings("unchecked")
     private String browseGcs(String resourceType, String resourceId, String projectId) throws Exception {
         if (resourceType == null || "buckets".equals(resourceType) && resourceId == null) {
-            // List buckets
+            // List buckets — transform GCS items[] into buckets[] with selected fields
             String url = gcsBase + "/storage/v1/b?project=" + projectId;
-            return proxyGet(url);
+            String raw = proxyGet(url);
+            Map<String, Object> resp = mapper.readValue(raw, Map.class);
+            List<Map<String, Object>> items = (List<Map<String, Object>>) resp.get("items");
+            List<Map<String, Object>> buckets = new ArrayList<>();
+            if (items != null) {
+                for (Map<String, Object> item : items) {
+                    Map<String, Object> bucket = new LinkedHashMap<>();
+                    bucket.put("name", item.get("name"));
+                    bucket.put("timeCreated", item.get("timeCreated"));
+                    bucket.put("location", item.get("location"));
+                    buckets.add(bucket);
+                }
+            }
+            return mapper.writeValueAsString(Map.of("buckets", buckets));
         }
-        if ("buckets".equals(resourceType) && resourceId != null) {
-            // List objects in bucket
-            String url = gcsBase + "/storage/v1/b/" + resourceId + "/o";
-            return proxyGet(url);
+        // List objects in bucket — resourceType is either "buckets" with resourceId as bucket name,
+        // or resourceType is the bucket name directly (from console UI: browse/gcs/{bucketName})
+        String bucketName = "buckets".equals(resourceType) ? resourceId : resourceType;
+        if (bucketName != null) {
+            String url = gcsBase + "/storage/v1/b/" + bucketName + "/o";
+            String raw = proxyGet(url);
+            Map<String, Object> resp = mapper.readValue(raw, Map.class);
+            List<Map<String, Object>> items = (List<Map<String, Object>>) resp.get("items");
+            List<Map<String, Object>> objects = new ArrayList<>();
+            if (items != null) {
+                for (Map<String, Object> item : items) {
+                    Map<String, Object> obj = new LinkedHashMap<>();
+                    obj.put("name", item.get("name"));
+                    obj.put("size", item.get("size"));
+                    obj.put("contentType", item.get("contentType"));
+                    obj.put("updated", item.get("updated"));
+                    objects.add(obj);
+                }
+            }
+            return mapper.writeValueAsString(Map.of("objects", objects));
         }
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid GCS browse path"));
     }

@@ -17,7 +17,6 @@ services:
       - "127.0.0.1:9050:9050"    # BigQuery REST
       - "127.0.0.1:9060:9060"    # BigQuery gRPC
       - "127.0.0.1:6379:6379"    # Memorystore (Redis)
-      - "127.0.0.1:9090:9090"    # Web Console
       - "127.0.0.1:16443:6443"   # GKE k3d Kubernetes API (remapped to avoid Rancher Desktop conflict)
     mem_limit: 4g
     environment:
@@ -39,3 +38,6 @@ services:
 
 volumes:
   localcloud-data:
+    # Explicit name prevents Docker Compose from prefixing with project name.
+    # Both `docker compose` and `localcloud start` (docker run) use this same volume.
+    name: localcloud-data

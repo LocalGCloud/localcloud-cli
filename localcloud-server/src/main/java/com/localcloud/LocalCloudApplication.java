@@ -1,6 +1,7 @@
 package com.localcloud;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
 
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
@@ -120,20 +121,14 @@ public class LocalCloudApplication {
         sb.serviceUnder("/_localcloud/dashboard/",
                 FileService.of(ClassLoader.getSystemClassLoader(), "dashboard"));
 
-        // Root endpoint - simple info response
-        sb.service("/", (ctx, req) -> {
-            String escapedProjectId = config.getProjectId().replace("\\", "\\\\").replace("\"", "\\\"");
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
-                """
-                {
-                  "name": "LocalCloud",
-                  "version": "0.1.0",
-                  "project_id": "%s",
-                  "health": "/_localcloud/health",
-                  "dashboard": "/_localcloud/dashboard/"
-                }
-                """.formatted(escapedProjectId));
-        });
+        // Console static files (served from filesystem in Docker container)
+        // Armeria matches most-specific routes first, so /_localcloud/* API routes take priority
+        Path consoleDist = Path.of("/opt/localcloud/console/dist");
+        if (Files.isDirectory(consoleDist)) {
+            sb.serviceUnder("/", FileService.of(consoleDist));
+            logger.info("Console UI served from {}", consoleDist);
+        }
+        boolean consoleAvailable = Files.isDirectory(consoleDist);
 
         // Register facade gRPC services (backed by PostgreSQL, running in-process)
         // Enable HTTP/JSON transcoding so gRPC services are also accessible via REST
@@ -236,30 +231,33 @@ public class LocalCloudApplication {
         }
 
         // Global fallback for unsupported GCP API paths (Principle IV: Transparent Limitations)
-        sb.serviceUnder("/", (ctx, req) -> {
-            String method = req.method().toString().replace("\\", "\\\\").replace("\"", "\\\"");
-            String path = ctx.path().replace("\\", "\\\\").replace("\"", "\\\"");
-            return HttpResponse.of(HttpStatus.NOT_IMPLEMENTED, MediaType.JSON,
-                """
-                {
-                  "error": {
-                    "code": 501,
-                    "message": "This API endpoint is not emulated by LocalCloud: %s %s",
-                    "status": "UNIMPLEMENTED",
-                    "details": [
-                      {
-                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
-                        "reason": "ENDPOINT_NOT_EMULATED",
-                        "domain": "localcloud",
-                        "metadata": {
-                          "suggestion": "Check /_localcloud/services for available emulated services, or see contracts/emulated-services.md for supported operations."
-                        }
+        // Only registered when console is not serving from / (to avoid duplicate serviceUnder)
+        if (!consoleAvailable) {
+            sb.serviceUnder("/", (ctx, req) -> {
+                String method = req.method().toString().replace("\\", "\\\\").replace("\"", "\\\"");
+                String path = ctx.path().replace("\\", "\\\\").replace("\"", "\\\"");
+                return HttpResponse.of(HttpStatus.NOT_IMPLEMENTED, MediaType.JSON,
+                    """
+                    {
+                      "error": {
+                        "code": 501,
+                        "message": "This API endpoint is not emulated by LocalCloud: %s %s",
+                        "status": "UNIMPLEMENTED",
+                        "details": [
+                          {
+                            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                            "reason": "ENDPOINT_NOT_EMULATED",
+                            "domain": "localcloud",
+                            "metadata": {
+                              "suggestion": "Check /_localcloud/services for available emulated services, or see contracts/emulated-services.md for supported operations."
+                            }
+                          }
+                        ]
                       }
-                    ]
-                  }
-                }
-                """.formatted(method, path));
-        });
+                    }
+                    """.formatted(method, path));
+            });
+        }
 
         server = sb.build();
         server.start().join();
@@ -270,6 +268,7 @@ public class LocalCloudApplication {
         logger.info("  Project ID:  {}", config.getProjectId());
         logger.info("  Gateway:     http://localhost:{}", port);
         logger.info("  Health:      http://localhost:{}/_localcloud/health", port);
+        logger.info("  Console:     http://localhost:{}", port);
         logger.info("  Dashboard:   http://localhost:{}/_localcloud/dashboard/", port);
         logger.info("  Persistence: {}", config.isPersistenceEnabled() ? "enabled (" + config.getDataDir() + ")" : "disabled");
         logger.info("  Services:    {}", config.getEnabledServices());

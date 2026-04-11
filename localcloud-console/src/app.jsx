@@ -42,7 +42,7 @@ const NAV_ITEMS = [
 const DATA_SERVICES = [
     { id: 'gcs', label: 'Cloud Storage' },
     { id: 'pubsub', label: 'Pub/Sub' },
-    { id: 'firestore', label: 'Firestore' },
+    { id: 'firestore', label: 'Firestore', beta: true },
     { id: 'bigquery', label: 'BigQuery' },
     { id: 'secretmanager', label: 'Secret Manager' },
     { id: 'cloudtasks', label: 'Cloud Tasks' },
@@ -50,8 +50,8 @@ const DATA_SERVICES = [
     { id: 'bigtable', label: 'Bigtable' },
     { id: 'logging', label: 'Logging' },
     { id: 'monitoring', label: 'Monitoring' },
-    { id: 'gke', label: 'GKE' },
-    { id: 'compute', label: 'Compute' },
+    { id: 'gke', label: 'GKE', beta: true },
+    { id: 'compute', label: 'Compute', beta: true },
     { id: 'cloudrun', label: 'Cloud Run' },
     { id: 'memorystore', label: 'Memorystore' },
 ];
@@ -381,6 +381,7 @@ function App() {
                                         >
                                             <img src={`/icons/${svc.id}.svg`} alt="" class="sidebar-sub-item-icon" />
                                             <span class="sidebar-sub-item-label">{svc.label}</span>
+                                            {svc.beta && <span class="badge badge-beta">Beta</span>}
                                             <span classList={{
                                                 "sidebar-sub-item-dot": true,
                                                 "healthy": healthStatus() === 'healthy',

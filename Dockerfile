@@ -8,10 +8,10 @@
 # Option B: Use pre-built JAR (run `cd localcloud-server && ./gradlew shadowJar` first)
 # The pre-built JAR is copied directly in the runtime stage below.
 
-# Pull bigquery-emulator binary (amd64-only, skipped on arm64)
+# Pull bigquery-emulator binary (amd64-only)
 FROM --platform=linux/amd64 ghcr.io/goccy/bigquery-emulator:latest AS bigquery-emulator-amd64
 
-# Pull spanner-emulator: upstream for gateway, fork for persistent emulator_main
+# Spanner emulator: upstream gateway + local fork with persistence
 FROM gcr.io/cloud-spanner-emulator/emulator:latest AS spanner-emulator-upstream
 FROM spanner-emulator-build:latest AS spanner-emulator-fork
 
@@ -31,8 +31,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         postgresql-15 \
         supervisor \
         curl \
-        python3-flask \
-        python3-requests \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Docker CLI only (not the full engine — daemon runs on host via mounted docker.sock)
@@ -85,10 +83,9 @@ RUN su - localcloud -s /bin/bash -c " \
 # Copy pre-built server JAR (run `cd localcloud-server && ./gradlew shadowJar` before docker build)
 COPY localcloud-server/build/libs/localcloud-server-*-all.jar /opt/localcloud/server.jar
 
-# Copy console (pre-built frontend + Flask backend)
+# Copy console (pre-built frontend, served by Armeria gateway)
 # Run `cd localcloud-console && npm run build` before docker build
 COPY localcloud-console/dist/ /opt/localcloud/console/dist/
-COPY localcloud-console/backend/ /opt/localcloud/console/backend/
 # Copy service registry and configuration
 COPY services.yaml /etc/localcloud/services.yaml
 COPY supervisord.conf /etc/supervisor/conf.d/localcloud.conf
@@ -128,8 +125,8 @@ ENV LOCALCLOUD_PROJECT="local-project" \
 # Data persistence volume
 VOLUME /var/lib/localcloud
 
-# Ports: gateway, GCS, Memorystore, GKE/k3d, Pub/Sub, Firestore, Bigtable, Spanner, BigQuery, Console
-EXPOSE 8080 4443 6379 6443 8085 8086 8087 9010 9020 9050 9060 9090
+# Ports: gateway (+ console), GCS, Memorystore, GKE/k3d, Pub/Sub, Firestore, Bigtable, Spanner, BigQuery
+EXPOSE 8080 4443 6379 6443 8085 8086 8087 9010 9020 9050 9060
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
   CMD curl -f http://localhost:8080/_localcloud/health || exit 1
