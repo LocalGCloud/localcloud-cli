@@ -90,7 +90,7 @@ firestore:
         - id: "user-1"
           fields:
             name: "Jay Senjaliya"
-            email: "jsenjaliya@paypal.com"
+            email: "JaySen@apache.com"
 ```
 
 **Bigtable**: Add seeding via Bigtable gRPC MutateRows API or REST equivalent. The seed.yaml format:

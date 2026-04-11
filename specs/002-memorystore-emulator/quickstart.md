@@ -75,7 +75,7 @@ services:
       - key: "user:1"
         fields:
           name: "Jay Senjaliya"
-          email: "jsenjaliya@paypal.com"
+          email: "JaySen@apache.com"
           role: "admin"
 ```
 

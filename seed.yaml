@@ -8,7 +8,7 @@ project: "local-project"
 
 personas:
   - name: "Jay Senjaliya"
-    email: "jsenjaliya@paypal.com"
+    email: "JaySen@apache.com"
     role: "admin"
 
 services:
@@ -19,7 +19,7 @@ services:
         location: "US"
         objects:
           - key: "users/jay-senjaliya.json"
-            content: '{"@type":"Person","name":"Jay Senjaliya","email":"jsenjaliya@paypal.com","jobTitle":"Staff Engineer","worksFor":"PayPal"}'
+            content: '{"@type":"Person","name":"Jay Senjaliya","email":"JaySen@apache.com","jobTitle":"principal engineer","worksFor":"PayPal"}'
             contentType: "application/json"
           - key: "users/alice-johnson.json"
             content: '{"@type":"Person","name":"Alice Johnson","email":"alice@example.com","jobTitle":"Product Manager","worksFor":"Acme Corp"}'
@@ -91,7 +91,7 @@ services:
             - name: "worksFor"
               type: "STRING"
         rows:
-          - { id: "1", name: "Jay Senjaliya", email: "jsenjaliya@paypal.com", jobTitle: "Staff Engineer", worksFor: "PayPal" }
+          - { id: "1", name: "Jay Senjaliya", email: "JaySen@apache.com", jobTitle: "principal engineer", worksFor: "PayPal" }
           - { id: "2", name: "Alice Johnson", email: "alice@example.com", jobTitle: "Product Manager", worksFor: "Acme Corp" }
           - { id: "3", name: "Bob Smith", email: "bob@example.com", jobTitle: "Software Engineer", worksFor: "TechCo" }
       - dataset: "app_analytics"
@@ -161,7 +161,7 @@ services:
               - table: "Persons"
                 columns: ["Id", "Name", "Email", "JobTitle", "WorksFor"]
                 rows:
-                  - ["1", "Jay Senjaliya", "jsenjaliya@paypal.com", "Staff Engineer", "PayPal"]
+                  - ["1", "Jay Senjaliya", "JaySen@apache.com", "principal engineer", "PayPal"]
                   - ["2", "Alice Johnson", "alice@example.com", "Product Manager", "Acme Corp"]
                   - ["3", "Bob Smith", "bob@example.com", "Software Engineer", "TechCo"]
               - table: "PageViews"
@@ -244,8 +244,8 @@ services:
           - id: "user-1"
             fields:
               name: "Jay Senjaliya"
-              email: "jsenjaliya@paypal.com"
-              jobTitle: "Staff Engineer"
+              email: "JaySen@apache.com"
+              jobTitle: "principal engineer"
               worksFor: "PayPal"
               role: "admin"
               address:
@@ -431,7 +431,7 @@ services:
               - key: "user#0001"
                 cells:
                   "profile:name": "Jay Senjaliya"
-                  "profile:email": "jsenjaliya@paypal.com"
+                  "profile:email": "JaySen@apache.com"
                   "profile:role": "admin"
                   "activity:last_login": "2026-04-08T10:30:00Z"
                   "activity:page_views": "342"
@@ -567,8 +567,8 @@ services:
       - key: "user:1"
         fields:
           name: "Jay Senjaliya"
-          email: "jsenjaliya@paypal.com"
-          jobTitle: "Staff Engineer"
+          email: "JaySen@apache.com"
+          jobTitle: "principal engineer"
           worksFor: "PayPal"
           role: "admin"
       - key: "user:2"
