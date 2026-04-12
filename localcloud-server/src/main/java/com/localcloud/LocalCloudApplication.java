@@ -12,10 +12,13 @@ import com.linecorp.armeria.server.file.FileService;
 import com.linecorp.armeria.server.grpc.GrpcService;
 import com.localcloud.admin.AdminApiService;
 import com.localcloud.admin.BrowseService;
+import com.localcloud.admin.CredentialBroker;
 import com.localcloud.admin.ExportService;
 import com.localcloud.admin.MutateService;
 import com.localcloud.admin.ProjectService;
+import com.localcloud.admin.QueryService;
 import com.localcloud.admin.SeedService;
+import com.localcloud.admin.ServiceRoutingRepository;
 import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.emulators.secretmanager.SecretManagerEmulator;
 import com.localcloud.emulators.cloudtasks.CloudTasksEmulator;
@@ -63,6 +66,8 @@ public class LocalCloudApplication {
     private final MutateService mutateService;
     private final SeedService seedService;
     private final ExportService exportService;
+    private final CredentialBroker credentialBroker;
+    private final QueryService queryService;
     private IamMiddleware iamMiddleware;
     private Server server;
 
@@ -75,11 +80,14 @@ public class LocalCloudApplication {
         this.processHealthChecker = new ProcessHealthChecker(config, config.getServiceRegistry());
         this.healthCheckService = new HealthCheckService(config, gateway, processHealthChecker);
         this.projectService = new ProjectService(dataSource);
-        this.adminApiService = new AdminApiService(config, requestLogger, projectService);
+        var routingRepository = new ServiceRoutingRepository(dataSource);
+        this.credentialBroker = new CredentialBroker(config);
+        this.adminApiService = new AdminApiService(config, requestLogger, projectService, routingRepository, credentialBroker);
         this.browseService = new BrowseService(config, dataSource, config.getServiceRegistry());
         this.mutateService = new MutateService(config, dataSource, config.getServiceRegistry());
         this.seedService = new SeedService(config, dataSource, config.getServiceRegistry());
         this.exportService = new ExportService(config, dataSource, config.getServiceRegistry());
+        this.queryService = new QueryService(config, dataSource, config.getServiceRegistry());
     }
 
     /**
@@ -116,6 +124,7 @@ public class LocalCloudApplication {
         sb.annotatedService("/_localcloud/mutate", mutateService);
         sb.annotatedService("/_localcloud", seedService);
         sb.annotatedService("/_localcloud", exportService);
+        sb.annotatedService("/_localcloud", queryService);
 
         // Dashboard static files (served from classpath resources)
         sb.serviceUnder("/_localcloud/dashboard/",
@@ -189,7 +198,7 @@ public class LocalCloudApplication {
 
         if (config.isServiceEnabled("compute")) {
             ContainerManager cm = containerManager != null ? containerManager : new ContainerManager(null);
-            ComputeEmulator computeEmulator = new ComputeEmulator(dataSource, cm);
+            ComputeEmulator computeEmulator = new ComputeEmulator(dataSource, cm, credentialBroker);
             computeEmulator.start();
             sb.annotatedService("/compute/v1", computeEmulator.getRestService());
             gateway.registerRestEmulator("/compute/v1", computeEmulator, null);
@@ -198,7 +207,7 @@ public class LocalCloudApplication {
 
         if (config.isServiceEnabled("cloudrun")) {
             ContainerManager cm = containerManager != null ? containerManager : new ContainerManager(null);
-            CloudRunEmulator cloudRunEmulator = new CloudRunEmulator(dataSource, cm);
+            CloudRunEmulator cloudRunEmulator = new CloudRunEmulator(dataSource, cm, credentialBroker);
             cloudRunEmulator.start();
             grpcBuilder.addService(cloudRunEmulator.getServicesService());
             grpcBuilder.addService(cloudRunEmulator.getRevisionsService());
@@ -209,7 +218,7 @@ public class LocalCloudApplication {
         }
 
         if (config.isServiceEnabled("gke")) {
-            K3dManager k3dManager = new K3dManager();
+            K3dManager k3dManager = new K3dManager(credentialBroker);
             GkeEmulator gkeEmulator = new GkeEmulator(dataSource, k3dManager);
             gkeEmulator.start();
             grpcBuilder.addService(gkeEmulator.getClusterManagerService());

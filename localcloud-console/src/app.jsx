@@ -4,7 +4,7 @@ import { api, setActiveProject, getActiveProject } from './api.js';
 import Dashboard from './pages/Dashboard.jsx';
 import Services from './pages/Services.jsx';
 import Logs from './pages/Logs.jsx';
-import DataBrowser from './pages/DataBrowser.jsx';
+import ServiceExplorer from './pages/ServiceExplorer.jsx';
 import Settings from './pages/Settings.jsx';
 import Usage from './pages/Usage.jsx';
 
@@ -34,7 +34,7 @@ const NAV_ITEMS = [
     { id: 'dashboard',  label: 'Dashboard',        icon: 'dashboard' },
     { id: 'services',   label: 'APIs & Services',  icon: 'services' },
     { id: 'logs',       label: 'Logs',              icon: 'logs' },
-    { id: 'data',       label: 'Data Browser',      icon: 'data', expandable: true },
+    { id: 'data',       label: 'Service Explorer',   icon: 'data', expandable: true },
     { id: 'usage',      label: 'Usage',             icon: 'usage' },
     { id: 'settings',   label: 'Settings',          icon: 'settings' },
 ];
@@ -83,6 +83,8 @@ function App() {
     const [selectedService, setSelectedService] = createSignal(initial.service);
     const [darkMode, setDarkMode] = createSignal(false);
     const [healthData, setHealthData] = createSignal(null);
+    const [routingData, setRoutingData] = createSignal(null);
+    const [credentialData, setCredentialData] = createSignal(null);
     const [refreshInterval, setRefreshInterval] = createSignal(5000);
 
     // Project management
@@ -92,6 +94,7 @@ function App() {
     const [showNewProjectDialog, setShowNewProjectDialog] = createSignal(false);
     const [newProjectId, setNewProjectId] = createSignal('');
     const [newProjectName, setNewProjectName] = createSignal('');
+    const [projectError, setProjectError] = createSignal(null);
 
     // Initialize active project from localStorage
     const initProject = (() => {
@@ -137,7 +140,8 @@ function App() {
             await fetchProjects();
             switchProject(id);
         } catch (err) {
-            alert('Failed to create project: ' + err.message);
+            setProjectError('Failed to create project: ' + err.message);
+            setTimeout(() => setProjectError(null), 5000);
         }
     };
 
@@ -193,8 +197,14 @@ function App() {
 
         const fetchHealth = async () => {
             try {
-                const data = await api.health();
-                setHealthData(data);
+                const [health, routing, creds] = await Promise.all([
+                    api.health(),
+                    api.routing().catch(() => null),
+                    api.credentials().catch(() => null),
+                ]);
+                setHealthData(health);
+                if (routing) setRoutingData(routing);
+                if (creds) setCredentialData(creds);
             } catch (err) {
                 console.error('Health check failed:', err);
             }
@@ -233,13 +243,13 @@ function App() {
         const proj = activeProject();
         switch (currentPage()) {
             case 'dashboard':
-                return <Dashboard healthData={healthData} onServiceClick={handleServiceClick} activeProject={proj} />;
+                return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={proj} />;
             case 'services':
-                return <Services healthData={healthData} onServiceClick={handleServiceClick} activeProject={proj} />;
+                return <Services healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={proj} />;
             case 'logs':
                 return <Logs activeProject={proj} />;
             case 'data':
-                return <DataBrowser selectedService={selectedService} onTabChange={handleTabChange} activeProject={proj} />;
+                return <ServiceExplorer selectedService={selectedService} onTabChange={handleTabChange} activeProject={proj} />;
             case 'usage':
                 return <Usage activeProject={proj} />;
             case 'settings':
@@ -249,15 +259,18 @@ function App() {
                         toggleDarkMode={toggleDarkMode}
                         refreshInterval={refreshInterval}
                         setRefreshInterval={setRefreshInterval}
+                        routingData={routingData}
+                        credentialData={credentialData}
                     />
                 );
             default:
-                return <Dashboard healthData={healthData} onServiceClick={handleServiceClick} activeProject={proj} />;
+                return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={proj} />;
         }
     };
 
     return (
         <>
+            <a class="skip-link" href="#main-content">Skip to content</a>
             {/* Top Bar */}
             <header class="topbar">
                 <div class="topbar-left">
@@ -309,24 +322,31 @@ function App() {
                     </Show>
                     {/* New Project Dialog */}
                     <Show when={showNewProjectDialog()}>
-                        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", "z-index": 200, display: "flex", "align-items": "center", "justify-content": "center" }}
-                            onClick={(e) => { if (e.target === e.currentTarget) setShowNewProjectDialog(false); }}>
-                            <div class="card" style={{ width: "360px", padding: "24px" }} onClick={(e) => e.stopPropagation()}>
-                                <h2 style={{ "margin-bottom": "16px" }}>New Project</h2>
+                        <div
+                            class="modal-overlay"
+                            role="dialog"
+                            aria-modal="true"
+                            aria-labelledby="new-project-title"
+                            onClick={(e) => { if (e.target === e.currentTarget) { setShowNewProjectDialog(false); setProjectError(null); } }}
+                            onKeyDown={(e) => { if (e.key === 'Escape') { setShowNewProjectDialog(false); setProjectError(null); } }}
+                        >
+                            <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
+                                <h2 id="new-project-title" style={{ "margin-bottom": "16px" }}>New Project</h2>
+                                <Show when={projectError()}>
+                                    <div class="alert alert-error" style={{ "margin-bottom": "12px" }}>{projectError()}</div>
+                                </Show>
                                 <div style={{ "margin-bottom": "12px" }}>
-                                    <label style={{ "font-size": "12px", color: "var(--text-secondary)", display: "block", "margin-bottom": "4px" }}>Project ID</label>
-                                    <input type="text" value={newProjectId()} onInput={(e) => setNewProjectId(e.currentTarget.value)}
-                                        placeholder="my-project"
-                                        style={{ width: "100%", height: "34px", padding: "0 10px", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--glass-border)", "border-radius": "var(--radius-xs)", "font-family": "var(--font-mono)", "font-size": "13px" }} />
+                                    <label for="project-id-input" class="form-label">Project ID</label>
+                                    <input id="project-id-input" type="text" class="form-input form-input-mono" value={newProjectId()} onInput={(e) => setNewProjectId(e.currentTarget.value)}
+                                        placeholder="my-project" />
                                 </div>
                                 <div style={{ "margin-bottom": "16px" }}>
-                                    <label style={{ "font-size": "12px", color: "var(--text-secondary)", display: "block", "margin-bottom": "4px" }}>Display Name</label>
-                                    <input type="text" value={newProjectName()} onInput={(e) => setNewProjectName(e.currentTarget.value)}
-                                        placeholder="My Project"
-                                        style={{ width: "100%", height: "34px", padding: "0 10px", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--glass-border)", "border-radius": "var(--radius-xs)", "font-size": "13px" }} />
+                                    <label for="project-name-input" class="form-label">Display Name</label>
+                                    <input id="project-name-input" type="text" class="form-input" value={newProjectName()} onInput={(e) => setNewProjectName(e.currentTarget.value)}
+                                        placeholder="My Project" />
                                 </div>
                                 <div style={{ display: "flex", gap: "8px", "justify-content": "flex-end" }}>
-                                    <button class="btn btn-secondary" onClick={() => setShowNewProjectDialog(false)}>Cancel</button>
+                                    <button class="btn btn-secondary" onClick={() => { setShowNewProjectDialog(false); setProjectError(null); }}>Cancel</button>
                                     <button class="btn btn-primary" onClick={handleCreateProject} disabled={!newProjectId().trim()}>Create</button>
                                 </div>
                             </div>
@@ -345,7 +365,7 @@ function App() {
             </header>
 
             {/* Sidebar */}
-            <nav class="sidebar">
+            <nav class="sidebar" aria-label="Main navigation">
                 <div class="sidebar-section-label">Navigation</div>
                 {NAV_ITEMS.map(item => (
                     <>
@@ -374,18 +394,22 @@ function App() {
                             <div class={`sidebar-sub-items ${currentPage() === 'data' ? 'expanded' : ''}`}>
                                 {DATA_SERVICES.map(svc => {
                                     const healthStatus = () => healthData()?.services?.[svc.id]?.status;
+                                    const routingMode = () => routingData()?.[svc.id]?.mode || 'local';
+                                    const isDisabled = () => healthStatus() === 'disabled';
                                     return (
                                         <button
                                             class={`sidebar-sub-item ${selectedService() === svc.id && currentPage() === 'data' ? 'active' : ''}`}
                                             onClick={() => handleServiceClick(svc.id)}
+                                            style={isDisabled() ? { opacity: "0.5" } : {}}
                                         >
                                             <img src={`/icons/${svc.id}.svg`} alt="" class="sidebar-sub-item-icon" />
                                             <span class="sidebar-sub-item-label">{svc.label}</span>
                                             {svc.beta && <span class="badge badge-beta">Beta</span>}
+                                            {routingMode() === 'remote' && <span class="badge badge-cloud" title="Routed to Google Cloud">Cloud</span>}
                                             <span classList={{
                                                 "sidebar-sub-item-dot": true,
                                                 "healthy": healthStatus() === 'healthy',
-                                                "unhealthy": healthStatus() === 'unhealthy',
+                                                "unhealthy": healthStatus() === 'unhealthy' || isDisabled(),
                                             }} />
                                         </button>
                                     );
@@ -397,7 +421,7 @@ function App() {
             </nav>
 
             {/* Content */}
-            <main class="main-content">
+            <main id="main-content" class="main-content">
                 {renderPage()}
             </main>
         </>

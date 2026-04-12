@@ -1,10 +1,13 @@
 package com.localcloud.emulators.gke;
 
+import com.localcloud.admin.CredentialBroker;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
@@ -19,6 +22,16 @@ public class K3dManager {
     private static final Logger logger = LoggerFactory.getLogger(K3dManager.class);
     private static final String CLUSTER_PREFIX = "lc-";
     private static final Pattern SAFE_NAME = Pattern.compile("^[a-zA-Z0-9][a-zA-Z0-9_-]*$");
+
+    private final CredentialBroker credentialBroker;
+
+    public K3dManager() {
+        this(null);
+    }
+
+    public K3dManager(CredentialBroker credentialBroker) {
+        this.credentialBroker = credentialBroker;
+    }
 
     private void validateClusterName(String name) {
         if (name == null || name.isBlank() || name.length() > 63 || !SAFE_NAME.matcher(name).matches()) {
@@ -36,8 +49,18 @@ public class K3dManager {
     public String createCluster(String name, int apiPort) {
         validateClusterName(name);
         String fullName = CLUSTER_PREFIX + name;
-        execCommand(List.of("k3d", "cluster", "create", fullName,
-                "--api-port", String.valueOf(apiPort), "--no-lb", "--wait"), 120);
+
+        List<String> cmd = new ArrayList<>(List.of("k3d", "cluster", "create", fullName,
+                "--api-port", String.valueOf(apiPort), "--no-lb", "--wait"));
+
+        // Mount GCP credential file into the k3d cluster nodes if available
+        String credPath = credentialBroker != null ? credentialBroker.getCredentialFilePath() : null;
+        if (credPath != null) {
+            cmd.add("--volume");
+            cmd.add(credPath + ":/credentials/gcp.json");
+        }
+
+        execCommand(cmd, 120);
         logger.info("Created k3d cluster: {} (API port {})", fullName, apiPort);
         return fullName;
     }

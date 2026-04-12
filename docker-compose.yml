@@ -25,6 +25,9 @@ services:
       LOCALCLOUD_PROJECT: "${LOCALCLOUD_PROJECT:-local-project}"
       LOCALCLOUD_SERVICES: "${LOCALCLOUD_SERVICES:-gcs,pubsub,firestore,bigquery,secretmanager,cloudtasks,spanner,bigtable,logging,monitoring,memorystore}"
       LOCALCLOUD_DATA_DIR: "/var/lib/localcloud"
+      # GCP credential bridging: set to "adc" or "service-account" to enable real GCP access
+      # See: https://github.com/localcloud/localcloud#hybrid-cloud
+      LOCALCLOUD_GCP_CREDENTIAL_SOURCE: "${LOCALCLOUD_GCP_CREDENTIAL_SOURCE:-none}"
       # JAVA_OPTS are set in the Dockerfile with container-aware percentage-based memory allocation
       # Override only if you need specific heap sizing: JAVA_OPTS: "-Xmx1g -Xms256m"
     volumes:
@@ -32,6 +35,11 @@ services:
       - "${LOCALCLOUD_SEED_FILE:-./seed.yaml}:/etc/localcloud/seed.yaml:ro"
       - ./services.yaml:/etc/localcloud/services.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock
+      # GCP credential bridging (uncomment ONE of the options below):
+      # Option A: Application Default Credentials (from `gcloud auth application-default login`)
+      # - "${HOME}/.config/gcloud:/credentials/adc:ro"
+      # Option B: Service Account key file
+      # - "${LOCALCLOUD_GCP_SA_KEY:-/dev/null}:/credentials/sa-key.json:ro"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/_localcloud/health"]
       interval: 10s
@@ -42,4 +50,5 @@ volumes:
   localcloud-data:
     # Explicit name prevents Docker Compose from prefixing with project name.
     # Both `docker compose` and `localcloud start` (docker run) use this same volume.
+    external: true
     name: localcloud-data

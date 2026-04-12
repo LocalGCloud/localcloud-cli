@@ -169,6 +169,19 @@ public final class TestDataSource {
                 ")"
             );
 
+            // Service routing
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS service_routing (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    service_id VARCHAR(255) NOT NULL," +
+                "    mode VARCHAR(20) DEFAULT 'local'," +
+                "    remote_project VARCHAR(255)," +
+                "    remote_region VARCHAR(255)," +
+                "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, service_id)" +
+                ")"
+            );
+
         } catch (SQLException e) {
             throw new RuntimeException("Failed to initialize test schema", e);
         }

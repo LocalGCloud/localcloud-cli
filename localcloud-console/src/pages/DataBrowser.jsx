@@ -1727,6 +1727,18 @@ export default function DataBrowser(props) {
 
     const loadData = () => fetchData(selectedTab());
 
+    // Watch for parent-triggered refresh/reset
+    createEffect(() => {
+        const trigger = props.refreshTrigger?.();
+        if (trigger > 0) loadData();
+    });
+    createEffect(() => {
+        const trigger = props.resetTrigger?.();
+        if (trigger > 0) {
+            api.resetService(selectedTab(), false).then(() => loadData());
+        }
+    });
+
     const handleAdd = (title, fields, callback) => {
         setCrudTitle(title);
         setCrudFields(fields);
@@ -1838,26 +1850,6 @@ export default function DataBrowser(props) {
 
     return (
         <div>
-            {/* Service Header Bar */}
-            <div class="db-header">
-                <div class="db-header-title">
-                    <img src={`/icons/${selectedTab()}.svg`} alt="" width="24" height="24" style={{ "object-fit": "contain" }} />
-                    <span>{activeTabLabel()}</span>
-                </div>
-                <div class="db-header-actions">
-                    <button class="btn btn-secondary" onClick={loadData} style={{ height: "30px", "font-size": "11px", padding: "0 12px" }}>
-                        Refresh
-                    </button>
-                    <button class="btn btn-danger" onClick={() => {
-                        if (confirm(`Reset all ${selectedTab()} data? This cannot be undone.`)) {
-                            api.resetService(selectedTab(), false).then(() => loadData());
-                        }
-                    }} style={{ height: "30px", "font-size": "11px", padding: "0 12px" }}>
-                        Reset
-                    </button>
-                </div>
-            </div>
-
             {/* Service Content — full width */}
             {renderServiceView}
 

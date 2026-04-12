@@ -19,6 +19,7 @@ import com.linecorp.armeria.server.annotation.Delete;
 import com.linecorp.armeria.server.annotation.Get;
 import com.linecorp.armeria.server.annotation.Param;
 import com.linecorp.armeria.server.annotation.Post;
+import com.linecorp.armeria.server.annotation.Put;
 import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.config.ServiceRegistry;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
@@ -42,12 +43,20 @@ public class AdminApiService {
     private final LocalCloudConfig config;
     private final RequestLogger requestLogger;
     private final ProjectService projectService;
+    private final ServiceRoutingRepository routingRepository;
+    private final CredentialBroker credentialBroker;
+    private final SupervisorClient supervisorClient;
     private final ObjectMapper mapper;
 
-    public AdminApiService(LocalCloudConfig config, RequestLogger requestLogger, ProjectService projectService) {
+    public AdminApiService(LocalCloudConfig config, RequestLogger requestLogger,
+                           ProjectService projectService, ServiceRoutingRepository routingRepository,
+                           CredentialBroker credentialBroker) {
         this.config = config;
         this.requestLogger = requestLogger;
         this.projectService = projectService;
+        this.routingRepository = routingRepository;
+        this.credentialBroker = credentialBroker;
+        this.supervisorClient = new SupervisorClient();
         this.mapper = new ObjectMapper();
         this.mapper.registerModule(new JavaTimeModule());
         this.mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -262,6 +271,211 @@ public class AdminApiService {
             }
         } catch (Exception e) {
             logger.error("Error deleting project '{}'", projectId, e);
+            return errorResponse(e);
+        }
+    }
+
+    // --- Routing API ---
+
+    /**
+     * Return per-service routing status: auto-detected routing, configured mode,
+     * port, and env var information.
+     */
+    @Get("/routing")
+    public HttpResponse routing(ServiceRequestContext ctx) {
+        try {
+            QueryParams params = ctx.queryParams();
+            String projectParam = params.get("project");
+            String projectId = (projectParam != null && !projectParam.isBlank())
+                    ? projectParam : config.getProjectId();
+
+            Map<String, Map<String, String>> persisted = routingRepository.getAll(projectId);
+            ServiceRegistry registry = config.getServiceRegistry();
+
+            Map<String, Object> response = new LinkedHashMap<>();
+            for (Map.Entry<String, ServiceDefinition> entry : registry.getAllServices().entrySet()) {
+                String serviceId = entry.getKey();
+                ServiceDefinition def = entry.getValue();
+                boolean enabled = config.isServiceEnabled(serviceId);
+
+                // Auto-detect routing based on whether service is enabled
+                String routing;
+                boolean emulatorRunning;
+                boolean healthy;
+                if (!enabled) {
+                    routing = "cloud";
+                    emulatorRunning = false;
+                    healthy = false;
+                } else {
+                    // If enabled, assume running and healthy (detailed supervisord check deferred)
+                    emulatorRunning = true;
+                    healthy = true;
+                    routing = "local";
+                }
+
+                // Get configured mode from DB (default to "local")
+                Map<String, String> routingConfig = persisted.get(serviceId);
+                String mode = routingConfig != null ? routingConfig.get("mode") : "local";
+
+                Map<String, Object> serviceRouting = new LinkedHashMap<>();
+                serviceRouting.put("emulatorRunning", emulatorRunning);
+                serviceRouting.put("healthy", healthy);
+                serviceRouting.put("routing", routing);
+                serviceRouting.put("mode", mode);
+                serviceRouting.put("port", def.port());
+                serviceRouting.put("envVar", def.envVar());
+                if ("remote".equals(mode) && routingConfig != null) {
+                    serviceRouting.put("remote_project", routingConfig.get("remote_project"));
+                    serviceRouting.put("remote_region", routingConfig.get("remote_region"));
+                }
+                response.put(serviceId, serviceRouting);
+            }
+
+            String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(response);
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
+        } catch (Exception e) {
+            logger.error("Error getting routing status", e);
+            return errorResponse(e);
+        }
+    }
+
+    /**
+     * Set routing mode for a specific service.
+     */
+    @Put("/routing/{service}")
+    public HttpResponse setRouting(@Param("service") String serviceId, AggregatedHttpRequest request) {
+        try {
+            // Validate service exists
+            ServiceRegistry registry = config.getServiceRegistry();
+            if (!registry.getAllServices().containsKey(serviceId)) {
+                Map<String, Object> error = Map.of("error", true, "message", "Unknown service: " + serviceId);
+                return HttpResponse.of(HttpStatus.NOT_FOUND, MediaType.JSON, mapper.writeValueAsString(error));
+            }
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> body = mapper.readValue(request.contentUtf8(), Map.class);
+            String mode = (String) body.get("mode");
+            if (mode == null || (!mode.equals("local") && !mode.equals("remote"))) {
+                Map<String, Object> error = Map.of("error", true, "message", "mode must be 'local' or 'remote'");
+                return HttpResponse.of(HttpStatus.BAD_REQUEST, MediaType.JSON, mapper.writeValueAsString(error));
+            }
+
+            String remoteProject = (String) body.get("remote_project");
+            String remoteRegion = (String) body.get("remote_region");
+            String projectId = config.getProjectId();
+
+            routingRepository.upsert(projectId, serviceId, mode, remoteProject, remoteRegion);
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("service", serviceId);
+            result.put("mode", mode);
+            result.put("remote_project", remoteProject);
+            result.put("remote_region", remoteRegion);
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
+        } catch (Exception e) {
+            logger.error("Error setting routing for service '{}'", serviceId, e);
+            return errorResponse(e);
+        }
+    }
+
+    // --- Credentials API ---
+
+    /**
+     * Return the current GCP credential status.
+     */
+    @Get("/credentials")
+    public HttpResponse credentials() {
+        try {
+            String json = mapper.writerWithDefaultPrettyPrinter()
+                    .writeValueAsString(credentialBroker.getStatus());
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
+        } catch (Exception e) {
+            logger.error("Error getting credential status", e);
+            return errorResponse(e);
+        }
+    }
+
+    // --- Service Enable/Disable API ---
+
+    // Map service IDs to supervisord program names (external services only)
+    private static final Map<String, String> SUPERVISOR_PROGRAM_NAMES = Map.of(
+        "gcs", "fake-gcs-server",
+        "pubsub", "pubsub-emulator",
+        "firestore", "firestore-emulator",
+        "bigtable", "bigtable-emulator",
+        "spanner", "spanner-emulator",
+        "bigquery", "bigquery-emulator"
+    );
+
+    /**
+     * Enable an emulator service. External services are started via supervisord;
+     * facade services are toggled in-memory.
+     */
+    @Post("/services/{id}/enable")
+    public HttpResponse enableService(@Param("id") String serviceId) {
+        try {
+            ServiceRegistry registry = config.getServiceRegistry();
+            ServiceDefinition def = registry.getAllServices().get(serviceId);
+            if (def == null) {
+                Map<String, Object> error = Map.of("error", true, "message", "Unknown service: " + serviceId);
+                return HttpResponse.of(HttpStatus.NOT_FOUND, MediaType.JSON, mapper.writeValueAsString(error));
+            }
+
+            if (config.isServiceDynamicallyEnabled(serviceId)) {
+                Map<String, Object> result = Map.of("service", serviceId, "status", "already_enabled");
+                return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+            }
+
+            if ("external".equals(def.type())) {
+                String programName = SUPERVISOR_PROGRAM_NAMES.get(serviceId);
+                if (programName != null) {
+                    supervisorClient.startProcess(programName);
+                }
+            }
+            config.setServiceEnabled(serviceId, true);
+
+            Map<String, Object> result = Map.of("service", serviceId, "status", "enabled");
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
+        } catch (Exception e) {
+            logger.error("Error enabling service '{}'", serviceId, e);
+            return errorResponse(e);
+        }
+    }
+
+    /**
+     * Disable an emulator service. External services are stopped via supervisord;
+     * facade services are toggled in-memory (new requests get 503).
+     */
+    @Post("/services/{id}/disable")
+    public HttpResponse disableService(@Param("id") String serviceId) {
+        try {
+            ServiceRegistry registry = config.getServiceRegistry();
+            ServiceDefinition def = registry.getAllServices().get(serviceId);
+            if (def == null) {
+                Map<String, Object> error = Map.of("error", true, "message", "Unknown service: " + serviceId);
+                return HttpResponse.of(HttpStatus.NOT_FOUND, MediaType.JSON, mapper.writeValueAsString(error));
+            }
+
+            if (!config.isServiceDynamicallyEnabled(serviceId)) {
+                Map<String, Object> result = Map.of("service", serviceId, "status", "already_disabled");
+                return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+            }
+
+            if ("external".equals(def.type())) {
+                String programName = SUPERVISOR_PROGRAM_NAMES.get(serviceId);
+                if (programName != null) {
+                    supervisorClient.stopProcess(programName);
+                }
+            }
+            config.setServiceEnabled(serviceId, false);
+
+            Map<String, Object> result = Map.of("service", serviceId, "status", "disabled");
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
+        } catch (Exception e) {
+            logger.error("Error disabling service '{}'", serviceId, e);
             return errorResponse(e);
         }
     }

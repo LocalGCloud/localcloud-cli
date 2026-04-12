@@ -244,6 +244,19 @@ public class SchemaManager {
                 ")"
             );
 
+            // Service routing: per-service local/remote mode configuration
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS service_routing (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    service_id VARCHAR(255) NOT NULL," +
+                "    mode VARCHAR(20) DEFAULT 'local'," +
+                "    remote_project VARCHAR(255)," +
+                "    remote_region VARCHAR(255)," +
+                "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, service_id)" +
+                ")"
+            );
+
             // Cloud Storage: storage_objects (referenced by index below)
             // Indexes for high-volume tables
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_log_entries_log_name ON log_entries (log_name)");

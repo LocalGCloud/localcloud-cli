@@ -1,5 +1,6 @@
 package com.localcloud.emulators.compute;
 
+import com.localcloud.admin.CredentialBroker;
 import com.localcloud.docker.ContainerManager;
 import com.localcloud.emulators.AbstractEmulator;
 import com.localcloud.persistence.PostgresDataSource;
@@ -11,15 +12,25 @@ public class ComputeEmulator extends AbstractEmulator {
 
     private final PostgresDataSource dataSource;
     private final ContainerManager containerManager;
+    private final CredentialBroker credentialBroker;
     private final ComputeStore store;
     private final ComputeRestService restService;
 
     public ComputeEmulator(PostgresDataSource dataSource, ContainerManager containerManager) {
+        this(dataSource, containerManager, null);
+    }
+
+    public ComputeEmulator(PostgresDataSource dataSource, ContainerManager containerManager, CredentialBroker credentialBroker) {
         super("compute", "Compute Engine", 8080, "rest", "COMPUTE_EMULATOR_HOST");
         this.dataSource = dataSource;
         this.containerManager = containerManager;
+        this.credentialBroker = credentialBroker;
         this.store = new ComputeStore(dataSource);
         this.restService = new ComputeRestService(store, containerManager, this);
+    }
+
+    public CredentialBroker getCredentialBroker() {
+        return credentialBroker;
     }
 
     @Override

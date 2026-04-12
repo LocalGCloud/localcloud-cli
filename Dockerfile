@@ -76,10 +76,12 @@ RUN groupadd -r localcloud && useradd -r -g localcloud -m localcloud \
                 /var/log/localcloud \
                 /opt/localcloud \
                 /var/run/postgresql \
+                /credentials/adc \
     && chown -R localcloud:localcloud /var/lib/localcloud \
                                       /var/log/localcloud \
                                       /opt/localcloud \
-                                      /var/run/postgresql
+                                      /var/run/postgresql \
+                                      /credentials
 
 # Spanner emulator wrapper: passes --data_dir only for local fork (persistence support)
 RUN printf '#!/bin/bash\nif [ ! -x /usr/local/bin/spanner-emulator-main ]; then\n  echo "ERROR: spanner-emulator-main not found or not executable" >&2\n  exit 1\nfi\nif [ "${SPANNER_EMULATOR_IMAGE}" = "google" ]; then\n  exec /usr/local/bin/spanner-emulator-main "$@"\nelse\n  exec /usr/local/bin/spanner-emulator-main --data_dir=/var/lib/localcloud/spanner-data "$@"\nfi\n' \

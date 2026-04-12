@@ -43,6 +43,16 @@ async function post(path, body) {
     return r.json();
 }
 
+async function put(path, body) {
+    const r = await fetch(`${BASE}${path}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json();
+}
+
 async function del(path) {
     const r = await fetch(`${BASE}${path}`, { method: 'DELETE' });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
@@ -73,4 +83,15 @@ export const api = {
     projects: () => get('/_localcloud/projects'),
     createProject: (projectId, displayName) => post('/_localcloud/projects', { project_id: projectId, display_name: displayName }),
     deleteProject: (projectId) => del(`/_localcloud/projects/${encodeURIComponent(projectId)}`),
+    // Routing & credentials
+    routing: () => get(appendProject('/_localcloud/routing')),
+    credentials: () => get('/_localcloud/credentials'),
+    setRouting: (serviceId, mode, remoteProject, remoteRegion) =>
+        put(`/_localcloud/routing/${encodeURIComponent(serviceId)}`, { mode, remote_project: remoteProject, remote_region: remoteRegion }),
+    enableService: (serviceId) => post(`/_localcloud/services/${encodeURIComponent(serviceId)}/enable`),
+    disableService: (serviceId) => post(`/_localcloud/services/${encodeURIComponent(serviceId)}/disable`),
+    // SQL query execution
+    query: (service, sql, params) => postJson(appendProject('/_localcloud/query'), { service, sql, ...params }),
+    // Schema info
+    schema: (service) => get(appendProject(`/_localcloud/schema/${encodeURIComponent(service)}`)),
 };

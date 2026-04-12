@@ -4,9 +4,12 @@ import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.command.CreateContainerResponse;
 import com.github.dockerjava.api.command.InspectContainerResponse;
 import com.github.dockerjava.api.model.Container;
+import com.github.dockerjava.api.model.AccessMode;
+import com.github.dockerjava.api.model.Bind;
 import com.github.dockerjava.api.model.ExposedPort;
 import com.github.dockerjava.api.model.HostConfig;
 import com.github.dockerjava.api.model.Ports;
+import com.github.dockerjava.api.model.Volume;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +47,27 @@ public class ContainerManager {
                                  Map<Integer, Integer> ports,
                                  Map<String, String> env,
                                  Map<String, String> labels) {
+        return createAndStart(image, name, ports, env, labels, null, null);
+    }
+
+    /**
+     * Pull an image, create a container, and start it, optionally mounting GCP credentials.
+     *
+     * @param image              Docker image (e.g. "ubuntu:22.04")
+     * @param name               container name
+     * @param ports              container port → host port mappings
+     * @param env                environment variables
+     * @param labels             additional labels (merged with managed label)
+     * @param credentialFilePath path to GCP credential JSON file to mount (null to skip)
+     * @param projectId          GCP project ID for GOOGLE_CLOUD_PROJECT env var (null to skip)
+     * @return the container ID
+     */
+    public String createAndStart(String image, String name,
+                                 Map<Integer, Integer> ports,
+                                 Map<String, String> env,
+                                 Map<String, String> labels,
+                                 String credentialFilePath,
+                                 String projectId) {
         // Pull image if not present
         try {
             docker.inspectImageCmd(image).exec();
@@ -63,6 +87,14 @@ public class ContainerManager {
             env.forEach((k, v) -> envList.add(k + "=" + v));
         }
 
+        // Add credential-related env vars if credential file is provided
+        if (credentialFilePath != null) {
+            envList.add("GOOGLE_APPLICATION_CREDENTIALS=/credentials/gcp.json");
+            if (projectId != null && !projectId.isBlank()) {
+                envList.add("GOOGLE_CLOUD_PROJECT=" + projectId);
+            }
+        }
+
         // Build labels
         var allLabels = new java.util.HashMap<>(labels != null ? labels : Map.of());
         allLabels.put("localcloud.managed", "true");
@@ -80,6 +112,12 @@ public class ContainerManager {
 
         HostConfig hostConfig = HostConfig.newHostConfig()
                 .withPortBindings(portBindings);
+
+        // Add credential file bind mount if provided
+        if (credentialFilePath != null) {
+            hostConfig.withBinds(new Bind(credentialFilePath,
+                    new Volume("/credentials/gcp.json"), AccessMode.ro));
+        }
 
         CreateContainerResponse container = docker.createContainerCmd(image)
                 .withName(name)

@@ -185,6 +185,11 @@ code, pre {
   to { opacity: 1; }
 }
 
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(52,211,153,0.4); }
+  50% { opacity: 0.6; box-shadow: 0 0 10px rgba(52,211,153,0.6); }
+}
+
 /* --- Reduced Motion --- */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

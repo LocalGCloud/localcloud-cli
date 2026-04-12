@@ -63,12 +63,18 @@ public class ComputeRestService {
             String containerName = "lc-compute-" + project + "-" + name;
             String containerId;
             try {
+                String credPath = emulator.getCredentialBroker() != null
+                        ? emulator.getCredentialBroker().getCredentialFilePath() : null;
+                String credProject = emulator.getCredentialBroker() != null
+                        && emulator.getCredentialBroker().getProject() != null
+                        ? emulator.getCredentialBroker().getProject() : project;
                 containerId = containerManager.createAndStart(
                         containerImage, containerName,
                         Map.of(), Map.of(),
                         Map.of("localcloud.service", "compute",
                                "localcloud.project", project,
-                               "localcloud.instance", name));
+                               "localcloud.instance", name),
+                        credPath, credProject);
             } catch (Exception e) {
                 logger.warn("Failed to create container for instance {}: {}", name, e.getMessage());
                 containerId = "simulated-" + name;

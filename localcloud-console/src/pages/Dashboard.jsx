@@ -38,6 +38,9 @@ export default function Dashboard(props) {
     const [resetMsg, setResetMsg] = createSignal(null);
     const [copyMsg, setCopyMsg] = createSignal(null);
     const [servicesData, setServicesData] = createSignal([]);
+    const [confirmingReset, setConfirmingReset] = createSignal(false);
+    const [fetchError, setFetchError] = createSignal(null);
+    const [failCount, setFailCount] = createSignal(0);
 
     createEffect(() => {
         // Re-fetch when active project changes
@@ -47,8 +50,15 @@ export default function Dashboard(props) {
                 const data = await api.services();
                 if (data && data.services) {
                     setServicesData(data.services);
+                    setFetchError(null);
+                    setFailCount(0);
                 }
             } catch (err) {
+                const count = failCount() + 1;
+                setFailCount(count);
+                if (count >= 3) {
+                    setFetchError('Cannot reach LocalCloud backend. Is the container running?');
+                }
                 console.error('Failed to fetch services:', err);
             }
         };
@@ -94,17 +104,22 @@ export default function Dashboard(props) {
 
     const totalRequests = () => services().reduce((sum, s) => sum + (s.request_count || 0), 0);
 
-    const handleReset = async () => {
-        if (!confirm('Reset all emulator data? This cannot be undone.')) return;
+    const handleResetClick = () => {
+        setConfirmingReset(true);
+    };
+
+    const handleResetConfirm = async () => {
+        setConfirmingReset(false);
         setResetting(true);
         setResetMsg(null);
         try {
             await api.reset();
-            setResetMsg('All data reset successfully.');
+            setResetMsg({ type: 'success', text: 'All data reset successfully.' });
         } catch (err) {
-            setResetMsg('Reset failed: ' + err.message);
+            setResetMsg({ type: 'error', text: 'Reset failed: ' + err.message });
         } finally {
             setResetting(false);
+            setTimeout(() => setResetMsg(null), 5000);
         }
     };
 
@@ -180,10 +195,17 @@ export default function Dashboard(props) {
             <div class="section">
                 <h2>Local Services</h2>
                 <Show when={services().length > 0} fallback={
-                    <div class="loading-state">
-                        <div class="loading-spinner" />
-                        Loading services...
-                    </div>
+                    <Show when={fetchError()} fallback={
+                        <div class="loading-state">
+                            <div class="loading-spinner" />
+                            Loading services...
+                        </div>
+                    }>
+                        <div class="alert alert-error">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+                            {fetchError()}
+                        </div>
+                    </Show>
                 }>
                     <div class="service-grid">
                         <For each={services()}>
@@ -203,8 +225,12 @@ export default function Dashboard(props) {
                                 return (
                                     <div
                                         class="service-card"
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-label={`${svc.displayName} — ${statusLabel()}`}
                                         style={{ cursor: 'pointer' }}
                                         onClick={() => handleCardClick(svc.id)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCardClick(svc.id); } }}
                                     >
                                         <div style={{ display: 'flex', "align-items": 'center', gap: '10px' }}>
                                             <ServiceIcon id={svc.id} size={24} />
@@ -223,6 +249,11 @@ export default function Dashboard(props) {
                                             }}>
                                                 {statusLabel()}
                                             </span>
+                                            {(() => {
+                                                const mode = props.routingData?.()?.[svc.id]?.mode;
+                                                if (mode === 'remote') return <span class="badge badge-cloud" style={{ "margin-left": "auto" }}>Cloud</span>;
+                                                return null;
+                                            })()}
                                         </div>
                                         <div class="service-card-meta">
                                             <span style={{ "font-family": "var(--font-mono)", "font-size": "11px", "letter-spacing": "-0.02em" }}>:{svc.port || '--'}</span>
@@ -252,9 +283,27 @@ export default function Dashboard(props) {
                 </Show>
             </div>
 
+            {/* Confirmation Dialog */}
+            <Show when={confirmingReset()}>
+                <div class="alert alert-error" style={{ display: 'flex', "align-items": 'center', "justify-content": 'space-between' }}>
+                    <span>Reset all emulator data? This cannot be undone.</span>
+                    <div style={{ display: 'flex', gap: '8px', "flex-shrink": 0, "margin-left": '16px' }}>
+                        <button class="btn btn-secondary" onClick={() => setConfirmingReset(false)}>Cancel</button>
+                        <button class="btn btn-danger" onClick={handleResetConfirm}>Confirm Reset</button>
+                    </div>
+                </div>
+            </Show>
+
+            {/* Status Messages */}
+            <Show when={resetMsg()}>
+                <div class={`alert ${resetMsg().type === 'success' ? 'alert-success' : 'alert-error'}`}>
+                    {resetMsg().text}
+                </div>
+            </Show>
+
             {/* Quick Actions */}
             <div class="actions-bar">
-                <button class="btn btn-danger" onClick={handleReset} disabled={resetting()}>
+                <button class="btn btn-danger" onClick={handleResetClick} disabled={resetting() || confirmingReset()}>
                     {resetting() ? 'Resetting...' : 'Reset All Data'}
                 </button>
                 <button class="btn btn-secondary" onClick={handleCopyEnv}>
@@ -275,13 +324,8 @@ export default function Dashboard(props) {
                 }}>
                     Export State
                 </button>
-                <Show when={resetMsg()}>
-                    <span style={{ "font-size": "12px", color: "var(--text-secondary)", "align-self": "center" }}>
-                        {resetMsg()}
-                    </span>
-                </Show>
                 <Show when={copyMsg()}>
-                    <span style={{ "font-size": "12px", color: "var(--success)", "align-self": "center" }}>
+                    <span class="badge badge-healthy" style={{ "align-self": "center" }}>
                         {copyMsg()}
                     </span>
                 </Show>

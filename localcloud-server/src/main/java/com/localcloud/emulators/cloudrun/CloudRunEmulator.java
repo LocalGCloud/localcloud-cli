@@ -4,6 +4,7 @@ import com.google.cloud.run.v2.*;
 import com.google.longrunning.Operation;
 import com.google.protobuf.Any;
 import com.google.protobuf.Timestamp;
+import com.localcloud.admin.CredentialBroker;
 import com.localcloud.docker.ContainerManager;
 import com.localcloud.emulators.AbstractEmulator;
 import com.localcloud.persistence.PostgresDataSource;
@@ -21,15 +22,21 @@ public class CloudRunEmulator extends AbstractEmulator {
 
     private final PostgresDataSource dataSource;
     private final ContainerManager containerManager;
+    private final CredentialBroker credentialBroker;
     private final CloudRunStore store;
     private final ServicesServiceImpl servicesService;
     private final RevisionsServiceImpl revisionsService;
     private final AtomicInteger nextPort = new AtomicInteger(10000);
 
     public CloudRunEmulator(PostgresDataSource dataSource, ContainerManager containerManager) {
+        this(dataSource, containerManager, null);
+    }
+
+    public CloudRunEmulator(PostgresDataSource dataSource, ContainerManager containerManager, CredentialBroker credentialBroker) {
         super("cloudrun", "Cloud Run", 8080, "grpc", "CLOUD_RUN_EMULATOR_HOST");
         this.dataSource = dataSource;
         this.containerManager = containerManager;
+        this.credentialBroker = credentialBroker;
         this.store = new CloudRunStore(dataSource);
         this.servicesService = new ServicesServiceImpl();
         this.revisionsService = new RevisionsServiceImpl();
@@ -173,13 +180,17 @@ public class CloudRunEmulator extends AbstractEmulator {
                 String containerId;
                 String uri;
                 try {
+                    String credPath = credentialBroker != null ? credentialBroker.getCredentialFilePath() : null;
+                    String credProject = credentialBroker != null && credentialBroker.getProject() != null
+                            ? credentialBroker.getProject() : projectId;
                     containerId = containerManager.createAndStart(
                             containerImage, containerName,
                             Map.of(containerPort, hostPort),
                             Map.of(),
                             Map.of("localcloud.service", "cloudrun",
                                    "localcloud.project", projectId,
-                                   "localcloud.run-service", serviceId));
+                                   "localcloud.run-service", serviceId),
+                            credPath, credProject);
                     uri = "http://localhost:" + hostPort;
                 } catch (Exception e) {
                     logger.warn("Failed to create container for Cloud Run service {}: {}", serviceId, e.getMessage());
@@ -306,13 +317,17 @@ public class CloudRunEmulator extends AbstractEmulator {
                 String containerId;
                 String uri;
                 try {
+                    String credPath = credentialBroker != null ? credentialBroker.getCredentialFilePath() : null;
+                    String credProject = credentialBroker != null && credentialBroker.getProject() != null
+                            ? credentialBroker.getProject() : projectId;
                     containerId = containerManager.createAndStart(
                             newImage, containerName,
                             Map.of(containerPort, hostPort),
                             Map.of(),
                             Map.of("localcloud.service", "cloudrun",
                                    "localcloud.project", projectId,
-                                   "localcloud.run-service", serviceId));
+                                   "localcloud.run-service", serviceId),
+                            credPath, credProject);
                     uri = "http://localhost:" + hostPort;
                 } catch (Exception e) {
                     containerId = "simulated-" + serviceId;

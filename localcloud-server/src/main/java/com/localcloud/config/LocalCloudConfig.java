@@ -3,6 +3,7 @@ package com.localcloud.config;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Central configuration for the LocalCloud server.
@@ -24,6 +25,10 @@ public class LocalCloudConfig {
     private String postgresUser;
     private String postgresPassword;
     private ServiceRegistry serviceRegistry;
+    private String gcpCredentialSource;
+    private String gcpCredentialAdcPath;
+    private String gcpCredentialSaKeyPath;
+    private ConcurrentHashMap<String, Boolean> enabledServicesMap;
 
     private LocalCloudConfig() {
     }
@@ -52,11 +57,21 @@ public class LocalCloudConfig {
                 .filter(s -> !s.isEmpty())
                 .toList();
 
+        config.gcpCredentialSource = env("LOCALCLOUD_GCP_CREDENTIAL_SOURCE", "none");
+        config.gcpCredentialAdcPath = env("LOCALCLOUD_GCP_ADC_PATH", "/credentials/adc/application_default_credentials.json");
+        config.gcpCredentialSaKeyPath = env("LOCALCLOUD_GCP_SA_KEY_PATH", "/credentials/sa-key.json");
+
         config.postgresHost = env("LOCALCLOUD_PG_HOST", "localhost");
         config.postgresPort = intEnv("LOCALCLOUD_PG_PORT", 5432);
         config.postgresDatabase = env("LOCALCLOUD_PG_DATABASE", "localcloud");
         config.postgresUser = env("LOCALCLOUD_PG_USER", "localcloud");
         config.postgresPassword = env("LOCALCLOUD_PG_PASSWORD", "localcloud");
+
+        // Initialize enabled services map from the enabled services list
+        config.enabledServicesMap = new ConcurrentHashMap<>();
+        for (String svc : config.enabledServices) {
+            config.enabledServicesMap.put(svc, true);
+        }
 
         return config;
     }
@@ -138,5 +153,32 @@ public class LocalCloudConfig {
 
     public ServiceRegistry getServiceRegistry() {
         return serviceRegistry;
+    }
+
+    public String getGcpCredentialSource() {
+        return gcpCredentialSource;
+    }
+
+    public String getGcpCredentialAdcPath() {
+        return gcpCredentialAdcPath;
+    }
+
+    public String getGcpCredentialSaKeyPath() {
+        return gcpCredentialSaKeyPath;
+    }
+
+    /**
+     * Check if a service is dynamically enabled (supports runtime toggling).
+     * Falls back to the static enabledServices list if not present in the dynamic map.
+     */
+    public boolean isServiceDynamicallyEnabled(String serviceName) {
+        return enabledServicesMap.getOrDefault(serviceName, false);
+    }
+
+    /**
+     * Dynamically enable or disable a service at runtime.
+     */
+    public void setServiceEnabled(String serviceName, boolean enabled) {
+        enabledServicesMap.put(serviceName, enabled);
     }
 }

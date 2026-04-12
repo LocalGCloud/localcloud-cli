@@ -117,6 +117,7 @@ export default function Services(props) {
                                 <th style={{ width: '36px' }}></th>
                                 <th>Service</th>
                                 <th>Status</th>
+                                <th>Routing</th>
                                 <th>Port</th>
                                 <th>Protocol</th>
                                 <th>Env Var</th>
@@ -159,6 +160,16 @@ export default function Services(props) {
                                                     <span class={`status-dot ${statusClass()}`} />
                                                     {statusLabel()}
                                                 </span>
+                                            </td>
+                                            <td>
+                                                {(() => {
+                                                    const mode = props.routingData?.()?.[svc.id]?.mode || 'local';
+                                                    return (
+                                                        <span class={`badge ${mode === 'remote' ? 'badge-cloud' : 'badge-local'}`}>
+                                                            {mode === 'remote' ? 'Cloud' : 'Local'}
+                                                        </span>
+                                                    );
+                                                })()}
                                             </td>
                                             <td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>
                                                 {svc.port || '--'}
