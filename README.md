@@ -2,7 +2,7 @@
 
 Google Cloud Platform — in a box.
 
-LocalCloud emulates 13 GCP services inside a single Docker container so you can develop and test locally without cloud access, credentials, or costs. Your application code works against LocalCloud with **zero code changes** — just point your GCP SDKs at localhost.
+LocalCloud emulates 14 GCP services inside a single Docker container so you can develop and test locally without cloud access, credentials, or costs. Your application code works against LocalCloud with **zero code changes** — just point your GCP SDKs at localhost.
 
 ## Emulated Services
 
@@ -21,6 +21,7 @@ LocalCloud emulates 13 GCP services inside a single Docker container so you can 
 | GKE | gRPC | 8080 |
 | Compute Engine | REST | 8080 |
 | Cloud Run | gRPC | 8080 |
+| Memorystore (Redis) | RESP2 | 6379 |
 
 ## Quick Start
 
@@ -96,7 +97,6 @@ docker build -t localcloud/localcloud:latest .
 
 **Architecture notes:**
 - Native arm64 (Apple Silicon) and amd64 (Intel/AMD) builds are supported
-- The BigQuery emulator binary is amd64-only and runs via QEMU on arm64
 - First build downloads ~3GB of base images; subsequent builds use cache
 
 **Running the built image:**

@@ -62,7 +62,7 @@ Java 21 (LTS, primary), Python 3.11+ (CLI/tooling): Follow standard conventions
 - `/_localcloud/services` returns array format with id, name, status, port, protocol, endpoint, env_var, env_value, request_count
 - `/_localcloud/reset` reads `restore_seed` from JSON body (not query params)
 - Seed YAML supports both flat format (`gcs: ...`) and nested format (`services: { gcs: ... }`)
-- BigQuery emulator binary is amd64-only; runs via QEMU on arm64
+- BigQuery emulator v2 is Python-based (DuckDB+SQLGlot), native on both arm64 and amd64
 - Container needs `-m 4g` memory limit for stable operation
 
 ## Recent Changes

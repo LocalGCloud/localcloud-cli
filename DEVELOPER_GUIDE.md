@@ -960,7 +960,7 @@ docker run -d --name localcloud-main \
   localcloud/localcloud:latest
 ```
 
-**Note:** On Apple Silicon (arm64), some emulators run under QEMU emulation which increases memory usage. Use `-m 4g` or higher.
+**Note:** Use `-m 4g` or higher when running all default services.
 
 ### Cloud Tasks Not Dispatching
 
