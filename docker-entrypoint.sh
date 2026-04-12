@@ -4,9 +4,8 @@ set -e
 # Ensure data directories exist (Docker volumes from older images may lack them)
 mkdir -p /var/lib/localcloud/spanner-data /var/lib/localcloud/gcs-data /var/lib/localcloud/pgdata /var/lib/localcloud/bigquery-data
 
-# BigQuery emulator: persistence is write-only (doesn't reload from SQLite on startup).
-# Clear stale database to avoid UNIQUE constraint errors on re-seed.
-rm -f /var/lib/localcloud/bigquery-data/bigquery.db
+# BigQuery emulator v2: clear DuckDB database on startup for clean re-seed.
+rm -f /var/lib/localcloud/bigquery-data/bigquery.duckdb /var/lib/localcloud/bigquery-data/bigquery.duckdb.wal
 chown -R localcloud:localcloud /var/lib/localcloud/spanner-data /var/lib/localcloud/gcs-data 2>/dev/null || true
 
 # Service names below must match keys in /etc/localcloud/services.yaml

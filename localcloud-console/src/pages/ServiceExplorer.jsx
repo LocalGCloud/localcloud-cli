@@ -23,6 +23,8 @@ const SERVICE_META = {
 
 // ─── SQL-Capable Services ──────────────────────────────────────────────
 const SQL_SERVICES = [
+    { id: 'gcs', label: 'Cloud Storage', dialect: 'bigquery', dialectLabel: 'BigQuery SQL', icon: 'gcs',
+      placeholder: "-- Click a file in the explorer to generate a query" },
     { id: 'bigquery', label: 'BigQuery', dialect: 'bigquery', dialectLabel: 'BigQuery SQL', icon: 'bigquery',
       placeholder: "SELECT * FROM `dataset.table` LIMIT 10" },
     { id: 'spanner', label: 'Spanner', dialect: 'googlesql', dialectLabel: 'GoogleSQL', icon: 'spanner',
@@ -85,14 +87,59 @@ function truncateCell(val, max = 120) {
 }
 
 // ─── Services without SQL support ────────────────────────────────────────
-const NON_SQL_SERVICES = new Set(['gcs', 'pubsub', 'firestore']);
+const NON_SQL_SERVICES = new Set(['pubsub', 'firestore']);
 
 // ─── Non-SQL service descriptions for the "no SQL" placeholder ───────────
 const NON_SQL_INFO = {
-    gcs:       { label: 'Cloud Storage',  hint: 'Cloud Storage uses object-based storage. Use the Data Explorer tab to browse buckets and objects.' },
     pubsub:    { label: 'Pub/Sub',        hint: 'Pub/Sub uses topic-based messaging. Use the Data Explorer tab to browse topics and subscriptions.' },
     firestore: { label: 'Firestore',      hint: 'Firestore uses document-based NoSQL storage. Use the Data Explorer tab to browse collections and documents.' },
 };
+
+// ─── GCS File Query Helpers ──────────────────────────────────────────────
+const QUERYABLE_EXTENSIONS = new Set(['.parquet', '.csv', '.json', '.jsonl', '.ndjson']);
+
+function getFileExtension(name) {
+    const dot = name.lastIndexOf('.');
+    return dot >= 0 ? name.substring(dot).toLowerCase() : '';
+}
+
+function isQueryableFile(name) {
+    return QUERYABLE_EXTENSIONS.has(getFileExtension(name));
+}
+
+function getReaderFunction(name) {
+    const ext = getFileExtension(name);
+    switch (ext) {
+        case '.parquet': return 'read_parquet';
+        case '.csv': return 'read_csv';
+        case '.json': case '.jsonl': case '.ndjson': return 'read_json';
+        default: return null;
+    }
+}
+
+function generateFileQuery(bucket, objectName) {
+    const reader = getReaderFunction(objectName);
+    // Use local filesystem path inside the container (DuckDB reads directly)
+    // Escape single quotes for SQL safety
+    const filePath = `/var/lib/localcloud/gcs-data/${bucket}/${objectName}`.replace(/'/g, "''");
+    if (reader === 'read_csv') return `SELECT * FROM read_csv('${filePath}', auto_detect=true, header=true) LIMIT 100`;
+    if (reader === 'read_json') return `SELECT * FROM read_json('${filePath}', auto_detect=true) LIMIT 100`;
+    return `SELECT * FROM read_parquet('${filePath}') LIMIT 100`;
+}
+
+function formatFileSize(bytes) {
+    if (bytes == null) return '';
+    const n = Number(bytes);
+    if (n === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(n) / Math.log(1024));
+    return `${(n / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
+}
+
+function formatBadge(name) {
+    const ext = getFileExtension(name).replace('.', '').toUpperCase();
+    return ext === 'JSONL' || ext === 'NDJSON' ? 'JSON' : ext;
+}
 
 // ─── SQL Editor Component (Full Workspace) ─────────────────────────────
 function SQLEditor(props) {
@@ -111,6 +158,69 @@ function SQLEditor(props) {
     const [schemaSearch, setSchemaSearch] = createSignal('');
     const [schemaLoading, setSchemaLoading] = createSignal(false);
 
+    // GCS file explorer state
+    const isGcsMode = () => service() === 'gcs';
+    const [gcsBuckets, setGcsBuckets] = createSignal([]);
+    const [gcsFiles, setGcsFiles] = createSignal({}); // { bucketName: [{ name, size, ... }] }
+    const [gcsFileSchemas, setGcsFileSchemas] = createSignal({}); // { "bucket/obj": [{ name, type }] }
+    const [gcsSchemaLoading, setGcsSchemaLoading] = createSignal({});
+
+    // Load GCS buckets and files when in GCS mode
+    createEffect(() => {
+        if (isGcsMode()) loadGcsFiles();
+    });
+
+    async function loadGcsFiles() {
+        setSchemaLoading(true);
+        try {
+            const data = await api.browse('gcs');
+            const buckets = data.buckets || [];
+            setGcsBuckets(buckets);
+            // Load objects for all buckets in parallel
+            const files = {};
+            const results = await Promise.allSettled(
+                buckets.map(b => api.browse('gcs', b.name).then(objs => ({ name: b.name, objects: objs.objects || [] })))
+            );
+            for (const r of results) {
+                if (r.status === 'fulfilled') files[r.value.name] = r.value.objects;
+            }
+            setGcsFiles(files);
+            // Auto-expand first bucket
+            if (buckets.length > 0) setExpanded(prev => ({ ...prev, ['bucket:' + buckets[0].name]: true }));
+        } catch (e) { console.error('Failed to load GCS files:', e); }
+        setSchemaLoading(false);
+    }
+
+    async function loadFileSchema(bucket, objectName) {
+        const key = bucket + '/' + objectName;
+        setGcsSchemaLoading(prev => ({ ...prev, [key]: true }));
+        try {
+            const data = await api.gcsFileSchema(bucket, objectName);
+            setGcsFileSchemas(prev => ({ ...prev, [key]: data.columns || [] }));
+        } catch (e) {
+            setGcsFileSchemas(prev => ({ ...prev, [key]: { error: e.message } }));
+        }
+        setGcsSchemaLoading(prev => ({ ...prev, [key]: false }));
+    }
+
+    function handleFileClick(bucket, objectName) {
+        const query = generateFileQuery(bucket, objectName);
+        setSqlText(query);
+        setIsPlaceholder(false);
+        setResult(null);
+        setError(null);
+    }
+
+    function handleFileExpand(bucket, objectName) {
+        const key = bucket + '/' + objectName;
+        const fileKey = 'file:' + key;
+        toggle(fileKey);
+        // Load schema on first expand
+        if (!gcsFileSchemas()[key] && !gcsSchemaLoading()[key]) {
+            loadFileSchema(bucket, objectName);
+        }
+    }
+
     // Reset editor state when service changes
     createEffect((prev) => {
         const svc = service();
@@ -124,10 +234,10 @@ function SQLEditor(props) {
         return svc;
     });
 
-    // Load schema from API for SQL-capable services
+    // Load schema from API for SQL-capable services (not GCS — it uses file loading)
     createEffect(() => {
         const svc = service();
-        if (!NON_SQL_SERVICES.has(svc)) loadDynamicSchema(svc);
+        if (!NON_SQL_SERVICES.has(svc) && svc !== 'gcs') loadDynamicSchema(svc);
     });
 
     async function loadDynamicSchema(svc) {
@@ -191,7 +301,9 @@ function SQLEditor(props) {
         setRunning(true); setError(null); setResult(null);
         const startTime = performance.now();
         try {
-            const data = await api.query(service(), query);
+            // GCS file queries route through BigQuery emulator
+            const queryService = service() === 'gcs' ? 'bigquery' : service();
+            const data = await api.query(queryService, query);
             const elapsed = Math.round(performance.now() - startTime);
             if (data.error) { setError(data.error); }
             else { setResult({ columns: data.columns || [], rows: data.rows || [], rowCount: data.row_count ?? (data.rows || []).length, executionTime: data.execution_time_ms || elapsed }); }
@@ -319,10 +431,107 @@ function SQLEditor(props) {
                     <Show when={schemaLoading()}>
                         <div class="sql-explorer-loading">
                             <div class="loading-spinner" style={{ width: '14px', height: '14px', "border-width": '1.5px' }} />
-                            <span>Loading schema...</span>
+                            <span>{isGcsMode() ? 'Loading files...' : 'Loading schema...'}</span>
                         </div>
                     </Show>
-                    <Show when={!schemaLoading() && Object.keys(schemaTree()).length === 0}>
+
+                    {/* ── GCS File Explorer Tree ── */}
+                    <Show when={isGcsMode() && !schemaLoading()}>
+                        <Show when={gcsBuckets().length === 0}>
+                            <div class="sql-explorer-empty">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.12 }}>
+                                    <path d="M20 6H12L10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/>
+                                </svg>
+                                <span>No buckets found</span>
+                            </div>
+                        </Show>
+                        <For each={gcsBuckets()}>
+                            {(bucket) => {
+                                const bucketKey = 'bucket:' + bucket.name;
+                                const allObjects = () => gcsFiles()[bucket.name] || [];
+                                const queryableFiles = () => {
+                                    const q = schemaSearch().toLowerCase().trim();
+                                    return allObjects().filter(o => isQueryableFile(o.name) && (!q || o.name.toLowerCase().includes(q)));
+                                };
+                                const otherCount = () => allObjects().length - allObjects().filter(o => isQueryableFile(o.name)).length;
+                                return (
+                                    <div class="tree-group">
+                                        <div class="tree-row tree-row-db" onClick={() => toggle(bucketKey)} role="button" tabIndex={0}>
+                                            <IconChevron open={expanded()[bucketKey]} />
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" class="tree-icon tree-icon-db">
+                                                <path d="M20 6H12L10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.12"/>
+                                            </svg>
+                                            <span class="tree-name">{bucket.name}</span>
+                                            <span class="tree-badge tree-badge-db">{queryableFiles().length} file{queryableFiles().length !== 1 ? 's' : ''}</span>
+                                        </div>
+                                        <Show when={expanded()[bucketKey]}>
+                                            <div class="tree-children">
+                                                <For each={queryableFiles()}>
+                                                    {(file) => {
+                                                        const fileKey = 'file:' + bucket.name + '/' + file.name;
+                                                        const schemaKey = bucket.name + '/' + file.name;
+                                                        const cols = () => gcsFileSchemas()[schemaKey];
+                                                        const isLoading = () => gcsSchemaLoading()[schemaKey];
+                                                        return (
+                                                            <div class="tree-group">
+                                                                <div class="tree-row tree-row-tbl" role="button" tabIndex={0}
+                                                                    onClick={() => handleFileClick(bucket.name, file.name)}>
+                                                                    <span style={{ cursor: 'pointer', display: 'inline-flex' }}
+                                                                        onClick={(e) => { e.stopPropagation(); handleFileExpand(bucket.name, file.name); }}>
+                                                                        <IconChevron open={expanded()[fileKey]} />
+                                                                    </span>
+                                                                    <IconTable />
+                                                                    <span class="tree-name">{file.name}</span>
+                                                                    <span class="tree-badge" style={{ "font-size": "9px", "letter-spacing": "0.5px" }}>{formatBadge(file.name)}</span>
+                                                                    <Show when={file.size}>
+                                                                        <span class="tree-col-type" style={{ "margin-left": "auto" }}>{formatFileSize(file.size)}</span>
+                                                                    </Show>
+                                                                </div>
+                                                                <Show when={expanded()[fileKey]}>
+                                                                    <div class="tree-children">
+                                                                        <Show when={isLoading()}>
+                                                                            <div class="sql-explorer-loading" style={{ padding: '4px 0 4px 24px' }}>
+                                                                                <div class="loading-spinner" style={{ width: '12px', height: '12px', "border-width": '1.5px' }} />
+                                                                                <span>Detecting schema...</span>
+                                                                            </div>
+                                                                        </Show>
+                                                                        <Show when={!isLoading() && cols() && !cols().error}>
+                                                                            <For each={cols()}>
+                                                                                {(col) => (
+                                                                                    <div class="tree-row tree-row-col" title={`${col.name} (${col.type})`}>
+                                                                                        <IconColumn />
+                                                                                        <span class="tree-col-name">{col.name}</span>
+                                                                                        <span class="tree-col-type">{col.type}</span>
+                                                                                    </div>
+                                                                                )}
+                                                                            </For>
+                                                                        </Show>
+                                                                        <Show when={!isLoading() && cols()?.error}>
+                                                                            <div class="tree-row tree-row-col" style={{ color: 'var(--error)', "font-size": "11px" }}>
+                                                                                <span>Schema detection failed</span>
+                                                                            </div>
+                                                                        </Show>
+                                                                    </div>
+                                                                </Show>
+                                                            </div>
+                                                        );
+                                                    }}
+                                                </For>
+                                                <Show when={otherCount() > 0}>
+                                                    <div class="tree-row tree-row-col" style={{ opacity: 0.4, "font-style": "italic" }}>
+                                                        <span>+{otherCount()} non-queryable file{otherCount() !== 1 ? 's' : ''}</span>
+                                                    </div>
+                                                </Show>
+                                            </div>
+                                        </Show>
+                                    </div>
+                                );
+                            }}
+                        </For>
+                    </Show>
+
+                    {/* ── Standard Schema Tree (non-GCS) ── */}
+                    <Show when={!isGcsMode() && !schemaLoading() && Object.keys(schemaTree()).length === 0}>
                         <div class="sql-explorer-empty">
                             <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.12 }}>
                                 <ellipse cx="12" cy="5.5" rx="9" ry="3.5"/>
@@ -331,6 +540,7 @@ function SQLEditor(props) {
                             <span>No resources found</span>
                         </div>
                     </Show>
+                    <Show when={!isGcsMode()}>
                     <For each={Object.entries(schemaTree())}>
                         {([dbName, tables]) => {
                             const dbKey = 'db:' + dbName;
@@ -392,6 +602,7 @@ function SQLEditor(props) {
                             );
                         }}
                     </For>
+                    </Show>
                 </div>
             </div>
 

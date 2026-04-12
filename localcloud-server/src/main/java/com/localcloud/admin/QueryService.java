@@ -330,6 +330,119 @@ public class QueryService {
         }
     }
 
+    // ─── GCS File Schema Detection ──────────────────────────────────────
+
+    /** Allowlist pattern for bucket/object names — rejects path traversal and SQL injection. */
+    private static final java.util.regex.Pattern SAFE_GCS_PATH =
+            java.util.regex.Pattern.compile("^[a-zA-Z0-9._\\-/]+$");
+
+    /** Supported queryable file extensions and their DuckDB reader functions. */
+    private static final Map<String, String> FORMAT_READERS = Map.of(
+            ".parquet", "read_parquet",
+            ".csv", "read_csv",
+            ".json", "read_json",
+            ".jsonl", "read_json",
+            ".ndjson", "read_json"
+    );
+
+    /**
+     * Detect schema of a GCS file by querying the BigQuery emulator with LIMIT 0.
+     * Returns { columns: [{ name, type }] }.
+     */
+    @Get("/gcs/file-schema")
+    public HttpResponse gcsFileSchema(ServiceRequestContext ctx) {
+        try {
+            String bucket = ctx.queryParams().get("bucket");
+            String object = ctx.queryParams().get("object");
+            String project = ctx.queryParams().get("project");
+            String projectId = (project != null && !project.isBlank()) ? project : config.getProjectId();
+
+            if (bucket == null || bucket.isBlank() || object == null || object.isBlank()) {
+                return HttpResponse.of(HttpStatus.BAD_REQUEST, MediaType.JSON,
+                        mapper.writeValueAsString(Map.of("error", "Missing required params: bucket, object")));
+            }
+
+            // Reject path traversal and SQL injection characters
+            if (!SAFE_GCS_PATH.matcher(bucket).matches() || !SAFE_GCS_PATH.matcher(object).matches()
+                    || bucket.contains("..") || object.contains("..")) {
+                return HttpResponse.of(HttpStatus.BAD_REQUEST, MediaType.JSON,
+                        mapper.writeValueAsString(Map.of("error", "Invalid bucket or object name")));
+            }
+
+            // Detect format from extension
+            String ext = object.contains(".") ? object.substring(object.lastIndexOf('.')).toLowerCase() : "";
+            String readerFn = FORMAT_READERS.get(ext);
+            if (readerFn == null) {
+                return HttpResponse.of(HttpStatus.BAD_REQUEST, MediaType.JSON,
+                        mapper.writeValueAsString(Map.of("error",
+                                "Unsupported file format: " + ext + ". Supported: .parquet, .csv, .json, .jsonl, .ndjson")));
+            }
+
+            // Build a LIMIT 0 query to detect schema without reading data
+            // Use local filesystem path (DuckDB reads directly inside container)
+            String gcsDataDir = System.getenv("GCS_DATA_DIR");
+            if (gcsDataDir == null || gcsDataDir.isBlank()) gcsDataDir = "/var/lib/localcloud/gcs-data";
+            String filePath = gcsDataDir + "/" + bucket + "/" + object;
+            String sql;
+            if ("read_csv".equals(readerFn)) {
+                sql = "SELECT * FROM " + readerFn + "('" + filePath + "', auto_detect=true, header=true) LIMIT 0";
+            } else if ("read_json".equals(readerFn)) {
+                sql = "SELECT * FROM " + readerFn + "('" + filePath + "', auto_detect=true) LIMIT 0";
+            } else {
+                sql = "SELECT * FROM " + readerFn + "('" + filePath + "') LIMIT 0";
+            }
+
+            // Execute via BigQuery emulator
+            String queryUrl = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/queries";
+            String queryPayload = mapper.writeValueAsString(Map.of("query", sql, "useLegacySql", false));
+            String responseBody = proxyPost(queryUrl, queryPayload);
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> queryResp = mapper.readValue(responseBody, Map.class);
+
+            // Check for errors
+            @SuppressWarnings("unchecked")
+            Map<String, Object> bqError = (Map<String, Object>) queryResp.get("error");
+            if (bqError != null) {
+                String errMsg = (String) bqError.get("message");
+                int status = errMsg != null && errMsg.contains("No such file") ? 404 : 500;
+                return HttpResponse.of(HttpStatus.valueOf(status), MediaType.JSON,
+                        mapper.writeValueAsString(Map.of("error", "Schema detection failed: " + errMsg)));
+            }
+
+            // Parse schema from response
+            List<Map<String, String>> columns = new ArrayList<>();
+            @SuppressWarnings("unchecked")
+            Map<String, Object> schema = (Map<String, Object>) queryResp.get("schema");
+            if (schema != null) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> fields = (List<Map<String, Object>>) schema.get("fields");
+                if (fields != null) {
+                    for (Map<String, Object> field : fields) {
+                        columns.add(Map.of(
+                                "name", (String) field.get("name"),
+                                "type", (String) field.getOrDefault("type", "STRING")
+                        ));
+                    }
+                }
+            }
+
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of("columns", columns)));
+
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : "Unknown error";
+            logger.warn("GCS file schema detection failed: {}", msg);
+            try {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
+                        mapper.writeValueAsString(Map.of("error", "Schema detection failed: " + msg)));
+            } catch (Exception je) {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.PLAIN_TEXT_UTF_8,
+                        "Schema detection failed");
+            }
+        }
+    }
+
     // ─── Schema endpoint ───────────────────────────────────────────────
 
     /**

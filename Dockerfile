@@ -13,21 +13,23 @@
 # Must be declared before the first FROM for use in FROM line interpolation
 ARG SPANNER_EMULATOR_IMAGE=local
 
-# Pull bigquery-emulator binary (amd64-only)
-FROM --platform=linux/amd64 ghcr.io/goccy/bigquery-emulator:latest AS bigquery-emulator-amd64
-
-FROM gcr.io/cloud-spanner-emulator/emulator:latest AS spanner-emulator-upstream
-# Fork stage: only pulled by BuildKit when SPANNER_EMULATOR_IMAGE=local
+# --- Spanner emulator binary selection ---
+FROM gcr.io/cloud-spanner-emulator/emulator:1.5.29 AS spanner-emulator-upstream
 FROM spanner-emulator-build:latest AS spanner-emulator-fork
 
-# Normalize emulator binary path for each mode
-FROM spanner-emulator-upstream AS spanner-bin-google
-FROM spanner-emulator-fork AS spanner-bin-local
-RUN cp /build/output/emulator_main /emulator_main
-# Select the right emulator binary source based on build arg
+# Normalize emulator binary path: upstream has /emulator_main, fork has /build/output/emulator_main
+# Use scratch intermediates to avoid RUN on distroless images (no shell available)
+FROM scratch AS spanner-bin-google
+COPY --from=spanner-emulator-upstream /emulator_main /emulator_main
+FROM scratch AS spanner-bin-local
+COPY --from=spanner-emulator-fork /build/output/emulator_main /emulator_main
 FROM spanner-bin-${SPANNER_EMULATOR_IMAGE} AS spanner-bin
 
-# Stage 2: Runtime
+# --- BigQuery emulator: use pre-built image (built from ../local_cloud_dependencies/bigquery-emulator-v2) ---
+# Build first: cd ../local_cloud_dependencies/bigquery-emulator-v2 && docker build -t bigquery-emulator-v2 .
+FROM bigquery-emulator-v2:latest AS bq-emulator
+
+# --- Runtime stage ---
 FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
 
 # Re-declare ARG after FROM so it's available in this stage
@@ -40,29 +42,82 @@ LABEL org.opencontainers.image.title="LocalCloud"
 LABEL org.opencontainers.image.description="Local GCP Emulator Orchestrator"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
-# Install runtime dependencies
-# Note: Java 21 is already included in the base image (google-cloud-cli:emulators)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# [A] Remove unused gcloud SDK components (gsutil, bq CLI, datastore emulator)
+# [C] Strip locale data, docs, man pages
+# [F] Strip unused gcloud surface commands (keep only emulators + beta)
+# Then install runtime dependencies in the same layer to avoid duplicates
+RUN rm -rf \
+        /google-cloud-sdk/platform/gsutil \
+        /google-cloud-sdk/platform/bq \
+        /google-cloud-sdk/platform/cloud-datastore-emulator \
+        /google-cloud-sdk/lib/third_party/botocore \
+        /google-cloud-sdk/lib/third_party/boto3 \
+        /google-cloud-sdk/lib/third_party/kubernetes \
+        /google-cloud-sdk/lib/third_party/pygments \
+    && find /google-cloud-sdk/lib/surface/ -mindepth 1 -maxdepth 1 \
+        ! -name '__init__.py' \
+        ! -name 'emulators' \
+        ! -name 'beta' \
+        ! -name 'config' \
+        ! -name 'components' \
+        -exec rm -rf {} + \
+    && rm -rf \
+        /usr/share/locale/* \
+        /usr/share/doc/* \
+        /usr/share/man/* \
+        /usr/share/i18n/* \
+        /usr/share/perl/* \
+        /usr/share/fonts/* \
+        /usr/share/alsa/* \
+        /var/cache/debconf/* \
+    && apt-get update && apt-get install -y --no-install-recommends \
         postgresql-15 \
         supervisor \
         curl \
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+        /usr/share/doc/* /usr/share/man/* /usr/share/locale/*
 
 # Docker CLI only (not the full engine — daemon runs on host via mounted docker.sock)
-COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
 
 # Install k3d (lightweight k3s wrapper for GKE emulation)
 # Set --build-arg INCLUDE_K3D=false for slim images without GKE support
 ARG INCLUDE_K3D=true
+ARG K3D_VERSION=v5.7.5
 RUN if [ "$INCLUDE_K3D" = "true" ]; then \
-      curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash; \
+      ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/') && \
+      curl -fsSLk -o /usr/local/bin/k3d "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-${ARCH}" && \
+      chmod +x /usr/local/bin/k3d; \
     fi
 
 # Copy third-party emulator binaries
-COPY --from=fsouza/fake-gcs-server:latest /bin/fake-gcs-server /usr/local/bin/fake-gcs-server
-# bigquery-emulator is amd64-only
-# On arm64 this copies the amd64 binary which requires QEMU; BigQuery may not work on arm64
-COPY --from=bigquery-emulator-amd64 /bin/bigquery-emulator /usr/local/bin/bigquery-emulator
+COPY --from=fsouza/fake-gcs-server:1.52.1 /bin/fake-gcs-server /usr/local/bin/fake-gcs-server
+
+# BigQuery Emulator v2: copy pre-built venv + Python 3.12 interpreter from the BQ emulator image
+# The base image has Python 3.11 but the BQ venv is built with 3.12 — so we embed 3.12 alongside it
+COPY --from=bq-emulator /usr/local/bin/python3.12 /usr/local/bin/python3.12
+COPY --from=bq-emulator /usr/local/lib/libpython3.12.so.1.0 /usr/local/lib/libpython3.12.so.1.0
+COPY --from=bq-emulator /usr/local/lib/python3.12/ /usr/local/lib/python3.12/
+COPY --from=bq-emulator /opt/bqenv /opt/bqenv
+# [D] Strip Python 3.12 stdlib modules not needed at runtime
+# Wire up: libpython shared lib, venv symlinks, and CLI entrypoint
+RUN rm -rf \
+        /usr/local/lib/python3.12/test \
+        /usr/local/lib/python3.12/idlelib \
+        /usr/local/lib/python3.12/tkinter \
+        /usr/local/lib/python3.12/turtledemo \
+        /usr/local/lib/python3.12/ensurepip \
+        /usr/local/lib/python3.12/lib2to3 \
+        /usr/local/lib/python3.12/distutils \
+        /usr/local/lib/python3.12/pydoc_data \
+        /usr/local/lib/python3.12/unittest/test \
+    && ln -sf /usr/local/lib/libpython3.12.so.1.0 /usr/local/lib/libpython3.12.so \
+    && ln -sf /usr/local/lib/libpython3.12.so.1.0 /usr/local/lib/libpython3.so \
+    && ldconfig \
+    && ln -sf /usr/local/bin/python3.12 /opt/bqenv/bin/python3 \
+    && ln -sf /usr/local/bin/python3.12 /opt/bqenv/bin/python \
+    && ln -sf /opt/bqenv/bin/bigquery-emulator /usr/local/bin/bigquery-emulator
+
 # Spanner emulator: gateway always from upstream, emulator from selected source (google or local fork)
 COPY --from=spanner-emulator-upstream /gateway_main /usr/local/bin/spanner-gateway
 COPY --from=spanner-bin /emulator_main /usr/local/bin/spanner-emulator-main
@@ -88,11 +143,10 @@ RUN printf '#!/bin/bash\nif [ ! -x /usr/local/bin/spanner-emulator-main ]; then\
     > /usr/local/bin/spanner-emulator-wrapper \
     && chmod +x /usr/local/bin/spanner-emulator-wrapper
 
-# Initialize PostgreSQL data directory
-RUN su - localcloud -s /bin/bash -c "/usr/lib/postgresql/15/bin/initdb -D /var/lib/localcloud/pgdata"
-
-# Create the localcloud database
+# [B] Initialize PostgreSQL data directory + create database in single layer
+# (avoids 34MB duplicate WAL data from separate initdb + createdb layers)
 RUN su - localcloud -s /bin/bash -c " \
+    /usr/lib/postgresql/15/bin/initdb -D /var/lib/localcloud/pgdata && \
     /usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/localcloud/pgdata start && \
     /usr/lib/postgresql/15/bin/createdb -h /var/run/postgresql localcloud && \
     /usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/localcloud/pgdata stop"

@@ -94,4 +94,6 @@ export const api = {
     query: (service, sql, params) => postJson(appendProject('/_localcloud/query'), { service, sql, ...params }),
     // Schema info
     schema: (service) => get(appendProject(`/_localcloud/schema/${encodeURIComponent(service)}`)),
+    // GCS file schema detection
+    gcsFileSchema: (bucket, object) => get(appendProject(`/_localcloud/gcs/file-schema?bucket=${encodeURIComponent(bucket)}&object=${encodeURIComponent(object)}`)),
 };
