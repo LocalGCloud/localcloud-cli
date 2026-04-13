@@ -150,6 +150,9 @@ export default function Logs(props) {
                         <div class="empty-state-text">
                             Send requests to the emulated services to see them appear here.
                         </div>
+                        <div class="empty-state-hint">
+                            <code>curl http://localhost:8080/_localcloud/health</code>
+                        </div>
                     </div>
                 }>
                     <div class="data-table-wrapper">

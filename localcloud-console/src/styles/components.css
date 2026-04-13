@@ -1842,10 +1842,23 @@
 
 /* --- Editor Pane --- */
 .sql-editor-pane {
-  flex: 1;
   min-height: 80px;
   overflow: hidden;
-  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* --- Resize Handle --- */
+.sql-resize-handle {
+  height: 5px;
+  cursor: row-resize;
+  background: var(--border);
+  flex-shrink: 0;
+  position: relative;
+  transition: background 0.15s;
+}
+.sql-resize-handle:hover,
+.sql-resize-handle:active {
+  background: var(--primary);
 }
 
 .sql-editor-fill {
@@ -2109,6 +2122,20 @@
 .skip-link:focus {
   top: 0;
   text-decoration: none;
+}
+
+/* ---------- Empty State Hint ---------- */
+.empty-state-hint {
+  margin-top: 12px;
+  padding: 8px 14px;
+  background: var(--surface-active, rgba(0,0,0,0.03));
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  text-align: left;
+  display: inline-block;
 }
 
 /* ---------- Offline Banner ---------- */

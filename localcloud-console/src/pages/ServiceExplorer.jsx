@@ -158,6 +158,36 @@ function SQLEditor(props) {
     const [schemaSearch, setSchemaSearch] = createSignal('');
     const [schemaLoading, setSchemaLoading] = createSignal(false);
 
+    // Resizable editor pane
+    const [editorHeight, setEditorHeight] = createSignal(300);
+    let resizing = false;
+    let resizeStartY = 0;
+    let resizeStartH = 0;
+
+    const startResize = (e) => {
+        e.preventDefault();
+        resizing = true;
+        resizeStartY = e.clientY;
+        resizeStartH = editorHeight();
+        const onMove = (ev) => {
+            if (!resizing) return;
+            const delta = ev.clientY - resizeStartY;
+            const newH = Math.max(80, Math.min(resizeStartH + delta, window.innerHeight - 200));
+            setEditorHeight(newH);
+        };
+        const onUp = () => {
+            resizing = false;
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+        document.body.style.cursor = 'row-resize';
+        document.body.style.userSelect = 'none';
+    };
+
     // GCS file explorer state
     const isGcsMode = () => service() === 'gcs';
     const [gcsBuckets, setGcsBuckets] = createSignal([]);
@@ -636,8 +666,8 @@ function SQLEditor(props) {
                     </div>
                 </div>
 
-                {/* Editor Pane (flex: 1, fills top half) */}
-                <div class="sql-editor-pane">
+                {/* Editor Pane — resizable via drag handle */}
+                <div class="sql-editor-pane" style={{ flex: `0 0 ${editorHeight()}px` }}>
                     <CodeEditor
                         value={sqlText()}
                         onChange={handleSqlChange}
@@ -649,7 +679,14 @@ function SQLEditor(props) {
                     />
                 </div>
 
-                {/* Status Bar / Divider */}
+                {/* Resize Handle */}
+                <div
+                    class="sql-resize-handle"
+                    onMouseDown={startResize}
+                    title="Drag to resize editor"
+                />
+
+                {/* Status Bar */}
                 <div class="sql-status-bar">
                     <Show when={running()}>
                         <div class="loading-spinner" style={{ width: '12px', height: '12px', "border-width": '1.5px' }} />

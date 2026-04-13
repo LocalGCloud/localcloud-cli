@@ -15,7 +15,26 @@ const SERVICE_NAMES = {
     gke: 'GKE',
     compute: 'Compute Engine',
     cloudrun: 'Cloud Run',
+    memorystore: 'Memorystore (Redis)',
 };
+
+// All 14 services — ensures disabled ones still appear as greyed cards
+const ALL_SERVICE_IDS = [
+    { id: 'gcs', port: 4443, protocol: 'REST' },
+    { id: 'pubsub', port: 8085, protocol: 'GRPC' },
+    { id: 'firestore', port: 8086, protocol: 'GRPC' },
+    { id: 'bigtable', port: 8087, protocol: 'GRPC' },
+    { id: 'spanner', port: 9010, protocol: 'GRPC' },
+    { id: 'bigquery', port: 9050, protocol: 'REST' },
+    { id: 'secretmanager', port: 8080, protocol: 'GRPC' },
+    { id: 'cloudtasks', port: 8080, protocol: 'GRPC' },
+    { id: 'logging', port: 8080, protocol: 'GRPC' },
+    { id: 'monitoring', port: 8080, protocol: 'GRPC' },
+    { id: 'memorystore', port: 6379, protocol: 'REDIS' },
+    { id: 'gke', port: 8080, protocol: 'GRPC' },
+    { id: 'compute', port: 8080, protocol: 'REST' },
+    { id: 'cloudrun', port: 8080, protocol: 'GRPC' },
+];
 
 function ServiceIcon({ id, size = 20 }) {
     return <img src={`/icons/${id}.svg`} alt="" width={size} height={size} style={{ "object-fit": "contain" }} />;
@@ -72,29 +91,31 @@ export default function Dashboard(props) {
         const health = props.healthData();
         const healthServices = health?.services || {};
 
-        if (svcList.length > 0) {
-            return svcList.map(svc => ({
-                ...svc,
-                displayName: SERVICE_NAMES[svc.id] || svc.name || svc.id,
-                status: healthServices[svc.id]?.status || svc.status || 'unknown',
-            }));
+        // Build lookup from live API data
+        const liveMap = {};
+        for (const svc of svcList) {
+            liveMap[svc.id] = svc;
         }
 
-        if (health && health.services) {
-            return Object.entries(health.services).map(([key, val]) => ({
-                id: key,
-                displayName: SERVICE_NAMES[key] || key,
-                status: val.status,
-                port: val.port,
-                protocol: val.protocol || '--',
-                request_count: 0,
-            }));
-        }
-
-        return [];
+        // Merge static list with live data — always show all 14 services
+        return ALL_SERVICE_IDS.map(def => {
+            const live = liveMap[def.id] || {};
+            const healthStatus = healthServices[def.id]?.status;
+            return {
+                ...def,
+                ...live,
+                id: def.id,
+                displayName: SERVICE_NAMES[def.id] || live.name || def.id,
+                status: healthStatus || live.status || 'disabled',
+                port: live.port || def.port,
+                protocol: (live.protocol || def.protocol || '--').toUpperCase(),
+                request_count: live.request_count || 0,
+            };
+        });
     };
 
     const healthyCount = () => services().filter(s => s.status === 'healthy').length;
+    const enabledCount = () => services().filter(s => s.status !== 'disabled').length;
     const totalCount = () => services().length;
 
     const overallHealthy = () => {
@@ -158,7 +179,7 @@ export default function Dashboard(props) {
                 <div class="stat-card stat-card-hero">
                     <div class="stat-card-label">Services</div>
                     <div class="stat-card-value">
-                        {healthyCount()} / {totalCount()}
+                        {healthyCount()} / {enabledCount()}
                     </div>
                 </div>
                 <div class="stat-card">
@@ -212,12 +233,15 @@ export default function Dashboard(props) {
                             {(svc) => {
                                 const isHealthy = () => svc.status === 'healthy';
                                 const isUnknown = () => svc.status === 'unknown';
+                                const isDisabled = () => svc.status === 'disabled';
                                 const statusClass = () => {
+                                    if (isDisabled()) return 'disabled';
                                     if (isHealthy()) return 'healthy';
                                     if (isUnknown()) return 'warning';
                                     return 'unhealthy';
                                 };
                                 const statusLabel = () => {
+                                    if (isDisabled()) return 'Disabled';
                                     if (isHealthy()) return 'Healthy';
                                     if (isUnknown()) return 'Unknown';
                                     return 'Unhealthy';
@@ -228,7 +252,7 @@ export default function Dashboard(props) {
                                         role="button"
                                         tabIndex={0}
                                         aria-label={`${svc.displayName} — ${statusLabel()}`}
-                                        style={{ cursor: 'pointer' }}
+                                        style={{ cursor: 'pointer', ...(isDisabled() ? { opacity: '0.5', "pointer-events": 'none' } : {}) }}
                                         onClick={() => handleCardClick(svc.id)}
                                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCardClick(svc.id); } }}
                                     >
@@ -239,11 +263,13 @@ export default function Dashboard(props) {
                                         <div class="service-card-status">
                                             <span class={`status-dot ${statusClass()}`} />
                                             <span style={{
-                                                color: isHealthy()
-                                                    ? 'var(--success)'
-                                                    : isUnknown()
-                                                        ? 'var(--warning)'
-                                                        : 'var(--error)',
+                                                color: isDisabled()
+                                                    ? 'var(--text-tertiary)'
+                                                    : isHealthy()
+                                                        ? 'var(--success)'
+                                                        : isUnknown()
+                                                            ? 'var(--warning)'
+                                                            : 'var(--error)',
                                                 "font-size": '12px',
                                                 "font-weight": '500',
                                             }}>

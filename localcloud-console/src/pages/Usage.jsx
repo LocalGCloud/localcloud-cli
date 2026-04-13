@@ -86,6 +86,7 @@ export default function Usage(props) {
     const [usageData, setUsageData] = createSignal([]);
     const [loading, setLoading] = createSignal(true);
     const [error, setError] = createSignal(null);
+    const [lastUpdated, setLastUpdated] = createSignal(null);
 
     const fetchUsage = async () => {
         setLoading(true);
@@ -93,6 +94,7 @@ export default function Usage(props) {
         try {
             const result = await api.usage();
             setUsageData(result.services || []);
+            setLastUpdated(new Date());
         } catch (err) {
             setError('Could not load usage data: ' + err.message);
         } finally {
@@ -174,6 +176,9 @@ export default function Usage(props) {
                         </div>
                         <div style={{ "font-size": "12px", color: "var(--text-secondary)" }}>
                             {formatNumber(totalRequests())} total requests (all time)
+                            <Show when={lastUpdated()}>
+                                {' '}&middot; updated {lastUpdated().toLocaleTimeString()}
+                            </Show>
                         </div>
                     </div>
 

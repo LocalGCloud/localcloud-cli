@@ -257,7 +257,8 @@ function GcsView(props) {
                 <div class="empty-state">
                     <div class="empty-state-icon">{'\u2205'}</div>
                     <div class="empty-state-title">No buckets found</div>
-                    <div class="empty-state-text">Create a bucket to see it here.</div>
+                    <div class="empty-state-text">Create a bucket using the button above, or via the SDK:</div>
+                    <div class="empty-state-hint"><code>client = storage.Client(){'\n'}client.create_bucket("my-bucket")</code></div>
                 </div>
             }>
                 <div class="data-table-wrapper">

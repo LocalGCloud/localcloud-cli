@@ -559,7 +559,12 @@ gcloud secrets list --project=dev`}</CopyableCodeBlock>
                     <Show when={activeTab() === 'revert'}>
                         <Section title="Switch back to real GCP">
                             <Text>To stop using LocalCloud and point your SDKs back to real Google Cloud, unset all emulator environment variables:</Text>
-                            <CopyableCodeBlock>{`unset STORAGE_EMULATOR_HOST PUBSUB_EMULATOR_HOST FIRESTORE_EMULATOR_HOST BIGTABLE_EMULATOR_HOST SPANNER_EMULATOR_HOST BIGQUERY_EMULATOR_HOST SECRET_MANAGER_EMULATOR_HOST CLOUD_TASKS_EMULATOR_HOST CLOUD_LOGGING_EMULATOR_HOST CLOUD_MONITORING_EMULATOR_HOST REDIS_HOST`}</CopyableCodeBlock>
+                            <CopyableCodeBlock>{`unset STORAGE_EMULATOR_HOST PUBSUB_EMULATOR_HOST \\
+  FIRESTORE_EMULATOR_HOST BIGTABLE_EMULATOR_HOST \\
+  SPANNER_EMULATOR_HOST BIGQUERY_EMULATOR_HOST \\
+  SECRET_MANAGER_EMULATOR_HOST CLOUD_TASKS_EMULATOR_HOST \\
+  CLOUD_LOGGING_EMULATOR_HOST CLOUD_MONITORING_EMULATOR_HOST \\
+  REDIS_HOST`}</CopyableCodeBlock>
                         </Section>
                         <Section title="Revert gcloud CLI">
                             <Text>To revert gcloud CLI overrides:</Text>
@@ -799,7 +804,12 @@ export default function Settings(props) {
                     <div style={{ background: "var(--bg-subtle)", border: "1px solid var(--border)", "border-radius": "var(--radius-sm)", padding: "12px 16px", "margin-bottom": "16px" }}>
                         <div style={{ "font-size": "12px", "font-weight": "500", color: "var(--text-secondary)", "margin-bottom": "6px" }}>Switch to Google Cloud</div>
                         <CopyableCodeBlock>
-                            {`unset STORAGE_EMULATOR_HOST PUBSUB_EMULATOR_HOST FIRESTORE_EMULATOR_HOST BIGTABLE_EMULATOR_HOST SPANNER_EMULATOR_HOST BIGQUERY_EMULATOR_HOST SECRET_MANAGER_EMULATOR_HOST CLOUD_TASKS_EMULATOR_HOST CLOUD_LOGGING_EMULATOR_HOST CLOUD_MONITORING_EMULATOR_HOST REDIS_HOST`}
+                            {`unset STORAGE_EMULATOR_HOST PUBSUB_EMULATOR_HOST \\
+  FIRESTORE_EMULATOR_HOST BIGTABLE_EMULATOR_HOST \\
+  SPANNER_EMULATOR_HOST BIGQUERY_EMULATOR_HOST \\
+  SECRET_MANAGER_EMULATOR_HOST CLOUD_TASKS_EMULATOR_HOST \\
+  CLOUD_LOGGING_EMULATOR_HOST CLOUD_MONITORING_EMULATOR_HOST \\
+  REDIS_HOST`}
                         </CopyableCodeBlock>
                         <div style={{ "font-size": "11px", color: "var(--text-tertiary)", "margin-top": "6px" }}>Or open a new terminal session. No code changes needed.</div>
                     </div>
@@ -1122,7 +1132,12 @@ gcloud spanner instances list`}</CopyableCodeBlock>
                 <Show when={guideTab() === 'revert'}>
                     <GuideSection title="Switch back to real GCP">
                         <GuideText>Unset all emulator environment variables:</GuideText>
-                        <CopyableCodeBlock>{`unset STORAGE_EMULATOR_HOST PUBSUB_EMULATOR_HOST FIRESTORE_EMULATOR_HOST BIGTABLE_EMULATOR_HOST SPANNER_EMULATOR_HOST BIGQUERY_EMULATOR_HOST SECRET_MANAGER_EMULATOR_HOST CLOUD_TASKS_EMULATOR_HOST CLOUD_LOGGING_EMULATOR_HOST CLOUD_MONITORING_EMULATOR_HOST REDIS_HOST`}</CopyableCodeBlock>
+                        <CopyableCodeBlock>{`unset STORAGE_EMULATOR_HOST PUBSUB_EMULATOR_HOST \\
+  FIRESTORE_EMULATOR_HOST BIGTABLE_EMULATOR_HOST \\
+  SPANNER_EMULATOR_HOST BIGQUERY_EMULATOR_HOST \\
+  SECRET_MANAGER_EMULATOR_HOST CLOUD_TASKS_EMULATOR_HOST \\
+  CLOUD_LOGGING_EMULATOR_HOST CLOUD_MONITORING_EMULATOR_HOST \\
+  REDIS_HOST`}</CopyableCodeBlock>
                         <GuideText>Or simply open a new terminal session. Your application code does not need any changes to switch between LocalCloud and real GCP.</GuideText>
                     </GuideSection>
                 </Show>
