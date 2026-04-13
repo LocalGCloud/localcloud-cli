@@ -43,6 +43,7 @@ public class BrowseService {
     private final LocalCloudConfig config;
     private final PostgresDataSource dataSource;
     private final ServiceRegistry registry;
+    private final UsageMetricsRepository usageMetrics;
     private final HttpClient httpClient;
     private final ObjectMapper mapper;
 
@@ -54,10 +55,12 @@ public class BrowseService {
     private final int bigtablePort;
     private final int firestorePort;
 
-    public BrowseService(LocalCloudConfig config, PostgresDataSource dataSource, ServiceRegistry registry) {
+    public BrowseService(LocalCloudConfig config, PostgresDataSource dataSource,
+                         ServiceRegistry registry, UsageMetricsRepository usageMetrics) {
         this.config = config;
         this.dataSource = dataSource;
         this.registry = registry;
+        this.usageMetrics = usageMetrics;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .build();
@@ -137,6 +140,7 @@ public class BrowseService {
 
     private HttpResponse browseService6(String service, String a, String b, String c, String d, String e, String projectId) {
         try {
+            usageMetrics.incrementCount(projectId, service, 1);
             String json = switch (service) {
                 case "spanner" -> browseSpannerTableData(a, b, c, d, e, projectId);
                 case "bigquery" -> browseBigQueryTableData(a, b, c, d, e, projectId);
@@ -159,6 +163,7 @@ public class BrowseService {
 
     private HttpResponse browseService4(String service, String a, String b, String c, String projectId) {
         try {
+            usageMetrics.incrementCount(projectId, service, 1);
             String json = switch (service) {
                 case "spanner" -> browseSpannerDatabase(a, b, c, projectId);
                 default -> mapper.writeValueAsString(Map.of(
@@ -180,6 +185,7 @@ public class BrowseService {
 
     private HttpResponse browseService(String service, String resourceType, String resourceId, String projectId) {
         try {
+            usageMetrics.incrementCount(projectId, service, 1);
             String json = switch (service) {
                 case "gcs" -> browseGcs(resourceType, resourceId, projectId);
                 case "pubsub" -> browsePubSub(resourceType, resourceId, projectId);
@@ -214,16 +220,41 @@ public class BrowseService {
     @SuppressWarnings("unchecked")
     private String browseGcs(String resourceType, String resourceId, String projectId) throws Exception {
         if (resourceType == null || "buckets".equals(resourceType) && resourceId == null) {
-            // List buckets — transform GCS items[] into buckets[] with selected fields
+            // List buckets — filter by project ownership from gcs_bucket_projects table
+            // (fake-gcs-server returns all buckets regardless of ?project= param)
             String url = gcsBase + "/storage/v1/b?project=" + projectId;
             String raw = proxyGet(url);
             Map<String, Object> resp = mapper.readValue(raw, Map.class);
             List<Map<String, Object>> items = (List<Map<String, Object>>) resp.get("items");
+
+            // Get ALL tracked bucket names to find untracked ones
+            java.util.Set<String> allTrackedBuckets = getAllTrackedBuckets();
+
+            // Auto-register any untracked buckets to the default project
+            // (buckets created before ownership tracking was added)
+            if (items != null) {
+                String defaultProject = config.getProjectId();
+                for (Map<String, Object> item : items) {
+                    String name = (String) item.get("name");
+                    if (!allTrackedBuckets.contains(name)) {
+                        registerBucketOwnership(name, defaultProject);
+                        allTrackedBuckets.add(name);
+                    }
+                }
+            }
+
+            // Get project-owned bucket names for filtering
+            java.util.Set<String> ownedBuckets = getProjectBuckets(projectId);
+
             List<Map<String, Object>> buckets = new ArrayList<>();
             if (items != null) {
                 for (Map<String, Object> item : items) {
+                    String name = (String) item.get("name");
+                    if (!ownedBuckets.contains(name)) {
+                        continue;
+                    }
                     Map<String, Object> bucket = new LinkedHashMap<>();
-                    bucket.put("name", item.get("name"));
+                    bucket.put("name", name);
                     bucket.put("timeCreated", item.get("timeCreated"));
                     bucket.put("location", item.get("location"));
                     buckets.add(bucket);
@@ -826,6 +857,63 @@ public class BrowseService {
         }
 
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Bigtable browse path"));
+    }
+
+    // ========== GCS bucket ownership helpers ==========
+
+    /**
+     * Get ALL tracked bucket names across all projects.
+     */
+    private java.util.Set<String> getAllTrackedBuckets() {
+        java.util.Set<String> buckets = new java.util.HashSet<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "SELECT bucket_name FROM gcs_bucket_projects")) {
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    buckets.add(rs.getString("bucket_name"));
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Could not query all GCS bucket ownership: {}", e.getMessage());
+        }
+        return buckets;
+    }
+
+    /**
+     * Register bucket→project ownership. No-op if already tracked.
+     */
+    private void registerBucketOwnership(String bucketName, String projectId) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "INSERT INTO gcs_bucket_projects (bucket_name, project_id) VALUES (?, ?) " +
+                 "ON CONFLICT (bucket_name) DO NOTHING")) {
+            ps.setString(1, bucketName);
+            ps.setString(2, projectId);
+            ps.executeUpdate();
+        } catch (Exception e) {
+            logger.debug("Could not register GCS bucket ownership for {}: {}", bucketName, e.getMessage());
+        }
+    }
+
+    /**
+     * Get the set of bucket names owned by a project.
+     */
+    private java.util.Set<String> getProjectBuckets(String projectId) {
+        java.util.Set<String> buckets = new java.util.HashSet<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "SELECT bucket_name FROM gcs_bucket_projects WHERE project_id = ?")) {
+            ps.setString(1, projectId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    buckets.add(rs.getString("bucket_name"));
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Could not query GCS bucket ownership: {}", e.getMessage());
+        }
+        return buckets;
     }
 
     // ========== HTTP proxy helper ==========

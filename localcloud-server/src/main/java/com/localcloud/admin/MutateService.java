@@ -157,8 +157,20 @@ public class MutateService {
             bucketBody.put("name", bucketName);
             bucketBody.put("location", location);
 
-            String url = gcsBase + "/storage/v1/b?project=" + config.getProjectId();
+            String projectId = config.getProjectId();
+            String url = gcsBase + "/storage/v1/b?project=" + projectId;
             String response = httpPostAndReturn(url, mapper.writeValueAsString(bucketBody), "application/json");
+            // Track bucket→project ownership for project-level isolation
+            try (java.sql.Connection conn = dataSource.getConnection();
+                 java.sql.PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO gcs_bucket_projects (bucket_name, project_id) VALUES (?, ?) " +
+                     "ON CONFLICT (bucket_name) DO NOTHING")) {
+                ps.setString(1, bucketName);
+                ps.setString(2, projectId);
+                ps.executeUpdate();
+            } catch (Exception e) {
+                logger.debug("Could not register GCS bucket ownership: {}", e.getMessage());
+            }
             logger.debug("Created GCS bucket: {}", bucketName);
             return response;
         }

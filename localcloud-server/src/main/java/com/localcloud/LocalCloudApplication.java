@@ -19,6 +19,7 @@ import com.localcloud.admin.ProjectService;
 import com.localcloud.admin.QueryService;
 import com.localcloud.admin.SeedService;
 import com.localcloud.admin.ServiceRoutingRepository;
+import com.localcloud.admin.UsageMetricsRepository;
 import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.emulators.secretmanager.SecretManagerEmulator;
 import com.localcloud.emulators.cloudtasks.CloudTasksEmulator;
@@ -78,16 +79,17 @@ public class LocalCloudApplication {
         this.gateway = new ApiGateway();
         this.requestLogger = new RequestLogger();
         this.processHealthChecker = new ProcessHealthChecker(config, config.getServiceRegistry());
-        this.healthCheckService = new HealthCheckService(config, gateway, processHealthChecker);
+        var usageMetrics = new UsageMetricsRepository(dataSource);
+        this.healthCheckService = new HealthCheckService(config, gateway, processHealthChecker, usageMetrics);
         this.projectService = new ProjectService(dataSource);
         var routingRepository = new ServiceRoutingRepository(dataSource);
         this.credentialBroker = new CredentialBroker(config);
         this.adminApiService = new AdminApiService(config, requestLogger, projectService, routingRepository, credentialBroker);
-        this.browseService = new BrowseService(config, dataSource, config.getServiceRegistry());
+        this.browseService = new BrowseService(config, dataSource, config.getServiceRegistry(), usageMetrics);
         this.mutateService = new MutateService(config, dataSource, config.getServiceRegistry());
         this.seedService = new SeedService(config, dataSource, config.getServiceRegistry());
         this.exportService = new ExportService(config, dataSource, config.getServiceRegistry());
-        this.queryService = new QueryService(config, dataSource, config.getServiceRegistry());
+        this.queryService = new QueryService(config, dataSource, config.getServiceRegistry(), usageMetrics);
     }
 
     /**
@@ -299,6 +301,9 @@ public class LocalCloudApplication {
             server.stop().join();
             logger.info("LocalCloud server stopped");
         }
+
+        // Flush usage metrics before stopping emulators
+        healthCheckService.shutdown();
 
         // Stop all registered emulators (facade services)
         for (var emulator : gateway.getEmulators()) {

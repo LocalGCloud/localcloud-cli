@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
+import { createSignal, createEffect, createMemo, onCleanup, Show, For } from 'solid-js';
 import { api } from '../api.js';
 
 const GCP_PRICING = {
@@ -83,30 +83,32 @@ function formatNumber(n) {
 }
 
 export default function Usage(props) {
-    const [services, setServices] = createSignal([]);
+    const [usageData, setUsageData] = createSignal([]);
     const [loading, setLoading] = createSignal(true);
     const [error, setError] = createSignal(null);
 
-    const fetchServices = async () => {
+    const fetchUsage = async () => {
         setLoading(true);
         setError(null);
         try {
-            const result = await api.services();
-            setServices(result.services || []);
+            const result = await api.usage();
+            setUsageData(result.services || []);
         } catch (err) {
-            setError('Could not load services: ' + err.message);
+            setError('Could not load usage data: ' + err.message);
         } finally {
             setLoading(false);
         }
     };
 
     createEffect(() => {
-        const _proj = props.activeProject; // re-fetch on project switch
-        fetchServices();
+        const _proj = typeof props.activeProject === 'function' ? props.activeProject() : props.activeProject;
+        fetchUsage();
+        const timer = setInterval(fetchUsage, 30000); // refresh every 30s
+        onCleanup(() => clearInterval(timer));
     });
 
     const serviceUsage = () => {
-        return services().map(svc => {
+        return usageData().map(svc => {
             const id = svc.id;
             const pricing = GCP_PRICING[id];
             const count = svc.request_count || 0;
@@ -115,7 +117,7 @@ export default function Usage(props) {
                 id,
                 name: pricing ? pricing.label : (svc.name || id),
                 requestCount: count,
-                protocol: PROTOCOL_MAP[id] || svc.protocol || 'REST',
+                protocol: PROTOCOL_MAP[id] || 'REST',
                 cost,
                 unit: pricing ? pricing.unit : '--',
                 price: pricing ? pricing.price : 0,
@@ -136,7 +138,7 @@ export default function Usage(props) {
             <div class="page-header">
                 <h1>Usage & Cost Estimates</h1>
                 <p class="page-header-subtitle">
-                    Track API usage per service and estimated GCP costs saved by using LocalCloud.
+                    Cumulative API usage per service and estimated GCP costs saved by using LocalCloud.
                 </p>
             </div>
 
@@ -146,7 +148,7 @@ export default function Usage(props) {
                 <Show when={!error()} fallback={
                     <div>
                         <div class="alert alert-error">{error()}</div>
-                        <button class="btn btn-secondary" onClick={fetchServices}>Retry</button>
+                        <button class="btn btn-secondary" onClick={fetchUsage}>Retry</button>
                     </div>
                 }>
                     {/* Savings Banner */}
@@ -158,7 +160,7 @@ export default function Usage(props) {
                         "border-color": "rgba(99,102,241,0.15)",
                     }}>
                         <div style={{ "font-size": "11px", "font-weight": "600", "text-transform": "uppercase", "letter-spacing": "0.06em", color: "var(--text-tertiary)", "margin-bottom": "8px" }}>
-                            Estimated GCP Cost Saved
+                            Estimated GCP Cost Saved (Lifetime)
                         </div>
                         <div class="gradient-text" style={{
                             "font-size": "40px",
@@ -171,7 +173,7 @@ export default function Usage(props) {
                             {formatCost(totalCost())}
                         </div>
                         <div style={{ "font-size": "12px", color: "var(--text-secondary)" }}>
-                            {formatNumber(totalRequests())} total requests
+                            {formatNumber(totalRequests())} total requests (all time)
                         </div>
                     </div>
 

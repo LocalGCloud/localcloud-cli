@@ -244,6 +244,27 @@ public class SchemaManager {
                 ")"
             );
 
+            // GCS bucket ownership: track which project created each bucket
+            // (fake-gcs-server doesn't enforce project isolation natively)
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS gcs_bucket_projects (" +
+                "    bucket_name VARCHAR(255) NOT NULL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                ")"
+            );
+
+            // Usage metrics: persistent cumulative request counts per project per service
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS usage_metrics (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    service_id VARCHAR(255) NOT NULL," +
+                "    request_count BIGINT NOT NULL DEFAULT 0," +
+                "    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, service_id)" +
+                ")"
+            );
+
             // Service routing: per-service local/remote mode configuration
             stmt.execute(
                 "CREATE TABLE IF NOT EXISTS service_routing (" +

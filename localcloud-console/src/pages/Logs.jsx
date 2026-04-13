@@ -67,7 +67,7 @@ export default function Logs(props) {
 
     // Re-fetch on project change
     createEffect(() => {
-        const _proj = props.activeProject;
+        const _proj = typeof props.activeProject === 'function' ? props.activeProject() : props.activeProject;
         fetchRequests();
     });
 

@@ -2110,3 +2110,29 @@
   top: 0;
   text-decoration: none;
 }
+
+/* ---------- Offline Banner ---------- */
+.offline-banner {
+  position: fixed;
+  top: var(--topbar-height);
+  left: var(--sidebar-width);
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  z-index: 90;
+}
+.offline-banner.connecting {
+  background: var(--warning, #f59e0b);
+  color: #1a1a1a;
+}
+@media (max-width: 768px) {
+  .offline-banner {
+    left: 56px;
+  }
+}

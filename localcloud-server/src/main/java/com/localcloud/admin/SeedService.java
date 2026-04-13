@@ -772,6 +772,8 @@ public class SeedService {
                         }
                         logger.debug("GCS bucket already exists: {}", name);
                     }
+                    // Track bucket→project ownership for project-level isolation
+                    registerBucketOwnership(name, projectId);
 
                     // Upload objects nested in this bucket
                     List<Map<String, Object>> bucketObjects = (List<Map<String, Object>>) bucket.get("objects");
@@ -1685,6 +1687,22 @@ public class SeedService {
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() >= 400) {
             logger.debug("HTTP DELETE {} failed ({})", url, response.statusCode());
+        }
+    }
+
+    /**
+     * Register bucket→project ownership in PostgreSQL for project-level GCS isolation.
+     */
+    private void registerBucketOwnership(String bucketName, String projectId) {
+        try (java.sql.Connection conn = dataSource.getConnection();
+             java.sql.PreparedStatement ps = conn.prepareStatement(
+                 "INSERT INTO gcs_bucket_projects (bucket_name, project_id) VALUES (?, ?) " +
+                 "ON CONFLICT (bucket_name) DO NOTHING")) {
+            ps.setString(1, bucketName);
+            ps.setString(2, projectId);
+            ps.executeUpdate();
+        } catch (Exception e) {
+            logger.debug("Could not register GCS bucket ownership for {}: {}", bucketName, e.getMessage());
         }
     }
 

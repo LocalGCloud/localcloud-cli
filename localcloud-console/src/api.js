@@ -96,4 +96,6 @@ export const api = {
     schema: (service) => get(appendProject(`/_localcloud/schema/${encodeURIComponent(service)}`)),
     // GCS file schema detection
     gcsFileSchema: (bucket, object) => get(appendProject(`/_localcloud/gcs/file-schema?bucket=${encodeURIComponent(bucket)}&object=${encodeURIComponent(object)}`)),
+    // Usage metrics (persistent cumulative counts)
+    usage: () => get(appendProject('/_localcloud/usage')),
 };

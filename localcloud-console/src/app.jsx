@@ -86,6 +86,8 @@ function App() {
     const [routingData, setRoutingData] = createSignal(null);
     const [credentialData, setCredentialData] = createSignal(null);
     const [refreshInterval, setRefreshInterval] = createSignal(5000);
+    const [connectionStatus, setConnectionStatus] = createSignal('connecting'); // 'connected' | 'connecting' | 'offline'
+    let healthFailCount = 0;
 
     // Project management
     const [projects, setProjects] = createSignal([]);
@@ -104,8 +106,11 @@ function App() {
     })();
 
     const switchProject = (projectId) => {
-        setActiveProjectState(projectId);
+        // IMPORTANT: Set the api.js module variable BEFORE the Solid.js signal.
+        // Solid.js may synchronously flush effects when the signal is set,
+        // and those effects call api.browse() which reads _activeProject.
         setActiveProject(projectId);
+        setActiveProjectState(projectId);
         setProjectDropdownOpen(false);
         try { localStorage.setItem('localcloud-active-project', projectId); } catch {}
     };
@@ -205,8 +210,14 @@ function App() {
                 setHealthData(health);
                 if (routing) setRoutingData(routing);
                 if (creds) setCredentialData(creds);
+                healthFailCount = 0;
+                setConnectionStatus('connected');
             } catch (err) {
-                console.error('Health check failed:', err);
+                healthFailCount++;
+                if (healthFailCount >= 2) {
+                    setConnectionStatus('offline');
+                    setHealthData(null);
+                }
             }
         };
 
@@ -238,20 +249,29 @@ function App() {
         setSelectedService(tabId);
     };
 
+    // Derived signal: true once a project has loaded (prevents null-project API calls)
+    const projectReady = () => !!activeProject();
+
     const renderPage = () => {
-        // activeProject() is read here so Solid.js re-runs renderPage when project changes
-        const proj = activeProject();
-        switch (currentPage()) {
+        const page = currentPage();
+        // Don't render data-dependent pages until project is resolved
+        if (!projectReady()) {
+            return <div class="loading-state"><div class="loading-spinner" /> Loading project...</div>;
+        }
+        // Pass activeProject as a signal accessor so children can track changes reactively
+        // NOTE: renderPage must NOT read activeProject() here — only pass the accessor.
+        // Reading it would cause full component tree re-creation on every project switch.
+        switch (page) {
             case 'dashboard':
-                return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={proj} />;
+                return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={activeProject} />;
             case 'services':
-                return <Services healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={proj} />;
+                return <Services healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={activeProject} />;
             case 'logs':
-                return <Logs activeProject={proj} />;
+                return <Logs activeProject={activeProject} />;
             case 'data':
-                return <ServiceExplorer selectedService={selectedService} onTabChange={handleTabChange} activeProject={proj} />;
+                return <ServiceExplorer selectedService={selectedService} onTabChange={handleTabChange} activeProject={activeProject} />;
             case 'usage':
-                return <Usage activeProject={proj} />;
+                return <Usage activeProject={activeProject} />;
             case 'settings':
                 return (
                     <Settings
@@ -364,60 +384,80 @@ function App() {
                 </div>
             </header>
 
+            {/* Offline Banner */}
+            <Show when={connectionStatus() === 'offline'}>
+                <div class="offline-banner" role="alert">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ "flex-shrink": "0" }}>
+                        <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+                    </svg>
+                    <span>Cannot reach LocalCloud backend. Is the container running?</span>
+                </div>
+            </Show>
+            <Show when={connectionStatus() === 'connecting'}>
+                <div class="offline-banner connecting" role="status">
+                    <div class="loading-spinner" style={{ width: "14px", height: "14px" }} />
+                    <span>Connecting to LocalCloud...</span>
+                </div>
+            </Show>
+
             {/* Sidebar */}
             <nav class="sidebar" aria-label="Main navigation">
                 <div class="sidebar-section-label">Navigation</div>
-                {NAV_ITEMS.map(item => (
-                    <>
-                        <button
-                            class={`sidebar-item ${currentPage() === item.id ? 'active' : ''}`}
-                            onClick={() => {
-                                if (item.id === 'data') {
-                                    navigateTo('data');
-                                    if (!selectedService()) setSelectedService('gcs');
-                                } else {
-                                    navigateTo(item.id);
-                                }
-                            }}
-                        >
-                            <span class="sidebar-item-icon">
-                                <Icon name={item.icon} size={18} />
-                            </span>
-                            <span class="sidebar-item-label">{item.label}</span>
+                <For each={NAV_ITEMS}>
+                    {(item) => (
+                        <>
+                            <button
+                                class={`sidebar-item ${currentPage() === item.id ? 'active' : ''}`}
+                                onClick={() => {
+                                    if (item.id === 'data') {
+                                        navigateTo('data');
+                                        if (!selectedService()) setSelectedService('gcs');
+                                    } else {
+                                        navigateTo(item.id);
+                                    }
+                                }}
+                            >
+                                <span class="sidebar-item-icon">
+                                    <Icon name={item.icon} size={18} />
+                                </span>
+                                <span class="sidebar-item-label">{item.label}</span>
+                                {item.expandable && (
+                                    <svg class={`sidebar-item-chevron ${currentPage() === 'data' ? 'expanded' : ''}`} width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
+                                    </svg>
+                                )}
+                            </button>
                             {item.expandable && (
-                                <svg class={`sidebar-item-chevron ${currentPage() === 'data' ? 'expanded' : ''}`} width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
-                                </svg>
+                                <div class={`sidebar-sub-items ${currentPage() === 'data' ? 'expanded' : ''}`}>
+                                    <For each={DATA_SERVICES}>
+                                        {(svc) => {
+                                            const healthStatus = () => connectionStatus() === 'offline' ? 'offline' : healthData()?.services?.[svc.id]?.status;
+                                            const routingMode = () => routingData()?.[svc.id]?.mode || 'local';
+                                            const isDisabled = () => healthStatus() === 'disabled' || healthStatus() === 'offline';
+                                            return (
+                                                <button
+                                                    class={`sidebar-sub-item ${selectedService() === svc.id && currentPage() === 'data' ? 'active' : ''}`}
+                                                    onClick={() => handleServiceClick(svc.id)}
+                                                    style={isDisabled() ? { opacity: "0.5" } : {}}
+                                                >
+                                                    <img src={`/icons/${svc.id}.svg`} alt="" class="sidebar-sub-item-icon" />
+                                                    <span class="sidebar-sub-item-label">{svc.label}</span>
+                                                    {svc.beta && <span class="badge badge-beta">Beta</span>}
+                                                    {routingMode() === 'remote' && <span class="badge badge-cloud" title="Routed to Google Cloud">Cloud</span>}
+                                                    <span classList={{
+                                                        "sidebar-sub-item-dot": true,
+                                                        "healthy": healthStatus() === 'healthy',
+                                                        "unhealthy": healthStatus() === 'unhealthy' || isDisabled(),
+                                                    }} />
+                                                </button>
+                                            );
+                                        }}
+                                    </For>
+                                </div>
                             )}
-                        </button>
-                        {item.expandable && (
-                            <div class={`sidebar-sub-items ${currentPage() === 'data' ? 'expanded' : ''}`}>
-                                {DATA_SERVICES.map(svc => {
-                                    const healthStatus = () => healthData()?.services?.[svc.id]?.status;
-                                    const routingMode = () => routingData()?.[svc.id]?.mode || 'local';
-                                    const isDisabled = () => healthStatus() === 'disabled';
-                                    return (
-                                        <button
-                                            class={`sidebar-sub-item ${selectedService() === svc.id && currentPage() === 'data' ? 'active' : ''}`}
-                                            onClick={() => handleServiceClick(svc.id)}
-                                            style={isDisabled() ? { opacity: "0.5" } : {}}
-                                        >
-                                            <img src={`/icons/${svc.id}.svg`} alt="" class="sidebar-sub-item-icon" />
-                                            <span class="sidebar-sub-item-label">{svc.label}</span>
-                                            {svc.beta && <span class="badge badge-beta">Beta</span>}
-                                            {routingMode() === 'remote' && <span class="badge badge-cloud" title="Routed to Google Cloud">Cloud</span>}
-                                            <span classList={{
-                                                "sidebar-sub-item-dot": true,
-                                                "healthy": healthStatus() === 'healthy',
-                                                "unhealthy": healthStatus() === 'unhealthy' || isDisabled(),
-                                            }} />
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </>
-                ))}
+                        </>
+                    )}
+                </For>
             </nav>
 
             {/* Content */}

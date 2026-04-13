@@ -66,4 +66,10 @@ public interface EmulatorBase {
      * Increment the request counter. Called by the gateway on each routed request.
      */
     void incrementRequestCount();
+
+    /**
+     * Atomically get the current request count and reset to zero.
+     * Used by the periodic flush task to drain in-memory deltas to persistent storage.
+     */
+    long getAndResetRequestCount();
 }

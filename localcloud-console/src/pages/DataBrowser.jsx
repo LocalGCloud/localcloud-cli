@@ -215,7 +215,7 @@ function GcsView(props) {
                                                 <td>
                                                     <div style="display:flex;gap:4px;align-items:center">
                                                         <a
-                                                            href={`http://localhost:4443/storage/v1/b/${selectedBucket()}/o/${encodeURIComponent(obj.name)}?alt=media`}
+                                                            href={`${window.location.protocol}//${window.location.hostname}:4443/storage/v1/b/${selectedBucket()}/o/${encodeURIComponent(obj.name)}?alt=media`}
                                                             target="_blank"
                                                             rel="noopener noreferrer"
                                                             class="btn btn-secondary"
@@ -1652,7 +1652,7 @@ const FETCH_SERVICES = new Set(['gcs', 'pubsub', 'firestore', 'bigquery', 'secre
 export default function DataBrowser(props) {
     const [selectedTab, setSelectedTab] = createSignal('gcs');
     const [data, setData] = createSignal(null);
-    const [loading, setLoading] = createSignal(false);
+    const [loading, setLoading] = createSignal(true);
     const [error, setError] = createSignal(null);
     const [serviceHealth, setServiceHealth] = createSignal({});
 
@@ -1666,21 +1666,8 @@ export default function DataBrowser(props) {
     const [deleteMessage, setDeleteMessage] = createSignal('');
     const [deleteCallback, setDeleteCallback] = createSignal(null);
 
-    // Read tab from URL hash - works on mount and on hash change
-    const syncTabFromHash = () => {
-        const hash = window.location.hash.replace(/^#\/?/, '');
-        const parts = hash.split('/');
-        if (parts[0] === 'data' && parts[1] && TABS.find(t => t.id === parts[1])) {
-            setSelectedTab(parts[1]);
-        }
-    };
-
-    // Run on mount
-    syncTabFromHash();
-
-    // Run on hash change (back/forward, URL change)
-    window.addEventListener('hashchange', syncTabFromHash);
-    onCleanup(() => window.removeEventListener('hashchange', syncTabFromHash));
+    // Tab sync is handled by the parent (app.jsx) via props.selectedService.
+    // No duplicate hash listener needed here — app.jsx already listens to hashchange.
 
     // Fetch service health for tab indicators
     const loadHealth = async () => {
@@ -1705,7 +1692,6 @@ export default function DataBrowser(props) {
         if (!FETCH_SERVICES.has(tab)) return;
         setLoading(true);
         setError(null);
-        setData(null);
         try {
             let result;
             if (tab === 'pubsub') {
@@ -1768,7 +1754,7 @@ export default function DataBrowser(props) {
             setShowCrudModal(false);
             loadData();
         } catch (err) {
-            console.error('CRUD operation failed:', err);
+            setError('Operation failed: ' + (err.message || 'Unknown error'));
         }
     };
 
@@ -1779,15 +1765,16 @@ export default function DataBrowser(props) {
             setShowDeleteConfirm(false);
             loadData();
         } catch (err) {
-            console.error('Delete failed:', err);
+            setShowDeleteConfirm(false);
+            setError('Delete failed: ' + (err.message || 'Unknown error'));
         }
     };
 
     // Fetch data when tab or project changes
+    // props.activeProject is a signal accessor — call it to track reactively
     createEffect(() => {
         const tab = selectedTab();
-        const _proj = props.activeProject; // dependency: re-fetch on project switch
-        setData(null);
+        const proj = typeof props.activeProject === 'function' ? props.activeProject() : props.activeProject;
         setError(null);
         if (FETCH_SERVICES.has(tab)) {
             fetchData(tab);
@@ -1851,7 +1838,7 @@ export default function DataBrowser(props) {
     return (
         <div>
             {/* Service Content — full width */}
-            {renderServiceView}
+            {renderServiceView()}
 
             <CrudModal
                 show={showCrudModal()}

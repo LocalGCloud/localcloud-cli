@@ -93,6 +93,11 @@ public abstract class AbstractEmulator implements EmulatorBase {
     }
 
     @Override
+    public long getAndResetRequestCount() {
+        return requestCount.getAndSet(0);
+    }
+
+    @Override
     public void start() throws Exception {
         if (running.compareAndSet(false, true)) {
             logger.info("{} emulator starting on port {}", displayName, port);

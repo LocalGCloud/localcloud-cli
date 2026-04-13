@@ -17,7 +17,7 @@ const SERVICE_NAMES = {
     cloudrun: 'Cloud Run',
 };
 
-const BETA_SERVICES = new Set(['firestore', 'gke', 'compute']);
+const BETA_SERVICES = new Set(['firestore', 'gke', 'compute', 'cloudrun']);
 
 // All services — includes disabled-by-default ones
 const ALL_SERVICES = [
@@ -43,17 +43,27 @@ function ServiceIcon({ id, size = 18 }) {
 
 export default function Services(props) {
     const [servicesData, setServicesData] = createSignal([]);
+    const [loading, setLoading] = createSignal(true);
+    const [fetchError, setFetchError] = createSignal(null);
+    let failCount = 0;
 
     createEffect(() => {
-        const _proj = props.activeProject; // re-fetch on project switch
+        const _proj = typeof props.activeProject === 'function' ? props.activeProject() : props.activeProject;
         const fetchServices = async () => {
             try {
                 const data = await api.services();
                 if (data && data.services) {
                     setServicesData(data.services);
                 }
+                failCount = 0;
+                setFetchError(null);
+                setLoading(false);
             } catch (err) {
-                console.error('Failed to fetch services:', err);
+                failCount++;
+                if (failCount >= 2) {
+                    setFetchError('Cannot reach LocalCloud backend. Is the container running?');
+                }
+                setLoading(false);
             }
         };
         fetchServices();
@@ -110,6 +120,12 @@ export default function Services(props) {
                 </p>
             </div>
 
+            <Show when={fetchError()}>
+                <div class="alert alert-error" style={{ "margin-bottom": "16px" }}>{fetchError()}</div>
+            </Show>
+            <Show when={loading()} fallback={null}>
+                <div class="loading-state"><div class="loading-spinner" /> Loading services...</div>
+            </Show>
             <div class="data-table-wrapper">
                     <table class="data-table">
                         <thead>

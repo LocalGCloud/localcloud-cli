@@ -7,6 +7,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -14,8 +17,10 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.server.ServiceRequestContext;
 import com.linecorp.armeria.server.annotation.Get;
 import com.linecorp.armeria.server.annotation.Param;
+import com.localcloud.admin.UsageMetricsRepository;
 import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.config.ServiceRegistry;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
@@ -28,23 +33,68 @@ import com.localcloud.config.ServiceRegistry.ServiceDefinition;
  */
 public class HealthCheckService {
 
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(HealthCheckService.class);
+
     private final LocalCloudConfig config;
     private final ApiGateway gateway;
     private final ProcessHealthChecker processHealthChecker;
+    private final UsageMetricsRepository usageMetrics;
     private final Instant startTime;
     private final ObjectMapper mapper;
     private final ServiceRegistry registry;
+    private final ScheduledExecutorService flushScheduler;
 
     public HealthCheckService(LocalCloudConfig config, ApiGateway gateway,
-                              ProcessHealthChecker processHealthChecker) {
+                              ProcessHealthChecker processHealthChecker,
+                              UsageMetricsRepository usageMetrics) {
         this.config = config;
         this.gateway = gateway;
         this.processHealthChecker = processHealthChecker;
+        this.usageMetrics = usageMetrics;
         this.startTime = Instant.now();
         this.mapper = new ObjectMapper();
         this.mapper.registerModule(new JavaTimeModule());
         this.mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         this.registry = config.getServiceRegistry();
+
+        // Flush in-memory request deltas to PostgreSQL every 30 seconds
+        this.flushScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "usage-metrics-flush");
+            t.setDaemon(true);
+            return t;
+        });
+        this.flushScheduler.scheduleAtFixedRate(this::flushMetrics, 30, 30, TimeUnit.SECONDS);
+    }
+
+    /**
+     * Flush in-memory request count deltas from all registered emulators
+     * to the persistent usage_metrics table. Called periodically and on shutdown.
+     */
+    public void flushMetrics() {
+        try {
+            String projectId = config.getProjectId();
+            Map<String, Long> deltas = new LinkedHashMap<>();
+            for (var emulator : gateway.getEmulators()) {
+                long delta = emulator.getAndResetRequestCount();
+                if (delta > 0) {
+                    deltas.put(emulator.getName(), delta);
+                }
+            }
+            if (!deltas.isEmpty()) {
+                usageMetrics.flushDeltas(projectId, deltas);
+                logger.debug("Flushed usage deltas: {}", deltas);
+            }
+        } catch (Exception e) {
+            logger.warn("Error flushing usage metrics: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Shut down the flush scheduler and perform a final flush.
+     */
+    public void shutdown() {
+        flushScheduler.shutdown();
+        flushMetrics(); // final flush
     }
 
     @Get("/health")
@@ -156,6 +206,9 @@ public class HealthCheckService {
                 processHealthChecker.checkAll();
                 Map<String, String> statuses = processHealthChecker.getAllStatuses();
 
+                // Get persisted cumulative counts from DB
+                Map<String, Long> persistedCounts = usageMetrics.getGlobalCounts();
+
                 List<Map<String, Object>> serviceList = new ArrayList<>();
                 for (Map.Entry<String, ServiceDefinition> entry : registry.getAllServices().entrySet()) {
                     String serviceName = entry.getKey();
@@ -167,12 +220,14 @@ public class HealthCheckService {
 
                     String status = statuses.getOrDefault(serviceName, "unknown");
 
-                    // Look up request count from the gateway's registered emulator
-                    long requestCount = 0;
+                    // Total = persisted cumulative + unflushed in-memory delta
+                    long persisted = persistedCounts.getOrDefault(serviceName, 0L);
+                    long unflushed = 0;
                     var emulator = gateway.getEmulator(serviceName);
                     if (emulator.isPresent()) {
-                        requestCount = emulator.get().getRequestCount();
+                        unflushed = emulator.get().getRequestCount();
                     }
+                    long totalCount = persisted + unflushed;
 
                     String envValue = def.envValue("localhost");
                     Map<String, Object> svc = new LinkedHashMap<>();
@@ -184,7 +239,7 @@ public class HealthCheckService {
                     svc.put("endpoint", envValue);
                     svc.put("env_var", def.envVar());
                     svc.put("env_value", envValue);
-                    svc.put("request_count", requestCount);
+                    svc.put("request_count", totalCount);
                     serviceList.add(svc);
                 }
 
@@ -194,6 +249,65 @@ public class HealthCheckService {
                 String json = mapper.writeValueAsString(response);
                 return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
             } catch (Exception e) {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR,
+                        MediaType.PLAIN_TEXT_UTF_8, "Internal server error");
+            }
+        }));
+    }
+
+    /**
+     * Return cumulative usage metrics per service for the active project.
+     * Includes persisted counts plus any unflushed in-memory deltas.
+     * Supports {@code ?project=} query parameter for project-specific metrics.
+     */
+    @Get("/usage")
+    public HttpResponse usage(ServiceRequestContext ctx) {
+        return HttpResponse.of(CompletableFuture.supplyAsync(() -> {
+            try {
+                String projectParam = ctx.queryParams().get("project");
+                String projectId = (projectParam != null && !projectParam.isBlank())
+                        ? projectParam : config.getProjectId();
+
+                // Get persisted counts for this project
+                Map<String, Long> persistedCounts = usageMetrics.getCountsByProject(projectId);
+
+                // Add unflushed in-memory deltas (only for default project — facade emulators
+                // currently don't track per-project, they use the default project)
+                boolean isDefaultProject = projectId.equals(config.getProjectId());
+
+                List<Map<String, Object>> usageList = new ArrayList<>();
+                for (Map.Entry<String, ServiceDefinition> entry : registry.getAllServices().entrySet()) {
+                    String serviceName = entry.getKey();
+                    ServiceDefinition def = entry.getValue();
+
+                    if (!config.isServiceEnabled(serviceName)) {
+                        continue;
+                    }
+
+                    long persisted = persistedCounts.getOrDefault(serviceName, 0L);
+                    long unflushed = 0;
+                    if (isDefaultProject) {
+                        var emulator = gateway.getEmulator(serviceName);
+                        if (emulator.isPresent()) {
+                            unflushed = emulator.get().getRequestCount();
+                        }
+                    }
+
+                    Map<String, Object> svc = new LinkedHashMap<>();
+                    svc.put("id", serviceName);
+                    svc.put("name", def.displayName());
+                    svc.put("request_count", persisted + unflushed);
+                    usageList.add(svc);
+                }
+
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("project_id", projectId);
+                response.put("services", usageList);
+
+                String json = mapper.writeValueAsString(response);
+                return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
+            } catch (Exception e) {
+                logger.warn("Error fetching usage metrics: {}", e.getMessage());
                 return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR,
                         MediaType.PLAIN_TEXT_UTF_8, "Internal server error");
             }

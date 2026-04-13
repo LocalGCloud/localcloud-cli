@@ -51,15 +51,18 @@ public class QueryService {
 
     private final LocalCloudConfig config;
     private final PostgresDataSource dataSource;
+    private final UsageMetricsRepository usageMetrics;
     private final HttpClient httpClient;
     private final ObjectMapper mapper;
 
     private final String bigqueryBase;
     private final String spannerBase;
 
-    public QueryService(LocalCloudConfig config, PostgresDataSource dataSource, ServiceRegistry registry) {
+    public QueryService(LocalCloudConfig config, PostgresDataSource dataSource,
+                        ServiceRegistry registry, UsageMetricsRepository usageMetrics) {
         this.config = config;
         this.dataSource = dataSource;
+        this.usageMetrics = usageMetrics;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .build();
@@ -107,6 +110,7 @@ public class QueryService {
             String project = ctx.queryParams().get("project");
             String projectId = (project != null && !project.isBlank()) ? project : config.getProjectId();
 
+            usageMetrics.incrementCount(projectId, service, 1);
             long startTime = System.currentTimeMillis();
 
             if (POSTGRES_SERVICES.contains(service)) {

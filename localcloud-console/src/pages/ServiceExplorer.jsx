@@ -256,7 +256,7 @@ function SQLEditor(props) {
 
     const currentServiceInfo = () => SQL_SERVICES.find(s => s.id === service());
     const currentSchema = () => {
-        const ds = serviceSchema();
+        const ds = dynamicSchema();
         if (ds && ds.tables && ds.tables.length > 0) return ds;
         return SERVICE_SCHEMAS[service()] || { tables: [] };
     };
@@ -372,7 +372,7 @@ function SQLEditor(props) {
     const dynamicPlaceholder = () => {
         const svc = currentServiceInfo();
         if (!svc) return '';
-        const ds = serviceSchema();
+        const ds = dynamicSchema();
         if (ds && ds.tables && ds.tables.length > 0) {
             const tbl = ds.tables[0];
             return `SELECT * FROM ${svc.dialect === 'bigquery' ? '`' + tbl.name + '`' : tbl.name} LIMIT 10`;
@@ -823,11 +823,11 @@ export default function ServiceExplorer(props) {
                 </div>
             </div>
 
-            <Show when={mode() === 'editor'}>
+            <div style={{ display: mode() === 'editor' ? '' : 'none' }}>
                 <SQLEditor serviceId={activeService()} />
-            </Show>
+            </div>
 
-            <Show when={mode() === 'explorer'}>
+            <div style={{ display: mode() === 'explorer' ? '' : 'none' }}>
                 <DataBrowser
                     selectedService={props.selectedService}
                     onTabChange={props.onTabChange}
@@ -835,7 +835,7 @@ export default function ServiceExplorer(props) {
                     refreshTrigger={refreshTrigger}
                     resetTrigger={resetTrigger}
                 />
-            </Show>
+            </div>
         </div>
     );
 }

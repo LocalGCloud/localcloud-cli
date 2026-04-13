@@ -77,4 +77,38 @@ Java 21 (LTS, primary), Python 3.11+ (CLI/tooling): Follow standard conventions
 - Console: esbuild (no test suite)
 
 <!-- MANUAL ADDITIONS START -->
+
+## Communication Style
+
+- When asked to simplify, do it immediately. Provide the minimal working solution first, then offer to elaborate. Don't generate elaborate guides when a simple Dockerfile or config is requested.
+- Prefer concise, actionable output over comprehensive documentation unless explicitly asked.
+
+## Docker
+
+- Always check ARG placement (must be after FROM for multi-stage builds).
+- Verify volume mount paths and avoid relying on Docker cache during debugging iterations.
+- Prefer incremental rebuilds over full rebuilds when debugging build issues.
+- Always build the shadow JAR before `docker compose build` — the Dockerfile copies the pre-built JAR.
+
+## Frontend / UI (Solid.js)
+
+- Signals must be properly tracked in JSX — call `signal()` inside JSX, not outside.
+- State updates must use setter functions (`setSignal(value)`), never mutate directly.
+- Test reactivity behavior after each change rather than batching multiple reactive changes.
+- Console uses esbuild (not Vite/Webpack) — run `npm run build` from `localcloud-console/`.
+
+## Emulator-Specific Notes
+
+- GCS emulator (fake-gcs-server) does NOT enforce project-level bucket isolation natively. Project isolation is handled by the `gcs_bucket_projects` table in PostgreSQL, with filtering in `BrowseService`.
+- GCS files are local filesystem — don't use `gs://` URIs with DuckDB or other tools expecting real GCS.
+- BigQuery schema/browse endpoints only work for PostgreSQL-backed services via admin API; the BQ emulator itself uses DuckDB.
+- Spanner emulator has a known LevelDB race condition on persistence — verify data survives restarts.
+- Secret Manager seeding uses direct PostgreSQL inserts, not gRPC — so emulator `incrementRequestCount()` is NOT called from seed/browse paths. Usage metrics for admin API operations are tracked directly via `UsageMetricsRepository`.
+- Usage metrics are persisted to PostgreSQL (`usage_metrics` table) with UPSERT semantics — one row per project+service, flushed every 30 seconds from in-memory counters.
+
+## Project Management / Specs
+
+- Always use local OpenSpec stories and specs from the project directory — never reference Jira, Atlassian, or external project management tools unless explicitly asked.
+- Story files live in `openspec/` directory. Specs live in `specs/`.
+
 <!-- MANUAL ADDITIONS END -->

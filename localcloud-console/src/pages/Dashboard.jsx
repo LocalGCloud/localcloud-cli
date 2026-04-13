@@ -44,7 +44,7 @@ export default function Dashboard(props) {
 
     createEffect(() => {
         // Re-fetch when active project changes
-        const _proj = props.activeProject;
+        const _proj = typeof props.activeProject === 'function' ? props.activeProject() : props.activeProject;
         const fetchServices = async () => {
             try {
                 const data = await api.services();
