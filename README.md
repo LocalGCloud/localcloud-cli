@@ -26,17 +26,20 @@ LocalCloud emulates 14 GCP services inside a single Docker container so you can 
 ## Quick Start
 
 ```bash
-# Start all services (ports are pre-configured in docker-compose.yml)
-docker compose up -d
+# Create the persistent volume (one-time)
+docker volume create localcloud-data
 
-# Or use docker run (service ports defined in services.yaml)
+# Pull and start
 docker run -d --name localcloud \
   -p 8080:8080 -p 4443:4443 -p 8085:8085 -p 8086:8086 \
-  -p 8087:8087 -p 9010:9010 -p 9050:9050 -p 9060:9060 \
+  -p 8087:8087 -p 9010:9010 -p 9020:9020 -p 9050:9050 -p 9060:9060 \
+  -p 6379:6379 \
   -m 4g \
   -v localcloud-data:/var/lib/localcloud \
   localcloud/localcloud:latest
 ```
+
+Sample data is baked into the image and auto-loads on startup. Open the console at **http://localhost:8080** to explore.
 
 Set environment variables to route GCP SDKs to LocalCloud:
 
@@ -102,13 +105,12 @@ docker build -t localcloud/localcloud:latest .
 **Running the built image:**
 
 ```bash
-# Start with docker-compose (recommended)
-docker compose up -d
+docker volume create localcloud-data
 
-# Or start directly with docker
-docker run -d --name localcloud-main \
+docker run -d --name localcloud \
   -p 8080:8080 -p 4443:4443 -p 8085:8085 -p 8086:8086 \
-  -p 8087:8087 -p 9010:9010 -p 9050:9050 -p 9060:9060 \
+  -p 8087:8087 -p 9010:9010 -p 9020:9020 -p 9050:9050 -p 9060:9060 \
+  -p 6379:6379 \
   -m 4g \
   -v localcloud-data:/var/lib/localcloud \
   localcloud/localcloud:latest
@@ -117,7 +119,7 @@ docker run -d --name localcloud-main \
 curl http://localhost:8080/_localcloud/health | jq
 
 # View logs
-docker logs -f localcloud-main
+docker logs -f localcloud
 ```
 
 ### Build the Web Console (optional)
@@ -156,40 +158,95 @@ cd localcloud-cli && ruff check .
 cd localcloud-server && ./gradlew shadowJar && cd ..
 cd localcloud-console && npm install && npm run build && cd ..
 cd localcloud-cli && pip install -e ".[test,console]" && cd ..
-docker compose build
-docker compose up -d
+docker build -t localcloud/localcloud:latest .
 ```
 
-## Docker Compose
+## Configuration
 
-A `docker-compose.yml` is included for development:
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOCALCLOUD_PROJECT` | `local-project` | GCP project ID |
+| `LOCALCLOUD_SERVICES` | _(all enabled)_ | Comma-separated list of services to enable (overrides individual flags) |
+| `LOCALCLOUD_SEED_FILE` | `/etc/localcloud/seed.yaml` | Path to seed data file inside container |
+| `JAVA_OPTS` | `-Xmx512m -Xms128m` | JVM flags for the gateway server |
+
+Individual service flags (set to `true` or `false`):
+
+| Flag | Default |
+|------|---------|
+| `LOCALCLOUD_ENABLE_GCS` | `true` |
+| `LOCALCLOUD_ENABLE_PUBSUB` | `true` |
+| `LOCALCLOUD_ENABLE_FIRESTORE` | `true` |
+| `LOCALCLOUD_ENABLE_BIGQUERY` | `true` |
+| `LOCALCLOUD_ENABLE_SPANNER` | `true` |
+| `LOCALCLOUD_ENABLE_BIGTABLE` | `true` |
+| `LOCALCLOUD_ENABLE_SECRETMANAGER` | `true` |
+| `LOCALCLOUD_ENABLE_CLOUDTASKS` | `true` |
+| `LOCALCLOUD_ENABLE_LOGGING` | `true` |
+| `LOCALCLOUD_ENABLE_MONITORING` | `true` |
+| `LOCALCLOUD_ENABLE_MEMORYSTORE` | `true` |
+| `LOCALCLOUD_ENABLE_GKE` | `false` |
+| `LOCALCLOUD_ENABLE_COMPUTE` | `false` |
+| `LOCALCLOUD_ENABLE_CLOUDRUN` | `false` |
+
+### Examples
 
 ```bash
-# Start LocalCloud
-docker compose up -d
+# Run only storage and messaging services
+docker run -d --name localcloud \
+  -p 8080:8080 -p 4443:4443 -p 8085:8085 -p 6379:6379 \
+  -m 4g \
+  -e LOCALCLOUD_SERVICES="gcs,pubsub,memorystore" \
+  -v localcloud-data:/var/lib/localcloud \
+  localcloud/localcloud:latest
 
-# View logs
-docker compose logs -f
+# Custom project ID
+docker run -d --name localcloud \
+  -p 8080:8080 -p 4443:4443 -p 8085:8085 -p 8086:8086 \
+  -p 8087:8087 -p 9010:9010 -p 9020:9020 -p 9050:9050 -p 9060:9060 \
+  -p 6379:6379 \
+  -m 4g \
+  -e LOCALCLOUD_PROJECT="my-app-dev" \
+  -v localcloud-data:/var/lib/localcloud \
+  localcloud/localcloud:latest
+```
 
-# Stop
-docker compose down
+### Optional Volume Mounts
+
+```bash
+# Custom seed data (overrides the built-in seed)
+-v ./my-seed.yaml:/etc/localcloud/seed.yaml:ro
+
+# GKE emulation (requires Docker-in-Docker)
+-v /var/run/docker.sock:/var/run/docker.sock
+
+# GCP credential bridging (for hybrid local+cloud routing)
+-v ~/.config/gcloud:/credentials/adc:ro -e LOCALCLOUD_GCP_CREDENTIAL_SOURCE=adc
 ```
 
 ## Seed Data
 
-Pre-populate services with data on startup by mounting a seed file:
+Default seed data is baked into the image and auto-loads on startup — no setup needed. It populates all services with sample data (users, buckets, topics, datasets, secrets, etc.).
+
+To use your own seed data, mount a custom file:
 
 ```bash
 docker run -d --name localcloud \
-  -p 8080:8080 -p 4443:4443 -p 8085:8085 -p 8086:8086 \
-  -p 8087:8087 -p 9010:9010 -p 9050:9050 -p 9060:9060 \
-  -m 4g \
-  -v localcloud-data:/var/lib/localcloud \
-  -v ./seed.yaml:/etc/localcloud/seed.yaml:ro \
+  ... \
+  -v ./my-seed.yaml:/etc/localcloud/seed.yaml:ro \
   localcloud/localcloud:latest
 ```
 
-See `seed.yaml` for an example.
+To load seed data into a running container:
+
+```bash
+curl -X POST http://localhost:8080/_localcloud/seed \
+  -H "Content-Type: application/x-yaml" --data-binary @seed.yaml
+```
+
+See `seed.yaml` for the format and a full example.
 
 ## Admin API
 
@@ -204,6 +261,17 @@ curl http://localhost:8080/_localcloud/services | jq
 
 # Reset all data
 curl -X POST http://localhost:8080/_localcloud/reset
+```
+
+## Docker Compose (for contributors)
+
+A `docker-compose.yml` is included for building from source:
+
+```bash
+docker compose build
+docker compose up -d
+docker compose logs -f
+docker compose down
 ```
 
 ## Project Structure

@@ -1,12 +1,97 @@
-# Stage 1: Build Java server
-# Option A: Build inside Docker (requires network access for Gradle)
-# FROM eclipse-temurin:21-jdk-jammy AS build
-# WORKDIR /app
-# COPY localcloud-server/ .
-# RUN chmod +x gradlew && ./gradlew shadowJar --no-daemon
-
-# Option B: Use pre-built JAR (run `cd localcloud-server && ./gradlew shadowJar` first)
-# The pre-built JAR is copied directly in the runtime stage below.
+# =============================================================================
+# LocalCloud — Local GCP Emulator Orchestrator
+# =============================================================================
+#
+# QUICK START
+# -----------
+#   docker run -d --name localcloud \
+#     -p 8080:8080 -p 4443:4443 -p 8085:8085 -p 8086:8086 \
+#     -p 8087:8087 -p 9010:9010 -p 9020:9020 -p 9050:9050 -p 9060:9060 \
+#     -p 6379:6379 \
+#     -m 4g \
+#     -v localcloud-data:/var/lib/localcloud \
+#     localcloud/localcloud:latest
+#
+#   Console: http://localhost:8080
+#   Health:  curl http://localhost:8080/_localcloud/health
+#
+# PORTS
+# -----
+#   8080  — Gateway (admin API + web console)
+#   4443  — Cloud Storage (REST)
+#   8085  — Pub/Sub (gRPC)
+#   8086  — Firestore (gRPC)
+#   8087  — Bigtable (gRPC)
+#   9010  — Spanner (gRPC)
+#   9020  — Spanner (REST)
+#   9050  — BigQuery (REST)
+#   9060  — BigQuery (gRPC)
+#   6379  — Memorystore / Redis (RESP2)
+#   6443  — GKE / k3d Kubernetes API (optional, requires docker.sock)
+#
+# ENVIRONMENT VARIABLES
+# ---------------------
+#   LOCALCLOUD_PROJECT        Project ID (default: "local-project")
+#   LOCALCLOUD_SERVICES       Comma-separated list of services to enable.
+#                             Overrides all individual LOCALCLOUD_ENABLE_* flags.
+#                             Example: "gcs,pubsub,bigquery,secretmanager"
+#   LOCALCLOUD_SEED_FILE      Path to seed YAML inside the container
+#                             (default: /etc/localcloud/seed.yaml, baked into image)
+#   JAVA_OPTS                 JVM flags (default: -Xmx512m -Xms128m -XX:+UseZGC)
+#
+#   Individual service flags (all default to true except GKE, Compute, Cloud Run):
+#     LOCALCLOUD_ENABLE_GCS, LOCALCLOUD_ENABLE_PUBSUB,
+#     LOCALCLOUD_ENABLE_FIRESTORE, LOCALCLOUD_ENABLE_BIGQUERY,
+#     LOCALCLOUD_ENABLE_SPANNER, LOCALCLOUD_ENABLE_BIGTABLE,
+#     LOCALCLOUD_ENABLE_SECRETMANAGER, LOCALCLOUD_ENABLE_CLOUDTASKS,
+#     LOCALCLOUD_ENABLE_LOGGING, LOCALCLOUD_ENABLE_MONITORING,
+#     LOCALCLOUD_ENABLE_MEMORYSTORE,
+#     LOCALCLOUD_ENABLE_GKE (default: false),
+#     LOCALCLOUD_ENABLE_COMPUTE (default: false),
+#     LOCALCLOUD_ENABLE_CLOUDRUN (default: false)
+#
+# VOLUMES
+# -------
+#   /var/lib/localcloud       Persistent data (PostgreSQL, GCS blobs, Spanner, BigQuery)
+#
+# OPTIONAL MOUNTS
+# ---------------
+#   Custom seed data:
+#     -v /path/to/my-seed.yaml:/etc/localcloud/seed.yaml:ro
+#
+#   GKE emulation (requires Docker-in-Docker):
+#     -v /var/run/docker.sock:/var/run/docker.sock
+#
+#   GCP credential bridging (for hybrid local+cloud routing):
+#     -v ~/.config/gcloud:/credentials/adc:ro
+#     -e LOCALCLOUD_GCP_CREDENTIAL_SOURCE=adc
+#
+# EXAMPLES
+# --------
+#   # Run only storage and messaging services:
+#   docker run -d --name localcloud \
+#     -p 8080:8080 -p 4443:4443 -p 8085:8085 -p 6379:6379 \
+#     -m 4g \
+#     -e LOCALCLOUD_SERVICES="gcs,pubsub,memorystore" \
+#     -v localcloud-data:/var/lib/localcloud \
+#     localcloud/localcloud:latest
+#
+# SEED DATA
+# ---------
+#   A default seed.yaml is baked into the image at /etc/localcloud/seed.yaml.
+#   It auto-loads on container startup once all services are healthy.
+#   Mount your own file to override, or set LOCALCLOUD_SEED_FILE to a different path.
+#   To load seed data manually into a running container:
+#     curl -X POST http://localhost:8080/_localcloud/seed \
+#       -H "Content-Type: application/x-yaml" --data-binary @seed.yaml
+#
+# BUILD (for contributors)
+# ------------------------
+#   cd localcloud-server && ./gradlew shadowJar
+#   cd localcloud-console && npm run build
+#   docker build -t localcloud/localcloud:latest .
+#
+# =============================================================================
 
 # Spanner emulator source: google (official) or local (fork with persistence)
 # Set via: docker compose build --build-arg SPANNER_EMULATOR_IMAGE=google
@@ -159,6 +244,7 @@ COPY localcloud-server/build/libs/localcloud-server-*-all.jar /opt/localcloud/se
 COPY localcloud-console/dist/ /opt/localcloud/console/dist/
 # Copy service registry and configuration
 COPY services.yaml /etc/localcloud/services.yaml
+COPY seed.yaml /etc/localcloud/seed.yaml
 COPY supervisord.conf /etc/supervisor/conf.d/localcloud.conf
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
