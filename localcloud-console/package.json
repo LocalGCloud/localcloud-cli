@@ -6,7 +6,6 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
-    "dev": "python backend/app.py",
     "build": "node build.js"
   },
   "dependencies": {
