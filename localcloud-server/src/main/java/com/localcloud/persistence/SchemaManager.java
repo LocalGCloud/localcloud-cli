@@ -278,6 +278,43 @@ public class SchemaManager {
                 ")"
             );
 
+            // Cloud Workflows: workflows
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS workflows (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL DEFAULT 'us-central1'," +
+                "    workflow_id VARCHAR(255) NOT NULL," +
+                "    source_contents TEXT NOT NULL," +
+                "    state VARCHAR(20) DEFAULT 'ACTIVE'," +
+                "    revision_id INT DEFAULT 1," +
+                "    labels JSONB DEFAULT '{}'," +
+                "    service_account VARCHAR(500)," +
+                "    call_log_level VARCHAR(30) DEFAULT 'LOG_NONE'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location_id, workflow_id)" +
+                ")"
+            );
+
+            // Cloud Workflows: workflow_executions
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS workflow_executions (" +
+                "    execution_id VARCHAR(255) NOT NULL PRIMARY KEY," +
+                "    workflow_id VARCHAR(255) NOT NULL," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    state VARCHAR(20) DEFAULT 'QUEUED'," +
+                "    argument JSONB," +
+                "    result JSONB," +
+                "    error JSONB," +
+                "    start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    end_time TIMESTAMP," +
+                "    call_log_level VARCHAR(30) DEFAULT 'LOG_NONE'," +
+                "    workflow_revision_id VARCHAR(50)" +
+                ")"
+            );
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_workflow_executions_workflow ON workflow_executions (project_id, location_id, workflow_id)");
+
             // Cloud Storage: storage_objects (referenced by index below)
             // Indexes for high-volume tables
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_log_entries_log_name ON log_entries (log_name)");

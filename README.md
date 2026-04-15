@@ -2,7 +2,7 @@
 
 Google Cloud Platform — in a box.
 
-LocalCloud emulates 14 GCP services inside a single Docker container so you can develop and test locally without cloud access, credentials, or costs. Your application code works against LocalCloud with **zero code changes** — just point your GCP SDKs at localhost.
+LocalCloud emulates 15 GCP services inside a single Docker container so you can develop and test locally without cloud access, credentials, or costs. Your application code works against LocalCloud with **zero code changes** — just point your GCP SDKs at localhost.
 
 ## Emulated Services
 
@@ -22,6 +22,7 @@ LocalCloud emulates 14 GCP services inside a single Docker container so you can 
 | Compute Engine | REST | 8080 |
 | Cloud Run | gRPC | 8080 |
 | Memorystore (Redis) | RESP2 | 6379 |
+| Cloud Workflows | REST | 8080 |
 
 ## Quick Start
 

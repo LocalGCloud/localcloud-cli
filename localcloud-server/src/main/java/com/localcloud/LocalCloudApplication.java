@@ -30,6 +30,8 @@ import com.localcloud.emulators.cloudrun.CloudRunEmulator;
 import com.localcloud.emulators.gke.GkeEmulator;
 import com.localcloud.emulators.gke.K3dManager;
 import com.localcloud.emulators.memorystore.MemorystoreEmulator;
+import com.localcloud.emulators.workflows.WorkflowsCallbackService;
+import com.localcloud.emulators.workflows.WorkflowsEmulator;
 import com.localcloud.docker.ContainerManager;
 import com.localcloud.docker.DockerClientProvider;
 import com.localcloud.gateway.ApiGateway;
@@ -87,7 +89,8 @@ public class LocalCloudApplication {
         this.adminApiService = new AdminApiService(config, requestLogger, projectService, routingRepository, credentialBroker);
         this.browseService = new BrowseService(config, dataSource, config.getServiceRegistry(), usageMetrics);
         this.mutateService = new MutateService(config, dataSource, config.getServiceRegistry());
-        this.seedService = new SeedService(config, dataSource, config.getServiceRegistry());
+        var workflowsStore = new com.localcloud.emulators.workflows.WorkflowsStore(dataSource);
+        this.seedService = new SeedService(config, dataSource, config.getServiceRegistry(), workflowsStore);
         this.exportService = new ExportService(config, dataSource, config.getServiceRegistry());
         this.queryService = new QueryService(config, dataSource, config.getServiceRegistry(), usageMetrics);
     }
@@ -235,6 +238,18 @@ public class LocalCloudApplication {
             memorystoreEmulator.start();
             gateway.registerRestEmulator("/redis", memorystoreEmulator, null);
             logger.info("Memorystore (Redis) emulator started on port {}", redisPort);
+        }
+
+        if (config.isServiceEnabled("workflows")) {
+            WorkflowsEmulator workflowsEmulator = new WorkflowsEmulator(dataSource);
+            workflowsEmulator.start();
+            gateway.registerGrpcEmulator(workflowsEmulator, new io.grpc.BindableService[0]);
+            // Register callback HTTP endpoint so external systems can wake waiting executions
+            WorkflowsCallbackService callbackService = new WorkflowsCallbackService(
+                    workflowsEmulator.getWorkflowsService().getCallbackManager());
+            sb.annotatedService("/_localcloud/workflows", callbackService);
+            hasGrpcServices = true;
+            logger.info("Cloud Workflows facade registered on gateway port {}", config.getGatewayPort());
         }
 
         if (hasGrpcServices) {

@@ -626,3 +626,37 @@ services:
           - { member: "emma", score: 1350 }
           - { member: "frank", score: 1200 }
           - { member: "henry", score: 1050 }
+
+  # Cloud Workflows: workflow definitions
+  workflows:
+    workflows:
+      - name: "hello-world"
+        location: "us-central1"
+        source: |
+          main:
+            steps:
+              - init:
+                  assign:
+                    - greeting: "Hello from LocalCloud Workflows!"
+                    - timestamp: ${sys.now()}
+              - done:
+                  return: ${greeting + " at " + timestamp}
+      - name: "data-pipeline"
+        location: "us-central1"
+        source: |
+          main:
+            params: [args]
+            steps:
+              - setup:
+                  assign:
+                    - project: "local-project"
+                    - results: []
+              - list_buckets:
+                  call: http.get
+                  args:
+                    url: http://localhost:4443/storage/v1/b?project=local-project
+                  result: gcs_response
+              - done:
+                  return:
+                    buckets: ${gcs_response.body}
+                    status: "completed"

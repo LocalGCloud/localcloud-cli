@@ -24,6 +24,7 @@ import com.linecorp.armeria.server.annotation.Post;
 import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.config.ServiceRegistry;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
+import com.localcloud.emulators.workflows.WorkflowsStore;
 import com.localcloud.persistence.PostgresDataSource;
 
 import org.slf4j.Logger;
@@ -42,6 +43,7 @@ public class SeedService {
     private final LocalCloudConfig config;
     private final PostgresDataSource dataSource;
     private final ServiceRegistry registry;
+    private final WorkflowsStore workflowsStore;
     private final ObjectMapper jsonMapper;
     private final YAMLMapper yamlMapper;
     private final HttpClient httpClient;
@@ -56,10 +58,12 @@ public class SeedService {
     /** Stores the last loaded seed YAML so it can be restored on reset. */
     private volatile String lastSeedYaml;
 
-    public SeedService(LocalCloudConfig config, PostgresDataSource dataSource, ServiceRegistry registry) {
+    public SeedService(LocalCloudConfig config, PostgresDataSource dataSource, ServiceRegistry registry,
+                       WorkflowsStore workflowsStore) {
         this.config = config;
         this.dataSource = dataSource;
         this.registry = registry;
+        this.workflowsStore = workflowsStore;
         this.jsonMapper = new ObjectMapper();
         this.jsonMapper.registerModule(new JavaTimeModule());
         this.jsonMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -226,6 +230,11 @@ public class SeedService {
             results.put("cloudtasks", results.containsKey("cloudtasks") ? ((int) results.get("cloudtasks")) + count : count);
             totalSeeded += count;
         }
+        if (seedData.containsKey("workflows")) {
+            int count = seedWorkflows(seedData.get("workflows"), projectId);
+            results.put("workflows", results.containsKey("workflows") ? ((int) results.get("workflows")) + count : count);
+            totalSeeded += count;
+        }
         return totalSeeded;
     }
 
@@ -276,6 +285,7 @@ public class SeedService {
                 if (seedData.containsKey("firestore")) totalSeeded += seedFirestore(seedData.get("firestore"));
                 if (seedData.containsKey("bigtable")) totalSeeded += seedBigtable(seedData.get("bigtable"));
                 if (seedData.containsKey("cloudtasks")) totalSeeded += seedCloudTasks(seedData.get("cloudtasks"));
+                if (seedData.containsKey("workflows")) totalSeeded += seedWorkflows(seedData.get("workflows"), config.getProjectId());
 
                 response.put("seed_restored", true);
                 response.put("records_restored", totalSeeded);
@@ -343,6 +353,7 @@ public class SeedService {
                 case "compute" -> resetCompute(projectId);
                 case "cloudrun" -> resetCloudRun(projectId);
                 case "gke" -> resetGke(projectId);
+                case "workflows" -> resetWorkflows(projectId);
                 default -> {
                     logger.warn("No reset logic for service: {}", service);
                     yield 0;
@@ -376,6 +387,7 @@ public class SeedService {
                             case "firestore" -> seedFirestore(seedData.get("firestore"));
                             case "bigtable" -> seedBigtable(seedData.get("bigtable"));
                             case "cloudtasks" -> seedCloudTasks(seedData.get("cloudtasks"));
+                            case "workflows" -> seedWorkflows(seedData.get("workflows"), config.getProjectId());
                             default -> 0;
                         };
                     }
@@ -1590,6 +1602,54 @@ public class SeedService {
             }
         }
         return count;
+    }
+
+    // ========== Cloud Workflows seed ==========
+
+    @SuppressWarnings("unchecked")
+    private int seedWorkflows(Object wfData, String projectId) {
+        if (!(wfData instanceof Map)) return 0;
+        Map<String, Object> wf = (Map<String, Object>) wfData;
+        int count = 0;
+
+        List<Map<String, Object>> workflows = (List<Map<String, Object>>) wf.get("workflows");
+        if (workflows != null) {
+            for (Map<String, Object> entry : workflows) {
+                try {
+                    String name = (String) entry.get("name");
+                    String location = (String) entry.getOrDefault("location", "us-central1");
+                    String source = (String) entry.get("source");
+                    if (name == null || source == null) {
+                        logger.warn("Skipping workflow seed entry missing name or source: {}", entry);
+                        continue;
+                    }
+                    // Validate YAML source
+                    try {
+                        yamlMapper.readValue(source, Map.class);
+                    } catch (Exception e) {
+                        logger.warn("Invalid YAML source for workflow '{}', skipping: {}", name, e.getMessage());
+                        continue;
+                    }
+                    workflowsStore.upsertWorkflow(projectId, location, name, source);
+                    count++;
+                    logger.debug("Seeded workflow: {}/{}/{}", projectId, location, name);
+                } catch (Exception e) {
+                    logger.warn("Failed to seed workflow: {}", e.getMessage());
+                }
+            }
+        }
+        return count;
+    }
+
+    private int resetWorkflows(String projectId) {
+        try {
+            workflowsStore.resetAll();
+            logger.info("Reset workflows for project {}", projectId);
+            return 1;
+        } catch (Exception e) {
+            logger.warn("Failed to reset workflows: {}", e.getMessage());
+            return 0;
+        }
     }
 
     // ========== HTTP helpers ==========

@@ -2,7 +2,7 @@
 
 **Google Cloud Platform — In-a-Box.**
 
-LocalCloud emulates 14 GCP services in a single Docker container. Develop and test locally without cloud access, approvals, or costs. Zero code changes — just set environment variables.
+LocalCloud emulates 15 GCP services in a single Docker container. Develop and test locally without cloud access, approvals, or costs. Zero code changes — just set environment variables.
 
 ---
 
@@ -93,7 +93,7 @@ Or set manually:
 
 | Port | Service | Protocol |
 |------|---------|----------|
-| 8080 | Gateway (Admin API, Secret Manager, Cloud Tasks, Logging, Monitoring, GKE, Compute, Cloud Run) | REST + gRPC |
+| 8080 | Gateway (Admin API, Secret Manager, Cloud Tasks, Logging, Monitoring, GKE, Compute, Cloud Run, Cloud Workflows) | REST + gRPC |
 | 4443 | Cloud Storage | HTTP |
 | 8085 | Pub/Sub | gRPC |
 | 8086 | Firestore | gRPC |
@@ -122,10 +122,77 @@ Or set manually:
 | **GKE** | Cluster CRUD (creates real k3d clusters when available) | Node pools, auto-scaling, upgrades |
 | **Compute Engine** | Instance CRUD, start/stop (Docker containers as VMs) | Disks, snapshots, templates, networking |
 | **Cloud Run** | Service CRUD, revisions (real Docker containers) | Traffic splitting, custom domains, Jobs |
+| **Cloud Workflows** | YAML workflow definitions, expression language, all step types (assign, call, switch, for, parallel, try/except, raise, return), standard library (http, sys, json, base64, math, text, list, map), connector shims to other LocalCloud emulators, callback support | Persistent execution checkpointing (in-flight executions lost on restart), KMS encryption, IAM enforcement |
 
 GKE, Compute, and Cloud Run are disabled by default (require Docker socket). Enable with:
 ```bash
 docker run ... -e LOCALCLOUD_ENABLE_GKE=true -v /var/run/docker.sock:/var/run/docker.sock ...
+```
+
+---
+
+## Cloud Workflows
+
+**Cloud Workflows** is a serverless orchestration service for chaining service calls into reliable, repeatable pipelines. LocalCloud emulates it at port 8080 via the REST browse API — no separate process or port required.
+
+### Features
+
+- YAML workflow definitions with full expression language support
+- All step types: `assign`, `call`, `switch`, `for`, `parallel`, `try/except`, `raise`, `return`
+- Standard library: `http`, `sys`, `json`, `base64`, `math`, `text`, `list`, `map`
+- Connector shims to other LocalCloud emulators (GCS, Pub/Sub, Secret Manager, Cloud Tasks, etc.)
+- Callback support for pausing and resuming executions
+
+### Limitations
+
+- No persistent execution checkpointing — in-flight executions are lost on container restart
+- No KMS encryption of workflow definitions or execution data
+- No IAM enforcement — all workflows and executions are accessible without credentials
+
+### Browse API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/_localcloud/browse/workflows` | List all workflows |
+| GET | `/_localcloud/browse/workflows/{id}` | Get workflow definition and metadata |
+| GET | `/_localcloud/browse/workflows/{id}/executions` | List executions for a workflow |
+
+```bash
+# List all workflows
+curl http://localhost:8080/_localcloud/browse/workflows | jq
+
+# Get a specific workflow
+curl http://localhost:8080/_localcloud/browse/workflows/my-workflow | jq
+
+# List executions for a workflow
+curl http://localhost:8080/_localcloud/browse/workflows/my-workflow/executions | jq
+```
+
+### Seed Format
+
+```yaml
+services:
+  workflows:
+    workflows:
+      - name: "notify-on-upload"
+        description: "Send a Pub/Sub notification when a GCS object is uploaded"
+        source_contents: |
+          main:
+            steps:
+              - init:
+                  assign:
+                    - bucket: ${sys.get_env("BUCKET_NAME")}
+                    - topic: "upload-events"
+              - publish:
+                  call: http.post
+                  args:
+                    url: ${"http://localhost:8085/v1/projects/local-project/topics/" + topic + ":publish"}
+                    body:
+                      messages:
+                        - data: ${base64.encode(json.encode({"bucket": bucket}))}
+                  result: publish_response
+              - done:
+                  return: ${publish_response.body}
 ```
 
 ---
@@ -206,7 +273,7 @@ Open **http://localhost:8080** — no separate server needed.
 | Page | What It Does |
 |------|-------------|
 | **Dashboard** | Service health, project info, uptime, request counts |
-| **APIs & Services** | All 14 services with status, ports, routing, env vars |
+| **APIs & Services** | All 15 services with status, ports, routing, env vars |
 | **Service Explorer** | SQL editor with schema browser, data explorer for all services |
 | **Logs** | Real-time request log viewer with filtering |
 | **Usage** | Cumulative API usage per service, estimated GCP cost savings |

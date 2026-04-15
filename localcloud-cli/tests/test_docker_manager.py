@@ -14,9 +14,9 @@ from localcloud.docker_manager import (
 class TestServiceEnvVars:
     """Tests for the SERVICE_ENV_VARS constant."""
 
-    def test_all_14_services_have_env_vars(self):
-        """All 14 services must be defined in SERVICE_ENV_VARS."""
-        assert len(SERVICE_ENV_VARS) == 14
+    def test_all_15_services_have_env_vars(self):
+        """All 15 services must be defined in SERVICE_ENV_VARS."""
+        assert len(SERVICE_ENV_VARS) == 15
 
     def test_expected_services_present(self):
         """Verify all expected service names exist as keys."""
@@ -24,6 +24,7 @@ class TestServiceEnvVars:
             "storage", "pubsub", "firestore", "bigtable", "spanner",
             "bigquery", "secretmanager", "cloudtasks", "logging",
             "monitoring", "gke", "compute", "cloudrun", "memorystore",
+            "workflows",
         }
         assert set(SERVICE_ENV_VARS.keys()) == expected
 

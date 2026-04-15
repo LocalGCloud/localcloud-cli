@@ -177,3 +177,13 @@ services:
     envValuePrefix: ""
     type: facade
     defaultEnabled: true
+
+  workflows:
+    displayName: "Cloud Workflows"
+    port: gateway
+    protocol: grpc
+    envVar: WORKFLOWS_EMULATOR_HOST
+    envValuePrefix: ""
+    type: facade
+    defaultEnabled: true
+    gcloudApiName: workflows

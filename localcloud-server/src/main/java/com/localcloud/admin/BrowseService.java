@@ -198,6 +198,7 @@ public class BrowseService {
                 case "spanner" -> browseSpanner(resourceType, resourceId, projectId);
                 case "firestore" -> browseFirestore(resourceType, resourceId, projectId);
                 case "bigtable" -> browseBigtable(resourceType, resourceId, projectId);
+                case "workflows" -> browseWorkflows(resourceType, resourceId, projectId);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unknown service: " + service));
@@ -857,6 +858,126 @@ public class BrowseService {
         }
 
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Bigtable browse path"));
+    }
+
+    // ========== Workflows (in-process, query PostgreSQL) ==========
+
+    private String browseWorkflows(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+
+        // browse/workflows — list all workflows
+        if (resourceType == null) {
+            List<Map<String, Object>> workflows = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT workflow_id, location_id, state, revision_id, created_at, updated_at " +
+                     "FROM workflows WHERE project_id = ? AND state != 'DELETED' ORDER BY created_at DESC LIMIT 100")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> w = new LinkedHashMap<>();
+                        w.put("name", rs.getString("workflow_id"));
+                        w.put("location", rs.getString("location_id"));
+                        w.put("state", rs.getString("state"));
+                        w.put("revision_id", rs.getInt("revision_id"));
+                        if (rs.getTimestamp("created_at") != null)
+                            w.put("created_at", rs.getTimestamp("created_at").toString());
+                        if (rs.getTimestamp("updated_at") != null)
+                            w.put("updated_at", rs.getTimestamp("updated_at").toString());
+                        workflows.add(w);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("workflows", workflows));
+        }
+
+        // browse/workflows/{workflowId} — single workflow detail
+        if (resourceId == null) {
+            String workflowId = resourceType;
+            Map<String, Object> result = new LinkedHashMap<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT * FROM workflows WHERE project_id = ? AND workflow_id = ? AND state != 'DELETED'")) {
+                ps.setString(1, projectId);
+                ps.setString(2, workflowId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        result.put("workflow_id", rs.getString("workflow_id"));
+                        result.put("location_id", rs.getString("location_id"));
+                        result.put("state", rs.getString("state"));
+                        result.put("revision_id", rs.getInt("revision_id"));
+                        result.put("source_contents", rs.getString("source_contents"));
+                        if (rs.getTimestamp("created_at") != null)
+                            result.put("created_at", rs.getTimestamp("created_at").toString());
+                        if (rs.getTimestamp("updated_at") != null)
+                            result.put("updated_at", rs.getTimestamp("updated_at").toString());
+                    } else {
+                        return mapper.writeValueAsString(Map.of("error", true, "message", "Workflow not found: " + workflowId));
+                    }
+                }
+            }
+            return mapper.writeValueAsString(result);
+        }
+
+        // browse/workflows/{workflowId}/executions — list executions for a workflow
+        if ("executions".equals(resourceId)) {
+            String workflowId = resourceType;
+            List<Map<String, Object>> executions = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT execution_id, state, start_time, end_time, workflow_revision_id " +
+                     "FROM workflow_executions WHERE project_id = ? AND workflow_id = ? ORDER BY start_time DESC LIMIT 100")) {
+                ps.setString(1, projectId);
+                ps.setString(2, workflowId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> e = new LinkedHashMap<>();
+                        e.put("execution_id", rs.getString("execution_id"));
+                        e.put("state", rs.getString("state"));
+                        if (rs.getTimestamp("start_time") != null)
+                            e.put("start_time", rs.getTimestamp("start_time").toString());
+                        if (rs.getTimestamp("end_time") != null)
+                            e.put("end_time", rs.getTimestamp("end_time").toString());
+                        e.put("workflow_revision_id", rs.getString("workflow_revision_id"));
+                        executions.add(e);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("executions", executions));
+        }
+
+        // browse/workflows/{workflowId}/revisions — list revisions for a workflow
+        if ("revisions".equals(resourceId)) {
+            String workflowId = resourceType;
+            List<Map<String, Object>> revisions = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT workflow_id, location_id, state, revision_id, source_contents, created_at, updated_at " +
+                     "FROM workflows WHERE project_id = ? AND workflow_id = ? AND state != 'DELETED'")) {
+                ps.setString(1, projectId);
+                ps.setString(2, workflowId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        Map<String, Object> rev = new LinkedHashMap<>();
+                        String loc = rs.getString("location_id");
+                        rev.put("name", "projects/" + projectId + "/locations/" + loc + "/workflows/" + workflowId);
+                        rev.put("state", rs.getString("state"));
+                        rev.put("revisionId", String.valueOf(rs.getInt("revision_id")));
+                        rev.put("sourceContents", rs.getString("source_contents"));
+                        if (rs.getTimestamp("created_at") != null)
+                            rev.put("createTime", rs.getTimestamp("created_at").toString());
+                        if (rs.getTimestamp("updated_at") != null)
+                            rev.put("updateTime", rs.getTimestamp("updated_at").toString());
+                        revisions.add(rev);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("revisions", revisions));
+        }
+
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Workflows browse path"));
     }
 
     // ========== GCS bucket ownership helpers ==========

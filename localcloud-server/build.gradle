@@ -54,6 +54,12 @@ dependencies {
     implementation 'com.google.api.grpc:proto-google-cloud-run-v2:0.58.0'
     implementation 'com.google.api.grpc:grpc-google-cloud-run-v2:0.58.0'
 
+    // Cloud Workflows API stubs
+    implementation 'com.google.api.grpc:proto-google-cloud-workflows-v1:2.64.0'
+    implementation 'com.google.api.grpc:grpc-google-cloud-workflows-v1:2.64.0'
+    implementation 'com.google.api.grpc:proto-google-cloud-workflow-executions-v1:2.64.0'
+    implementation 'com.google.api.grpc:grpc-google-cloud-workflow-executions-v1:2.64.0'
+
     // Docker Java client
     implementation 'com.github.docker-java:docker-java-core:3.3.6'
     implementation 'com.github.docker-java:docker-java-transport-httpclient5:3.3.6'

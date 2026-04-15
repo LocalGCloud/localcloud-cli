@@ -249,6 +249,7 @@ class LocalCloudConfigTest {
         assertTrue(services.contains("logging"));
         assertTrue(services.contains("monitoring"));
         assertTrue(services.contains("memorystore"));
-        assertEquals(11, services.size());
+        assertTrue(services.contains("workflows"));
+        assertEquals(12, services.size());
     }
 }

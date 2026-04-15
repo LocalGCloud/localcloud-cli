@@ -7,6 +7,7 @@ import Logs from './pages/Logs.jsx';
 import ServiceExplorer from './pages/ServiceExplorer.jsx';
 import Settings from './pages/Settings.jsx';
 import Usage from './pages/Usage.jsx';
+import Workflows from './pages/Workflows.jsx';
 
 // --- SVG Icon component ---
 const ICON_PATHS = {
@@ -36,6 +37,7 @@ const NAV_ITEMS = [
     { id: 'logs',       label: 'Logs',              icon: 'logs' },
     { id: 'data',       label: 'Service Explorer',   icon: 'data', expandable: true },
     { id: 'usage',      label: 'Usage',             icon: 'usage' },
+    { id: 'workflows',  label: 'Workflows',         icon: 'data' },
     { id: 'settings',   label: 'Settings',          icon: 'settings' },
 ];
 
@@ -272,6 +274,8 @@ function App() {
                 return <ServiceExplorer selectedService={selectedService} onTabChange={handleTabChange} activeProject={activeProject} />;
             case 'usage':
                 return <Usage activeProject={activeProject} />;
+            case 'workflows':
+                return <Workflows activeProject={activeProject} />;
             case 'settings':
                 return (
                     <Settings
