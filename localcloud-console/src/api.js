@@ -91,9 +91,16 @@ export const api = {
     enableService: (serviceId) => post(`/_localcloud/services/${encodeURIComponent(serviceId)}/enable`),
     disableService: (serviceId) => post(`/_localcloud/services/${encodeURIComponent(serviceId)}/disable`),
     // SQL query execution
-    query: (service, sql, params) => postJson(appendProject('/_localcloud/query'), { service, sql, ...params }),
+    query: (service, sql, params) => postJson(appendProject('/_localcloud/query'), { ...params, service, sql }),
     // Schema info
-    schema: (service) => get(appendProject(`/_localcloud/schema/${encodeURIComponent(service)}`)),
+    schema: (service, params) => {
+        let url = appendProject(`/_localcloud/schema/${encodeURIComponent(service)}`);
+        if (params) {
+            const qs = Object.entries(params).map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+            url += (url.includes('?') ? '&' : '?') + qs;
+        }
+        return get(url);
+    },
     // GCS file schema detection
     gcsFileSchema: (bucket, object) => get(appendProject(`/_localcloud/gcs/file-schema?bucket=${encodeURIComponent(bucket)}&object=${encodeURIComponent(object)}`)),
     // Usage metrics (persistent cumulative counts)

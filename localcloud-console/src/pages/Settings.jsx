@@ -1033,6 +1033,29 @@ environment:
                     Export State
                 </button>
             </div>
+
+            {/* Seed Data */}
+            <div class="section">
+                <div class="section-title">Seed Data</div>
+                <p style={{ "margin-bottom": "12px" }}>
+                    Re-load the default seed data into all services. This uses UPSERT semantics — existing data is updated, not duplicated.
+                    Seed data persists across container restarts and is only auto-loaded on first run.
+                </p>
+                <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
+                    <button class="btn btn-secondary" onClick={async () => {
+                        if (!confirm('Re-seed all services with default data? Existing data will be preserved (UPSERT).')) return;
+                        try {
+                            const resp = await fetch('/_localcloud/reseed', { method: 'POST' });
+                            const data = await resp.json();
+                            if (data.error) { alert('Seed failed: ' + data.message); return; }
+                            alert('Seed complete: ' + (data.total_records || 0) + ' records loaded across ' + Object.keys(data.services || {}).length + ' services');
+                        } catch (e) { alert('Seed failed: ' + e.message); }
+                    }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                        Re-seed Data
+                    </button>
+                </div>
+            </div>
             </Show>
 
             {/* ===== HELP & ABOUT TAB ===== */}

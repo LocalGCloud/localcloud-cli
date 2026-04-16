@@ -187,10 +187,39 @@ function GcsView(props) {
                     <div class="loading-state"><div class="loading-spinner" /> Loading objects...</div>
                 }>
                     <Show when={bucketObjects() && bucketObjects().length > 0} fallback={
-                        <div class="empty-state">
-                            <div class="empty-state-icon">{'\u2205'}</div>
+                        <div class="empty-state"
+                            onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'var(--primary-softer)'; }}
+                            onDragLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = ''; }}
+                            onDrop={async (e) => {
+                                e.preventDefault();
+                                e.currentTarget.style.borderColor = 'var(--border)';
+                                e.currentTarget.style.background = '';
+                                const files = e.dataTransfer?.files;
+                                if (!files || files.length === 0) return;
+                                let uploaded = 0;
+                                for (const file of files) {
+                                    try {
+                                        const text = await file.text();
+                                        await api.mutate('gcs', 'objects', {
+                                            bucket: selectedBucket(),
+                                            key: file.name,
+                                            content: text,
+                                            contentType: file.type || 'text/plain',
+                                        });
+                                        uploaded++;
+                                    } catch (err) { console.error('Upload failed for ' + file.name + ':', err); }
+                                }
+                                if (uploaded > 0) fetchBucketObjects(selectedBucket());
+                            }}
+                            style={{ border: '2px dashed var(--border)', 'border-radius': '8px', cursor: 'pointer', transition: 'all 150ms ease' }}
+                        >
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" style={{ 'margin-bottom': '12px' }}>
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
                             <div class="empty-state-title">No objects found</div>
-                            <div class="empty-state-text">This bucket is empty.</div>
+                            <div class="empty-state-text">Drag and drop text files here to upload (JSON, CSV, TXT, YAML), or use the SDK.</div>
                         </div>
                     }>
                         <div class="data-table-wrapper">
@@ -574,7 +603,7 @@ function BigQueryView(props) {
                                                                         await api.mutate('bigquery', 'rows/delete', {
                                                                             dataset: selectedDataset(),
                                                                             table: selectedTable(),
-                                                                            whereClause: `${firstCol} = '${value}'`
+                                                                            whereClause: `${firstCol} = '${String(value).replace(/'/g, "''")}'`
                                                                         });
                                                                     })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete">Del</button>
                                                                 );
@@ -927,6 +956,53 @@ function SpannerView(props) {
     const [ddlData, setDdlData] = createSignal(null);
     const [tableData, setTableData] = createSignal(null);
     const [subLoading, setSubLoading] = createSignal(false);
+    const [showCreateInstance, setShowCreateInstance] = createSignal(false);
+    const [showCreateDatabase, setShowCreateDatabase] = createSignal(false);
+    const [showCreateTable, setShowCreateTable] = createSignal(false);
+    const [createName, setCreateName] = createSignal('');
+    const [createDdl, setCreateDdl] = createSignal('');
+    const [createError, setCreateError] = createSignal(null);
+    const [creating, setCreating] = createSignal(false);
+
+    const handleCreateInstance = async () => {
+        const name = createName().trim();
+        if (!name) return;
+        setCreating(true); setCreateError(null);
+        try {
+            await api.mutate('spanner', 'createInstance', { instance: name, displayName: name });
+            setShowCreateInstance(false); setCreateName('');
+            if (props.onRefresh) props.onRefresh();
+        } catch (e) { setCreateError(e.message); }
+        finally { setCreating(false); }
+    };
+
+    const handleCreateDatabase = async () => {
+        const name = createName().trim();
+        if (!name) return;
+        setCreating(true); setCreateError(null);
+        try {
+            await api.mutate('spanner', 'createDatabase', { instance: selectedInstance(), database: name });
+            setShowCreateDatabase(false); setCreateName('');
+            // Refresh databases
+            const result = await api.browse('spanner', 'instances/' + selectedInstance());
+            setDatabases(result.databases || []);
+        } catch (e) { setCreateError(e.message); }
+        finally { setCreating(false); }
+    };
+
+    const handleCreateTable = async () => {
+        const ddl = createDdl().trim();
+        if (!ddl) return;
+        setCreating(true); setCreateError(null);
+        try {
+            await api.mutate('spanner', 'ddl', { instance: selectedInstance(), database: selectedDatabase(), statements: [ddl] });
+            setShowCreateTable(false); setCreateDdl('');
+            // Refresh tables
+            const result = await api.browse('spanner', 'instances/' + selectedInstance() + '/' + selectedDatabase());
+            setDdlData(result);
+        } catch (e) { setCreateError(e.message); }
+        finally { setCreating(false); }
+    };
 
     const instances = () => {
         const raw = d();
@@ -1108,7 +1184,10 @@ function SpannerView(props) {
                     <button class="back-link" onClick={goBackToDatabases}>
                         {'\u2190'} Back to databases
                     </button>
-                    <h2>Database: {selectedDatabase()}</h2>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                        <h2 style="margin:0">Database: {selectedDatabase()}</h2>
+                        <button class="btn btn-primary" style="height:30px;font-size:11px;padding:0 12px" onClick={() => { setCreateDdl(''); setCreateError(null); setShowCreateTable(true); }}>+ Create Table</button>
+                    </div>
                     {(() => {
                         const tables = parseTables(ddlData());
                         return (
@@ -1143,7 +1222,10 @@ function SpannerView(props) {
                     <button class="back-link" onClick={goBackToInstances}>
                         {'\u2190'} Back to instances
                     </button>
-                    <h2>Instance: {selectedInstance()}</h2>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                        <h2 style="margin:0">Instance: {selectedInstance()}</h2>
+                        <button class="btn btn-primary" style="height:30px;font-size:11px;padding:0 12px" onClick={() => { setCreateName(''); setCreateError(null); setShowCreateDatabase(true); }}>+ Create Database</button>
+                    </div>
                     <Show when={databases().length > 0} fallback={
                         <div class="empty-state">
                             <div class="empty-state-icon">{'\u2205'}</div>
@@ -1173,11 +1255,14 @@ function SpannerView(props) {
 
                 {/* Level 1: Instances */}
                 <Show when={!selectedInstance()}>
+                    <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+                        <button class="btn btn-primary" style="height:30px;font-size:11px;padding:0 12px" onClick={() => { setCreateName(''); setCreateError(null); setShowCreateInstance(true); }}>+ Create Instance</button>
+                    </div>
                     <Show when={instances().length > 0} fallback={
                         <div class="empty-state">
                             <div class="empty-state-icon">{'\u2205'}</div>
                             <div class="empty-state-title">No Spanner instances found</div>
-                            <div class="empty-state-text">Create an instance to see it here.</div>
+                            <div class="empty-state-text">Click "Create Instance" above to get started.</div>
                         </div>
                     }>
                         <div class="data-table-wrapper">
@@ -1198,6 +1283,62 @@ function SpannerView(props) {
                             </table>
                         </div>
                     </Show>
+                </Show>
+
+                {/* Create Instance Modal */}
+                <Show when={showCreateInstance()}>
+                    <div class="modal-overlay" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) setShowCreateInstance(false); }}>
+                        <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
+                            <h2 style="margin-bottom:16px">Create Spanner Instance</h2>
+                            <Show when={createError()}><div class="alert alert-error" style="margin-bottom:12px">{createError()}</div></Show>
+                            <div style="margin-bottom:16px">
+                                <label class="form-label">Instance ID</label>
+                                <input type="text" class="form-input form-input-mono" value={createName()} onInput={(e) => setCreateName(e.currentTarget.value)} placeholder="my-instance" />
+                            </div>
+                            <div style="display:flex;gap:8px;justify-content:flex-end">
+                                <button class="btn btn-secondary" onClick={() => setShowCreateInstance(false)}>Cancel</button>
+                                <button class="btn btn-primary" onClick={handleCreateInstance} disabled={creating() || !createName().trim()}>{creating() ? 'Creating...' : 'Create'}</button>
+                            </div>
+                        </div>
+                    </div>
+                </Show>
+
+                {/* Create Database Modal */}
+                <Show when={showCreateDatabase()}>
+                    <div class="modal-overlay" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) setShowCreateDatabase(false); }}>
+                        <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
+                            <h2 style="margin-bottom:16px">Create Database in {selectedInstance()}</h2>
+                            <Show when={createError()}><div class="alert alert-error" style="margin-bottom:12px">{createError()}</div></Show>
+                            <div style="margin-bottom:16px">
+                                <label class="form-label">Database Name</label>
+                                <input type="text" class="form-input form-input-mono" value={createName()} onInput={(e) => setCreateName(e.currentTarget.value)} placeholder="my-database" />
+                            </div>
+                            <div style="display:flex;gap:8px;justify-content:flex-end">
+                                <button class="btn btn-secondary" onClick={() => setShowCreateDatabase(false)}>Cancel</button>
+                                <button class="btn btn-primary" onClick={handleCreateDatabase} disabled={creating() || !createName().trim()}>{creating() ? 'Creating...' : 'Create'}</button>
+                            </div>
+                        </div>
+                    </div>
+                </Show>
+
+                {/* Create Table Modal */}
+                <Show when={showCreateTable()}>
+                    <div class="modal-overlay" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) setShowCreateTable(false); }}>
+                        <div class="card modal-card" onClick={(e) => e.stopPropagation()} style="max-width:600px">
+                            <h2 style="margin-bottom:4px">Create Table in {selectedDatabase()}</h2>
+                            <p style="font-size:12px;color:var(--text-secondary);margin-bottom:16px">Enter a Spanner DDL statement.</p>
+                            <Show when={createError()}><div class="alert alert-error" style="margin-bottom:12px">{createError()}</div></Show>
+                            <div style="margin-bottom:16px">
+                                <label class="form-label">DDL Statement</label>
+                                <textarea class="form-input form-input-mono" style="min-height:120px;resize:vertical;font-size:12px" value={createDdl()} onInput={(e) => setCreateDdl(e.currentTarget.value)}
+                                    placeholder={"CREATE TABLE MyTable (\n  Id STRING(36) NOT NULL,\n  Name STRING(100),\n  CreatedAt TIMESTAMP\n) PRIMARY KEY (Id)"} />
+                            </div>
+                            <div style="display:flex;gap:8px;justify-content:flex-end">
+                                <button class="btn btn-secondary" onClick={() => setShowCreateTable(false)}>Cancel</button>
+                                <button class="btn btn-primary" onClick={handleCreateTable} disabled={creating() || !createDdl().trim()}>{creating() ? 'Executing...' : 'Execute DDL'}</button>
+                            </div>
+                        </div>
+                    </div>
                 </Show>
             </Show>
         </div>
@@ -1678,6 +1819,8 @@ export default function DataBrowser(props) {
         } catch (e) {}
     };
     loadHealth();
+    // Note: health polling continues when Data Explorer is hidden (SQL Editor shown).
+    // This is intentional — keeps status dots updated in the sidebar.
     const healthTimer = setInterval(loadHealth, 30000);
     onCleanup(() => clearInterval(healthTimer));
 
@@ -1722,6 +1865,7 @@ export default function DataBrowser(props) {
     createEffect(() => {
         const trigger = props.resetTrigger?.();
         if (trigger > 0) {
+            setLoading(true);
             api.resetService(selectedTab(), false).then(() => loadData());
         }
     });

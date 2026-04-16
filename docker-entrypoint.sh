@@ -3,9 +3,6 @@ set -e
 
 # Ensure data directories exist (Docker volumes from older images may lack them)
 mkdir -p /var/lib/localcloud/spanner-data /var/lib/localcloud/gcs-data /var/lib/localcloud/pgdata /var/lib/localcloud/bigquery-data
-
-# BigQuery emulator v2: clear DuckDB database on startup for clean re-seed.
-rm -f /var/lib/localcloud/bigquery-data/bigquery.duckdb /var/lib/localcloud/bigquery-data/bigquery.duckdb.wal
 chown -R localcloud:localcloud /var/lib/localcloud/spanner-data /var/lib/localcloud/gcs-data 2>/dev/null || true
 
 # Service names below must match keys in /etc/localcloud/services.yaml
@@ -60,42 +57,100 @@ if [ "${SPANNER_EMULATOR_IMAGE}" = "google" ] && [ "${LOCALCLOUD_ENABLE_SPANNER:
     echo "WARNING: Using Google's standard Spanner emulator — persistence is NOT supported. Data will be lost on container restart."
 fi
 
-# Auto-seed: load seed data after services are healthy (runs in background)
+# Auto-seed: always seed on startup because several emulators are in-memory
+# (Pub/Sub, Firestore, Bigtable lose data on restart).
+# The seed endpoint uses UPSERT semantics — safe to run repeatedly.
+# Strategy: seed fast services immediately, then seed BigQuery/Spanner
+# in parallel as they become ready — no blocking.
 SEED_FILE="${LOCALCLOUD_SEED_FILE:-/etc/localcloud/seed.yaml}"
 if [ -f "$SEED_FILE" ]; then
     (
-        echo "Auto-seed: waiting for services to become healthy..."
+        echo "Auto-seed: waiting for gateway..."
         for i in $(seq 1 60); do
             if curl -sf http://localhost:8080/_localcloud/health >/dev/null 2>&1; then
-                # Wait for external emulators (Spanner, BigQuery, etc.) to be ready
-                echo "Auto-seed: gateway healthy, waiting for external emulators..."
-                sleep 5
-                # Check Spanner readiness if enabled
-                if [ "${LOCALCLOUD_ENABLE_SPANNER:-true}" = "true" ]; then
-                    for j in $(seq 1 30); do
-                        if curl -sf http://localhost:9020/v1/projects/local-project/instances >/dev/null 2>&1; then
-                            echo "Auto-seed: Spanner emulator ready"
-                            break
-                        fi
-                        echo "Auto-seed: waiting for Spanner emulator ($j/30)..."
-                        sleep 2
-                    done
+                echo "Auto-seed: gateway healthy"
+
+                # Check if this is a first run or a restart.
+                # PostgreSQL data persists across restarts; check if seed data already exists.
+                HAS_DATA=$(psql -U localcloud -t -c "SELECT CASE WHEN (SELECT count(*) FROM secrets) > 0 THEN 'yes' ELSE 'no' END" 2>/dev/null | tr -d ' ')
+
+                if [ "$HAS_DATA" = "yes" ] && [ "${LOCALCLOUD_FORCE_SEED}" != "true" ]; then
+                    # RESTART: Seed volatile (in-memory) services immediately.
+                    echo "Auto-seed: restart detected — seeding volatile services (Pub/Sub, Firestore, Bigtable)..."
+                    sleep 2
+                    RESULT=$(curl -s -X POST "http://localhost:8080/_localcloud/seed?mode=volatile" \
+                        -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" 2>&1)
+                    echo "Auto-seed: volatile seed done: $RESULT"
+
+                    # Also check if BigQuery lost data (DuckDB may have been wiped by older entrypoint).
+                    # If BigQuery has zero datasets, re-seed it in background.
+                    # BigQuery: DuckDB uses wal_autocheckpoint=4KB for immediate persistence.
+                    # The emulator takes ~20s to load the DuckDB file after port opens.
+                    # Wait for "Initialized project" in logs before checking for data.
+                    # BigQuery: emulator now persists metadata from DuckDB on startup.
+                    # Check if datasets already exist before re-seeding.
+                    if [ "${LOCALCLOUD_ENABLE_BIGQUERY:-true}" = "true" ]; then
+                        (
+                            set +e
+                            for j in $(seq 1 45); do
+                                BQ_RESP=$(curl -sf "http://localhost:9050/bigquery/v2/projects/${LOCALCLOUD_PROJECT:-local-project}/datasets" 2>/dev/null)
+                                if [ $? -eq 0 ] && [ -n "$BQ_RESP" ]; then
+                                    if echo "$BQ_RESP" | grep -q '"datasetId"'; then
+                                        echo "Auto-seed: BigQuery has persistent data, skipping"
+                                    else
+                                        echo "Auto-seed: BigQuery has no data, seeding..."
+                                        curl -s -X POST http://localhost:8080/_localcloud/seed \
+                                            -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" >/dev/null 2>&1
+                                        echo "Auto-seed: BigQuery seed complete"
+                                    fi
+                                    break
+                                fi
+                                sleep 2
+                            done
+                        ) &
+                    fi
+                else
+                    # FIRST RUN: Seed everything.
+                    sleep 2
+                    echo "Auto-seed: first run — loading all seed data..."
+                    RESULT=$(curl -s -X POST http://localhost:8080/_localcloud/seed \
+                        -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" 2>&1)
+                    echo "Auto-seed: phase 1 done: $RESULT"
+
+                    # Wait for slow emulators (BigQuery, Spanner) in parallel, re-seed when ready.
+                    if [ "${LOCALCLOUD_ENABLE_SPANNER:-true}" = "true" ]; then
+                        (
+                            for j in $(seq 1 30); do
+                                if curl -sf http://localhost:9020/v1/projects/local-project/instances >/dev/null 2>&1; then
+                                    echo "Auto-seed: Spanner ready, seeding..."
+                                    curl -s -X POST http://localhost:8080/_localcloud/seed \
+                                        -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" >/dev/null 2>&1
+                                    echo "Auto-seed: Spanner seed complete"
+                                    break
+                                fi
+                                sleep 2
+                            done
+                        ) &
+                    fi
+
+                    if [ "${LOCALCLOUD_ENABLE_BIGQUERY:-true}" = "true" ]; then
+                        (
+                            for j in $(seq 1 45); do
+                                if curl -sf "http://localhost:9050/bigquery/v2/projects/${LOCALCLOUD_PROJECT:-local-project}/datasets" >/dev/null 2>&1; then
+                                    echo "Auto-seed: BigQuery ready, seeding..."
+                                    curl -s -X POST http://localhost:8080/_localcloud/seed \
+                                        -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" >/dev/null 2>&1
+                                    echo "Auto-seed: BigQuery seed complete"
+                                    break
+                                fi
+                                sleep 2
+                            done
+                        ) &
+                    fi
+
+                    wait
+                    echo "Auto-seed: all phases complete"
                 fi
-                # Check BigQuery readiness if enabled
-                if [ "${LOCALCLOUD_ENABLE_BIGQUERY:-true}" = "true" ]; then
-                    for j in $(seq 1 30); do
-                        if curl -sf "http://localhost:9050/bigquery/v2/projects/${LOCALCLOUD_PROJECT:-local-project}/datasets" >/dev/null 2>&1; then
-                            echo "Auto-seed: BigQuery emulator ready"
-                            break
-                        fi
-                        echo "Auto-seed: waiting for BigQuery emulator ($j/30)..."
-                        sleep 2
-                    done
-                fi
-                echo "Auto-seed: loading $SEED_FILE"
-                RESULT=$(curl -s -X POST http://localhost:8080/_localcloud/seed \
-                    -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" 2>&1)
-                echo "Auto-seed: $RESULT"
                 break
             fi
             sleep 1

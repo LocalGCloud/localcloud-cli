@@ -117,13 +117,52 @@ public class SeedService {
      *             type: INTEGER
      * </pre>
      */
-    @Post("/seed")
-    public com.linecorp.armeria.common.HttpResponse seed(AggregatedHttpRequest request) {
+    /**
+     * Re-seed from the baked-in seed file at /etc/localcloud/seed.yaml.
+     * Called from the console Settings page "Re-seed" button.
+     */
+    @Post("/reseed")
+    public com.linecorp.armeria.common.HttpResponse reseed() {
         try {
-            String yamlContent = request.contentUtf8();
-            if (yamlContent == null || yamlContent.isBlank()) {
-                return errorResponse(HttpStatus.BAD_REQUEST, "Seed data is required (YAML format)");
+            java.io.File seedFile = new java.io.File(
+                System.getenv().getOrDefault("LOCALCLOUD_SEED_FILE", "/etc/localcloud/seed.yaml"));
+            if (!seedFile.exists()) {
+                return errorResponse(HttpStatus.NOT_FOUND, "No seed file found at " + seedFile.getAbsolutePath());
             }
+            String yamlContent = java.nio.file.Files.readString(seedFile.toPath());
+            // Delegate to the main seed method by creating a fake request
+            return doSeed(yamlContent);
+        } catch (Exception e) {
+            logger.error("Re-seed failed", e);
+            return errorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Re-seed failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Seed all services from YAML body.
+     * Query params:
+     *   ?mode=volatile  — only seed in-memory services (Pub/Sub, Firestore, Bigtable).
+     *                     Skip persistent services (GCS, BigQuery, Spanner, PostgreSQL-backed).
+     *                     Used by auto-seed on container restart.
+     *   ?mode=all       — seed everything (default).
+     */
+    @Post("/seed")
+    public com.linecorp.armeria.common.HttpResponse seed(ServiceRequestContext ctx, AggregatedHttpRequest request) {
+        String yamlContent = request.contentUtf8();
+        if (yamlContent == null || yamlContent.isBlank()) {
+            return errorResponse(HttpStatus.BAD_REQUEST, "Seed data is required (YAML format)");
+        }
+        String mode = ctx.queryParam("mode");
+        boolean volatileOnly = "volatile".equals(mode);
+        return doSeed(yamlContent, volatileOnly);
+    }
+
+    private com.linecorp.armeria.common.HttpResponse doSeed(String yamlContent) {
+        return doSeed(yamlContent, false);
+    }
+
+    private com.linecorp.armeria.common.HttpResponse doSeed(String yamlContent, boolean volatileOnly) {
+        try {
 
             @SuppressWarnings("unchecked")
             Map<String, Object> rawData = yamlMapper.readValue(yamlContent, Map.class);
@@ -147,7 +186,7 @@ public class SeedService {
                     Map<String, Object> seedData = projectServices.containsKey("services") && projectServices.get("services") instanceof Map
                             ? (Map<String, Object>) projectServices.get("services")
                             : projectServices;
-                    int count = seedServicesForProject(seedData, projectId, results);
+                    int count = seedServicesForProject(seedData, projectId, results, volatileOnly);
                     totalSeeded += count;
                 }
             } else {
@@ -156,7 +195,7 @@ public class SeedService {
                 Map<String, Object> seedData = rawData.containsKey("services") && rawData.get("services") instanceof Map
                         ? (Map<String, Object>) rawData.get("services")
                         : rawData;
-                totalSeeded = seedServicesForProject(seedData, config.getProjectId(), results);
+                totalSeeded = seedServicesForProject(seedData, config.getProjectId(), results, volatileOnly);
             }
 
             // Store seed for potential restore
@@ -183,36 +222,32 @@ public class SeedService {
      * each seed method — marked as a future enhancement.
      */
     private int seedServicesForProject(Map<String, Object> seedData, String projectId,
-                                        Map<String, Object> results) {
+                                        Map<String, Object> results, boolean volatileOnly) {
+        // Persistent services — data survives container restarts (filesystem, DuckDB, LevelDB, PostgreSQL).
+        // Skip these on restart (volatileOnly=true) since their data is already on the persistent volume.
+        // Volatile services — in-memory emulators that lose data on restart (gcloud Pub/Sub, Firestore, Bigtable).
+        // These must always be re-seeded.
+        //
+        // Service storage map:
+        //   GCS:            filesystem (/var/lib/localcloud/gcs-data)     → persistent
+        //   BigQuery:       DuckDB (/var/lib/localcloud/bigquery-data)    → persistent
+        //   Spanner:        LevelDB (/var/lib/localcloud/spanner-data)    → persistent
+        //   Secret Manager: PostgreSQL                                    → persistent
+        //   Cloud Tasks:    PostgreSQL                                    → persistent
+        //   Memorystore:    PostgreSQL (redis_data table)                 → persistent
+        //   Workflows:      PostgreSQL                                    → persistent
+        //   Logging:        PostgreSQL                                    → persistent
+        //   Monitoring:     PostgreSQL                                    → persistent
+        //   Pub/Sub:        in-memory (gcloud emulator)                   → volatile
+        //   Firestore:      in-memory (gcloud emulator)                   → volatile
+        //   Bigtable:       in-memory (gcloud emulator)                   → volatile
+
         int totalSeeded = 0;
-        if (seedData.containsKey("gcs")) {
-            int count = seedGcs(seedData.get("gcs"));
-            results.put("gcs", results.containsKey("gcs") ? ((int) results.get("gcs")) + count : count);
-            totalSeeded += count;
-        }
+
+        // --- Volatile services (always seed) ---
         if (seedData.containsKey("pubsub")) {
             int count = seedPubSub(seedData.get("pubsub"));
             results.put("pubsub", results.containsKey("pubsub") ? ((int) results.get("pubsub")) + count : count);
-            totalSeeded += count;
-        }
-        if (seedData.containsKey("bigquery")) {
-            int count = seedBigQuery(seedData.get("bigquery"));
-            results.put("bigquery", results.containsKey("bigquery") ? ((int) results.get("bigquery")) + count : count);
-            totalSeeded += count;
-        }
-        if (seedData.containsKey("secretmanager")) {
-            int count = seedSecretManager(seedData.get("secretmanager"));
-            results.put("secretmanager", results.containsKey("secretmanager") ? ((int) results.get("secretmanager")) + count : count);
-            totalSeeded += count;
-        }
-        if (seedData.containsKey("memorystore")) {
-            int count = seedMemorystore(seedData.get("memorystore"));
-            results.put("memorystore", results.containsKey("memorystore") ? ((int) results.get("memorystore")) + count : count);
-            totalSeeded += count;
-        }
-        if (seedData.containsKey("spanner")) {
-            int count = seedSpanner(seedData.get("spanner"));
-            results.put("spanner", results.containsKey("spanner") ? ((int) results.get("spanner")) + count : count);
             totalSeeded += count;
         }
         if (seedData.containsKey("firestore")) {
@@ -225,16 +260,48 @@ public class SeedService {
             results.put("bigtable", results.containsKey("bigtable") ? ((int) results.get("bigtable")) + count : count);
             totalSeeded += count;
         }
-        if (seedData.containsKey("cloudtasks")) {
-            int count = seedCloudTasks(seedData.get("cloudtasks"));
-            results.put("cloudtasks", results.containsKey("cloudtasks") ? ((int) results.get("cloudtasks")) + count : count);
-            totalSeeded += count;
+
+        // --- Persistent services (skip on restart when volatileOnly=true) ---
+        if (!volatileOnly) {
+            if (seedData.containsKey("gcs")) {
+                int count = seedGcs(seedData.get("gcs"));
+                results.put("gcs", results.containsKey("gcs") ? ((int) results.get("gcs")) + count : count);
+                totalSeeded += count;
+            }
+            if (seedData.containsKey("bigquery")) {
+                int count = seedBigQuery(seedData.get("bigquery"));
+                results.put("bigquery", results.containsKey("bigquery") ? ((int) results.get("bigquery")) + count : count);
+                totalSeeded += count;
+            }
+            if (seedData.containsKey("spanner")) {
+                int count = seedSpanner(seedData.get("spanner"));
+                results.put("spanner", results.containsKey("spanner") ? ((int) results.get("spanner")) + count : count);
+                totalSeeded += count;
+            }
+            if (seedData.containsKey("secretmanager")) {
+                int count = seedSecretManager(seedData.get("secretmanager"));
+                results.put("secretmanager", results.containsKey("secretmanager") ? ((int) results.get("secretmanager")) + count : count);
+                totalSeeded += count;
+            }
+            if (seedData.containsKey("cloudtasks")) {
+                int count = seedCloudTasks(seedData.get("cloudtasks"));
+                results.put("cloudtasks", results.containsKey("cloudtasks") ? ((int) results.get("cloudtasks")) + count : count);
+                totalSeeded += count;
+            }
+            if (seedData.containsKey("memorystore")) {
+                int count = seedMemorystore(seedData.get("memorystore"));
+                results.put("memorystore", results.containsKey("memorystore") ? ((int) results.get("memorystore")) + count : count);
+                totalSeeded += count;
+            }
+            if (seedData.containsKey("workflows")) {
+                int count = seedWorkflows(seedData.get("workflows"), projectId);
+                results.put("workflows", results.containsKey("workflows") ? ((int) results.get("workflows")) + count : count);
+                totalSeeded += count;
+            }
+        } else {
+            logger.info("Volatile-only seed: skipping persistent services (GCS, BigQuery, Spanner, SecretManager, CloudTasks, Memorystore, Workflows)");
         }
-        if (seedData.containsKey("workflows")) {
-            int count = seedWorkflows(seedData.get("workflows"), projectId);
-            results.put("workflows", results.containsKey("workflows") ? ((int) results.get("workflows")) + count : count);
-            totalSeeded += count;
-        }
+
         return totalSeeded;
     }
 

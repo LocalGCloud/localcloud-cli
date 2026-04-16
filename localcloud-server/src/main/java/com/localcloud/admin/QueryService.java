@@ -46,7 +46,7 @@ public class QueryService {
     /** Services whose data lives in the internal PostgreSQL database. */
     private static final Set<String> POSTGRES_SERVICES = Set.of(
             "secretmanager", "cloudtasks", "logging", "monitoring",
-            "bigtable", "compute", "cloudrun", "gke", "memorystore"
+            "bigtable", "compute", "cloudrun", "gke", "memorystore", "workflows"
     );
 
     private final LocalCloudConfig config;
@@ -121,6 +121,8 @@ public class QueryService {
                 String instance = (String) request.get("instance");
                 String database = (String) request.get("database");
                 return executeSpannerQuery(sql, projectId, instance, database, startTime);
+            } else if ("pubsub".equals(service)) {
+                return executePubSubQuery(sql, projectId, startTime);
             } else {
                 return errorResponse("Service '" + service + "' does not support SQL queries");
             }
@@ -260,11 +262,75 @@ public class QueryService {
 
     private HttpResponse executeSpannerQuery(String sql, String projectId,
                                               String instance, String database, long startTime) {
+        // Auto-resolve instance if not provided — use the first (usually only) instance
         if (instance == null || instance.isBlank()) {
-            return errorResponse("Spanner queries require 'instance' parameter");
+            try {
+                String url = spannerBase + "/v1/projects/" + projectId + "/instances";
+                String body = proxyGet(url);
+                @SuppressWarnings("unchecked")
+                Map<String, Object> resp = mapper.readValue(body, Map.class);
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> instances = (List<Map<String, Object>>) resp.getOrDefault("instances", List.of());
+                if (instances.isEmpty()) {
+                    return errorResponse("No Spanner instances found. Create one first.");
+                }
+                String name = (String) instances.get(0).get("name");
+                instance = name.substring(name.lastIndexOf('/') + 1);
+            } catch (Exception e) {
+                return errorResponse("Failed to auto-resolve Spanner instance: " + e.getMessage());
+            }
         }
+
+        // Auto-resolve database if not provided — use the first database in the instance
         if (database == null || database.isBlank()) {
-            return errorResponse("Spanner queries require 'database' parameter");
+            try {
+                String url = spannerBase + "/v1/projects/" + projectId + "/instances/" + instance + "/databases";
+                String body = proxyGet(url);
+                @SuppressWarnings("unchecked")
+                Map<String, Object> resp = mapper.readValue(body, Map.class);
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> databases = (List<Map<String, Object>>) resp.getOrDefault("databases", List.of());
+                if (databases.isEmpty()) {
+                    return errorResponse("No databases in Spanner instance '" + instance + "'. Create one first.");
+                }
+                String name = (String) databases.get(0).get("name");
+                database = name.substring(name.lastIndexOf('/') + 1);
+                logger.info("Auto-resolved Spanner database: {}/{}", instance, database);
+            } catch (Exception e) {
+                return errorResponse("Failed to auto-resolve Spanner database: " + e.getMessage());
+            }
+        }
+
+        // Spanner SQL doesn't support database.table syntax.
+        // If the SQL contains "database_name.TableName", extract the database and strip the prefix.
+        // This lets users copy table names from the schema tree (which shows "orders_db.Products").
+        try {
+            String url = spannerBase + "/v1/projects/" + projectId + "/instances/" + instance + "/databases";
+            String body = proxyGet(url);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> resp = mapper.readValue(body, Map.class);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> allDbs = (List<Map<String, Object>>) resp.getOrDefault("databases", List.of());
+            for (Map<String, Object> db : allDbs) {
+                String dbFullName = (String) db.get("name");
+                String dbName = dbFullName.substring(dbFullName.lastIndexOf('/') + 1);
+                // Check if SQL references this database as a prefix (e.g., "orders_db.Products")
+                if (sql.contains(dbName + ".")) {
+                    database = dbName;
+                    sql = sql.replace(dbName + ".", "");
+                    logger.info("Spanner SQL rewrite: stripped '{}.' prefix, using database '{}'", dbName, database);
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Failed to check database prefixes in SQL: {}", e.getMessage());
+        }
+
+        // DDL statements (CREATE TABLE, DROP TABLE, ALTER TABLE, CREATE INDEX, DROP INDEX)
+        // must go through the DDL update API, not executeSql
+        String trimmedUpper = sql.trim().toUpperCase();
+        if (trimmedUpper.startsWith("CREATE ") || trimmedUpper.startsWith("DROP ") || trimmedUpper.startsWith("ALTER ")) {
+            return executeSpannerDdl(sql, projectId, instance, database, startTime);
         }
 
         String sessionName = null;
@@ -277,12 +343,33 @@ public class QueryService {
             Map<String, Object> sessionResp = mapper.readValue(sessionBody, Map.class);
             sessionName = (String) sessionResp.get("name");
 
-            // 2. Execute SQL
+            // 2. Execute SQL (DML only — SELECT, INSERT, UPDATE, DELETE)
             String sqlUrl = spannerBase + "/v1/" + sessionName + ":executeSql";
             String sqlPayload = mapper.writeValueAsString(Map.of("sql", sql));
             String sqlBody = proxyPost(sqlUrl, sqlPayload);
             @SuppressWarnings("unchecked")
             Map<String, Object> sqlResp = mapper.readValue(sqlBody, Map.class);
+
+            // Check for Spanner error response (e.g., {"code":5, "message":"Not Found"})
+            if (sqlResp.containsKey("code")) {
+                int code = ((Number) sqlResp.get("code")).intValue();
+                String message = sqlResp.containsKey("message") ? String.valueOf(sqlResp.get("message")) : "Unknown error";
+                if (code != 0) {
+                    // Extract table name from SQL for a helpful error message
+                    String tableName = sql.replaceAll("(?i).*?FROM\\s+(\\S+).*", "$1").trim();
+                    String errorMsg;
+                    if (code == 5 || message.contains("Not Found") || message.contains("not found")) {
+                        errorMsg = "Table '" + tableName + "' not found in database '" + database + "'";
+                    } else if (code == 13 || message.contains("marshal")) {
+                        // Spanner emulator wraps NOT_FOUND as INTERNAL with "failed to marshal"
+                        errorMsg = "Table '" + tableName + "' does not exist in database '" + database + "'. "
+                                + "Check that the table name and database are correct.";
+                    } else {
+                        errorMsg = "Spanner error: " + message;
+                    }
+                    return errorResponse(errorMsg);
+                }
+            }
 
             // 3. Parse columns from metadata
             List<String> columns = new ArrayList<>();
@@ -331,6 +418,196 @@ public class QueryService {
                     logger.debug("Failed to delete Spanner session: {}", ignored.getMessage());
                 }
             }
+        }
+    }
+
+    /**
+     * Execute a Spanner DDL statement (CREATE TABLE, DROP TABLE, ALTER TABLE, CREATE INDEX, etc.)
+     * via the database DDL update API (PATCH).
+     */
+    private HttpResponse executeSpannerDdl(String sql, String projectId,
+                                            String instance, String database, long startTime) {
+        try {
+            // Spanner DDL API does not accept trailing semicolons — strip them
+            String cleanSql = sql.trim();
+            while (cleanSql.endsWith(";")) {
+                cleanSql = cleanSql.substring(0, cleanSql.length() - 1).trim();
+            }
+
+            String url = spannerBase + "/v1/projects/" + projectId + "/instances/" + instance
+                    + "/databases/" + database + "/ddl";
+            String payload = mapper.writeValueAsString(Map.of("statements", List.of(cleanSql)));
+
+            var request = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create(url))
+                    .method("PATCH", java.net.http.HttpRequest.BodyPublishers.ofString(payload))
+                    .header("Content-Type", "application/json")
+                    .timeout(java.time.Duration.ofSeconds(30))
+                    .build();
+            var response = httpClient.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+
+            long elapsed = System.currentTimeMillis() - startTime;
+
+            if (response.statusCode() >= 400) {
+                String errorBody = response.body();
+                // Parse error message — Spanner returns either {"error":{"message":"..."}} or {"code":N,"message":"..."}
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> errorResp = mapper.readValue(errorBody, Map.class);
+                    // Try nested {"error":{"message":"..."}}
+                    Object errorObj = errorResp.get("error");
+                    if (errorObj instanceof Map) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> err = (Map<String, Object>) errorObj;
+                        return errorResponse(String.valueOf(err.getOrDefault("message", errorBody)));
+                    }
+                    // Try flat {"code":N,"message":"..."}
+                    if (errorResp.containsKey("message")) {
+                        return errorResponse(String.valueOf(errorResp.get("message")));
+                    }
+                } catch (Exception ignored) {}
+                return errorResponse(errorBody);
+            }
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("columns", List.of("result"));
+            result.put("rows", List.of(List.of("DDL statement executed successfully")));
+            result.put("row_count", 1);
+            result.put("execution_time_ms", elapsed);
+
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
+
+        } catch (Exception e) {
+            logger.warn("Spanner DDL failed: {}", e.getMessage());
+            return errorResponse("Spanner DDL failed: " + e.getMessage());
+        }
+    }
+
+    // ─── Pub/Sub Query ─────────────────────────────────────────────────
+
+    /**
+     * Execute a pseudo-SQL query against Pub/Sub topics.
+     * Supports: SELECT * FROM <topic_name> [LIMIT n]
+     * Pulls messages from the topic's first subscription, decodes base64 data,
+     * and returns messages as rows.
+     */
+    private HttpResponse executePubSubQuery(String sql, String projectId, long startTime) {
+        try {
+            String pubsubBase = "http://localhost:8085";
+
+            // Parse topic name and limit from SQL
+            String trimmed = sql.trim();
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                    "(?i)SELECT\\s+\\*\\s+FROM\\s+(\\S+)(?:\\s+LIMIT\\s+(\\d+))?").matcher(trimmed);
+            if (!m.find()) {
+                return errorResponse("Pub/Sub SQL syntax: SELECT * FROM <topic_name> [LIMIT n]");
+            }
+            String topicName = m.group(1).replace("`", "").replace("\"", "");
+            int limit = m.group(2) != null ? Integer.parseInt(m.group(2)) : 100;
+
+            // Find subscription for this topic
+            String subsUrl = pubsubBase + "/v1/projects/" + projectId + "/subscriptions";
+            String subsBody = proxyGet(subsUrl);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> subsResp = mapper.readValue(subsBody, Map.class);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> subscriptions = (List<Map<String, Object>>) subsResp.getOrDefault("subscriptions", List.of());
+
+            String subscriptionName = null;
+            String fullTopicName = "projects/" + projectId + "/topics/" + topicName;
+            for (Map<String, Object> sub : subscriptions) {
+                if (fullTopicName.equals(sub.get("topic"))) {
+                    subscriptionName = (String) sub.get("name");
+                    break;
+                }
+            }
+
+            if (subscriptionName == null) {
+                return errorResponse("No subscription found for topic '" + topicName + "'. Create a subscription first.");
+            }
+
+            // Pull messages (peek — don't ack)
+            String shortSubName = subscriptionName.substring(subscriptionName.lastIndexOf('/') + 1);
+            String pullUrl = pubsubBase + "/v1/projects/" + projectId + "/subscriptions/" + shortSubName + ":pull";
+            String pullPayload = mapper.writeValueAsString(Map.of("maxMessages", limit));
+            String pullBody = proxyPost(pullUrl, pullPayload);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> pullResp = mapper.readValue(pullBody, Map.class);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> receivedMessages = (List<Map<String, Object>>) pullResp.getOrDefault("receivedMessages", List.of());
+
+            // Build result rows
+            List<String> columns = List.of("messageId", "data", "attributes", "publishTime");
+            List<List<Object>> rows = new ArrayList<>();
+            for (Map<String, Object> rm : receivedMessages) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> msg = (Map<String, Object>) rm.get("message");
+                if (msg == null) continue;
+
+                String messageId = (String) msg.getOrDefault("messageId", "");
+                String dataBase64 = (String) msg.getOrDefault("data", "");
+                String decodedData;
+                try {
+                    decodedData = new String(java.util.Base64.getDecoder().decode(dataBase64), java.nio.charset.StandardCharsets.UTF_8);
+                } catch (Exception e) {
+                    decodedData = dataBase64; // fallback to raw
+                }
+                Object attributes = msg.getOrDefault("attributes", Map.of());
+                String publishTime = (String) msg.getOrDefault("publishTime", "");
+
+                rows.add(List.of(messageId, decodedData, mapper.writeValueAsString(attributes), publishTime));
+            }
+
+            long elapsed = System.currentTimeMillis() - startTime;
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("columns", columns);
+            result.put("rows", rows);
+            result.put("row_count", rows.size());
+            result.put("execution_time_ms", elapsed);
+
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
+
+        } catch (Exception e) {
+            logger.warn("Pub/Sub query failed: {}", e.getMessage());
+            return errorResponse("Pub/Sub query failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Return Pub/Sub schema — lists topics as "tables" with message columns.
+     */
+    private HttpResponse schemaPubSub(String projectId) {
+        try {
+            String pubsubBase = "http://localhost:8085";
+            String topicsUrl = pubsubBase + "/v1/projects/" + projectId + "/topics";
+            String topicsBody = proxyGet(topicsUrl);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> topicsResp = mapper.readValue(topicsBody, Map.class);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> topics = (List<Map<String, Object>>) topicsResp.getOrDefault("topics", List.of());
+
+            List<Map<String, Object>> tables = new ArrayList<>();
+            List<Map<String, String>> msgColumns = List.of(
+                Map.of("name", "messageId", "type", "STRING"),
+                Map.of("name", "data", "type", "JSON"),
+                Map.of("name", "attributes", "type", "JSON"),
+                Map.of("name", "publishTime", "type", "TIMESTAMP")
+            );
+
+            for (Map<String, Object> topic : topics) {
+                String name = (String) topic.get("name");
+                String shortName = name != null ? name.substring(name.lastIndexOf('/') + 1) : "unknown";
+                tables.add(Map.of("name", shortName, "columns", msgColumns));
+            }
+
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of("tables", tables)));
+
+        } catch (Exception e) {
+            logger.warn("Pub/Sub schema fetch failed: {}", e.getMessage());
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, "{\"tables\": []}");
         }
     }
 
@@ -462,9 +739,40 @@ public class QueryService {
                 return schemaBigQuery(projectId);
             }
 
+            if ("spanner".equals(service)) {
+                String instance = ctx.queryParams().get("instance");
+                String database = ctx.queryParams().get("database");
+                return schemaSpanner(projectId, instance, database);
+            }
+
+            if ("pubsub".equals(service)) {
+                return schemaPubSub(projectId);
+            }
+
             if (service == null || !POSTGRES_SERVICES.contains(service)) {
                 return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
                         mapper.writeValueAsString(Map.of("tables", List.of())));
+            }
+
+            // Filter tables by service — each service owns specific PostgreSQL tables
+            Map<String, List<String>> serviceTables = Map.ofEntries(
+                Map.entry("secretmanager", List.of("secrets", "secret_versions")),
+                Map.entry("cloudtasks", List.of("task_queues", "cloud_tasks")),
+                Map.entry("logging", List.of("log_entries")),
+                Map.entry("monitoring", List.of("time_series", "metric_points")),
+                Map.entry("bigtable", List.of("bigtable_data")),
+                Map.entry("compute", List.of("compute_instances")),
+                Map.entry("cloudrun", List.of("cloudrun_services", "cloudrun_revisions")),
+                Map.entry("gke", List.of("gke_clusters")),
+                Map.entry("memorystore", List.of("redis_data")),
+                Map.entry("workflows", List.of("workflows", "workflow_executions"))
+            );
+
+            List<String> allowedTables = serviceTables.getOrDefault(service, List.of());
+            String tableFilter = "";
+            if (!allowedTables.isEmpty()) {
+                tableFilter = " AND table_name IN (" +
+                    allowedTables.stream().map(t -> "'" + t + "'").collect(java.util.stream.Collectors.joining(",")) + ")";
             }
 
             // Query PostgreSQL information_schema for table/column metadata
@@ -475,8 +783,8 @@ public class QueryService {
                 ResultSet rs = stmt.executeQuery(
                         "SELECT table_name, column_name, data_type " +
                         "FROM information_schema.columns " +
-                        "WHERE table_schema = 'public' " +
-                        "ORDER BY table_name, ordinal_position");
+                        "WHERE table_schema = 'public'" + tableFilter +
+                        " ORDER BY table_name, ordinal_position");
 
                 String currentTable = null;
                 List<Map<String, String>> currentColumns = null;
@@ -588,6 +896,146 @@ public class QueryService {
             logger.warn("BigQuery schema fetch failed: {}", e.getMessage());
             return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
                     "{\"tables\":[]}");
+        }
+    }
+
+    // ─── Spanner Schema (proxy to emulator) ──────────────────────────
+
+    private HttpResponse schemaSpanner(String projectId, String instance, String database) {
+        try {
+            // 1. List instances
+            String instancesUrl = spannerBase + "/v1/projects/" + projectId + "/instances";
+            String instancesBody = proxyGet(instancesUrl);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> instancesResp = mapper.readValue(instancesBody, Map.class);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> instances = (List<Map<String, Object>>) instancesResp.getOrDefault("instances", List.of());
+
+            List<String> instanceNames = new ArrayList<>();
+            for (Map<String, Object> inst : instances) {
+                String name = (String) inst.get("name");
+                if (name != null) instanceNames.add(name.substring(name.lastIndexOf('/') + 1));
+            }
+
+            if (instanceNames.isEmpty()) {
+                return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writeValueAsString(Map.of("tables", List.of(), "instances", List.of(), "databases", List.of())));
+            }
+
+            // Use provided instance or first one
+            String selectedInstance = (instance != null && !instance.isBlank()) ? instance : instanceNames.get(0);
+
+            // 2. List databases
+            String dbsUrl = spannerBase + "/v1/projects/" + projectId + "/instances/" + selectedInstance + "/databases";
+            String dbsBody = proxyGet(dbsUrl);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> dbsResp = mapper.readValue(dbsBody, Map.class);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> databases = (List<Map<String, Object>>) dbsResp.getOrDefault("databases", List.of());
+
+            List<String> databaseNames = new ArrayList<>();
+            for (Map<String, Object> db : databases) {
+                String name = (String) db.get("name");
+                if (name != null) databaseNames.add(name.substring(name.lastIndexOf('/') + 1));
+            }
+
+            if (databaseNames.isEmpty()) {
+                return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writeValueAsString(Map.of("tables", List.of(), "instances", instanceNames, "databases", List.of())));
+            }
+
+            // 3. Get DDL for ALL databases — prefix table names with database name
+            List<Map<String, Object>> tables = new ArrayList<>();
+            for (String dbName : databaseNames) {
+                try {
+                    String ddlUrl = spannerBase + "/v1/projects/" + projectId + "/instances/" + selectedInstance
+                            + "/databases/" + dbName + "/ddl";
+                    String ddlBody = proxyGet(ddlUrl);
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> ddlResp = mapper.readValue(ddlBody, Map.class);
+                    @SuppressWarnings("unchecked")
+                    List<String> statements = (List<String>) ddlResp.getOrDefault("statements", List.of());
+
+                    for (String stmt : statements) {
+                        if (stmt.trim().toUpperCase().startsWith("CREATE TABLE")) {
+                            Map<String, Object> table = parseCreateTable(stmt);
+                            if (table != null) {
+                                // Prefix with database name so frontend can group by database
+                                Map<String, Object> prefixed = new LinkedHashMap<>(table);
+                                prefixed.put("name", dbName + "." + table.get("name"));
+                                prefixed.put("database", dbName);
+                                tables.add(prefixed);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    logger.debug("Failed to fetch DDL for database {}: {}", dbName, e.getMessage());
+                }
+            }
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("tables", tables);
+            result.put("instances", instanceNames);
+            result.put("databases", databaseNames);
+            result.put("selectedInstance", selectedInstance);
+
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
+
+        } catch (Exception e) {
+            logger.warn("Spanner schema fetch failed: {}", e.getMessage());
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                "{\"tables\": [], \"instances\": [], \"databases\": []}");
+        }
+    }
+
+    /**
+     * Parse a Spanner CREATE TABLE statement into table name and columns.
+     * Example: CREATE TABLE Persons (Id STRING(36) NOT NULL, Name STRING(100)) PRIMARY KEY (Id)
+     */
+    private Map<String, Object> parseCreateTable(String ddl) {
+        try {
+            // Extract table name
+            String upper = ddl.trim();
+            int tableIdx = upper.toUpperCase().indexOf("CREATE TABLE");
+            if (tableIdx < 0) return null;
+
+            String afterCreate = upper.substring(tableIdx + 12).trim();
+            int parenIdx = afterCreate.indexOf('(');
+            if (parenIdx < 0) return null;
+
+            String tableName = afterCreate.substring(0, parenIdx).trim();
+
+            // Extract columns — content between first ( and matching )
+            // Find the matching closing paren before PRIMARY KEY
+            String columnSection = afterCreate.substring(parenIdx + 1);
+            int pkIdx = columnSection.toUpperCase().indexOf(") PRIMARY KEY");
+            if (pkIdx < 0) {
+                // Try just finding the last )
+                pkIdx = columnSection.lastIndexOf(')');
+                if (pkIdx < 0) return null;
+            }
+            columnSection = columnSection.substring(0, pkIdx).trim();
+
+            // Split by comma, parse each column
+            List<Map<String, String>> columns = new ArrayList<>();
+            for (String col : columnSection.split(",")) {
+                String trimmed = col.trim();
+                if (trimmed.isEmpty()) continue;
+                // Skip INTERLEAVE and other non-column definitions
+                if (trimmed.toUpperCase().startsWith("INTERLEAVE")) continue;
+                if (trimmed.toUpperCase().startsWith("CONSTRAINT")) continue;
+
+                String[] parts = trimmed.split("\\s+", 3);
+                if (parts.length >= 2) {
+                    columns.add(Map.of("name", parts[0], "type", parts[1]));
+                }
+            }
+
+            return Map.of("name", tableName, "columns", columns);
+        } catch (Exception e) {
+            logger.debug("Failed to parse DDL: {}", ddl, e);
+            return null;
         }
     }
 

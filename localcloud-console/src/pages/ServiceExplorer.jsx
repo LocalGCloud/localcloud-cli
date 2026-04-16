@@ -2,6 +2,7 @@ import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
 import { api } from '../api.js';
 import DataBrowser from './DataBrowser.jsx';
 import CodeEditor, { toCodeMirrorSchema } from '../components/CodeEditor.jsx';
+import Workflows from './Workflows.jsx';
 
 // ─── Service Metadata (icon, title, description) ─────────────────────
 const SERVICE_META = {
@@ -19,10 +20,13 @@ const SERVICE_META = {
     compute:       { label: 'Compute Engine',   description: 'Virtual machines running in Google\'s data center. Scalable, high-performance VMs.' },
     cloudrun:      { label: 'Cloud Run',        description: 'Fully managed compute platform for deploying and scaling containerized applications quickly and securely.' },
     memorystore:   { label: 'Memorystore',      description: 'Fully managed in-memory data store service for Redis and Memcached.' },
+    workflows:     { label: 'Cloud Workflows',  description: 'Orchestrate and automate Google Cloud and HTTP-based API services with serverless workflows.' },
 };
 
 // ─── SQL-Capable Services ──────────────────────────────────────────────
 const SQL_SERVICES = [
+    { id: 'pubsub', label: 'Pub/Sub', dialect: 'postgresql', dialectLabel: 'Pub/Sub SQL', icon: 'pubsub',
+      placeholder: "SELECT * FROM user-events LIMIT 10" },
     { id: 'gcs', label: 'Cloud Storage', dialect: 'bigquery', dialectLabel: 'BigQuery SQL', icon: 'gcs',
       placeholder: "-- Click a file in the explorer to generate a query" },
     { id: 'bigquery', label: 'BigQuery', dialect: 'bigquery', dialectLabel: 'BigQuery SQL', icon: 'bigquery',
@@ -47,6 +51,8 @@ const SQL_SERVICES = [
       placeholder: "SELECT cluster_name, location, node_count, status\nFROM gke_clusters" },
     { id: 'memorystore', label: 'Memorystore', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'memorystore',
       placeholder: "SELECT key_name, data_type, value\nFROM redis_data\nLIMIT 200" },
+    { id: 'workflows', label: 'Cloud Workflows', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'workflows',
+      placeholder: "SELECT workflow_id, state, revision_id, updated_at\nFROM workflows\nWHERE state = 'ACTIVE'" },
 ];
 
 // ─── Static Schema Fallbacks ───────────────────────────────────────────
@@ -70,7 +76,11 @@ const SERVICE_SCHEMAS = {
         { name: 'cloudrun_revisions', columns: [{ name: 'revision_name', type: 'TEXT' }, { name: 'service_name', type: 'TEXT' }, { name: 'image', type: 'TEXT' }, { name: 'created_at', type: 'TIMESTAMP' }, { name: 'traffic_percent', type: 'INT' }] }
     ]},
     gke: { tables: [{ name: 'gke_clusters', columns: [{ name: 'cluster_name', type: 'TEXT' }, { name: 'location', type: 'TEXT' }, { name: 'node_count', type: 'INT' }, { name: 'machine_type', type: 'TEXT' }, { name: 'k8s_version', type: 'TEXT' }, { name: 'status', type: 'TEXT' }, { name: 'project_id', type: 'TEXT' }] }] },
-    memorystore: { tables: [{ name: 'redis_data', columns: [{ name: 'key_name', type: 'TEXT' }, { name: 'data_type', type: 'TEXT' }, { name: 'value', type: 'JSONB' }, { name: 'db_number', type: 'INT' }, { name: 'ttl_expires_at', type: 'TIMESTAMP' }, { name: 'project_id', type: 'TEXT' }] }] }
+    memorystore: { tables: [{ name: 'redis_data', columns: [{ name: 'key_name', type: 'TEXT' }, { name: 'data_type', type: 'TEXT' }, { name: 'value', type: 'JSONB' }, { name: 'db_number', type: 'INT' }, { name: 'ttl_expires_at', type: 'TIMESTAMP' }, { name: 'project_id', type: 'TEXT' }] }] },
+    workflows: { tables: [
+        { name: 'workflows', columns: [{ name: 'workflow_id', type: 'TEXT' }, { name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'source_contents', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'revision_id', type: 'INT' }, { name: 'labels', type: 'JSONB' }, { name: 'created_at', type: 'TIMESTAMP' }, { name: 'updated_at', type: 'TIMESTAMP' }] },
+        { name: 'workflow_executions', columns: [{ name: 'execution_id', type: 'TEXT' }, { name: 'workflow_id', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'argument', type: 'JSONB' }, { name: 'result', type: 'JSONB' }, { name: 'error', type: 'JSONB' }, { name: 'start_time', type: 'TIMESTAMP' }, { name: 'end_time', type: 'TIMESTAMP' }] }
+    ]}
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────
@@ -87,7 +97,7 @@ function truncateCell(val, max = 120) {
 }
 
 // ─── Services without SQL support ────────────────────────────────────────
-const NON_SQL_SERVICES = new Set(['pubsub', 'firestore']);
+const NON_SQL_SERVICES = new Set(['firestore']);
 
 // ─── Non-SQL service descriptions for the "no SQL" placeholder ───────────
 const NON_SQL_INFO = {
@@ -195,9 +205,27 @@ function SQLEditor(props) {
     const [gcsFileSchemas, setGcsFileSchemas] = createSignal({}); // { "bucket/obj": [{ name, type }] }
     const [gcsSchemaLoading, setGcsSchemaLoading] = createSignal({});
 
+    // Spanner instance/database selection signals
+    // Note: Spanner instance/database selection is independent from the Data Explorer tab.
+    // Changing the selection in one tab does not affect the other.
+    const [spannerInstances, setSpannerInstances] = createSignal([]);
+    const [spannerDatabases, setSpannerDatabases] = createSignal([]);
+    const [selectedInstance, setSelectedInstance] = createSignal('');
+    const [selectedDatabase, setSelectedDatabase] = createSignal('');
+
     // Load GCS buckets and files when in GCS mode
     createEffect(() => {
         if (isGcsMode()) loadGcsFiles();
+    });
+
+    // Spanner: auto-select instance from schema response
+    createEffect(() => {
+        const svc = service();
+        if (svc === 'spanner') {
+            const schema = dynamicSchema();
+            if (schema?.selectedInstance && !selectedInstance()) setSelectedInstance(schema.selectedInstance);
+            if (schema?.databases?.length > 0 && !selectedDatabase()) setSelectedDatabase(schema.databases[0]);
+        }
     });
 
     async function loadGcsFiles() {
@@ -260,6 +288,9 @@ function SQLEditor(props) {
             setResult(null);
             setError(null);
             setExpanded({});
+            setDynamicSchema(null);
+            setSelectedInstance('');
+            setSelectedDatabase('');
         }
         return svc;
     });
@@ -267,21 +298,31 @@ function SQLEditor(props) {
     // Load schema from API for SQL-capable services (not GCS — it uses file loading)
     createEffect(() => {
         const svc = service();
+        // Note: For Spanner, instance/database may be empty on first load.
+        // The backend auto-resolves to the first available instance/database.
         if (!NON_SQL_SERVICES.has(svc) && svc !== 'gcs') loadDynamicSchema(svc);
     });
 
     async function loadDynamicSchema(svc) {
         setSchemaLoading(true);
+        let data = null;
         try {
-            const data = await api.schema(svc);
+            const schemaParams = svc === 'spanner' ? { instance: selectedInstance(), database: selectedDatabase() } : undefined;
+            data = await api.schema(svc, schemaParams);
             if (data && data.tables) setDynamicSchema(data);
             else setDynamicSchema(null);
         } catch { setDynamicSchema(null); }
         setSchemaLoading(false);
         // Auto-expand the first database node
         const info = SQL_SERVICES.find(s => s.id === svc);
-        const dbName = info?.dialect === 'bigquery' ? null : 'public';
-        if (dbName) setExpanded(prev => ({ ...prev, ['db:' + dbName]: true }));
+        if (svc === 'spanner' && data && data.databases) {
+            const exp = {};
+            for (const db of data.databases) exp['db:' + db] = true;
+            setExpanded(prev => ({ ...prev, ...exp }));
+        } else {
+            const dbName = info?.dialect === 'bigquery' ? null : 'public';
+            if (dbName) setExpanded(prev => ({ ...prev, ['db:' + dbName]: true }));
+        }
     }
 
     const currentServiceInfo = () => SQL_SERVICES.find(s => s.id === service());
@@ -294,16 +335,23 @@ function SQLEditor(props) {
 
     // Build hierarchical tree: database → tables → columns
     const schemaTree = () => {
-        const tables = currentSchema()?.tables || [];
+        const schema = currentSchema();
+        const tables = schema?.tables || [];
         const q = schemaSearch().toLowerCase().trim();
         const svcInfo = currentServiceInfo();
         const isBigQuery = svcInfo?.dialect === 'bigquery';
+        const isSpanner = svcInfo?.id === 'spanner';
 
         // Group tables by database/dataset
         const groups = {};
         for (const t of tables) {
             let dbName, tableName;
             if (isBigQuery && t.name.includes('.')) {
+                const parts = t.name.split('.');
+                dbName = parts[0];
+                tableName = parts.slice(1).join('.');
+            } else if (isSpanner && t.name.includes('.')) {
+                // Spanner: tables are prefixed as "database.TableName"
                 const parts = t.name.split('.');
                 dbName = parts[0];
                 tableName = parts.slice(1).join('.');
@@ -333,10 +381,26 @@ function SQLEditor(props) {
         try {
             // GCS file queries route through BigQuery emulator
             const queryService = service() === 'gcs' ? 'bigquery' : service();
-            const data = await api.query(queryService, query);
+            const params = {};
+            if (queryService === 'spanner') {
+                const schema = currentSchema();
+                params.instance = schema?.selectedInstance || selectedInstance() || '';
+                // Infer database from the SQL — look for table references in schema
+                // Default to first database in schema
+                const databases = schema?.databases || [];
+                params.database = selectedDatabase() || (databases.length > 0 ? databases[0] : '');
+            }
+            const data = await api.query(queryService, query, params);
             const elapsed = Math.round(performance.now() - startTime);
             if (data.error) { setError(data.error); }
-            else { setResult({ columns: data.columns || [], rows: data.rows || [], rowCount: data.row_count ?? (data.rows || []).length, executionTime: data.execution_time_ms || elapsed }); }
+            else {
+                setResult({ columns: data.columns || [], rows: data.rows || [], rowCount: data.row_count ?? (data.rows || []).length, executionTime: data.execution_time_ms || elapsed });
+                // Refresh schema tree after DDL statements (CREATE, DROP, ALTER)
+                const trimmedUpper = query.trim().toUpperCase();
+                if (trimmedUpper.startsWith('CREATE ') || trimmedUpper.startsWith('DROP ') || trimmedUpper.startsWith('ALTER ')) {
+                    loadDynamicSchema(queryService);
+                }
+            }
             setHistory(prev => [{ sql: query, service: service(), timestamp: new Date(), rowCount: data.row_count ?? (data.rows || []).length, executionTime: data.execution_time_ms || Math.round(performance.now() - startTime), error: data.error || null }, ...prev.slice(0, 49)]);
         } catch (err) {
             setError(err.message || 'Query failed');
@@ -571,6 +635,85 @@ function SQLEditor(props) {
                         </div>
                     </Show>
                     <Show when={!isGcsMode()}>
+                    {/* Spanner: wrap databases under instance node */}
+                    <Show when={service() === 'spanner' && currentSchema()?.selectedInstance}>
+                        {(_) => {
+                            const instName = currentSchema()?.selectedInstance;
+                            const instKey = 'inst:' + instName;
+                            const dbCount = Object.keys(schemaTree()).length;
+                            return (
+                                <div class="tree-group">
+                                    <div class="tree-row tree-row-db" onClick={() => toggle(instKey)} role="button" tabIndex={0}>
+                                        <IconChevron open={expanded()[instKey] !== false} />
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" style={{"flex-shrink":"0"}}><path d="M19 15v4H5v-4h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 18.5c-.82 0-1.5-.67-1.5-1.5s.68-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM19 3v4H5V3h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V2c0-.55-.45-1-1-1zM7 6.5c-.82 0-1.5-.67-1.5-1.5S6.19 3.5 7 3.5s1.5.67 1.5 1.5S7.83 6.5 7 6.5zM19 9v4H5V9h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 12.5c-.82 0-1.5-.67-1.5-1.5s.68-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
+                                        <span class="tree-name" style={{"font-weight":"600"}}>{instName}</span>
+                                        <span class="tree-badge tree-badge-db">{dbCount} db{dbCount !== 1 ? 's' : ''}</span>
+                                    </div>
+                                    <Show when={expanded()[instKey] !== false}>
+                                        <div class="tree-children">
+                                            <For each={Object.entries(schemaTree())}>
+                                                {([dbName, tables]) => {
+                                                    const dbKey = 'db:' + dbName;
+                                                    const tableCount = tables.length;
+                                                    return (
+                                                        <div class="tree-group">
+                                                            <div class="tree-row tree-row-db"
+                                                                onClick={() => { toggle(dbKey); setSelectedDatabase(dbName); }}
+                                                                role="button" tabIndex={0}>
+                                                                <IconChevron open={expanded()[dbKey]} />
+                                                                <IconDatabase />
+                                                                <span class="tree-name">{dbName}</span>
+                                                                <span class="tree-badge tree-badge-db">{tableCount} table{tableCount !== 1 ? 's' : ''}</span>
+                                                            </div>
+                                                            <Show when={expanded()[dbKey]}>
+                                                                <div class="tree-children">
+                                                                    <For each={tables}>
+                                                                        {(table) => {
+                                                                            const tblKey = 'tbl:' + table.name;
+                                                                            const colCount = (table.columns || []).length;
+                                                                            return (
+                                                                                <div class="tree-group">
+                                                                                    <div class="tree-row tree-row-tbl"
+                                                                                        onClick={() => { toggle(tblKey); setSelectedDatabase(dbName); }}
+                                                                                        role="button" tabIndex={0}>
+                                                                                        <IconChevron open={expanded()[tblKey]} />
+                                                                                        <IconTable />
+                                                                                        <span class="tree-name">{table.shortName}</span>
+                                                                                        <span class="tree-badge">{colCount}</span>
+                                                                                    </div>
+                                                                                    <Show when={expanded()[tblKey]}>
+                                                                                        <div class="tree-children">
+                                                                                            <For each={table.columns || []}>
+                                                                                                {(col) => (
+                                                                                                    <div class="tree-row tree-row-col" title={`${col.name || col} (${col.type || ''})`}>
+                                                                                                        <IconColumn />
+                                                                                                        <span class="tree-col-name">{col.name || col}</span>
+                                                                                                        <Show when={col.type}>
+                                                                                                            <span class="tree-col-type">{col.type}</span>
+                                                                                                        </Show>
+                                                                                                    </div>
+                                                                                                )}
+                                                                                            </For>
+                                                                                        </div>
+                                                                                    </Show>
+                                                                                </div>
+                                                                            );
+                                                                        }}
+                                                                    </For>
+                                                                </div>
+                                                            </Show>
+                                                        </div>
+                                                    );
+                                                }}
+                                            </For>
+                                        </div>
+                                    </Show>
+                                </div>
+                            );
+                        }}
+                    </Show>
+                    {/* Non-Spanner services: flat database grouping */}
+                    <Show when={service() !== 'spanner' || !currentSchema()?.selectedInstance}>
                     <For each={Object.entries(schemaTree())}>
                         {([dbName, tables]) => {
                             const dbKey = 'db:' + dbName;
@@ -632,6 +775,7 @@ function SQLEditor(props) {
                             );
                         }}
                     </For>
+                    </Show>
                     </Show>
                 </div>
             </div>
@@ -813,6 +957,8 @@ export default function ServiceExplorer(props) {
         }
     };
 
+    const isWorkflows = () => activeService() === 'workflows';
+
     return (
         <div class="se-root">
             {/* Service Header — icon, title, description */}
@@ -828,51 +974,59 @@ export default function ServiceExplorer(props) {
                 </div>
             </div>
 
-            {/* Mode Toggle + Action Buttons */}
-            <div class="se-mode-bar">
-                <div class="se-mode-tabs">
-                    <button
-                        class={`se-mode-tab ${mode() === 'editor' ? 'active' : ''}`}
-                        onClick={() => setMode('editor')}
-                    >
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/>
-                        </svg>
-                        SQL Editor
-                    </button>
-                    <button
-                        class={`se-mode-tab ${mode() === 'explorer' ? 'active' : ''}`}
-                        onClick={() => setMode('explorer')}
-                    >
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M20 6H12L10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/>
-                        </svg>
-                        Data Explorer
-                    </button>
-                </div>
-                <div class="se-mode-actions">
-                    <button class="btn btn-secondary" onClick={handleRefresh} style={{ height: "30px", "font-size": "11px", padding: "0 12px" }}>
-                        Refresh
-                    </button>
-                    <button class="btn btn-danger" onClick={handleReset} style={{ height: "30px", "font-size": "11px", padding: "0 12px" }}>
-                        Reset
-                    </button>
-                </div>
-            </div>
+            {/* Workflows gets its own dedicated UI — function child forces remount on toggle */}
+            <Show when={isWorkflows()} keyed>
+                {(_) => <Workflows activeProject={props.activeProject} />}
+            </Show>
 
-            <div style={{ display: mode() === 'editor' ? '' : 'none' }}>
-                <SQLEditor serviceId={activeService()} />
-            </div>
+            {/* Standard services get SQL Editor + Data Explorer */}
+            <Show when={!isWorkflows()}>
+                {/* Mode Toggle + Action Buttons */}
+                <div class="se-mode-bar">
+                    <div class="se-mode-tabs">
+                        <button
+                            class={`se-mode-tab ${mode() === 'editor' ? 'active' : ''}`}
+                            onClick={() => setMode('editor')}
+                        >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/>
+                            </svg>
+                            SQL Editor
+                        </button>
+                        <button
+                            class={`se-mode-tab ${mode() === 'explorer' ? 'active' : ''}`}
+                            onClick={() => setMode('explorer')}
+                        >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M20 6H12L10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/>
+                            </svg>
+                            Data Explorer
+                        </button>
+                    </div>
+                    <div class="se-mode-actions">
+                        <button class="btn btn-secondary" onClick={handleRefresh} style={{ height: "30px", "font-size": "11px", padding: "0 12px" }}>
+                            Refresh
+                        </button>
+                        <button class="btn btn-danger" onClick={handleReset} style={{ height: "30px", "font-size": "11px", padding: "0 12px" }}>
+                            Reset
+                        </button>
+                    </div>
+                </div>
 
-            <div style={{ display: mode() === 'explorer' ? '' : 'none' }}>
-                <DataBrowser
-                    selectedService={props.selectedService}
-                    onTabChange={props.onTabChange}
-                    activeProject={props.activeProject}
-                    refreshTrigger={refreshTrigger}
-                    resetTrigger={resetTrigger}
-                />
-            </div>
+                <div style={{ display: mode() === 'editor' ? '' : 'none' }}>
+                    <SQLEditor serviceId={activeService()} />
+                </div>
+
+                <div style={{ display: mode() === 'explorer' ? '' : 'none' }}>
+                    <DataBrowser
+                        selectedService={props.selectedService}
+                        onTabChange={props.onTabChange}
+                        activeProject={props.activeProject}
+                        refreshTrigger={refreshTrigger}
+                        resetTrigger={resetTrigger}
+                    />
+                </div>
+            </Show>
         </div>
     );
 }

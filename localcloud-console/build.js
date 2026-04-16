@@ -26,9 +26,13 @@ const [jsResult] = await Promise.allSettled([
         writeFileSync('dist/styles.css', cssFiles.map(f => readFileSync(f, 'utf8')).join('\n'));
     }),
 
-    // HTML
+    // HTML — inject cache-busting version query param
     Promise.resolve().then(() => {
-        copyFileSync('src/index.html', 'dist/index.html');
+        const buildHash = Date.now().toString(36);
+        let html = readFileSync('src/index.html', 'utf8');
+        html = html.replace('/app.js', `/app.js?v=${buildHash}`);
+        html = html.replace('/styles.css', `/styles.css?v=${buildHash}`);
+        writeFileSync('dist/index.html', html);
     }),
 
     // Icons

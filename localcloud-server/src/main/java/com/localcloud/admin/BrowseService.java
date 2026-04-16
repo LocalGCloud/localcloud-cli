@@ -166,6 +166,7 @@ public class BrowseService {
             usageMetrics.incrementCount(projectId, service, 1);
             String json = switch (service) {
                 case "spanner" -> browseSpannerDatabase(a, b, c, projectId);
+                case "bigquery" -> browseBigQueryTables(a, b, c, projectId);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unsupported 4-segment browse for service: " + service));
@@ -362,6 +363,20 @@ public class BrowseService {
             return proxyGet(url);
         }
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid BigQuery browse path"));
+    }
+
+    /**
+     * Browse BigQuery tables in a dataset (4-segment: browse/bigquery/datasets/{datasetId}).
+     */
+    private String browseBigQueryTables(String a, String b, String c, String projectId) throws Exception {
+        // Expected path: datasets/{datasetId}/{operation} where operation is optional
+        if (!"datasets".equals(a)) {
+            return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid BigQuery browse path. Expected: datasets/{datasetId}"));
+        }
+        String datasetId = b;
+        // List tables in dataset
+        String url = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/datasets/" + datasetId + "/tables";
+        return proxyGet(url);
     }
 
     // ========== Secret Manager (in-process, query PostgreSQL) ==========

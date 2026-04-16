@@ -1888,7 +1888,7 @@
 /* --- Status Bar --- */
 .sql-status-bar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 6px 14px;
   background: var(--sql-editor-gutter);
@@ -1913,8 +1913,8 @@
   color: var(--error);
   font-family: var(--font-mono);
   font-size: 11px;
-  white-space: nowrap;
-  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
   text-overflow: ellipsis;
 }
 

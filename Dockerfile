@@ -110,9 +110,9 @@ FROM scratch AS spanner-bin-local
 COPY --from=spanner-emulator-fork /build/output/emulator_main /emulator_main
 FROM spanner-bin-${SPANNER_EMULATOR_IMAGE} AS spanner-bin
 
-# --- BigQuery emulator: use pre-built image (built from ../local_cloud_dependencies/bigquery-emulator-v2) ---
-# Build first: cd ../local_cloud_dependencies/bigquery-emulator-v2 && docker build -t bigquery-emulator-v2 .
-FROM bigquery-emulator-v2:latest AS bq-emulator
+# --- BigQuery emulator: use pre-built image (built from ../local_cloud_dependencies/bigquery-emulator-on-duckdb) ---
+# Build first: cd ../local_cloud_dependencies/bigquery-emulator-on-duckdb && docker build -t bigquery-emulator-on-duckdb .
+FROM bigquery-emulator-on-duckdb:latest AS bq-emulator
 
 # --- Runtime stage ---
 FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators

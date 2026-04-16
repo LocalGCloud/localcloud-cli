@@ -7,7 +7,7 @@ import Logs from './pages/Logs.jsx';
 import ServiceExplorer from './pages/ServiceExplorer.jsx';
 import Settings from './pages/Settings.jsx';
 import Usage from './pages/Usage.jsx';
-import Workflows from './pages/Workflows.jsx';
+
 
 // --- SVG Icon component ---
 const ICON_PATHS = {
@@ -37,7 +37,6 @@ const NAV_ITEMS = [
     { id: 'logs',       label: 'Logs',              icon: 'logs' },
     { id: 'data',       label: 'Service Explorer',   icon: 'data', expandable: true },
     { id: 'usage',      label: 'Usage',             icon: 'usage' },
-    { id: 'workflows',  label: 'Workflows',         icon: 'data' },
     { id: 'settings',   label: 'Settings',          icon: 'settings' },
 ];
 
@@ -56,6 +55,7 @@ const DATA_SERVICES = [
     { id: 'compute', label: 'Compute', beta: true },
     { id: 'cloudrun', label: 'Cloud Run' },
     { id: 'memorystore', label: 'Memorystore' },
+    { id: 'workflows', label: 'Workflows' },
 ];
 
 // --- Hash-based routing ---
@@ -193,6 +193,7 @@ function App() {
         const { page, service } = parseHash();
         setCurrentPage(page);
         if (service) setSelectedService(service);
+        else if (page !== 'data') setSelectedService(null);
     };
     window.addEventListener('hashchange', onHashChange);
     onCleanup(() => window.removeEventListener('hashchange', onHashChange));
@@ -274,8 +275,6 @@ function App() {
                 return <ServiceExplorer selectedService={selectedService} onTabChange={handleTabChange} activeProject={activeProject} />;
             case 'usage':
                 return <Usage activeProject={activeProject} />;
-            case 'workflows':
-                return <Workflows activeProject={activeProject} />;
             case 'settings':
                 return (
                     <Settings
@@ -288,7 +287,7 @@ function App() {
                     />
                 );
             default:
-                return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={proj} />;
+                return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={activeProject} />;
         }
     };
 

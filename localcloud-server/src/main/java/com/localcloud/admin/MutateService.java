@@ -102,6 +102,7 @@ public class MutateService {
                 case "bigtable" -> mutateBigtable(operation, null, json);
                 case "pubsub" -> mutatePubSub(operation, null, json);
                 case "cloudtasks" -> mutateCloudTasks(operation, null, json);
+                case "workflows" -> mutateWorkflows(operation, null, json);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unknown service: " + service));
@@ -133,6 +134,7 @@ public class MutateService {
                 case "bigtable" -> mutateBigtable(operation, subOp, json);
                 case "pubsub" -> mutatePubSub(operation, subOp, json);
                 case "cloudtasks" -> mutateCloudTasks(operation, subOp, json);
+                case "workflows" -> mutateWorkflows(operation, subOp, json);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unknown service: " + service));
@@ -220,6 +222,71 @@ public class MutateService {
             // Delete rows
             return spannerDeleteRows(projectId, json);
         }
+        // Create Spanner instance
+        if ("createInstance".equals(operation)) {
+            String instanceId = (String) json.get("instance");
+            if (instanceId == null) return mapper.writeValueAsString(Map.of("error", true, "message", "instance is required"));
+            String displayName = (String) json.getOrDefault("displayName", instanceId);
+
+            String url = spannerBase + "/v1/projects/" + projectId + "/instances";
+            String payload = mapper.writeValueAsString(Map.of(
+                "instanceId", instanceId,
+                "instance", Map.of(
+                    "config", "projects/" + projectId + "/instanceConfigs/emulator-config",
+                    "displayName", displayName,
+                    "nodeCount", 1
+                )
+            ));
+            String result = httpPostAndReturn(url, payload, "application/json");
+            return mapper.writeValueAsString(Map.of("status", "created", "instance", instanceId, "response", mapper.readValue(result, Object.class)));
+        }
+
+        // Create Spanner database
+        if ("createDatabase".equals(operation)) {
+            String instanceId = (String) json.get("instance");
+            String databaseId = (String) json.get("database");
+            if (instanceId == null || databaseId == null)
+                return mapper.writeValueAsString(Map.of("error", true, "message", "instance and database are required"));
+
+            List<String> ddlStatements = json.containsKey("ddl") ? (List<String>) json.get("ddl") : List.of();
+
+            String url = spannerBase + "/v1/projects/" + projectId + "/instances/" + instanceId + "/databases";
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("createStatement", "CREATE DATABASE `" + databaseId + "`");
+            if (!ddlStatements.isEmpty()) payload.put("extraStatements", ddlStatements);
+
+            String result = httpPostAndReturn(url, mapper.writeValueAsString(payload), "application/json");
+            return mapper.writeValueAsString(Map.of("status", "created", "database", databaseId, "response", mapper.readValue(result, Object.class)));
+        }
+
+        // Execute DDL (CREATE TABLE, DROP TABLE, ALTER TABLE)
+        if ("ddl".equals(operation)) {
+            String instanceId = (String) json.get("instance");
+            String databaseId = (String) json.get("database");
+            if (instanceId == null || databaseId == null)
+                return mapper.writeValueAsString(Map.of("error", true, "message", "instance and database are required"));
+
+            List<String> statements = (List<String>) json.get("statements");
+            if (statements == null || statements.isEmpty())
+                return mapper.writeValueAsString(Map.of("error", true, "message", "statements list is required"));
+
+            String url = spannerBase + "/v1/projects/" + projectId + "/instances/" + instanceId
+                    + "/databases/" + databaseId + "/ddl";
+            String payload = mapper.writeValueAsString(Map.of("statements", statements));
+
+            // Use PATCH for DDL updates
+            HttpRequest patchRequest = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .method("PATCH", HttpRequest.BodyPublishers.ofString(payload))
+                .header("Content-Type", "application/json")
+                .timeout(Duration.ofSeconds(30))
+                .build();
+            HttpResponse<String> patchResponse = httpClient.send(patchRequest, BodyHandlers.ofString());
+
+            return mapper.writeValueAsString(Map.of("status", "executed", "statements", statements.size(),
+                "response", mapper.readValue(patchResponse.body(), Object.class)));
+        }
+
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Spanner operation: " + operation));
     }
 
@@ -892,5 +959,133 @@ public class MutateService {
             return com.linecorp.armeria.common.HttpResponse.of(status,
                     MediaType.PLAIN_TEXT_UTF_8, message != null ? message : "Unknown error");
         }
+    }
+
+    // --- Cloud Workflows ---
+
+    private String mutateWorkflows(String operation, String subOp, Map<String, Object> body) throws Exception {
+        String projectId = config.getProjectId();
+        String locationId = (String) body.getOrDefault("location", "us-central1");
+
+        // POST /_localcloud/mutate/workflows/execute — create and run an execution
+        if ("execute".equals(operation)) {
+            String workflowId = (String) body.get("workflow_id");
+            if (workflowId == null) return mapper.writeValueAsString(Map.of("error", true, "message", "workflow_id is required"));
+
+            String argument = body.containsKey("argument") ? mapper.writeValueAsString(body.get("argument")) : null;
+
+            // Fetch the workflow source
+            String sourceContents = null;
+            String revisionId = "1";
+            try (var conn = dataSource.getConnection();
+                 var ps = conn.prepareStatement(
+                     "SELECT source_contents, revision_id FROM workflows WHERE project_id = ? AND location_id = ? AND workflow_id = ? AND state = 'ACTIVE'")) {
+                ps.setString(1, projectId);
+                ps.setString(2, locationId);
+                ps.setString(3, workflowId);
+                try (var rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        sourceContents = rs.getString("source_contents");
+                        revisionId = String.valueOf(rs.getInt("revision_id"));
+                    }
+                }
+            }
+            if (sourceContents == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "Workflow not found: " + workflowId));
+            }
+
+            // Create execution record
+            String executionId = java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+            try (var conn = dataSource.getConnection();
+                 var ps = conn.prepareStatement(
+                     "INSERT INTO workflow_executions (execution_id, workflow_id, project_id, location_id, state, argument, workflow_revision_id, start_time) " +
+                     "VALUES (?, ?, ?, ?, 'ACTIVE', ?::jsonb, ?, CURRENT_TIMESTAMP)")) {
+                ps.setString(1, executionId);
+                ps.setString(2, workflowId);
+                ps.setString(3, projectId);
+                ps.setString(4, locationId);
+                ps.setString(5, argument != null ? argument : "null");
+                ps.setString(6, revisionId);
+                ps.executeUpdate();
+            }
+
+            // Execute workflow synchronously (simple for now)
+            final String src = sourceContents;
+            final String execId = executionId;
+            final String arg = argument;
+            Thread.startVirtualThread(() -> {
+                try {
+                    var definition = com.localcloud.emulators.workflows.engine.WorkflowParser.parse(src);
+                    var stdlib = new com.localcloud.emulators.workflows.stdlib.StdlibRegistry();
+                    var initialVars = new java.util.LinkedHashMap<String, Object>();
+                    if (arg != null && !"null".equals(arg)) {
+                        try {
+                            Object parsed = mapper.readValue(arg, Object.class);
+                            if (parsed instanceof java.util.Map) {
+                                @SuppressWarnings("unchecked")
+                                var argMap = (java.util.Map<String, Object>) parsed;
+                                initialVars.putAll(argMap);
+                            }
+                            initialVars.put("args", parsed);
+                        } catch (Exception e) {
+                            initialVars.put("args", arg);
+                        }
+                    }
+                    var ctx = new com.localcloud.emulators.workflows.engine.ExecutionContext(initialVars);
+                    var executor = new com.localcloud.emulators.workflows.engine.WorkflowExecutor(definition, ctx, stdlib);
+                    Object result = executor.execute();
+                    String resultJson = result != null ? mapper.writeValueAsString(result) : "null";
+                    try (var conn = dataSource.getConnection();
+                         var ps = conn.prepareStatement(
+                             "UPDATE workflow_executions SET state = 'SUCCEEDED', result = ?::jsonb, end_time = CURRENT_TIMESTAMP WHERE execution_id = ?")) {
+                        ps.setString(1, resultJson);
+                        ps.setString(2, execId);
+                        ps.executeUpdate();
+                    }
+                    logger.info("Workflow execution {} completed successfully", execId);
+                } catch (Exception e) {
+                    try {
+                        var error = java.util.Map.of("code", "RuntimeError", "message", e.getMessage() != null ? e.getMessage() : "Unknown error");
+                        try (var conn = dataSource.getConnection();
+                             var ps = conn.prepareStatement(
+                                 "UPDATE workflow_executions SET state = 'FAILED', error = ?::jsonb, end_time = CURRENT_TIMESTAMP WHERE execution_id = ?")) {
+                            ps.setString(1, mapper.writeValueAsString(error));
+                            ps.setString(2, execId);
+                            ps.executeUpdate();
+                        }
+                    } catch (Exception ex) {
+                        logger.error("Failed to update execution state for {}", execId, ex);
+                    }
+                    logger.warn("Workflow execution {} failed: {}", execId, e.getMessage());
+                }
+            });
+
+            return mapper.writeValueAsString(Map.of(
+                "status", "started",
+                "execution_id", executionId,
+                "workflow_id", workflowId,
+                "state", "ACTIVE"
+            ));
+        }
+
+        // POST /_localcloud/mutate/workflows/cancel — cancel an execution
+        if ("cancel".equals(operation)) {
+            String executionId = (String) body.get("execution_id");
+            if (executionId == null) return mapper.writeValueAsString(Map.of("error", true, "message", "execution_id is required"));
+
+            try (var conn = dataSource.getConnection();
+                 var ps = conn.prepareStatement(
+                     "UPDATE workflow_executions SET state = 'CANCELLED', end_time = CURRENT_TIMESTAMP " +
+                     "WHERE execution_id = ? AND state IN ('QUEUED', 'ACTIVE')")) {
+                ps.setString(1, executionId);
+                int updated = ps.executeUpdate();
+                if (updated == 0) {
+                    return mapper.writeValueAsString(Map.of("error", true, "message", "Execution not found or already terminal"));
+                }
+            }
+            return mapper.writeValueAsString(Map.of("status", "cancelled", "execution_id", executionId));
+        }
+
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown workflows operation: " + operation));
     }
 }

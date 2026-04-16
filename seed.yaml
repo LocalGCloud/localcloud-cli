@@ -660,3 +660,82 @@ services:
                   return:
                     buckets: ${gcs_response.body}
                     status: "completed"
+      - name: "order-processor"
+        location: "us-central1"
+        source: |
+          main:
+            params: [args]
+            steps:
+              - validate:
+                  switch:
+                    - condition: ${args.order_id == null}
+                      raise: "order_id is required"
+              - fetch_order:
+                  assign:
+                    - order_id: ${args.order_id}
+                    - status: "processing"
+              - process:
+                  try:
+                    steps:
+                      - charge:
+                          assign:
+                            - payment_status: "charged"
+                      - fulfill:
+                          assign:
+                            - status: "fulfilled"
+                  except:
+                    as: e
+                    steps:
+                      - handle_error:
+                          assign:
+                            - status: "failed"
+                            - error: ${e.message}
+              - complete:
+                  return:
+                    order_id: ${order_id}
+                    status: ${status}
+                    payment: ${payment_status}
+      - name: "batch-notifier"
+        location: "us-central1"
+        source: |
+          main:
+            steps:
+              - setup:
+                  assign:
+                    - users: ["alice", "bob", "carol", "dave"]
+                    - notifications_sent: 0
+              - notify_all:
+                  for:
+                    value: user
+                    in: ${users}
+                    steps:
+                      - send:
+                          call: sys.log
+                          args:
+                            text: ${"Notifying " + user}
+                      - count:
+                          assign:
+                            - notifications_sent: ${notifications_sent + 1}
+              - done:
+                  return:
+                    total_sent: ${notifications_sent}
+                    users: ${users}
+      - name: "secret-rotator"
+        location: "us-central1"
+        source: |
+          main:
+            params: [args]
+            steps:
+              - get_secrets:
+                  call: http.get
+                  args:
+                    url: http://localhost:8080/v1/projects/local-project/secrets
+                  result: secrets_response
+              - log_count:
+                  call: sys.log
+                  args:
+                    text: ${"Found " + len(secrets_response.body) + " secrets to audit"}
+              - complete:
+                  return:
+                    secrets_audited: true
+                    timestamp: ${sys.now()}
