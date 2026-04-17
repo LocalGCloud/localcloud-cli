@@ -15,3 +15,12 @@ Thumbs.db
 localcloud-server/build/*/
 !localcloud-server/build/libs/
 localcloud-server/.gradle/
+localcloud-console/node_modules/
+local_cloud_dependencies/
+.claude/
+.codex/
+.naksha/
+.playwright-mcp/
+openspec/
+screenshots/
+*.png

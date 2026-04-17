@@ -18,6 +18,7 @@ localcloud-cli/src/*.egg-info/
 *.pyc
 *.pyo
 __pycache__/
+pp
 
 # Console frontend
 localcloud-console/dist/
