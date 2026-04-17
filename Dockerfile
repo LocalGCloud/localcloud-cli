@@ -98,9 +98,17 @@
 # Must be declared before the first FROM for use in FROM line interpolation
 ARG SPANNER_EMULATOR_IMAGE=local
 
+# Image repositories for dependencies (can be overridden for air-gapped or internal repos)
+ARG GCLOUD_SDK_IMAGE=gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+ARG SPANNER_UPSTREAM_IMAGE=gcr.io/cloud-spanner-emulator/emulator:1.5.29
+ARG SPANNER_FORK_IMAGE=spanner-emulator-build:latest
+ARG BIGQUERY_EMULATOR_IMAGE=bigquery-emulator-on-duckdb:latest
+ARG GCS_EMULATOR_IMAGE=fsouza/fake-gcs-server:1.52.1
+ARG DOCKER_CLI_IMAGE=docker:27-cli
+
 # --- Spanner emulator binary selection ---
-FROM gcr.io/cloud-spanner-emulator/emulator:1.5.29 AS spanner-emulator-upstream
-FROM spanner-emulator-build:latest AS spanner-emulator-fork
+FROM ${SPANNER_UPSTREAM_IMAGE} AS spanner-emulator-upstream
+FROM ${SPANNER_FORK_IMAGE} AS spanner-emulator-fork
 
 # Normalize emulator binary path: upstream has /emulator_main, fork has /build/output/emulator_main
 # Use scratch intermediates to avoid RUN on distroless images (no shell available)
@@ -112,10 +120,10 @@ FROM spanner-bin-${SPANNER_EMULATOR_IMAGE} AS spanner-bin
 
 # --- BigQuery emulator: use pre-built image (built from ../local_cloud_dependencies/bigquery-emulator-on-duckdb) ---
 # Build first: cd ../local_cloud_dependencies/bigquery-emulator-on-duckdb && docker build -t bigquery-emulator-on-duckdb .
-FROM bigquery-emulator-on-duckdb:latest AS bq-emulator
+FROM ${BIGQUERY_EMULATOR_IMAGE} AS bq-emulator
 
 # --- Runtime stage ---
-FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+FROM ${GCLOUD_SDK_IMAGE}
 
 # Re-declare ARG after FROM so it's available in this stage
 ARG SPANNER_EMULATOR_IMAGE=local
@@ -163,7 +171,7 @@ RUN rm -rf \
         /usr/share/doc/* /usr/share/man/* /usr/share/locale/*
 
 # Docker CLI only (not the full engine — daemon runs on host via mounted docker.sock)
-COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=${DOCKER_CLI_IMAGE} /usr/local/bin/docker /usr/local/bin/docker
 
 # Install k3d (lightweight k3s wrapper for GKE emulation)
 # Set --build-arg INCLUDE_K3D=false for slim images without GKE support
@@ -176,7 +184,7 @@ RUN if [ "$INCLUDE_K3D" = "true" ]; then \
     fi
 
 # Copy third-party emulator binaries
-COPY --from=fsouza/fake-gcs-server:1.52.1 /bin/fake-gcs-server /usr/local/bin/fake-gcs-server
+COPY --from=${GCS_EMULATOR_IMAGE} /bin/fake-gcs-server /usr/local/bin/fake-gcs-server
 
 # BigQuery Emulator v2: copy pre-built venv + Python 3.12 interpreter from the BQ emulator image
 # The base image has Python 3.11 but the BQ venv is built with 3.12 — so we embed 3.12 alongside it

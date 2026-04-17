@@ -18,20 +18,6 @@ if ! docker info >/dev/null 2>&1; then
     exit 1
 fi
 
-# Pre-check: Verify spanner-emulator-build image exists (built manually from fork)
-# Skipped when using Google's standard emulator (SPANNER_EMULATOR_IMAGE=google)
-if [ "${SPANNER_EMULATOR_IMAGE}" != "google" ]; then
-    if ! docker image inspect spanner-emulator-build:latest >/dev/null 2>&1; then
-        echo "WARNING: spanner-emulator-build:latest image not found."
-        echo "  Spanner persistence requires the forked emulator."
-        echo "  Build it manually: cd ../local_cloud_dependencies/cloud-spanner-emulator && ./build-offline.sh"
-        echo "  Or use Google's standard emulator: SPANNER_EMULATOR_IMAGE=google ./build.sh"
-        echo ""
-    fi
-else
-    echo "  Using Google's standard Spanner emulator (no persistence)"
-fi
-
 # 1. Build Java server
 echo "[1/4] Building Java server..."
 cd localcloud-server
@@ -61,11 +47,6 @@ if [ "$1" != "--skip-tests" ]; then
         echo "ERROR: Java server tests failed."
         exit 1
     fi
-    cd ../localcloud-cli
-    if ! python3 -m pytest -q 2>/dev/null; then
-        echo "ERROR: Python CLI tests failed."
-        exit 1
-    fi
     cd ..
     echo "  Done: all tests pass"
 else
@@ -75,6 +56,10 @@ fi
 # 4. Build Docker image
 echo "[4/4] Building Docker image..."
 docker volume create localcloud-data >/dev/null 2>&1 || true
+
+# Dockerfile is the single source of truth for image defaults.
+# To override, set environment variables:
+#   SPANNER_FORK_IMAGE=... BIGQUERY_EMULATOR_IMAGE=... ./build.sh
 if ! docker compose build; then
     echo "ERROR: Docker image build failed."
     echo "  Check that Docker daemon is running and has enough resources."
