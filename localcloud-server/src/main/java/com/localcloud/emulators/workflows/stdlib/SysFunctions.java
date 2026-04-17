@@ -5,15 +5,27 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 public class SysFunctions {
     private static final Logger logger = LoggerFactory.getLogger(SysFunctions.class);
+
+    // Env vars from the workflow_env_vars table, set before execution
+    private static Map<String, String> workflowEnvVars = Map.of();
+
+    public static void setWorkflowEnvVars(Map<String, String> vars) {
+        workflowEnvVars = vars != null ? vars : Map.of();
+    }
 
     public static void register(StdlibRegistry registry) {
         registry.register("sys.get_env", args -> {
             if (args.isEmpty()) throw new RuntimeException("sys.get_env requires a variable name");
             String name = String.valueOf(args.get(0));
-            String val = System.getenv(name);
+            // 1. Check workflow env vars table first
+            String val = workflowEnvVars.get(name);
+            if (val != null) return val;
+            // 2. Fall back to OS env var
+            val = System.getenv(name);
             return val; // returns null if not set
         });
 

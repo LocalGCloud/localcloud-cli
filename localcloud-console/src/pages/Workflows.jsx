@@ -125,6 +125,446 @@ function Breadcrumb(props) {
     );
 }
 
+// --- Import Modal Component ---
+function ImportModal(props) {
+    const [step, setStep] = createSignal('connect'); // connect | list | importing | done
+    const [sourceUrl, setSourceUrl] = createSignal('');
+    const [username, setUsername] = createSignal('');
+    const [connecting, setConnecting] = createSignal(false);
+    const [connectError, setConnectError] = createSignal(null);
+    const [remoteWorkflows, setRemoteWorkflows] = createSignal([]);
+    const [selected, setSelected] = createSignal(new Set());
+    const [importStatus, setImportStatus] = createSignal({}); // name -> 'pending'|'importing'|'success'|'failed'
+    const [importResults, setImportResults] = createSignal({});
+    const [listLoading, setListLoading] = createSignal(false);
+
+    // Check existing connection on open
+    createEffect(async () => {
+        try {
+            const status = await api.workflowConnectStatus();
+            if (status.connected) {
+                setSourceUrl(status.url);
+                setUsername(status.username);
+                setStep('list');
+                loadWorkflowList();
+            }
+        } catch {}
+    });
+
+    const loadWorkflowList = async () => {
+        setListLoading(true);
+        try {
+            const wfs = await api.workflowRemoteList();
+            setRemoteWorkflows(Array.isArray(wfs) ? wfs : []);
+        } catch (e) {
+            setConnectError('Failed to load workflows: ' + e.message);
+        } finally {
+            setListLoading(false);
+        }
+    };
+
+    const handleConnect = async () => {
+        if (!sourceUrl() || !username()) {
+            setConnectError('URL and username are required');
+            return;
+        }
+        setConnecting(true);
+        setConnectError(null);
+        try {
+            await api.workflowConnect(sourceUrl(), username());
+            setStep('list');
+            await loadWorkflowList();
+        } catch (e) {
+            setConnectError(e.message);
+        } finally {
+            setConnecting(false);
+        }
+    };
+
+    const toggleSelect = (name) => {
+        const s = new Set(selected());
+        if (s.has(name)) s.delete(name); else s.add(name);
+        setSelected(s);
+    };
+
+    const selectAll = () => {
+        const importable = remoteWorkflows().filter(w => !w.alreadyImported).map(w => w.name);
+        if (selected().size === importable.length) {
+            setSelected(new Set());
+        } else {
+            setSelected(new Set(importable));
+        }
+    };
+
+    const handleImport = async () => {
+        const names = [...selected()];
+        if (names.length === 0) return;
+        setStep('importing');
+        const statusMap = {};
+        names.forEach(n => statusMap[n] = 'pending');
+        setImportStatus({...statusMap});
+
+        const results = {};
+        for (const name of names) {
+            statusMap[name] = 'importing';
+            setImportStatus({...statusMap});
+            try {
+                const r = await api.workflowImport(name);
+                statusMap[name] = 'success';
+                results[name] = r;
+            } catch (e) {
+                statusMap[name] = 'failed';
+                results[name] = { error: e.message };
+            }
+            setImportStatus({...statusMap});
+            setImportResults({...results});
+        }
+        setStep('done');
+    };
+
+    const successCount = () => Object.values(importStatus()).filter(s => s === 'success').length;
+    const failedCount = () => Object.values(importStatus()).filter(s => s === 'failed').length;
+
+    return (
+        <div class="modal-overlay" role="dialog" aria-modal="true"
+             onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}
+             onKeyDown={(e) => { if (e.key === 'Escape') props.onClose(); }}>
+            <div class="card modal-card" style={{ 'max-width': '560px', 'max-height': '80vh', 'overflow-y': 'auto' }}
+                 onClick={(e) => e.stopPropagation()}>
+                <h2 style={{ 'margin-bottom': '4px', 'font-size': '16px' }}>Import from Remote</h2>
+
+                <Show when={step() === 'connect'}>
+                    <p style={{ 'font-size': '12px', color: 'var(--text-secondary)', 'margin-bottom': '16px' }}>
+                        Connect to a remote workflow source to import workflows.
+                    </p>
+                    <div style={{ 'margin-bottom': '12px' }}>
+                        <label class="form-label">Source URL</label>
+                        <input class="form-input" type="text" value={sourceUrl()}
+                            onInput={(e) => setSourceUrl(e.currentTarget.value)}
+                            placeholder="http://10.179.131.124" />
+                    </div>
+                    <div style={{ 'margin-bottom': '12px' }}>
+                        <label class="form-label">Username</label>
+                        <input class="form-input" type="text" value={username()}
+                            onInput={(e) => setUsername(e.currentTarget.value)}
+                            placeholder="your-username" />
+                    </div>
+                    <Show when={connectError()}>
+                        <div class="alert alert-error" style={{ 'margin-bottom': '12px', 'font-size': '12px' }}>{connectError()}</div>
+                    </Show>
+                    <div style={{ display: 'flex', gap: '8px', 'justify-content': 'flex-end' }}>
+                        <button class="btn btn-secondary" onClick={props.onClose}>Cancel</button>
+                        <button class="btn btn-primary" onClick={handleConnect} disabled={connecting()}>
+                            {connecting() ? 'Connecting...' : 'Connect'}
+                        </button>
+                    </div>
+                </Show>
+
+                <Show when={step() === 'list'}>
+                    <p style={{ 'font-size': '12px', color: 'var(--text-secondary)', 'margin-bottom': '12px' }}>
+                        Connected to <strong>{sourceUrl()}</strong> as <strong>{username()}</strong>
+                    </p>
+
+                    <Show when={listLoading()}>
+                        <div class="loading-state"><div class="loading-spinner" /> Loading workflows...</div>
+                    </Show>
+
+                    <Show when={!listLoading() && remoteWorkflows().length === 0}>
+                        <div style={{ padding: '20px', 'text-align': 'center', color: 'var(--text-secondary)', 'font-size': '13px' }}>
+                            No workflows found for user {username()}.
+                        </div>
+                    </Show>
+
+                    <Show when={!listLoading() && remoteWorkflows().length > 0}>
+                        <div style={{ 'margin-bottom': '8px' }}>
+                            <label style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'font-size': '12px', cursor: 'pointer' }}>
+                                <input type="checkbox"
+                                    checked={selected().size > 0 && selected().size === remoteWorkflows().filter(w => !w.alreadyImported).length}
+                                    onChange={selectAll} />
+                                Select all
+                            </label>
+                        </div>
+                        <div style={{ 'max-height': '300px', 'overflow-y': 'auto', border: '1px solid var(--border)', 'border-radius': 'var(--radius-sm)' }}>
+                            <For each={remoteWorkflows()}>
+                                {(wf) => (
+                                    <label style={{
+                                        display: 'flex', 'align-items': 'center', gap: '8px', padding: '8px 12px',
+                                        'border-bottom': '1px solid var(--border-subtle, var(--border))',
+                                        'font-size': '13px', cursor: wf.alreadyImported ? 'default' : 'pointer',
+                                        opacity: wf.alreadyImported ? 0.5 : 1,
+                                    }}>
+                                        <input type="checkbox"
+                                            checked={selected().has(wf.name)}
+                                            disabled={wf.alreadyImported}
+                                            onChange={() => toggleSelect(wf.name)} />
+                                        <span style={{ flex: 1, 'font-weight': '500' }}>{wf.name}</span>
+                                        {wf.alreadyImported && <span style={{ 'font-size': '11px', color: 'var(--text-tertiary)' }}>(already imported)</span>}
+                                    </label>
+                                )}
+                            </For>
+                        </div>
+                    </Show>
+
+                    <Show when={connectError()}>
+                        <div class="alert alert-error" style={{ 'margin-top': '12px', 'font-size': '12px' }}>{connectError()}</div>
+                    </Show>
+
+                    <div style={{ display: 'flex', gap: '8px', 'justify-content': 'flex-end', 'margin-top': '16px' }}>
+                        <button class="btn btn-secondary" onClick={() => { setStep('connect'); setConnectError(null); }}>Back</button>
+                        <button class="btn btn-primary" onClick={handleImport} disabled={selected().size === 0}>
+                            Import Selected ({selected().size})
+                        </button>
+                    </div>
+                </Show>
+
+                <Show when={step() === 'importing' || step() === 'done'}>
+                    <p style={{ 'font-size': '12px', color: 'var(--text-secondary)', 'margin-bottom': '12px' }}>
+                        {step() === 'done'
+                            ? `Imported ${successCount()} workflow(s). ${failedCount()} failed.`
+                            : 'Importing workflows...'
+                        }
+                    </p>
+                    <div style={{ border: '1px solid var(--border)', 'border-radius': 'var(--radius-sm)' }}>
+                        <For each={Object.entries(importStatus())}>
+                            {([name, status]) => (
+                                <div style={{
+                                    display: 'flex', 'align-items': 'center', gap: '8px', padding: '8px 12px',
+                                    'border-bottom': '1px solid var(--border-subtle, var(--border))',
+                                    'font-size': '13px',
+                                }}>
+                                    <span style={{ width: '20px', 'text-align': 'center' }}>
+                                        {status === 'pending' && '○'}
+                                        {status === 'importing' && <span class="loading-spinner" style={{ width: '14px', height: '14px' }} />}
+                                        {status === 'success' && <span style={{ color: 'var(--success)' }}>✓</span>}
+                                        {status === 'failed' && <span style={{ color: 'var(--error)' }}>✗</span>}
+                                    </span>
+                                    <span style={{ flex: 1 }}>{name}</span>
+                                    <Show when={status === 'success' && importResults()[name]?.urlRewrites?.length > 0}>
+                                        <span style={{ 'font-size': '11px', color: 'var(--text-tertiary)' }}>
+                                            {importResults()[name].urlRewrites.length} URL(s) rewritten
+                                        </span>
+                                    </Show>
+                                </div>
+                            )}
+                        </For>
+                    </div>
+                    <Show when={step() === 'done'}>
+                        <div style={{ display: 'flex', 'justify-content': 'flex-end', 'margin-top': '16px' }}>
+                            <button class="btn btn-primary" onClick={() => { props.onClose(); props.onRefresh(); }}>Done</button>
+                        </div>
+                    </Show>
+                </Show>
+            </div>
+        </div>
+    );
+}
+
+// --- Env Vars Section Component ---
+function EnvVarsSection(props) {
+    const [envVars, setEnvVars] = createSignal([]);
+    const [presets, setPresets] = createSignal([]);
+    const [activePreset, setActivePreset] = createSignal('local');
+    const [loading, setLoading] = createSignal(true);
+    const [editingVar, setEditingVar] = createSignal(null);
+    const [editValue, setEditValue] = createSignal('');
+    const [adding, setAdding] = createSignal(false);
+    const [newVarName, setNewVarName] = createSignal('');
+    const [newVarValue, setNewVarValue] = createSignal('');
+    const [error, setError] = createSignal(null);
+
+    const loadPresets = async () => {
+        try {
+            const data = await api.workflowPresets();
+            setPresets(data.presets || []);
+            setActivePreset(data.activePreset || 'local');
+        } catch {}
+    };
+
+    const loadEnvVars = async (preset) => {
+        setLoading(true);
+        try {
+            const vars = await api.workflowEnvVars(preset || activePreset());
+            setEnvVars(Array.isArray(vars) ? vars : []);
+            setError(null);
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    createEffect(() => {
+        loadPresets();
+        loadEnvVars();
+    });
+
+    const switchPreset = async (preset) => {
+        if (preset === activePreset()) return;
+        try {
+            await api.activatePreset(preset);
+            setActivePreset(preset);
+            await loadEnvVars(preset);
+            await loadPresets();
+        } catch (e) {
+            setError(e.message);
+        }
+    };
+
+    const startEdit = (varName, currentValue) => {
+        setEditingVar(varName);
+        setEditValue(currentValue || '');
+    };
+
+    const saveEdit = async (varName) => {
+        try {
+            await api.updateWorkflowEnvVar(varName, editValue(), activePreset());
+            setEditingVar(null);
+            await loadEnvVars();
+        } catch (e) {
+            setError(e.message);
+        }
+    };
+
+    const deleteVar = async (varName) => {
+        if (!confirm(`Delete ${varName} from ${activePreset()} preset?`)) return;
+        try {
+            await api.deleteWorkflowEnvVar(varName, activePreset());
+            await loadEnvVars();
+        } catch (e) {
+            setError(e.message);
+        }
+    };
+
+    const addVar = async () => {
+        if (!newVarName()) return;
+        try {
+            await api.createWorkflowEnvVar(newVarName(), newVarValue(), activePreset());
+            setAdding(false);
+            setNewVarName('');
+            setNewVarValue('');
+            await loadEnvVars();
+        } catch (e) {
+            setError(e.message);
+        }
+    };
+
+    return (
+        <div style={{ 'margin-top': '24px', 'padding-bottom': '40px' }}>
+            <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', 'margin-bottom': '12px' }}>
+                <h3 style={{ margin: 0, 'font-size': '14px', 'font-weight': '600' }}>
+                    Environment — <span style={{ color: 'var(--primary)', 'text-transform': 'capitalize' }}>{activePreset()}</span>
+                </h3>
+            </div>
+
+            {/* Preset selector */}
+            <div style={{ display: 'flex', gap: '4px', 'margin-bottom': '12px' }}>
+                <For each={presets()}>
+                    {(p) => (
+                        <button
+                            class={`btn ${p.name === activePreset() ? 'btn-primary' : 'btn-secondary'}`}
+                            style={{
+                                height: '28px', 'font-size': '11px', 'padding': '0 12px', 'text-transform': 'capitalize',
+                                'border-left': p.name === activePreset() ? '3px solid currentColor' : '3px solid transparent',
+                            }}
+                            onClick={() => switchPreset(p.name)}>
+                            {p.name} ({p.varCount})
+                        </button>
+                    )}
+                </For>
+            </div>
+
+            <Show when={error()}>
+                <div class="alert alert-error" style={{ 'margin-bottom': '8px', 'font-size': '12px' }}>{error()}</div>
+            </Show>
+
+            <Show when={loading()}>
+                <div class="loading-state" style={{ padding: '20px' }}><div class="loading-spinner" /> Loading...</div>
+            </Show>
+
+            <Show when={!loading()}>
+                <Show when={envVars().length === 0 && !adding()}>
+                    <div style={{ padding: '20px', 'text-align': 'center', color: 'var(--text-secondary)', 'font-size': '13px' }}>
+                        No environment variables configured for this preset.
+                    </div>
+                </Show>
+
+                <Show when={envVars().length > 0}>
+                    <div class="data-table-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Variable</th>
+                                    <th>Value</th>
+                                    <th style={{ width: '60px' }}></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <For each={envVars()}>
+                                    {(v) => {
+                                        const varName = v.var_name || v.varName;
+                                        const varValue = v.var_value || v.varValue || '';
+                                        return (
+                                            <tr style={{ transition: 'background 100ms ease' }}
+                                                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
+                                                onMouseLeave={(e) => e.currentTarget.style.background = ''}>
+                                                <td style={{ 'font-family': 'var(--font-mono)', 'font-size': '12px', 'font-weight': '600' }}>
+                                                    {varName}
+                                                </td>
+                                                <td style={{ 'font-family': 'var(--font-mono)', 'font-size': '12px' }}>
+                                                    <Show when={editingVar() === varName} fallback={
+                                                        <span onClick={() => startEdit(varName, varValue)}
+                                                              style={{ cursor: 'pointer', 'min-width': '100px', display: 'inline-block' }}>
+                                                            {varValue || <span style={{ color: 'var(--text-tertiary)' }}>(empty)</span>}
+                                                        </span>
+                                                    }>
+                                                        <input class="form-input" type="text" value={editValue()}
+                                                            onInput={(e) => setEditValue(e.currentTarget.value)}
+                                                            onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(varName); if (e.key === 'Escape') setEditingVar(null); }}
+                                                            onBlur={() => saveEdit(varName)}
+                                                            autofocus
+                                                            style={{ 'font-family': 'var(--font-mono)', 'font-size': '12px', padding: '2px 6px', height: '28px' }} />
+                                                    </Show>
+                                                </td>
+                                                <td>
+                                                    <button class="btn btn-secondary" style={{ height: '24px', 'font-size': '11px', padding: '0 6px', color: 'var(--error)' }}
+                                                        onClick={() => deleteVar(varName)}>
+                                                        ✕
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        );
+                                    }}
+                                </For>
+                            </tbody>
+                        </table>
+                    </div>
+                </Show>
+
+                {/* Add variable row */}
+                <Show when={adding()}>
+                    <div style={{ display: 'flex', gap: '8px', 'margin-top': '8px', 'align-items': 'center' }}>
+                        <input class="form-input" type="text" placeholder="VAR_NAME" value={newVarName()}
+                            onInput={(e) => setNewVarName(e.currentTarget.value)}
+                            autofocus
+                            style={{ flex: 1, 'font-family': 'var(--font-mono)', 'font-size': '12px', height: '32px' }} />
+                        <input class="form-input" type="text" placeholder="value" value={newVarValue()}
+                            onInput={(e) => setNewVarValue(e.currentTarget.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') addVar(); if (e.key === 'Escape') setAdding(false); }}
+                            style={{ flex: 2, 'font-family': 'var(--font-mono)', 'font-size': '12px', height: '32px' }} />
+                        <button class="btn btn-primary" style={{ height: '32px', 'font-size': '11px' }} onClick={addVar}>Save</button>
+                        <button class="btn btn-secondary" style={{ height: '32px', 'font-size': '11px' }} onClick={() => setAdding(false)}>Cancel</button>
+                    </div>
+                </Show>
+
+                <button class="btn btn-secondary" style={{ 'margin-top': '8px', height: '28px', 'font-size': '11px' }}
+                    onClick={() => setAdding(true)}>
+                    + Add Variable
+                </button>
+            </Show>
+        </div>
+    );
+}
+
 // --- Main Component ---
 
 export default function Workflows(props) {
@@ -139,6 +579,7 @@ export default function Workflows(props) {
     const [showCreateExec, setShowCreateExec] = createSignal(false);
     const [execArgument, setExecArgument] = createSignal('{}');
     const [creating, setCreating] = createSignal(false);
+    const [showImport, setShowImport] = createSignal(false);
 
     const projectId = () => {
         const p = typeof props.activeProject === 'function' ? props.activeProject() : props.activeProject;
@@ -416,6 +857,14 @@ export default function Workflows(props) {
                     <div class="alert alert-error" style={{ 'margin-bottom': '16px' }}>{error()}</div>
                 </Show>
 
+                {/* Action bar */}
+                <div style={{ display: 'flex', gap: '8px', 'margin-bottom': '16px' }}>
+                    <button class="btn btn-secondary" style={{ height: '32px', 'font-size': '12px' }}
+                        onClick={() => setShowImport(true)}>
+                        Import from Remote
+                    </button>
+                </div>
+
                 <Show when={loading()}>
                     <div class="loading-state"><div class="loading-spinner" /> Loading workflows...</div>
                 </Show>
@@ -468,6 +917,14 @@ export default function Workflows(props) {
                             </tbody>
                         </table>
                     </div>
+                </Show>
+
+                {/* Environment Variables Section */}
+                <EnvVarsSection />
+
+                {/* Import Modal */}
+                <Show when={showImport()}>
+                    <ImportModal onClose={() => setShowImport(false)} onRefresh={fetchWorkflows} />
                 </Show>
             </Show>
         </div>

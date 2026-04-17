@@ -162,6 +162,18 @@ public class WorkflowsStore {
         }
     }
 
+    public String getProjectIdForExecution(String executionId) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                "SELECT project_id FROM workflow_executions WHERE execution_id = ?")) {
+            ps.setString(1, executionId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return rs.getString("project_id");
+                return null;
+            }
+        }
+    }
+
     public void resetAll() {
         try (Connection conn = dataSource.getConnection();
              Statement st = conn.createStatement()) {

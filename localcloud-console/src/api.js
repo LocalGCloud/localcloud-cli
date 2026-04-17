@@ -105,4 +105,21 @@ export const api = {
     gcsFileSchema: (bucket, object) => get(appendProject(`/_localcloud/gcs/file-schema?bucket=${encodeURIComponent(bucket)}&object=${encodeURIComponent(object)}`)),
     // Usage metrics (persistent cumulative counts)
     usage: () => get(appendProject('/_localcloud/usage')),
+    // Workflow env vars
+    workflowEnvVars: (preset) => get(appendProject(`/_localcloud/workflow-env${preset ? '?preset=' + encodeURIComponent(preset) : ''}`)),
+    workflowEnvVarsAll: () => get(appendProject('/_localcloud/workflow-env?all=true')),
+    createWorkflowEnvVar: (varName, varValue, preset) => postJson(appendProject('/_localcloud/workflow-env'), { varName, varValue, preset }),
+    updateWorkflowEnvVar: (varName, varValue, preset) => put(appendProject(`/_localcloud/workflow-env/${encodeURIComponent(varName)}`), { varValue, preset }),
+    deleteWorkflowEnvVar: (varName, preset) => {
+        const url = appendProject(`/_localcloud/workflow-env/${encodeURIComponent(varName)}${preset ? (appendProject('').includes('?') ? '&' : '?') + 'preset=' + encodeURIComponent(preset) : ''}`);
+        return fetch(`${BASE}${url}`, { method: 'DELETE' }).then(r => { if (!r.ok) throw new Error(`${r.status}`); return {}; });
+    },
+    workflowPresets: () => get(appendProject('/_localcloud/workflow-env/presets')),
+    activatePreset: (preset) => postJson(appendProject('/_localcloud/workflow-env/presets/activate'), { preset }),
+    // Workflow connector
+    workflowConnectStatus: () => get(appendProject('/_localcloud/workflow/connect')),
+    workflowConnect: (url, username) => postJson(appendProject('/_localcloud/workflow/connect'), { url, username }),
+    workflowRemoteList: () => get(appendProject('/_localcloud/workflow/workflows')),
+    workflowRemoteServices: () => get(appendProject('/_localcloud/workflow/services')),
+    workflowImport: (name) => postJson(appendProject('/_localcloud/workflow/import'), { name }),
 };

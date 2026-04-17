@@ -14,11 +14,11 @@ Teams using a remote GCP Workflow ephemeral environment tool currently must depl
 
 ### New Capabilities
 
-- `capsule-connector`: Backend service that connects to a remote workflow source via its REST API (`/api/workflows/list`, `/api/workflows/source`, `/api/status/{id}`, `/api/list`). Discovers workflows, templates, deployed services, and their proxy URLs. Stores connection config in PostgreSQL.
+- `workflow-connector`: Backend service that connects to a remote workflow source via its REST API (`/api/workflows/list`, `/api/workflows/source`, `/api/status/{id}`, `/api/list`). Discovers workflows, templates, deployed services, and their proxy URLs. Stores connection config in PostgreSQL.
 - `workflow-url-rewriter`: Parses imported workflow YAML, detects hardcoded remote proxy URLs, extracts service names, and replaces URLs with `${SERVICE_NAME_URL}` environment variable patterns. Generates corresponding env var entries.
 - `workflow-env-vars`: PostgreSQL-backed key-value store for workflow environment variables. Variables are injected into the execution context for `sys.get_env()` resolution and `${}` template evaluation. Supports CRUD via REST API.
 - `env-var-presets`: Named preset configurations (Local, Remote, Production) that store complete sets of environment variable values. Switching presets bulk-updates all env vars. The Remote preset is auto-populated from the source API's discovered service URLs.
-- `capsule-import-ui`: Web UI for connecting to a remote workflow source, browsing available workflows, selecting and importing them. Shows import progress and URL rewriting results.
+- `workflow-import-ui`: Web UI for connecting to a remote workflow source, browsing available workflows, selecting and importing them. Shows import progress and URL rewriting results.
 - `env-vars-ui`: Web UI for managing workflow environment variables — table editor with add/edit/delete, preset selector buttons (Local/Remote/Production), and per-variable override capability.
 
 ### Modified Capabilities

@@ -23,7 +23,7 @@ services:
     mem_limit: 4g
     environment:
       LOCALCLOUD_PROJECT: "${LOCALCLOUD_PROJECT:-local-project}"
-      LOCALCLOUD_SERVICES: "${LOCALCLOUD_SERVICES:-gcs,pubsub,firestore,bigquery,secretmanager,cloudtasks,spanner,bigtable,logging,monitoring,memorystore}"
+      LOCALCLOUD_SERVICES: "${LOCALCLOUD_SERVICES:-gcs,pubsub,firestore,bigquery,secretmanager,cloudtasks,spanner,bigtable,logging,monitoring,memorystore,workflows}"
       LOCALCLOUD_DATA_DIR: "/var/lib/localcloud"
       # GCP credential bridging: set to "adc" or "service-account" to enable real GCP access
       # See: https://github.com/localcloud/localcloud#hybrid-cloud

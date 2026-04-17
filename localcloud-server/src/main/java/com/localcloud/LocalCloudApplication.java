@@ -32,6 +32,9 @@ import com.localcloud.emulators.gke.K3dManager;
 import com.localcloud.emulators.memorystore.MemorystoreEmulator;
 import com.localcloud.emulators.workflows.WorkflowsCallbackService;
 import com.localcloud.emulators.workflows.WorkflowsEmulator;
+import com.localcloud.emulators.workflows.WorkflowEnvVarsRepository;
+import com.localcloud.emulators.workflows.WorkflowEnvVarsService;
+import com.localcloud.emulators.workflows.WorkflowConnectorService;
 import com.localcloud.docker.ContainerManager;
 import com.localcloud.docker.DockerClientProvider;
 import com.localcloud.gateway.ApiGateway;
@@ -244,10 +247,21 @@ public class LocalCloudApplication {
             WorkflowsEmulator workflowsEmulator = new WorkflowsEmulator(dataSource);
             workflowsEmulator.start();
             gateway.registerGrpcEmulator(workflowsEmulator, new io.grpc.BindableService[0]);
+
+            // Workflow env vars and connector services (register before callbacks to avoid path conflicts)
+            var envVarsRepo = new WorkflowEnvVarsRepository(dataSource);
+            workflowsEmulator.getWorkflowsService().setEnvVarsRepository(envVarsRepo);
+            var envVarsService = new WorkflowEnvVarsService(config, envVarsRepo);
+            sb.annotatedService("/_localcloud/workflow-env", envVarsService);
+            var connectorService = new WorkflowConnectorService(config, envVarsRepo,
+                    workflowsEmulator.getWorkflowsService().getStore());
+            sb.annotatedService("/_localcloud/workflow", connectorService);
+
             // Register callback HTTP endpoint so external systems can wake waiting executions
             WorkflowsCallbackService callbackService = new WorkflowsCallbackService(
                     workflowsEmulator.getWorkflowsService().getCallbackManager());
             sb.annotatedService("/_localcloud/workflows", callbackService);
+
             hasGrpcServices = true;
             logger.info("Cloud Workflows facade registered on gateway port {}", config.getGatewayPort());
         }

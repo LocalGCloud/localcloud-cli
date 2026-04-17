@@ -1013,11 +1013,25 @@ public class MutateService {
             final String src = sourceContents;
             final String execId = executionId;
             final String arg = argument;
+            final String projId = projectId;
             Thread.startVirtualThread(() -> {
                 try {
                     var definition = com.localcloud.emulators.workflows.engine.WorkflowParser.parse(src);
                     var stdlib = new com.localcloud.emulators.workflows.stdlib.StdlibRegistry();
+                    com.localcloud.emulators.workflows.stdlib.SysFunctions.register(stdlib);
                     var initialVars = new java.util.LinkedHashMap<String, Object>();
+
+                    // Inject workflow env vars from DB
+                    try {
+                        var envRepo = new com.localcloud.emulators.workflows.WorkflowEnvVarsRepository(dataSource);
+                        String activePreset = envRepo.getActivePreset(projId);
+                        java.util.Map<String, String> envVars = envRepo.getEnvVarsForPreset(projId, activePreset);
+                        com.localcloud.emulators.workflows.stdlib.SysFunctions.setWorkflowEnvVars(envVars);
+                        initialVars.putAll(envVars);
+                    } catch (Exception envEx) {
+                        logger.warn("Failed to load workflow env vars: {}", envEx.getMessage());
+                    }
+
                     if (arg != null && !"null".equals(arg)) {
                         try {
                             Object parsed = mapper.readValue(arg, Object.class);

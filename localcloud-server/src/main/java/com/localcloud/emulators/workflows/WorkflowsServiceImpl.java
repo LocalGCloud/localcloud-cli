@@ -8,6 +8,7 @@ import com.localcloud.emulators.workflows.connector.ConnectorRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.localcloud.emulators.workflows.stdlib.SysFunctions;
 import java.sql.SQLException;
 import java.util.*;
 import java.util.concurrent.*;
@@ -25,6 +26,7 @@ public class WorkflowsServiceImpl {
     private final ConnectorRegistry connectorRegistry;
     private final CallbackManager callbackManager;
     private final ExecutorService executionPool;
+    private WorkflowEnvVarsRepository envVarsRepository;
 
     public WorkflowsServiceImpl(WorkflowsStore store) {
         this.store = store;
@@ -39,6 +41,10 @@ public class WorkflowsServiceImpl {
 
     public WorkflowsStore getStore() { return store; }
     public CallbackManager getCallbackManager() { return callbackManager; }
+
+    public void setEnvVarsRepository(WorkflowEnvVarsRepository repo) {
+        this.envVarsRepository = repo;
+    }
 
     public void shutdown() {
         executionPool.shutdown();
@@ -179,8 +185,23 @@ public class WorkflowsServiceImpl {
             // Parse workflow
             WorkflowDefinition definition = WorkflowParser.parse(sourceContents);
 
-            // Set up execution context with argument
+            // Inject workflow env vars into context and SysFunctions
             Map<String, Object> initialVars = new LinkedHashMap<>();
+            if (envVarsRepository != null) {
+                try {
+                    String projectId = store.getProjectIdForExecution(executionId);
+                    if (projectId == null) projectId = "local-project";
+                    String activePreset = envVarsRepository.getActivePreset(projectId);
+                    Map<String, String> envVars = envVarsRepository.getEnvVarsForPreset(projectId, activePreset);
+                    SysFunctions.setWorkflowEnvVars(envVars);
+                    // Also inject as initial variables for ${VAR} template resolution
+                    initialVars.putAll(envVars);
+                } catch (Exception e) {
+                    logger.warn("Failed to load workflow env vars, continuing without them: {}", e.getMessage());
+                }
+            }
+
+            // Set up execution context with argument
             if (argument != null && !argument.isBlank() && !"null".equals(argument)) {
                 try {
                     Object parsed = mapper.readValue(argument, Object.class);

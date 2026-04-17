@@ -324,6 +324,30 @@ public class SchemaManager {
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_metric_points_timestamp ON metric_points (end_time)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_secret_versions_secret ON secret_versions (project_id, secret_id)");
 
+            // Workflow environment variables: per-project, per-preset key-value store
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS workflow_env_vars (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    var_name VARCHAR(255) NOT NULL," +
+                "    var_value TEXT," +
+                "    preset VARCHAR(50) DEFAULT 'default'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, var_name, preset)" +
+                ")"
+            );
+
+            // Workflow config: remote source connection settings and active preset
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS workflow_config (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    config_key VARCHAR(255) NOT NULL," +
+                "    config_value TEXT," +
+                "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, config_key)" +
+                ")"
+            );
+
             // Auto-insert default project
             stmt.execute(
                 "INSERT INTO projects (project_id, display_name) " +

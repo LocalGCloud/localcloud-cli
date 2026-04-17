@@ -78,7 +78,7 @@ The system SHALL automatically populate the `remote` preset with service URLs di
 
 #### Scenario: Remote preset values are set during workflow import
 
-WHEN a workflow is imported via `POST /_localcloud/capsule/import`
+WHEN a workflow is imported via `POST /_localcloud/workflow/import`
 AND the URL rewriter detects remote proxy URLs for services
 THEN the system SHALL upsert rows in `workflow_env_vars` with `preset = 'remote'` and `var_value = {proxyBaseUrl}` for each discovered service
 AND existing `remote` preset values for the same `varName` SHALL be overwritten with the newly discovered URL

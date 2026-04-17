@@ -12,20 +12,20 @@ The system SHALL accept a remote source base URL and username as connection conf
 
 #### Scenario: User provides valid source URL and username
 
-WHEN a POST request is sent to `/_localcloud/capsule/connect` with a JSON body containing `url` and `username`
+WHEN a POST request is sent to `/_localcloud/workflow/connect` with a JSON body containing `url` and `username`
 THEN the system SHALL store the URL and username in the `workflow_config` table
 AND the system SHALL call `GET {url}/api/list` to validate reachability
 AND the system SHALL return HTTP 200 with `{"connected": true, "envCount": N}` where N is the number of discovered environments
 
 #### Scenario: Remote source server is unreachable
 
-WHEN a POST request is sent to `/_localcloud/capsule/connect` with a URL that cannot be reached
+WHEN a POST request is sent to `/_localcloud/workflow/connect` with a URL that cannot be reached
 THEN the system SHALL return HTTP 422 with an error body containing `{"error": "Cannot connect to remote source at {url}: {reason}"}`
 AND the system SHALL NOT persist the connection config
 
 #### Scenario: Missing required fields
 
-WHEN a POST request is sent to `/_localcloud/capsule/connect` with a missing `url` or `username` field
+WHEN a POST request is sent to `/_localcloud/workflow/connect` with a missing `url` or `username` field
 THEN the system SHALL return HTTP 400 with `{"error": "url and username are required"}`
 
 ---
@@ -36,20 +36,20 @@ The system SHALL retrieve the list of workflows available to the configured user
 
 #### Scenario: Retrieve workflow list for connected user
 
-WHEN a GET request is sent to `/_localcloud/capsule/workflows`
+WHEN a GET request is sent to `/_localcloud/workflow/workflows`
 AND a remote source connection is configured
 THEN the system SHALL call `GET {sourceUrl}/api/workflows/list?user={username}`
 AND the system SHALL return HTTP 200 with a JSON array of workflow objects, each containing `name`, `stepCount`, and `alreadyImported` (boolean)
 
 #### Scenario: No connection configured
 
-WHEN a GET request is sent to `/_localcloud/capsule/workflows`
+WHEN a GET request is sent to `/_localcloud/workflow/workflows`
 AND no remote source connection config is stored
-THEN the system SHALL return HTTP 409 with `{"error": "No remote source connection configured. Call POST /_localcloud/capsule/connect first."}`
+THEN the system SHALL return HTTP 409 with `{"error": "No remote source connection configured. Call POST /_localcloud/workflow/connect first."}`
 
 #### Scenario: Remote API returns an error
 
-WHEN a GET request is sent to `/_localcloud/capsule/workflows`
+WHEN a GET request is sent to `/_localcloud/workflow/workflows`
 AND the remote source API responds with a non-2xx status
 THEN the system SHALL return HTTP 502 with `{"error": "Remote API error: {status} {body}"}`
 
@@ -79,14 +79,14 @@ The system SHALL discover the services deployed in remote source environments an
 
 #### Scenario: Retrieve deployed services for all environments
 
-WHEN a GET request is sent to `/_localcloud/capsule/services`
+WHEN a GET request is sent to `/_localcloud/workflow/services`
 THEN the system SHALL call `GET {sourceUrl}/api/list` to list all environments
 AND the system SHALL call `GET {sourceUrl}/api/status/{envId}` for the environment owned by the configured username
 AND the system SHALL return HTTP 200 with a JSON array of service objects, each containing `name`, `proxyUrl`, and `envId`
 
 #### Scenario: No environments owned by configured user
 
-WHEN a GET request is sent to `/_localcloud/capsule/services`
+WHEN a GET request is sent to `/_localcloud/workflow/services`
 AND the remote source API returns no environments with owner matching the configured username
 THEN the system SHALL return HTTP 200 with an empty array `[]`
 
@@ -105,12 +105,12 @@ The system SHALL persist the remote source connection configuration so it surviv
 
 #### Scenario: Connection config is persisted to PostgreSQL
 
-WHEN a successful `POST /_localcloud/capsule/connect` request is processed
+WHEN a successful `POST /_localcloud/workflow/connect` request is processed
 THEN the system SHALL upsert a row in `workflow_config` with keys `source_url` and `source_username`
-AND subsequent calls to `GET /_localcloud/capsule/workflows` SHALL use the persisted URL and username without requiring reconnection
+AND subsequent calls to `GET /_localcloud/workflow/workflows` SHALL use the persisted URL and username without requiring reconnection
 
 #### Scenario: Retrieve current connection status
 
-WHEN a GET request is sent to `/_localcloud/capsule/connect`
+WHEN a GET request is sent to `/_localcloud/workflow/connect`
 THEN the system SHALL return HTTP 200 with `{"connected": true, "url": "...", "username": "..."}` if a config is stored
 OR return HTTP 200 with `{"connected": false}` if no config is stored

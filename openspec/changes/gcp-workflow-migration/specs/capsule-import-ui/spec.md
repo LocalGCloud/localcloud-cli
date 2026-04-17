@@ -30,12 +30,12 @@ THEN the modal SHALL close without performing any import action
 
 ### Requirement: Connect Form (URL + Username)
 
-The modal SHALL display a form with a source URL field and a username field. Submitting the form SHALL call the `POST /_localcloud/capsule/connect` endpoint. On success, the modal SHALL transition to the workflow list view.
+The modal SHALL display a form with a source URL field and a username field. Submitting the form SHALL call the `POST /_localcloud/workflow/connect` endpoint. On success, the modal SHALL transition to the workflow list view.
 
 #### Scenario: Connect form is shown when no connection exists
 
 WHEN the import modal is opened
-AND no remote source connection is currently configured (GET `/_localcloud/capsule/connect` returns `{"connected": false}`)
+AND no remote source connection is currently configured (GET `/_localcloud/workflow/connect` returns `{"connected": false}`)
 THEN the modal SHALL display the URL input, username input, and "Connect" button
 
 #### Scenario: Connect form is pre-filled when connection exists
@@ -73,7 +73,7 @@ After successful connection, the modal SHALL display the list of workflows avail
 #### Scenario: Workflow list is loaded after connect
 
 WHEN the modal transitions to the workflow list view
-THEN the system SHALL call `GET /_localcloud/capsule/workflows`
+THEN the system SHALL call `GET /_localcloud/workflow/workflows`
 AND the modal SHALL display each workflow as a row with a checkbox, workflow name, and step count
 
 #### Scenario: Already-imported workflows are shown as disabled
@@ -90,12 +90,12 @@ THEN the modal SHALL display a "Select all" checkbox that selects or deselects a
 
 #### Scenario: Loading state during workflow list fetch
 
-WHEN the modal is waiting for `GET /_localcloud/capsule/workflows` to respond
+WHEN the modal is waiting for `GET /_localcloud/workflow/workflows` to respond
 THEN the modal SHALL display a loading spinner in place of the workflow list
 
 #### Scenario: Empty workflow list
 
-WHEN `GET /_localcloud/capsule/workflows` returns an empty array
+WHEN `GET /_localcloud/workflow/workflows` returns an empty array
 THEN the modal SHALL display the message "No workflows found for user {username} in the remote source."
 
 ---
@@ -107,7 +107,7 @@ The modal SHALL provide an "Import Selected" button that triggers the import of 
 #### Scenario: Import Selected triggers import for each selected workflow
 
 WHEN the user selects one or more workflows and clicks "Import Selected"
-THEN the system SHALL call `POST /_localcloud/capsule/import` for each selected workflow sequentially
+THEN the system SHALL call `POST /_localcloud/workflow/import` for each selected workflow sequentially
 AND the modal SHALL display a progress indicator showing how many workflows have been imported out of the total selected
 
 #### Scenario: Per-workflow import progress row
