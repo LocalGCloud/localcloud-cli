@@ -93,40 +93,21 @@
 #
 # =============================================================================
 
-# Spanner emulator source: google (official) or local (fork with persistence)
-# Set via: docker compose build --build-arg SPANNER_EMULATOR_IMAGE=google
-# Must be declared before the first FROM for use in FROM line interpolation
-ARG SPANNER_EMULATOR_IMAGE=local
-
 # Image repositories for dependencies (can be overridden for air-gapped or internal repos)
+ARG SPANNER_EMULATOR_IMAGE=jaysen2apache/spanner-emulator-build:latest
+ARG BIGQUERY_EMULATOR_IMAGE=jaysen2apache/bigquery-emulator-on-duckdb
 ARG GCLOUD_SDK_IMAGE=gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
-ARG SPANNER_UPSTREAM_IMAGE=gcr.io/cloud-spanner-emulator/emulator:1.5.29
-ARG SPANNER_FORK_IMAGE=spanner-emulator-build:latest
-ARG BIGQUERY_EMULATOR_IMAGE=bigquery-emulator-on-duckdb:latest
 ARG GCS_EMULATOR_IMAGE=fsouza/fake-gcs-server:1.52.1
 ARG DOCKER_CLI_IMAGE=docker:27-cli
 
-# --- Spanner emulator binary selection ---
-FROM ${SPANNER_UPSTREAM_IMAGE} AS spanner-emulator-upstream
-FROM ${SPANNER_FORK_IMAGE} AS spanner-emulator-fork
-
-# Normalize emulator binary path: upstream has /emulator_main, fork has /build/output/emulator_main
-# Use scratch intermediates to avoid RUN on distroless images (no shell available)
-FROM scratch AS spanner-bin-google
-COPY --from=spanner-emulator-upstream /emulator_main /emulator_main
-FROM scratch AS spanner-bin-local
-COPY --from=spanner-emulator-fork /build/output/emulator_main /emulator_main
-FROM spanner-bin-${SPANNER_EMULATOR_IMAGE} AS spanner-bin
-
-# --- BigQuery emulator: use pre-built image (built from ../local_cloud_dependencies/bigquery-emulator-on-duckdb) ---
-# Build first: cd ../local_cloud_dependencies/bigquery-emulator-on-duckdb && docker build -t bigquery-emulator-on-duckdb .
+# --- Named build stages for COPY --from references ---
+FROM ${SPANNER_EMULATOR_IMAGE} AS spanner-emulator
 FROM ${BIGQUERY_EMULATOR_IMAGE} AS bq-emulator
+FROM ${GCS_EMULATOR_IMAGE} AS gcs-emulator
+FROM ${DOCKER_CLI_IMAGE} AS docker-cli
 
 # --- Runtime stage ---
 FROM ${GCLOUD_SDK_IMAGE}
-
-# Re-declare ARG after FROM so it's available in this stage
-ARG SPANNER_EMULATOR_IMAGE=local
 
 LABEL maintainer="Jay Sen <jaysen@apache.org>"
 LABEL description="LocalCloud - Local GCP Emulator Orchestrator"
@@ -171,7 +152,7 @@ RUN rm -rf \
         /usr/share/doc/* /usr/share/man/* /usr/share/locale/*
 
 # Docker CLI only (not the full engine — daemon runs on host via mounted docker.sock)
-COPY --from=${DOCKER_CLI_IMAGE} /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 
 # Install k3d (lightweight k3s wrapper for GKE emulation)
 # Set --build-arg INCLUDE_K3D=false for slim images without GKE support
@@ -184,7 +165,7 @@ RUN if [ "$INCLUDE_K3D" = "true" ]; then \
     fi
 
 # Copy third-party emulator binaries
-COPY --from=${GCS_EMULATOR_IMAGE} /bin/fake-gcs-server /usr/local/bin/fake-gcs-server
+COPY --from=gcs-emulator /bin/fake-gcs-server /usr/local/bin/fake-gcs-server
 
 # BigQuery Emulator v2: copy pre-built venv + Python 3.12 interpreter from the BQ emulator image
 # The base image has Python 3.11 but the BQ venv is built with 3.12 — so we embed 3.12 alongside it
@@ -211,9 +192,9 @@ RUN rm -rf \
     && ln -sf /usr/local/bin/python3.12 /opt/bqenv/bin/python \
     && ln -sf /opt/bqenv/bin/bigquery-emulator /usr/local/bin/bigquery-emulator
 
-# Spanner emulator: gateway always from upstream, emulator from selected source (google or local fork)
-COPY --from=spanner-emulator-upstream /gateway_main /usr/local/bin/spanner-gateway
-COPY --from=spanner-bin /emulator_main /usr/local/bin/spanner-emulator-main
+# Spanner emulator (fork with persistence support — includes both gateway and emulator)
+COPY --from=spanner-emulator /gateway_main /usr/local/bin/spanner-gateway
+COPY --from=spanner-emulator /emulator_main /usr/local/bin/spanner-emulator-main
 
 # Create localcloud user, group, and directories
 RUN groupadd -r localcloud && useradd -r -g localcloud -m localcloud \
@@ -231,8 +212,8 @@ RUN groupadd -r localcloud && useradd -r -g localcloud -m localcloud \
                                       /var/run/postgresql \
                                       /credentials
 
-# Spanner emulator wrapper: passes --data_dir only for local fork (persistence support)
-RUN printf '#!/bin/bash\nif [ ! -x /usr/local/bin/spanner-emulator-main ]; then\n  echo "ERROR: spanner-emulator-main not found or not executable" >&2\n  exit 1\nfi\nif [ "${SPANNER_EMULATOR_IMAGE}" = "google" ]; then\n  exec /usr/local/bin/spanner-emulator-main "$@"\nelse\n  exec /usr/local/bin/spanner-emulator-main --data_dir=/var/lib/localcloud/spanner-data "$@"\nfi\n' \
+# Spanner emulator wrapper: always passes --data_dir for persistence
+RUN printf '#!/bin/bash\nif [ ! -x /usr/local/bin/spanner-emulator-main ]; then\n  echo "ERROR: spanner-emulator-main not found or not executable" >&2\n  exit 1\nfi\nexec /usr/local/bin/spanner-emulator-main --data_dir=/var/lib/localcloud/spanner-data "$@"\n' \
     > /usr/local/bin/spanner-emulator-wrapper \
     && chmod +x /usr/local/bin/spanner-emulator-wrapper
 
@@ -269,9 +250,6 @@ ENV JAVA_OPTS="\
   -XX:MaxMetaspaceSize=96m \
   -XX:+ExitOnOutOfMemoryError \
   -Djava.security.egd=file:/dev/./urandom"
-
-# Spanner emulator mode (baked in from build arg, used by wrapper script and entrypoint)
-ENV SPANNER_EMULATOR_IMAGE=${SPANNER_EMULATOR_IMAGE}
 
 # Default project and service enable flags
 ENV LOCALCLOUD_PROJECT="local-project" \

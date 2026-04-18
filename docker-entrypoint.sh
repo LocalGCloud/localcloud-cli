@@ -52,11 +52,6 @@ if [ -n "${LOCALCLOUD_SERVICES}" ]; then
     done
 fi
 
-# Warn if using Google's standard Spanner emulator (no persistence)
-if [ "${SPANNER_EMULATOR_IMAGE}" = "google" ] && [ "${LOCALCLOUD_ENABLE_SPANNER:-true}" = "true" ]; then
-    echo "WARNING: Using Google's standard Spanner emulator — persistence is NOT supported. Data will be lost on container restart."
-fi
-
 # Auto-seed: always seed on startup because several emulators are in-memory
 # (Pub/Sub, Firestore, Bigtable lose data on restart).
 # The seed endpoint uses UPSERT semantics — safe to run repeatedly.

@@ -59,7 +59,7 @@ docker volume create localcloud-data >/dev/null 2>&1 || true
 
 # Dockerfile is the single source of truth for image defaults.
 # To override, set environment variables:
-#   SPANNER_FORK_IMAGE=... BIGQUERY_EMULATOR_IMAGE=... ./build.sh
+#   SPANNER_EMULATOR_IMAGE=... BIGQUERY_EMULATOR_IMAGE=... ./build.sh
 if ! docker compose build; then
     echo "ERROR: Docker image build failed."
     echo "  Check that Docker daemon is running and has enough resources."
