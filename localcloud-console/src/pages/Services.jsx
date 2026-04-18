@@ -45,27 +45,30 @@ export default function Services(props) {
     const [servicesData, setServicesData] = createSignal([]);
     const [loading, setLoading] = createSignal(true);
     const [fetchError, setFetchError] = createSignal(null);
+    const [toggleError, setToggleError] = createSignal(null);
+    const [togglingService, setTogglingService] = createSignal(null);
     let failCount = 0;
+
+    const fetchServices = async () => {
+        try {
+            const data = await api.services();
+            if (data && data.services) {
+                setServicesData(data.services);
+            }
+            failCount = 0;
+            setFetchError(null);
+            setLoading(false);
+        } catch (err) {
+            failCount++;
+            if (failCount >= 2) {
+                setFetchError('Cannot reach LocalCloud backend. Is the container running?');
+            }
+            setLoading(false);
+        }
+    };
 
     createEffect(() => {
         const _proj = typeof props.activeProject === 'function' ? props.activeProject() : props.activeProject;
-        const fetchServices = async () => {
-            try {
-                const data = await api.services();
-                if (data && data.services) {
-                    setServicesData(data.services);
-                }
-                failCount = 0;
-                setFetchError(null);
-                setLoading(false);
-            } catch (err) {
-                failCount++;
-                if (failCount >= 2) {
-                    setFetchError('Cannot reach LocalCloud backend. Is the container running?');
-                }
-                setLoading(false);
-            }
-        };
         fetchServices();
         const timer = setInterval(fetchServices, 10000);
         onCleanup(() => clearInterval(timer));
@@ -97,12 +100,33 @@ export default function Services(props) {
                 env_var: live.env_var || def.env_var || '--',
                 endpoint: live.endpoint || def.endpoint || '--',
                 request_count: live.request_count || 0,
+                enabled: live.enabled !== undefined ? live.enabled : def.defaultEnabled,
+                enabledSource: live.enabledSource || 'default',
             };
         });
     };
 
     const healthyCount = () => services().filter(s => s.status === 'healthy').length;
+    const enabledCount = () => services().filter(s => s.enabled).length;
     const totalCount = () => services().length;
+
+    const handleToggle = async (serviceId, currentlyEnabled) => {
+        setTogglingService(serviceId);
+        setToggleError(null);
+        try {
+            if (currentlyEnabled) {
+                await api.disableService(serviceId);
+            } else {
+                await api.enableService(serviceId);
+            }
+            await fetchServices();
+        } catch (err) {
+            setToggleError(`Failed to ${currentlyEnabled ? 'disable' : 'enable'} ${SERVICE_NAMES[serviceId] || serviceId}`);
+            setTimeout(() => setToggleError(null), 3000);
+        } finally {
+            setTogglingService(null);
+        }
+    };
 
     const handleRowClick = (serviceId) => {
         if (props.onServiceClick) {
@@ -115,8 +139,7 @@ export default function Services(props) {
             <div class="page-header">
                 <h1>APIs & Services</h1>
                 <p class="page-header-subtitle">
-                    All {totalCount()} emulated GCP services and their connection details.
-                    {' '}{healthyCount()} / {totalCount()} healthy.
+                    {enabledCount()} / {totalCount()} enabled, {healthyCount()} healthy.
                 </p>
             </div>
 
@@ -130,6 +153,7 @@ export default function Services(props) {
                     <table class="data-table">
                         <thead>
                             <tr>
+                                <th style={{ width: '44px' }}>On</th>
                                 <th style={{ width: '36px' }}></th>
                                 <th>Service</th>
                                 <th>Status</th>
@@ -146,14 +170,17 @@ export default function Services(props) {
                                 {(svc) => {
                                     const isHealthy = () => svc.status === 'healthy';
                                     const isUnknown = () => svc.status === 'unknown';
-                                    const isDisabled = () => svc.status === 'disabled';
+                                    const isDisabled = () => !svc.enabled || svc.status === 'disabled';
+                                    const isLocked = () => svc.enabledSource === 'env';
+                                    const isToggling = () => togglingService() === svc.id;
                                     const statusClass = () => {
-                                        if (isDisabled()) return 'warning';
+                                        if (isDisabled()) return 'disabled';
                                         if (isHealthy()) return 'healthy';
                                         if (isUnknown()) return 'warning';
                                         return 'unhealthy';
                                     };
                                     const statusLabel = () => {
+                                        if (isToggling()) return 'Updating...';
                                         if (isDisabled()) return 'Disabled';
                                         if (isHealthy()) return 'Healthy';
                                         if (isUnknown()) return 'Unknown';
@@ -161,9 +188,22 @@ export default function Services(props) {
                                     };
                                     return (
                                         <tr
-                                            class="clickable-row"
+                                            class={`clickable-row ${isDisabled() ? 'service-row-disabled' : ''}`}
                                             onClick={() => handleRowClick(svc.id)}
                                         >
+                                            <td onClick={(e) => e.stopPropagation()}>
+                                                <label class={`toggle-switch ${isLocked() ? 'locked' : ''}`}
+                                                       title={isLocked() ? 'Controlled by environment variable' : ''}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={svc.enabled}
+                                                        disabled={isLocked() || isToggling()}
+                                                        onChange={() => handleToggle(svc.id, svc.enabled)}
+                                                    />
+                                                    <span class="toggle-slider" />
+                                                </label>
+                                                {isLocked() && <span class="toggle-lock-icon" title="Locked by env var">&#128274;</span>}
+                                            </td>
                                             <td style={{ "text-align": 'center' }}>
                                                 <ServiceIcon id={svc.id} size={18} />
                                             </td>
@@ -215,6 +255,10 @@ export default function Services(props) {
                         </tbody>
                     </table>
                 </div>
+
+            <Show when={toggleError()}>
+                <div class="toggle-error">{toggleError()}</div>
+            </Show>
         </div>
     );
 }

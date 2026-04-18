@@ -95,19 +95,39 @@
 
 # Image repositories for dependencies (can be overridden for air-gapped or internal repos)
 ARG SPANNER_EMULATOR_IMAGE=jaysen2apache/spanner-emulator-build:latest
+ARG SPANNER_GATEWAY_IMAGE=gcr.io/cloud-spanner-emulator/emulator:1.5.29
 ARG BIGQUERY_EMULATOR_IMAGE=jaysen2apache/bigquery-emulator-on-duckdb
 ARG GCLOUD_SDK_IMAGE=gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
 ARG GCS_EMULATOR_IMAGE=fsouza/fake-gcs-server:1.52.1
 ARG DOCKER_CLI_IMAGE=docker:27-cli
+ARG JDK_IMAGE=eclipse-temurin:25-jdk
 
 # --- Named build stages for COPY --from references ---
 FROM ${SPANNER_EMULATOR_IMAGE} AS spanner-emulator
+FROM ${SPANNER_GATEWAY_IMAGE} AS spanner-gateway
 FROM ${BIGQUERY_EMULATOR_IMAGE} AS bq-emulator
 FROM ${GCS_EMULATOR_IMAGE} AS gcs-emulator
 FROM ${DOCKER_CLI_IMAGE} AS docker-cli
+FROM ${GCLOUD_SDK_IMAGE} AS gcloud-sdk
 
-# --- Runtime stage ---
-FROM ${GCLOUD_SDK_IMAGE}
+# --- Build custom JRE with jlink (Java 25 LTS, ~72 MB instead of ~194 MB full JRE) ---
+FROM ${JDK_IMAGE} AS jlink-build
+RUN jlink \
+    --add-modules java.base,java.compiler,java.desktop,java.instrument,\
+java.naming,java.net.http,java.security.jgss,java.security.sasl,\
+java.sql,jdk.management,jdk.unsupported,jdk.crypto.ec,\
+java.xml,java.logging,java.management,java.prefs,java.datatransfer,\
+java.scripting,java.rmi,jdk.httpserver,jdk.localedata,jdk.zipfs \
+    --strip-debug \
+    --no-man-pages \
+    --no-header-files \
+    --compress=zip-6 \
+    --output /opt/java-custom
+
+# --- Runtime stage (slim Debian instead of full gcloud SDK) ---
+# Trixie (Debian 13) required: spanner emulator needs GLIBCXX_3.4.32,
+# BigQuery's Python 3.12 needs GLIBC_2.38 — both unavailable in Bookworm (glibc 2.36)
+FROM debian:trixie-slim
 
 LABEL maintainer="Jay Sen <jaysen@apache.org>"
 LABEL description="LocalCloud - Local GCP Emulator Orchestrator"
@@ -116,40 +136,19 @@ LABEL org.opencontainers.image.title="LocalCloud"
 LABEL org.opencontainers.image.description="Local GCP Emulator Orchestrator"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
-# [A] Remove unused gcloud SDK components (gsutil, bq CLI, datastore emulator)
-# [C] Strip locale data, docs, man pages
-# [F] Strip unused gcloud surface commands (keep only emulators + beta)
-# Then install runtime dependencies in the same layer to avoid duplicates
-RUN rm -rf \
-        /google-cloud-sdk/platform/gsutil \
-        /google-cloud-sdk/platform/bq \
-        /google-cloud-sdk/platform/cloud-datastore-emulator \
-        /google-cloud-sdk/lib/third_party/botocore \
-        /google-cloud-sdk/lib/third_party/boto3 \
-        /google-cloud-sdk/lib/third_party/kubernetes \
-        /google-cloud-sdk/lib/third_party/pygments \
-    && find /google-cloud-sdk/lib/surface/ -mindepth 1 -maxdepth 1 \
-        ! -name '__init__.py' \
-        ! -name 'emulators' \
-        ! -name 'beta' \
-        ! -name 'config' \
-        ! -name 'components' \
-        -exec rm -rf {} + \
-    && rm -rf \
-        /usr/share/locale/* \
-        /usr/share/doc/* \
-        /usr/share/man/* \
-        /usr/share/i18n/* \
-        /usr/share/perl/* \
-        /usr/share/fonts/* \
-        /usr/share/alsa/* \
-        /var/cache/debconf/* \
-    && apt-get update && apt-get install -y --no-install-recommends \
-        postgresql-15 \
+# Install runtime dependencies (single layer, no gcloud SDK)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        postgresql-17 \
         supervisor \
         curl \
+        ca-certificates \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
         /usr/share/doc/* /usr/share/man/* /usr/share/locale/*
+
+# Custom JRE (jlink-built, ~72 MB instead of ~194 MB full JRE)
+COPY --from=jlink-build /opt/java-custom /opt/java
+ENV JAVA_HOME=/opt/java
+ENV PATH="/opt/java/bin:${PATH}"
 
 # Docker CLI only (not the full engine — daemon runs on host via mounted docker.sock)
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
@@ -167,8 +166,15 @@ RUN if [ "$INCLUDE_K3D" = "true" ]; then \
 # Copy third-party emulator binaries
 COPY --from=gcs-emulator /bin/fake-gcs-server /usr/local/bin/fake-gcs-server
 
+# Extract emulator JARs/binaries from gcloud SDK image (no gcloud CLI needed at runtime)
+# Firestore: Java JAR, launched via java -cp (no Main-Class manifest)
+# Pub/Sub: Java fat JAR, launched via java -jar
+# Bigtable: Go binary, launched directly
+COPY --from=gcloud-sdk /google-cloud-sdk/platform/cloud-firestore-emulator/cloud-firestore-emulator.jar /opt/emulators/cloud-firestore-emulator.jar
+COPY --from=gcloud-sdk /google-cloud-sdk/platform/pubsub-emulator/lib/cloud-pubsub-emulator-0.8.30-all.jar /opt/emulators/cloud-pubsub-emulator.jar
+COPY --chmod=755 --from=gcloud-sdk /google-cloud-sdk/platform/bigtable-emulator/cbtemulator /usr/local/bin/cbtemulator
+
 # BigQuery Emulator v2: copy pre-built venv + Python 3.12 interpreter from the BQ emulator image
-# The base image has Python 3.11 but the BQ venv is built with 3.12 — so we embed 3.12 alongside it
 COPY --from=bq-emulator /usr/local/bin/python3.12 /usr/local/bin/python3.12
 COPY --from=bq-emulator /usr/local/lib/libpython3.12.so.1.0 /usr/local/lib/libpython3.12.so.1.0
 COPY --from=bq-emulator /usr/local/lib/python3.12/ /usr/local/lib/python3.12/
@@ -192,9 +198,11 @@ RUN rm -rf \
     && ln -sf /usr/local/bin/python3.12 /opt/bqenv/bin/python \
     && ln -sf /opt/bqenv/bin/bigquery-emulator /usr/local/bin/bigquery-emulator
 
-# Spanner emulator (fork with persistence support — includes both gateway and emulator)
-COPY --from=spanner-emulator /gateway_main /usr/local/bin/spanner-gateway
-COPY --from=spanner-emulator /emulator_main /usr/local/bin/spanner-emulator-main
+# Spanner: gateway from upstream, emulator from fork (persistence support)
+# TODO: once spanner-emulator-build is rebuilt with both binaries at root,
+#       drop SPANNER_GATEWAY_IMAGE and use COPY --from=spanner-emulator for both
+COPY --from=spanner-gateway /gateway_main /usr/local/bin/spanner-gateway
+COPY --from=spanner-emulator /build/output/emulator_main /usr/local/bin/spanner-emulator-main
 
 # Create localcloud user, group, and directories
 RUN groupadd -r localcloud && useradd -r -g localcloud -m localcloud \
@@ -220,10 +228,10 @@ RUN printf '#!/bin/bash\nif [ ! -x /usr/local/bin/spanner-emulator-main ]; then\
 # [B] Initialize PostgreSQL data directory + create database in single layer
 # (avoids 34MB duplicate WAL data from separate initdb + createdb layers)
 RUN su - localcloud -s /bin/bash -c " \
-    /usr/lib/postgresql/15/bin/initdb -D /var/lib/localcloud/pgdata && \
-    /usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/localcloud/pgdata start && \
-    /usr/lib/postgresql/15/bin/createdb -h /var/run/postgresql localcloud && \
-    /usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/localcloud/pgdata stop"
+    /usr/lib/postgresql/17/bin/initdb -D /var/lib/localcloud/pgdata && \
+    /usr/lib/postgresql/17/bin/pg_ctl -D /var/lib/localcloud/pgdata start && \
+    /usr/lib/postgresql/17/bin/createdb -h /var/run/postgresql localcloud && \
+    /usr/lib/postgresql/17/bin/pg_ctl -D /var/lib/localcloud/pgdata stop"
 
 # Copy pre-built server JAR (run `cd localcloud-server && ./gradlew shadowJar` before docker build)
 COPY localcloud-server/build/libs/localcloud-server-*-all.jar /opt/localcloud/server.jar
@@ -238,14 +246,13 @@ COPY supervisord.conf /etc/supervisor/conf.d/localcloud.conf
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# JVM tuning for container environment
-# Fixed heap sizes to coexist with PostgreSQL + emulator processes within the container.
+# JVM tuning for container environment (Java 25 LTS)
+# ZGenerational is default in Java 25, no need to specify it
 # Override via: docker run -e JAVA_OPTS="-Xmx2g -Xms512m" ...
 ENV JAVA_OPTS="\
   -Xmx512m \
   -Xms128m \
   -XX:+UseZGC \
-  -XX:+ZGenerational \
   -Xss256k \
   -XX:MaxMetaspaceSize=96m \
   -XX:+ExitOnOutOfMemoryError \
@@ -256,8 +263,8 @@ ENV LOCALCLOUD_PROJECT="local-project" \
     LOCALCLOUD_ENABLE_GCS="true" \
     LOCALCLOUD_ENABLE_PUBSUB="true" \
     LOCALCLOUD_ENABLE_FIRESTORE="true" \
-    LOCALCLOUD_ENABLE_BIGQUERY="true" \
-    LOCALCLOUD_ENABLE_SPANNER="true" \
+    LOCALCLOUD_ENABLE_BIGQUERY="false" \
+    LOCALCLOUD_ENABLE_SPANNER="false" \
     LOCALCLOUD_ENABLE_BIGTABLE="true" \
     LOCALCLOUD_ENABLE_SECRETMANAGER="true" \
     LOCALCLOUD_ENABLE_CLOUDTASKS="true" \

@@ -18,6 +18,7 @@ import com.localcloud.admin.MutateService;
 import com.localcloud.admin.ProjectService;
 import com.localcloud.admin.QueryService;
 import com.localcloud.admin.SeedService;
+import com.localcloud.admin.ServiceConfigRepository;
 import com.localcloud.admin.ServiceRoutingRepository;
 import com.localcloud.admin.UsageMetricsRepository;
 import com.localcloud.config.LocalCloudConfig;
@@ -68,6 +69,7 @@ public class LocalCloudApplication {
     private final HealthCheckService healthCheckService;
     private final ProjectService projectService;
     private final AdminApiService adminApiService;
+    private final ServiceConfigRepository serviceConfigRepository;
     private final BrowseService browseService;
     private final MutateService mutateService;
     private final SeedService seedService;
@@ -88,8 +90,9 @@ public class LocalCloudApplication {
         this.healthCheckService = new HealthCheckService(config, gateway, processHealthChecker, usageMetrics);
         this.projectService = new ProjectService(dataSource);
         var routingRepository = new ServiceRoutingRepository(dataSource);
+        this.serviceConfigRepository = new ServiceConfigRepository(dataSource);
         this.credentialBroker = new CredentialBroker(config);
-        this.adminApiService = new AdminApiService(config, requestLogger, projectService, routingRepository, credentialBroker);
+        this.adminApiService = new AdminApiService(config, requestLogger, projectService, routingRepository, credentialBroker, serviceConfigRepository);
         this.browseService = new BrowseService(config, dataSource, config.getServiceRegistry(), usageMetrics);
         this.mutateService = new MutateService(config, dataSource, config.getServiceRegistry());
         var workflowsStore = new com.localcloud.emulators.workflows.WorkflowsStore(dataSource);
@@ -115,6 +118,17 @@ public class LocalCloudApplication {
                 throw e; // Required — fail hard
             }
             logger.warn("Database unavailable (persistence disabled): {}", e.getMessage());
+        }
+
+        // Load persisted service config and merge with env-based config
+        try {
+            var persistedConfig = serviceConfigRepository.findAll();
+            if (!persistedConfig.isEmpty()) {
+                config.mergePersistedConfig(persistedConfig);
+                logger.info("Loaded {} persisted service configs", persistedConfig.size());
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to load persisted service config: {}", e.getMessage());
         }
 
         // Build Armeria server

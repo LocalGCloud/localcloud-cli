@@ -45,17 +45,19 @@ public class AdminApiService {
     private final ProjectService projectService;
     private final ServiceRoutingRepository routingRepository;
     private final CredentialBroker credentialBroker;
+    private final ServiceConfigRepository serviceConfigRepository;
     private final SupervisorClient supervisorClient;
     private final ObjectMapper mapper;
 
     public AdminApiService(LocalCloudConfig config, RequestLogger requestLogger,
                            ProjectService projectService, ServiceRoutingRepository routingRepository,
-                           CredentialBroker credentialBroker) {
+                           CredentialBroker credentialBroker, ServiceConfigRepository serviceConfigRepository) {
         this.config = config;
         this.requestLogger = requestLogger;
         this.projectService = projectService;
         this.routingRepository = routingRepository;
         this.credentialBroker = credentialBroker;
+        this.serviceConfigRepository = serviceConfigRepository;
         this.supervisorClient = new SupervisorClient();
         this.mapper = new ObjectMapper();
         this.mapper.registerModule(new JavaTimeModule());
@@ -435,6 +437,13 @@ public class AdminApiService {
             }
             config.setServiceEnabled(serviceId, true);
 
+            // Persist toggle state (best-effort)
+            try {
+                serviceConfigRepository.upsert(serviceId, true);
+            } catch (Exception pe) {
+                logger.warn("Failed to persist enable state for '{}': {}", serviceId, pe.getMessage());
+            }
+
             Map<String, Object> result = Map.of("service", serviceId, "status", "enabled");
             return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
                     mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
@@ -471,11 +480,84 @@ public class AdminApiService {
             }
             config.setServiceEnabled(serviceId, false);
 
+            // Persist toggle state (best-effort)
+            try {
+                serviceConfigRepository.upsert(serviceId, false);
+            } catch (Exception pe) {
+                logger.warn("Failed to persist disable state for '{}': {}", serviceId, pe.getMessage());
+            }
+
             Map<String, Object> result = Map.of("service", serviceId, "status", "disabled");
             return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
                     mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
         } catch (Exception e) {
             logger.error("Error disabling service '{}'", serviceId, e);
+            return errorResponse(e);
+        }
+    }
+
+    /**
+     * Return persisted service configuration with source information.
+     */
+    @Get("/config/services")
+    public HttpResponse getServiceConfig() {
+        try {
+            Map<String, Object> result = new LinkedHashMap<>();
+            for (String serviceId : config.getServiceRegistry().getAllServices().keySet()) {
+                Map<String, Object> svcConfig = new LinkedHashMap<>();
+                svcConfig.put("enabled", config.isServiceDynamicallyEnabled(serviceId));
+                svcConfig.put("source", config.getConfigSource(serviceId));
+                svcConfig.put("locked", "env".equals(config.getConfigSource(serviceId)));
+                result.put(serviceId, svcConfig);
+            }
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
+        } catch (Exception e) {
+            logger.error("Error getting service config", e);
+            return errorResponse(e);
+        }
+    }
+
+    /**
+     * Update persisted service configuration. Only affects services not locked by env vars.
+     */
+    @Put("/config/services")
+    public HttpResponse updateServiceConfig(String body) {
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Boolean> updates = mapper.readValue(body, Map.class);
+            for (Map.Entry<String, Boolean> entry : updates.entrySet()) {
+                String serviceId = entry.getKey();
+                boolean enabled = Boolean.TRUE.equals(entry.getValue());
+
+                if ("env".equals(config.getConfigSource(serviceId))) {
+                    continue; // Skip env-locked services
+                }
+
+                config.setServiceEnabled(serviceId, enabled);
+                serviceConfigRepository.upsert(serviceId, enabled);
+
+                // Start/stop external services via supervisord
+                ServiceDefinition def = config.getServiceRegistry().getAllServices().get(serviceId);
+                if (def != null && "external".equals(def.type())) {
+                    String programName = SUPERVISOR_PROGRAM_NAMES.get(serviceId);
+                    if (programName != null) {
+                        try {
+                            if (enabled) {
+                                supervisorClient.startProcess(programName);
+                            } else {
+                                supervisorClient.stopProcess(programName);
+                            }
+                        } catch (Exception se) {
+                            logger.warn("Failed to {} supervisor process '{}': {}",
+                                    enabled ? "start" : "stop", programName, se.getMessage());
+                        }
+                    }
+                }
+            }
+            return getServiceConfig(); // Return updated state
+        } catch (Exception e) {
+            logger.error("Error updating service config", e);
             return errorResponse(e);
         }
     }

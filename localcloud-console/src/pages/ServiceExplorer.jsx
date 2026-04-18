@@ -42,7 +42,7 @@ const SQL_SERVICES = [
     { id: 'monitoring', label: 'Monitoring', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'monitoring',
       placeholder: "SELECT metric_type, resource_type, points\nFROM time_series\nLIMIT 100" },
     { id: 'bigtable', label: 'Bigtable', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'bigtable',
-      placeholder: "SELECT instance_id, table_name, row_key, cells\nFROM bigtable_data\nLIMIT 50" },
+      placeholder: "SELECT instance_id, table_name, row_key, cells\nFROM bigtable_data\nWHERE project_id = 'local-project'\nLIMIT 50" },
     { id: 'compute', label: 'Compute Engine', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'compute',
       placeholder: "SELECT name, zone, machine_type, status\nFROM compute_instances" },
     { id: 'cloudrun', label: 'Cloud Run', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'cloudrun',

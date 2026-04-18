@@ -278,6 +278,15 @@ public class SchemaManager {
                 ")"
             );
 
+            // Service config: persisted enable/disable state for UI toggles
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS service_config (" +
+                "    service_id VARCHAR(255) PRIMARY KEY," +
+                "    enabled BOOLEAN NOT NULL," +
+                "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                ")"
+            );
+
             // Cloud Workflows: workflows
             stmt.execute(
                 "CREATE TABLE IF NOT EXISTS workflows (" +

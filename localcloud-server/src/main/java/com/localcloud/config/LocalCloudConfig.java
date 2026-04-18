@@ -3,7 +3,11 @@ package com.localcloud.config;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Central configuration for the LocalCloud server.
@@ -29,6 +33,9 @@ public class LocalCloudConfig {
     private String gcpCredentialAdcPath;
     private String gcpCredentialSaKeyPath;
     private ConcurrentHashMap<String, Boolean> enabledServicesMap;
+    private ConcurrentHashMap<String, String> configSourceMap;
+
+    private static final Logger logger = LoggerFactory.getLogger(LocalCloudConfig.class);
 
     private LocalCloudConfig() {
     }
@@ -67,10 +74,31 @@ public class LocalCloudConfig {
         config.postgresUser = env("LOCALCLOUD_PG_USER", "localcloud");
         config.postgresPassword = env("LOCALCLOUD_PG_PASSWORD", "localcloud");
 
-        // Initialize enabled services map from the enabled services list
+        // Initialize enabled services map and track config source
         config.enabledServicesMap = new ConcurrentHashMap<>();
+        config.configSourceMap = new ConcurrentHashMap<>();
+
+        boolean localcloudServicesSet = System.getenv("LOCALCLOUD_SERVICES") != null
+                && !System.getenv("LOCALCLOUD_SERVICES").isBlank();
+
         for (String svc : config.enabledServices) {
             config.enabledServicesMap.put(svc, true);
+            config.configSourceMap.put(svc, localcloudServicesSet ? "env" : "default");
+        }
+
+        // For services NOT in enabledServices, mark them as disabled with source
+        for (String svcId : config.serviceRegistry.getAllServices().keySet()) {
+            if (!config.enabledServicesMap.containsKey(svcId)) {
+                config.enabledServicesMap.put(svcId, false);
+                if (localcloudServicesSet) {
+                    config.configSourceMap.put(svcId, "env");
+                } else {
+                    // Check if individual LOCALCLOUD_ENABLE_* was explicitly set
+                    String envKey = "LOCALCLOUD_ENABLE_" + svcId.toUpperCase();
+                    String envVal = System.getenv(envKey);
+                    config.configSourceMap.put(svcId, envVal != null ? "env" : "default");
+                }
+            }
         }
 
         return config;
@@ -180,5 +208,38 @@ public class LocalCloudConfig {
      */
     public void setServiceEnabled(String serviceName, boolean enabled) {
         enabledServicesMap.put(serviceName, enabled);
+    }
+
+    /**
+     * Get the source of a service's enabled/disabled config ("env", "persisted", or "default").
+     */
+    public String getConfigSource(String serviceName) {
+        return configSourceMap.getOrDefault(serviceName, "default");
+    }
+
+    /**
+     * Get all config sources.
+     */
+    public Map<String, String> getConfigSourceMap() {
+        return configSourceMap;
+    }
+
+    /**
+     * Merge persisted service config from the database.
+     * Only applies to services whose source is "default" (not overridden by env vars).
+     */
+    public void mergePersistedConfig(Map<String, Boolean> persistedConfig) {
+        for (Map.Entry<String, Boolean> entry : persistedConfig.entrySet()) {
+            String serviceId = entry.getKey();
+            boolean enabled = entry.getValue();
+            String currentSource = configSourceMap.getOrDefault(serviceId, "default");
+
+            // Only apply persisted config if not locked by env var
+            if (!"env".equals(currentSource)) {
+                enabledServicesMap.put(serviceId, enabled);
+                configSourceMap.put(serviceId, "persisted");
+                logger.debug("Service {} config loaded from persistence: enabled={}", serviceId, enabled);
+            }
+        }
     }
 }

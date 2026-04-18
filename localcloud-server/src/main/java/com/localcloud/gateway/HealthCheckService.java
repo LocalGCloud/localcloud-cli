@@ -214,11 +214,10 @@ public class HealthCheckService {
                     String serviceName = entry.getKey();
                     ServiceDefinition def = entry.getValue();
 
-                    if (!config.isServiceEnabled(serviceName)) {
-                        continue;
-                    }
-
-                    String status = statuses.getOrDefault(serviceName, "unknown");
+                    boolean enabled = config.isServiceDynamicallyEnabled(serviceName);
+                    String status = enabled
+                            ? statuses.getOrDefault(serviceName, "unknown")
+                            : "disabled";
 
                     // Total = persisted cumulative + unflushed in-memory delta
                     long persisted = persistedCounts.getOrDefault(serviceName, 0L);
@@ -240,6 +239,8 @@ public class HealthCheckService {
                     svc.put("env_var", def.envVar());
                     svc.put("env_value", envValue);
                     svc.put("request_count", totalCount);
+                    svc.put("enabled", enabled);
+                    svc.put("enabledSource", config.getConfigSource(serviceName));
                     serviceList.add(svc);
                 }
 

@@ -8,10 +8,12 @@ services:
       dockerfile: Dockerfile
       args:
         - SPANNER_EMULATOR_IMAGE
+        - SPANNER_GATEWAY_IMAGE
         - BIGQUERY_EMULATOR_IMAGE
         - GCLOUD_SDK_IMAGE
         - GCS_EMULATOR_IMAGE
         - DOCKER_CLI_IMAGE
+        - JDK_IMAGE
     ports:
       - "127.0.0.1:8080:8080"    # LocalCloud Gateway (admin API, REST)
       - "127.0.0.1:4443:4443"    # Cloud Storage (fake-gcs-server, REST)

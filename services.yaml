@@ -70,7 +70,7 @@ services:
     envVar: SPANNER_EMULATOR_HOST
     envValuePrefix: ""
     type: external
-    defaultEnabled: true
+    defaultEnabled: false
     gcloudApiName: spanner
     gcloudPort: 9020
     persistence: true
@@ -89,7 +89,7 @@ services:
     envVar: BIGQUERY_EMULATOR_HOST
     envValuePrefix: "http://"
     type: external
-    defaultEnabled: true
+    defaultEnabled: false
     gcloudApiName: bigquery
     additionalPorts:
       grpc: 9060
