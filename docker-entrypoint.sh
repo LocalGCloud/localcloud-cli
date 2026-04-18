@@ -45,6 +45,7 @@ if [ -n "${LOCALCLOUD_SERVICES}" ]; then
             compute)        export LOCALCLOUD_ENABLE_COMPUTE="true" ;;
             cloudrun)       export LOCALCLOUD_ENABLE_CLOUDRUN="true" ;;
             memorystore)    export LOCALCLOUD_ENABLE_MEMORYSTORE="true" ;;
+            workflows)      export LOCALCLOUD_ENABLE_WORKFLOWS="true" ;;
             *)
                 echo "WARNING: Unknown service '${service}' in LOCALCLOUD_SERVICES" >&2
                 ;;

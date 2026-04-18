@@ -169,7 +169,7 @@ COPY --from=gcs-emulator /bin/fake-gcs-server /usr/local/bin/fake-gcs-server
 # Pub/Sub: Java fat JAR, launched via java -jar
 # Bigtable: Go binary, launched directly
 COPY --from=gcloud-sdk /google-cloud-sdk/platform/cloud-firestore-emulator/cloud-firestore-emulator.jar /opt/emulators/cloud-firestore-emulator.jar
-COPY --from=gcloud-sdk /google-cloud-sdk/platform/pubsub-emulator/lib/cloud-pubsub-emulator-0.8.30-all.jar /opt/emulators/cloud-pubsub-emulator.jar
+COPY --from=gcloud-sdk /google-cloud-sdk/platform/pubsub-emulator/lib/ /opt/emulators/pubsub-lib/
 COPY --chmod=755 --from=gcloud-sdk /google-cloud-sdk/platform/bigtable-emulator/cbtemulator /usr/local/bin/cbtemulator
 
 # BigQuery Emulator v2: copy pre-built venv + Python 3.12 interpreter from the BQ emulator image
