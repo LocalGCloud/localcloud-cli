@@ -70,9 +70,9 @@ blob.upload_from_string("Hello, LocalCloud!")
 
 ### Prerequisites
 
-- Java 21 (JDK)
+- Java 21+ (JDK, for building the server JAR)
 - Docker
-- Node.js 18+ (for the web console, optional)
+- Node.js 18+ (for the web console)
 - Python 3.9+ (for the CLI, optional)
 
 ### Build the Server
@@ -86,13 +86,16 @@ This produces a fat JAR at `localcloud-server/build/libs/localcloud-server-*-all
 
 ### Build the Docker Image
 
-The server JAR must be built first — the Dockerfile copies the pre-built JAR.
+The server JAR and console must be built first — the Dockerfile copies pre-built artifacts.
 
 ```bash
-# 1. Build the server JAR (required before docker build)
+# 1. Build the server JAR
 cd localcloud-server && ./gradlew shadowJar && cd ..
 
-# 2. Build the Docker image using Compose
+# 2. Build the web console
+cd localcloud-console && npm install && npm run build && cd ..
+
+# 3. Build the Docker image using Compose
 docker compose build
 
 # Or build directly with Docker
@@ -101,7 +104,8 @@ docker build -t localcloud/localcloud:latest .
 
 **Architecture notes:**
 - Native arm64 (Apple Silicon) and amd64 (Intel/AMD) builds are supported
-- First build downloads ~3GB of base images; subsequent builds use cache
+- The Docker image uses a custom Java 25 JRE (built via jlink, ~72 MB) and debian:trixie-slim base
+- Emulators (Firestore, Pub/Sub, Bigtable) run as direct JAR/binary execution — no gcloud SDK at runtime
 
 **Running the built image:**
 
@@ -121,14 +125,6 @@ curl http://localhost:8080/_localcloud/health | jq
 
 # View logs
 docker logs -f localcloud
-```
-
-### Build the Web Console (optional)
-
-```bash
-cd localcloud-console
-npm install
-npm run build
 ```
 
 ### Install the CLI (optional)

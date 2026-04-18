@@ -59,6 +59,9 @@ Java 21 (LTS, primary), Python 3.11+ (CLI/tooling): Follow standard conventions
 - GCS emulator uses HTTP-only (`-scheme http`) on port 4443
 - Secret Manager seeding uses direct PostgreSQL inserts (not REST transcoding)
 - JVM tuned to `-Xmx512m -Xms128m` to coexist with emulators in container
+- Docker image uses debian:trixie-slim base with custom Java 25 JRE (jlink, ~72 MB) — no gcloud SDK at runtime
+- Emulators (Firestore, Pub/Sub, Bigtable) run as direct JAR/binary execution, not via gcloud CLI
+- PostgreSQL 17 (matching Debian Trixie's glibc requirements)
 - `/_localcloud/services` returns array format with id, name, status, port, protocol, endpoint, env_var, env_value, request_count
 - `/_localcloud/reset` reads `restore_seed` from JSON body (not query params)
 - Seed YAML supports both flat format (`gcs: ...`) and nested format (`services: { gcs: ... }`)

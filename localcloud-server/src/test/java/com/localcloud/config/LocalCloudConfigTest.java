@@ -236,21 +236,20 @@ class LocalCloudConfigTest {
     @Test
     void defaultEnabledServicesContainsAllExpected() {
         // When no LOCALCLOUD_SERVICES is set, default-enabled services should be present
-        // Note: spanner and bigquery default to disabled (heavy services)
         LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
         List<String> services = config.getEnabledServices();
         assertTrue(services.contains("gcs"));
         assertTrue(services.contains("pubsub"));
         assertTrue(services.contains("firestore"));
-        assertFalse(services.contains("bigquery"));
+        assertTrue(services.contains("bigquery"));
         assertTrue(services.contains("secretmanager"));
         assertTrue(services.contains("cloudtasks"));
-        assertFalse(services.contains("spanner"));
+        assertTrue(services.contains("spanner"));
         assertTrue(services.contains("bigtable"));
         assertTrue(services.contains("logging"));
         assertTrue(services.contains("monitoring"));
         assertTrue(services.contains("memorystore"));
         assertTrue(services.contains("workflows"));
-        assertEquals(10, services.size());
+        assertEquals(12, services.size());
     }
 }
