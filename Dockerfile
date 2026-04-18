@@ -94,8 +94,7 @@
 # =============================================================================
 
 # Image repositories for dependencies (can be overridden for air-gapped or internal repos)
-ARG SPANNER_EMULATOR_IMAGE=jaysen2apache/spanner-emulator-build:latest
-ARG SPANNER_GATEWAY_IMAGE=gcr.io/cloud-spanner-emulator/emulator:1.5.29
+ARG SPANNER_EMULATOR_IMAGE=jaysen2apache/spanner-emulator-extended:latest
 ARG BIGQUERY_EMULATOR_IMAGE=jaysen2apache/bigquery-emulator-on-duckdb
 ARG GCLOUD_SDK_IMAGE=gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
 ARG GCS_EMULATOR_IMAGE=fsouza/fake-gcs-server:1.52.1
@@ -104,7 +103,6 @@ ARG JDK_IMAGE=eclipse-temurin:25-jdk
 
 # --- Named build stages for COPY --from references ---
 FROM ${SPANNER_EMULATOR_IMAGE} AS spanner-emulator
-FROM ${SPANNER_GATEWAY_IMAGE} AS spanner-gateway
 FROM ${BIGQUERY_EMULATOR_IMAGE} AS bq-emulator
 FROM ${GCS_EMULATOR_IMAGE} AS gcs-emulator
 FROM ${DOCKER_CLI_IMAGE} AS docker-cli
@@ -198,11 +196,9 @@ RUN rm -rf \
     && ln -sf /usr/local/bin/python3.12 /opt/bqenv/bin/python \
     && ln -sf /opt/bqenv/bin/bigquery-emulator /usr/local/bin/bigquery-emulator
 
-# Spanner: gateway from upstream, emulator from fork (persistence support)
-# TODO: once spanner-emulator-build is rebuilt with both binaries at root,
-#       drop SPANNER_GATEWAY_IMAGE and use COPY --from=spanner-emulator for both
-COPY --from=spanner-gateway /gateway_main /usr/local/bin/spanner-gateway
-COPY --from=spanner-emulator /build/output/emulator_main /usr/local/bin/spanner-emulator-main
+# Spanner emulator (extended fork with persistence + gateway)
+COPY --from=spanner-emulator /gateway_main /usr/local/bin/spanner-gateway
+COPY --from=spanner-emulator /emulator_main /usr/local/bin/spanner-emulator-main
 
 # Create localcloud user, group, and directories
 RUN groupadd -r localcloud && useradd -r -g localcloud -m localcloud \

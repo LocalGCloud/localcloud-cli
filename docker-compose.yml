@@ -8,7 +8,6 @@ services:
       dockerfile: Dockerfile
       args:
         - SPANNER_EMULATOR_IMAGE
-        - SPANNER_GATEWAY_IMAGE
         - BIGQUERY_EMULATOR_IMAGE
         - GCLOUD_SDK_IMAGE
         - GCS_EMULATOR_IMAGE
