@@ -245,14 +245,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # JVM tuning for container environment (Java 25 LTS)
 # ZGenerational is default in Java 25, no need to specify it
 # Override via: docker run -e JAVA_OPTS="-Xmx2g -Xms512m" ...
-ENV JAVA_OPTS="\
-  -Xmx512m \
-  -Xms128m \
-  -XX:+UseZGC \
-  -Xss256k \
-  -XX:MaxMetaspaceSize=96m \
-  -XX:+ExitOnOutOfMemoryError \
-  -Djava.security.egd=file:/dev/./urandom"
+ENV JAVA_OPTS="-Xmx512m -Xms128m -XX:+UseZGC -Xss256k -XX:MaxMetaspaceSize=96m -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/./urandom"
 
 # Default project and service enable flags
 ENV LOCALCLOUD_PROJECT="local-project" \

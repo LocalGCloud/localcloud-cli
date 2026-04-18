@@ -1,9 +1,18 @@
 #!/bin/bash
 set -e
 
-# Ensure data directories exist (Docker volumes from older images may lack them)
-mkdir -p /var/lib/localcloud/spanner-data /var/lib/localcloud/gcs-data /var/lib/localcloud/pgdata /var/lib/localcloud/bigquery-data
-chown -R localcloud:localcloud /var/lib/localcloud/spanner-data /var/lib/localcloud/gcs-data 2>/dev/null || true
+# Ensure data directories exist and have correct ownership.
+# Docker volume mounts replace the build-time directory, so we must
+# re-create subdirectories and fix permissions on every startup.
+mkdir -p /var/lib/localcloud/spanner-data \
+         /var/lib/localcloud/gcs-data \
+         /var/lib/localcloud/pgdata \
+         /var/lib/localcloud/bigquery-data \
+         /var/log/localcloud \
+         /var/run/postgresql
+chown -R localcloud:localcloud /var/lib/localcloud \
+                                /var/log/localcloud \
+                                /var/run/postgresql 2>/dev/null || true
 
 # Service names below must match keys in /etc/localcloud/services.yaml
 # If LOCALCLOUD_SERVICES is set, parse it and map to individual enable flags.
