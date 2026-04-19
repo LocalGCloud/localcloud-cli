@@ -15,6 +15,8 @@ const SERVICE_NAMES = {
     gke: 'GKE',
     compute: 'Compute Engine',
     cloudrun: 'Cloud Run',
+    memorystore: 'Memorystore (Redis)',
+    workflows: 'Cloud Workflows',
 };
 
 const BETA_SERVICES = new Set(['firestore', 'gke', 'compute', 'cloudrun']);

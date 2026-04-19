@@ -243,7 +243,7 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # JVM tuning for container environment (Java 25 LTS)
-# ZGenerational is default in Java 25, no need to specify it
+# ZGenerational is default in Java 25 LTS, no need to specify it
 # Override via: docker run -e JAVA_OPTS="-Xmx2g -Xms512m" ...
 ENV JAVA_OPTS="-Xmx512m -Xms128m -XX:+UseZGC -Xss256k -XX:MaxMetaspaceSize=96m -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/./urandom"
 
@@ -262,7 +262,13 @@ ENV LOCALCLOUD_PROJECT="local-project" \
     LOCALCLOUD_ENABLE_GKE="false" \
     LOCALCLOUD_ENABLE_COMPUTE="false" \
     LOCALCLOUD_ENABLE_CLOUDRUN="false" \
-    LOCALCLOUD_ENABLE_MEMORYSTORE="true"
+    LOCALCLOUD_ENABLE_MEMORYSTORE="true" \
+    LOCALCLOUD_ENABLE_WORKFLOWS="true"
+
+# Telemetry: sends anonymous usage stats hourly (opt-out: LOCALCLOUD_TELEMETRY=false)
+# Requires LOCALCLOUD_EVENT_API_KEY to be set — no data sent without a valid key.
+ENV LOCALCLOUD_TELEMETRY="true" \
+    LOCALCLOUD_EVENT_API_KEY=""
 
 # Data persistence volume
 VOLUME /var/lib/localcloud

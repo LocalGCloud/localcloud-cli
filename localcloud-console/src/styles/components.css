@@ -719,50 +719,6 @@
   margin-left: 24px;
 }
 
-/* ---------- Toggle Switch ---------- */
-.toggle-switch {
-  position: relative;
-  width: 44px;
-  height: 24px;
-  cursor: pointer;
-}
-
-.toggle-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-  position: absolute;
-}
-
-.toggle-switch-slider {
-  position: absolute;
-  inset: 0;
-  background: var(--surface-active);
-  border-radius: 12px;
-  transition: background var(--transition);
-}
-
-.toggle-switch-slider::before {
-  content: "";
-  position: absolute;
-  height: 18px;
-  width: 18px;
-  left: 3px;
-  bottom: 3px;
-  background: #fff;
-  border-radius: 50%;
-  transition: transform var(--transition);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-}
-
-.toggle-switch input:checked + .toggle-switch-slider {
-  background: var(--primary);
-}
-
-.toggle-switch input:checked + .toggle-switch-slider::before {
-  transform: translateX(20px);
-}
-
 /* ---------- Back Button ---------- */
 .back-link {
   display: inline-flex;

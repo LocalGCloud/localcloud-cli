@@ -156,7 +156,7 @@ public class LocalCloudConfig {
     }
 
     public boolean isServiceEnabled(String serviceName) {
-        return enabledServices.contains(serviceName);
+        return isServiceDynamicallyEnabled(serviceName);
     }
 
     public String getPostgresHost() {

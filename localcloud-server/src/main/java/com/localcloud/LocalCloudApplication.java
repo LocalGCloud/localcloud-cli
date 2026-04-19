@@ -19,6 +19,7 @@ import com.localcloud.admin.ProjectService;
 import com.localcloud.admin.QueryService;
 import com.localcloud.admin.SeedService;
 import com.localcloud.admin.ServiceConfigRepository;
+import com.localcloud.admin.TelemetryService;
 import com.localcloud.admin.ServiceRoutingRepository;
 import com.localcloud.admin.UsageMetricsRepository;
 import com.localcloud.config.LocalCloudConfig;
@@ -70,6 +71,7 @@ public class LocalCloudApplication {
     private final ProjectService projectService;
     private final AdminApiService adminApiService;
     private final ServiceConfigRepository serviceConfigRepository;
+    private final TelemetryService telemetryService;
     private final BrowseService browseService;
     private final MutateService mutateService;
     private final SeedService seedService;
@@ -93,6 +95,7 @@ public class LocalCloudApplication {
         this.serviceConfigRepository = new ServiceConfigRepository(dataSource);
         this.credentialBroker = new CredentialBroker(config);
         this.adminApiService = new AdminApiService(config, requestLogger, projectService, routingRepository, credentialBroker, serviceConfigRepository);
+        this.telemetryService = new TelemetryService(config, usageMetrics, processHealthChecker, projectService, dataSource);
         this.browseService = new BrowseService(config, dataSource, config.getServiceRegistry(), usageMetrics);
         this.mutateService = new MutateService(config, dataSource, config.getServiceRegistry());
         var workflowsStore = new com.localcloud.emulators.workflows.WorkflowsStore(dataSource);
@@ -328,6 +331,9 @@ public class LocalCloudApplication {
         logger.info("  Services:    {}", config.getEnabledServices());
         logger.info("=================================================");
 
+        // Start anonymous telemetry (opt-out: LOCALCLOUD_TELEMETRY=false)
+        telemetryService.start();
+
         // Register shutdown hook
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             logger.info("Shutdown signal received, stopping LocalCloud...");
@@ -344,6 +350,9 @@ public class LocalCloudApplication {
             server.stop().join();
             logger.info("LocalCloud server stopped");
         }
+
+        // Stop telemetry scheduler
+        telemetryService.stop();
 
         // Flush usage metrics before stopping emulators
         healthCheckService.shutdown();

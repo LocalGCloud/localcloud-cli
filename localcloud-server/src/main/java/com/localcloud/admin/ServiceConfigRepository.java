@@ -82,8 +82,19 @@ public class ServiceConfigRepository {
      * Bulk upsert multiple service configs.
      */
     public void upsertAll(Map<String, Boolean> configs) throws SQLException {
-        for (Map.Entry<String, Boolean> entry : configs.entrySet()) {
-            upsert(entry.getKey(), entry.getValue());
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(
+                 "INSERT INTO service_config (service_id, enabled, updated_at) " +
+                 "VALUES (?, ?, CURRENT_TIMESTAMP) " +
+                 "ON CONFLICT (service_id) DO UPDATE SET enabled = EXCLUDED.enabled, " +
+                 "updated_at = CURRENT_TIMESTAMP")) {
+            for (Map.Entry<String, Boolean> entry : configs.entrySet()) {
+                stmt.setString(1, entry.getKey());
+                stmt.setBoolean(2, entry.getValue());
+                stmt.addBatch();
+            }
+            stmt.executeBatch();
         }
+        logger.info("Service config batch persisted: {} services", configs.size());
     }
 }

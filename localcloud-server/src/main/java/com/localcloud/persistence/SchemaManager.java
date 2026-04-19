@@ -1,6 +1,7 @@
 package com.localcloud.persistence;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
 
@@ -287,6 +288,15 @@ public class SchemaManager {
                 ")"
             );
 
+            // Telemetry queue: unsent events persisted for retry
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS telemetry_queue (" +
+                "    id SERIAL PRIMARY KEY," +
+                "    event_json TEXT NOT NULL," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                ")"
+            );
+
             // Cloud Workflows: workflows
             stmt.execute(
                 "CREATE TABLE IF NOT EXISTS workflows (" +
@@ -357,12 +367,14 @@ public class SchemaManager {
                 ")"
             );
 
-            // Auto-insert default project
-            stmt.execute(
-                "INSERT INTO projects (project_id, display_name) " +
-                "VALUES ('" + defaultProjectId + "', 'Default Project') " +
-                "ON CONFLICT (project_id) DO NOTHING"
-            );
+            // Auto-insert default project (use PreparedStatement to avoid SQL injection)
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "INSERT INTO projects (project_id, display_name) " +
+                    "VALUES (?, 'Default Project') " +
+                    "ON CONFLICT (project_id) DO NOTHING")) {
+                ps.setString(1, defaultProjectId);
+                ps.executeUpdate();
+            }
 
             logger.info("Database schema initialized");
         }

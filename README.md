@@ -73,7 +73,6 @@ blob.upload_from_string("Hello, LocalCloud!")
 - Java 21+ (JDK, for building the server JAR)
 - Docker
 - Node.js 18+ (for the web console)
-- Python 3.9+ (for the CLI, optional)
 
 ### Build the Server
 
@@ -127,25 +126,11 @@ curl http://localhost:8080/_localcloud/health | jq
 docker logs -f localcloud
 ```
 
-### Install the CLI (optional)
-
-```bash
-cd localcloud-cli
-pip install -e ".[test,console]"
-localcloud --help
-```
-
 ### Run Tests
 
 ```bash
 # Java server tests (187 unit tests)
 cd localcloud-server && ./gradlew test
-
-# Python CLI tests (66 unit tests)
-cd localcloud-cli && pip install -e ".[test]" && pytest
-
-# Python CLI linting
-cd localcloud-cli && ruff check .
 ```
 
 ### Full Build (all components)
@@ -154,7 +139,6 @@ cd localcloud-cli && ruff check .
 # Build everything from the repo root
 cd localcloud-server && ./gradlew shadowJar && cd ..
 cd localcloud-console && npm install && npm run build && cd ..
-cd localcloud-cli && pip install -e ".[test,console]" && cd ..
 docker build -t localcloud/localcloud:latest .
 ```
 
@@ -275,9 +259,18 @@ docker compose down
 
 ```
 localcloud-server/    Java API gateway + emulators (Armeria, gRPC, PostgreSQL)
-localcloud-cli/       Python CLI tool (Click)
 localcloud-console/   Web console (Solid.js, served by gateway)
 specs/                Feature specifications
+```
+
+## Telemetry
+
+LocalCloud collects anonymous usage statistics to help improve the project. No personally identifiable information is collected — only aggregate counters like which services are enabled, request counts, and error rates.
+
+**Opt out:**
+
+```bash
+docker run -e LOCALCLOUD_TELEMETRY=false ...
 ```
 
 ## Documentation

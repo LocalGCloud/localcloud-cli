@@ -33,6 +33,7 @@ if [ -n "${LOCALCLOUD_SERVICES}" ]; then
     export LOCALCLOUD_ENABLE_COMPUTE="false"
     export LOCALCLOUD_ENABLE_CLOUDRUN="false"
     export LOCALCLOUD_ENABLE_MEMORYSTORE="false"
+    export LOCALCLOUD_ENABLE_WORKFLOWS="false"
 
     # Parse comma-separated service list and enable matching services
     IFS=',' read -ra SERVICES <<< "${LOCALCLOUD_SERVICES}"

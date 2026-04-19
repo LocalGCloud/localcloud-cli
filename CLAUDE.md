@@ -3,16 +3,15 @@
 Auto-generated from all feature plans. Last updated: 2026-04-07
 
 ## Active Technologies
-- Java 21 LTS (primary), Python 3.11+ (CLI/console updates) + Netty codec-redis (RESP2 parser), Armeria (lifecycle), HikariCP (PostgreSQL pool), Jackson (JSONB) (002-memorystore-emulator)
+- Java 21 LTS (primary) + Netty codec-redis (RESP2 parser), Armeria (lifecycle), HikariCP (PostgreSQL pool), Jackson (JSONB) (002-memorystore-emulator)
 - PostgreSQL — single `redis_data` table with JSONB values for all 5 data types (002-memorystore-emulator)
 
-- Java 21 (LTS, primary), Python 3.11+ (CLI/tooling) + Armeria (API gateway, gRPC+REST, console static files), proto-google-cloud-* (gRPC stubs), PostgreSQL (persistence), HikariCP (connection pooling), Click (Python CLI), Docker SDK for Python, Solid.js (console frontend) (001-gcp-local-emulator)
+- Java 21 (LTS, primary) + Armeria (API gateway, gRPC+REST, console static files), proto-google-cloud-* (gRPC stubs), PostgreSQL (persistence), HikariCP (connection pooling), Solid.js (console frontend) (001-gcp-local-emulator)
 
 ## Project Structure
 
 ```text
 localcloud-server/    # Java API gateway + facade emulators (Armeria + PostgreSQL)
-localcloud-cli/       # Python CLI tool (Click)
 localcloud-console/   # Web console (Solid.js, served by Armeria gateway)
 specs/                # Speckit specifications
 services.yaml         # Service registry (ports, env vars, protocols) — single source of truth
@@ -28,12 +27,6 @@ cd localcloud-server && ./gradlew build
 # Java shadow JAR (for Docker image)
 cd localcloud-server && ./gradlew shadowJar
 
-# Python CLI (install + test)
-cd localcloud-cli && pip install -e ".[test]" && pytest
-
-# Python CLI linting
-cd localcloud-cli && ruff check .
-
 # Console frontend
 cd localcloud-console && npm install && npm run build
 
@@ -44,7 +37,7 @@ docker compose up -d
 
 ## Code Style
 
-Java 21 (LTS, primary), Python 3.11+ (CLI/tooling): Follow standard conventions
+Java 21 (LTS, primary): Follow standard conventions
 
 ## Architecture
 
@@ -69,14 +62,13 @@ Java 21 (LTS, primary), Python 3.11+ (CLI/tooling): Follow standard conventions
 - Container needs `-m 4g` memory limit for stable operation
 
 ## Recent Changes
-- 002-memorystore-emulator: Added Java 21 LTS (primary), Python 3.11+ (CLI/console updates) + Netty codec-redis (RESP2 parser), Armeria (lifecycle), HikariCP (PostgreSQL pool), Jackson (JSONB)
+- 002-memorystore-emulator: Added Java 21 LTS (primary) + Netty codec-redis (RESP2 parser), Armeria (lifecycle), HikariCP (PostgreSQL pool), Jackson (JSONB)
 
-- 001-gcp-local-emulator: Java 21 + Armeria (API gateway, gRPC+REST, console static files), PostgreSQL (persistence), proto-google-cloud-* (gRPC stubs), HikariCP, Click (Python CLI), Docker SDK, Solid.js (web console). 14 GCP services emulated (GCS, Pub/Sub, Firestore, BigQuery, Secret Manager, Cloud Tasks, Spanner, Bigtable, Logging, Monitoring, GKE, Compute Engine, Cloud Run, Memorystore).
+- 001-gcp-local-emulator: Java 21 + Armeria (API gateway, gRPC+REST, console static files), PostgreSQL (persistence), proto-google-cloud-* (gRPC stubs), HikariCP, Solid.js (web console). 14 GCP services emulated (GCS, Pub/Sub, Firestore, BigQuery, Secret Manager, Cloud Tasks, Spanner, Bigtable, Logging, Monitoring, GKE, Compute Engine, Cloud Run, Memorystore).
 
 ## Test Counts
 
 - Java server: 187 unit tests (JUnit 5 + Mockito)
-- Python CLI: 66 unit tests (pytest)
 - Console: esbuild (no test suite)
 
 <!-- MANUAL ADDITIONS START -->

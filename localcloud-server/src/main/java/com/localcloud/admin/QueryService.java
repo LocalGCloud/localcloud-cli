@@ -114,7 +114,7 @@ public class QueryService {
             long startTime = System.currentTimeMillis();
 
             if (POSTGRES_SERVICES.contains(service)) {
-                return executePostgresQuery(sql, startTime);
+                return executePostgresQuery(sql, projectId, startTime);
             } else if ("bigquery".equals(service)) {
                 return executeBigQueryQuery(sql, projectId, startTime);
             } else if ("spanner".equals(service)) {
@@ -135,7 +135,7 @@ public class QueryService {
 
     // ─── PostgreSQL Direct Query ───────────────────────────────────────
 
-    private HttpResponse executePostgresQuery(String sql, long startTime) {
+    private HttpResponse executePostgresQuery(String sql, String projectId, long startTime) {
         // Safety: only allow SELECT and EXPLAIN
         String trimmed = sql.trim().toUpperCase();
         if (!trimmed.startsWith("SELECT") && !trimmed.startsWith("EXPLAIN") && !trimmed.startsWith("WITH")) {
@@ -148,7 +148,17 @@ public class QueryService {
             // Set a query timeout to prevent runaway queries
             stmt.setQueryTimeout(30);
 
-            ResultSet rs = stmt.executeQuery(sql);
+            // Set project context as a session variable so queries can be filtered.
+            // Auto-inject project filter: wrap user query to only return rows
+            // matching the active project for tables that have a project_id column.
+            stmt.execute("SET localcloud.project_id = " + quoteStringLiteral(projectId));
+
+            // Wrap user SQL to filter by project_id when the table has that column.
+            // Uses a subquery approach: if any result column is named project_id,
+            // add a WHERE filter. This is safe because we only allow SELECT queries.
+            String filteredSql = wrapWithProjectFilter(sql, projectId);
+
+            ResultSet rs = stmt.executeQuery(filteredSql);
             ResultSetMetaData meta = rs.getMetaData();
             int colCount = meta.getColumnCount();
 
@@ -1040,6 +1050,79 @@ public class QueryService {
     }
 
     // ─── Helpers ───────────────────────────────────────────────────────
+
+    /**
+     * Auto-inject project_id filter into SELECT queries for tables that have a project_id column.
+     * Adds "WHERE project_id = '...'" or "AND project_id = '...'" as appropriate.
+     * Skips if the query already references project_id.
+     */
+    private String wrapWithProjectFilter(String sql, String projectId) {
+        String upper = sql.trim().toUpperCase();
+
+        // Don't filter EXPLAIN queries
+        if (upper.startsWith("EXPLAIN")) {
+            return sql;
+        }
+
+        // Don't filter CTEs or subqueries — too complex to inject safely
+        if (upper.startsWith("WITH")) {
+            return sql;
+        }
+
+        // If user already has a project_id filter in a WHERE clause, don't double-filter
+        if (upper.matches("(?s).*\\bWHERE\\b.*\\bPROJECT_ID\\b.*")) {
+            return sql;
+        }
+
+        // Known tables with project_id column
+        String[] tablesWithProjectId = {
+            "secrets", "secret_versions", "task_queues", "cloud_tasks",
+            "log_entries", "time_series", "metric_points", "bigtable_data",
+            "compute_instances", "cloudrun_services", "cloudrun_revisions",
+            "gke_clusters", "redis_data", "workflows", "workflow_executions",
+            "usage_metrics", "projects", "gcs_bucket_projects"
+        };
+
+        // Check if query references any of these tables (word-boundary match to avoid
+        // false positives like "custom_tasks" matching "tasks")
+        boolean referencesProjectTable = false;
+        for (String table : tablesWithProjectId) {
+            String pattern = "\\b" + table.toUpperCase() + "\\b";
+            if (java.util.regex.Pattern.compile(pattern).matcher(upper).find()) {
+                referencesProjectTable = true;
+                break;
+            }
+        }
+
+        if (!referencesProjectTable) {
+            return sql;
+        }
+
+        // Strip trailing semicolons
+        String cleaned = sql.replaceAll(";\\s*$", "").trim();
+        String cleanedUpper = cleaned.toUpperCase();
+
+        // Inject project filter before ORDER BY, GROUP BY, LIMIT, or at the end
+        String projectFilter = "project_id = " + quoteStringLiteral(projectId);
+        String connector = cleanedUpper.contains("WHERE") ? " AND " : " WHERE ";
+
+        // Find insertion point — before ORDER BY, GROUP BY, HAVING, LIMIT, OFFSET
+        String[] clauses = {"ORDER BY", "GROUP BY", "HAVING", "LIMIT", "OFFSET"};
+        int insertPos = cleaned.length();
+        for (String clause : clauses) {
+            int pos = cleanedUpper.lastIndexOf(clause);
+            if (pos > 0 && pos < insertPos) {
+                insertPos = pos;
+            }
+        }
+
+        return cleaned.substring(0, insertPos).trim() + connector + projectFilter + " " + cleaned.substring(insertPos);
+    }
+
+    /** Quote a string literal for PostgreSQL, preventing SQL injection. */
+    private String quoteStringLiteral(String value) {
+        return "'" + value.replace("'", "''") + "'";
+    }
 
     private HttpResponse errorResponse(String message) {
         try {

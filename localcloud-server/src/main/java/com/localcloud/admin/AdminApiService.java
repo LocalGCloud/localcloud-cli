@@ -432,7 +432,10 @@ public class AdminApiService {
             if ("external".equals(def.type())) {
                 String programName = SUPERVISOR_PROGRAM_NAMES.get(serviceId);
                 if (programName != null) {
-                    supervisorClient.startProcess(programName);
+                    boolean started = supervisorClient.startProcess(programName);
+                    if (!started) {
+                        logger.warn("Supervisor failed to start process '{}' for service '{}'", programName, serviceId);
+                    }
                 }
             }
             config.setServiceEnabled(serviceId, true);
@@ -475,7 +478,10 @@ public class AdminApiService {
             if ("external".equals(def.type())) {
                 String programName = SUPERVISOR_PROGRAM_NAMES.get(serviceId);
                 if (programName != null) {
-                    supervisorClient.stopProcess(programName);
+                    boolean stopped = supervisorClient.stopProcess(programName);
+                    if (!stopped) {
+                        logger.warn("Supervisor failed to stop process '{}' for service '{}'", programName, serviceId);
+                    }
                 }
             }
             config.setServiceEnabled(serviceId, false);
@@ -525,10 +531,11 @@ public class AdminApiService {
     public HttpResponse updateServiceConfig(String body) {
         try {
             @SuppressWarnings("unchecked")
-            Map<String, Boolean> updates = mapper.readValue(body, Map.class);
-            for (Map.Entry<String, Boolean> entry : updates.entrySet()) {
+            Map<String, Object> updates = mapper.readValue(body, Map.class);
+            for (Map.Entry<String, Object> entry : updates.entrySet()) {
                 String serviceId = entry.getKey();
-                boolean enabled = Boolean.TRUE.equals(entry.getValue());
+                Object val = entry.getValue();
+                boolean enabled = val instanceof Boolean ? (Boolean) val : "true".equalsIgnoreCase(String.valueOf(val));
 
                 if ("env".equals(config.getConfigSource(serviceId))) {
                     continue; // Skip env-locked services
