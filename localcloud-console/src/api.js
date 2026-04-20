@@ -87,7 +87,7 @@ export const api = {
     routing: () => get(appendProject('/_localcloud/routing')),
     credentials: () => get('/_localcloud/credentials'),
     setRouting: (serviceId, mode, remoteProject, remoteRegion) =>
-        put(`/_localcloud/routing/${encodeURIComponent(serviceId)}`, { mode, remote_project: remoteProject, remote_region: remoteRegion }),
+        put(appendProject(`/_localcloud/routing/${encodeURIComponent(serviceId)}`), { mode, remote_project: remoteProject, remote_region: remoteRegion }),
     enableService: (serviceId) => post(`/_localcloud/services/${encodeURIComponent(serviceId)}/enable`),
     disableService: (serviceId) => post(`/_localcloud/services/${encodeURIComponent(serviceId)}/disable`),
     // SQL query execution

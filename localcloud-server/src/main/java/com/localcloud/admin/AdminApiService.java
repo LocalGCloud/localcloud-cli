@@ -345,7 +345,7 @@ public class AdminApiService {
      * Set routing mode for a specific service.
      */
     @Put("/routing/{service}")
-    public HttpResponse setRouting(@Param("service") String serviceId, AggregatedHttpRequest request) {
+    public HttpResponse setRouting(ServiceRequestContext ctx, @Param("service") String serviceId, AggregatedHttpRequest request) {
         try {
             // Validate service exists
             ServiceRegistry registry = config.getServiceRegistry();
@@ -364,7 +364,8 @@ public class AdminApiService {
 
             String remoteProject = (String) body.get("remote_project");
             String remoteRegion = (String) body.get("remote_region");
-            String projectId = config.getProjectId();
+            String projectParam = ctx.queryParams().get("project");
+            String projectId = (projectParam != null && !projectParam.isBlank()) ? projectParam : config.getProjectId();
 
             routingRepository.upsert(projectId, serviceId, mode, remoteProject, remoteRegion);
 

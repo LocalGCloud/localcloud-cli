@@ -9,16 +9,9 @@ localcloud-server/out/
 *.iml
 
 # Python
-localcloud-cli/__pycache__/
-localcloud-cli/.venv/
-localcloud-cli/venv/
-localcloud-cli/dist/
-localcloud-cli/*.egg-info/
-localcloud-cli/src/*.egg-info/
 *.pyc
 *.pyo
 __pycache__/
-pp
 
 # Console frontend
 localcloud-console/dist/

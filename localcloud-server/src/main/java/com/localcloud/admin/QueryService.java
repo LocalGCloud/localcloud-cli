@@ -142,20 +142,21 @@ public class QueryService {
             return errorResponse("Only SELECT, EXPLAIN, and WITH (CTE) queries are allowed");
         }
 
-        try (Connection conn = dataSource.getConnection();
-             Statement stmt = conn.createStatement()) {
+        try (Connection conn = dataSource.getConnection()) {
+            // Use read-only transaction to prevent DML inside CTEs
+            // (e.g., "WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d")
+            conn.setAutoCommit(false);
+            conn.setReadOnly(true);
+
+            try (Statement stmt = conn.createStatement()) {
 
             // Set a query timeout to prevent runaway queries
             stmt.setQueryTimeout(30);
 
             // Set project context as a session variable so queries can be filtered.
-            // Auto-inject project filter: wrap user query to only return rows
-            // matching the active project for tables that have a project_id column.
             stmt.execute("SET localcloud.project_id = " + quoteStringLiteral(projectId));
 
-            // Wrap user SQL to filter by project_id when the table has that column.
-            // Uses a subquery approach: if any result column is named project_id,
-            // add a WHERE filter. This is safe because we only allow SELECT queries.
+            // Auto-inject project_id filter for tables that have the column.
             String filteredSql = wrapWithProjectFilter(sql, projectId);
 
             ResultSet rs = stmt.executeQuery(filteredSql);
@@ -194,6 +195,11 @@ public class QueryService {
             return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
                     mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
 
+            } finally {
+                conn.rollback();
+                conn.setReadOnly(false);
+                conn.setAutoCommit(true);
+            }
         } catch (Exception e) {
             logger.warn("PostgreSQL query failed: {}", e.getMessage());
             return errorResponse(e.getMessage());

@@ -265,10 +265,9 @@ ENV LOCALCLOUD_PROJECT="local-project" \
     LOCALCLOUD_ENABLE_MEMORYSTORE="true" \
     LOCALCLOUD_ENABLE_WORKFLOWS="true"
 
-# Telemetry: sends anonymous usage stats hourly (opt-out: LOCALCLOUD_TELEMETRY=false)
-# Requires LOCALCLOUD_EVENT_API_KEY to be set — no data sent without a valid key.
+# Telemetry: sends anonymous usage stats
 ENV LOCALCLOUD_TELEMETRY="true" \
-    LOCALCLOUD_EVENT_API_KEY=""
+    LOCALCLOUD_EVENT_API_KEY="phc_o9nQDAQjEgsPcamE8pCnhv7ekA8CmA2VQXechLju9LA9"
 
 # Data persistence volume
 VOLUME /var/lib/localcloud

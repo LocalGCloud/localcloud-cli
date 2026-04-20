@@ -78,25 +78,35 @@ public class LocalCloudConfig {
         config.enabledServicesMap = new ConcurrentHashMap<>();
         config.configSourceMap = new ConcurrentHashMap<>();
 
-        boolean localcloudServicesSet = System.getenv("LOCALCLOUD_SERVICES") != null
-                && !System.getenv("LOCALCLOUD_SERVICES").isBlank();
+        String localcloudServicesEnv = env("LOCALCLOUD_SERVICES", "");
+        boolean localcloudServicesSet = !localcloudServicesEnv.isBlank();
 
         for (String svc : config.enabledServices) {
             config.enabledServicesMap.put(svc, true);
             config.configSourceMap.put(svc, localcloudServicesSet ? "env" : "default");
         }
 
-        // For services NOT in enabledServices, mark them as disabled with source
+        // For all services: apply individual LOCALCLOUD_ENABLE_* flags when LOCALCLOUD_SERVICES is not set
         for (String svcId : config.serviceRegistry.getAllServices().keySet()) {
-            if (!config.enabledServicesMap.containsKey(svcId)) {
-                config.enabledServicesMap.put(svcId, false);
-                if (localcloudServicesSet) {
+            if (localcloudServicesSet) {
+                // LOCALCLOUD_SERVICES controls everything — already handled above
+                if (!config.enabledServicesMap.containsKey(svcId)) {
+                    config.enabledServicesMap.put(svcId, false);
                     config.configSourceMap.put(svcId, "env");
-                } else {
-                    // Check if individual LOCALCLOUD_ENABLE_* was explicitly set
-                    String envKey = "LOCALCLOUD_ENABLE_" + svcId.toUpperCase();
-                    String envVal = System.getenv(envKey);
-                    config.configSourceMap.put(svcId, envVal != null ? "env" : "default");
+                }
+            } else {
+                // Check individual LOCALCLOUD_ENABLE_* flag
+                String envKey = "LOCALCLOUD_ENABLE_" + svcId.toUpperCase();
+                String envVal = env(envKey, null);
+                if (envVal != null && !envVal.isBlank()) {
+                    // Individual flag explicitly set — apply it
+                    boolean enabled = Boolean.parseBoolean(envVal);
+                    config.enabledServicesMap.put(svcId, enabled);
+                    config.configSourceMap.put(svcId, "env");
+                } else if (!config.enabledServicesMap.containsKey(svcId)) {
+                    // No flag set, not in defaults — use services.yaml default
+                    config.enabledServicesMap.put(svcId, false);
+                    config.configSourceMap.put(svcId, "default");
                 }
             }
         }

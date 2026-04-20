@@ -252,4 +252,113 @@ class LocalCloudConfigTest {
         assertTrue(services.contains("workflows"));
         assertEquals(12, services.size());
     }
+
+    // -----------------------------------------------------------------------
+    // LOCALCLOUD_ENABLE_* individual flag tests
+    // -----------------------------------------------------------------------
+
+    @Test
+    void individualEnableFlagDisablesService() {
+        // When LOCALCLOUD_SERVICES is not set, individual flags should apply
+        setProperty("LOCALCLOUD_ENABLE_PUBSUB", "false");
+        LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
+        assertFalse(config.isServiceDynamicallyEnabled("pubsub"),
+                "pubsub should be disabled when LOCALCLOUD_ENABLE_PUBSUB=false");
+    }
+
+    @Test
+    void individualEnableFlagEnablesService() {
+        setProperty("LOCALCLOUD_ENABLE_GKE", "true");
+        LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
+        assertTrue(config.isServiceDynamicallyEnabled("gke"),
+                "gke should be enabled when LOCALCLOUD_ENABLE_GKE=true");
+    }
+
+    @Test
+    void configSourceTracksEnvVsDefault() {
+        setProperty("LOCALCLOUD_ENABLE_PUBSUB", "false");
+        LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
+        assertEquals("env", config.getConfigSource("pubsub"),
+                "pubsub source should be 'env' when flag is explicitly set");
+        assertEquals("default", config.getConfigSource("gcs"),
+                "gcs source should be 'default' when no flag is set");
+    }
+
+    @Test
+    void localcloudServicesOverridesIndividualFlags() {
+        // LOCALCLOUD_SERVICES should win over individual LOCALCLOUD_ENABLE_* flags
+        setProperty("LOCALCLOUD_SERVICES", "gcs,pubsub");
+        setProperty("LOCALCLOUD_ENABLE_FIRESTORE", "true");
+        LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
+        assertFalse(config.isServiceDynamicallyEnabled("firestore"),
+                "firestore should be disabled when LOCALCLOUD_SERVICES doesn't include it");
+        assertEquals("env", config.getConfigSource("firestore"),
+                "source should be 'env' when LOCALCLOUD_SERVICES is set");
+    }
+
+    @Test
+    void mergePersistedConfigAppliesWhenNotEnvLocked() {
+        LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
+        // GKE is disabled by default, source=default
+        assertFalse(config.isServiceDynamicallyEnabled("gke"));
+
+        // Merge persisted config that enables GKE
+        config.mergePersistedConfig(java.util.Map.of("gke", true));
+        assertTrue(config.isServiceDynamicallyEnabled("gke"),
+                "gke should be enabled after merging persisted config");
+        assertEquals("persisted", config.getConfigSource("gke"));
+    }
+
+    @Test
+    void mergePersistedConfigIgnoresEnvLockedServices() {
+        setProperty("LOCALCLOUD_ENABLE_GCS", "true");
+        LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
+
+        // Try to merge persisted config that disables GCS
+        config.mergePersistedConfig(java.util.Map.of("gcs", false));
+        assertTrue(config.isServiceDynamicallyEnabled("gcs"),
+                "gcs should remain enabled — env var takes precedence over persisted");
+        assertEquals("env", config.getConfigSource("gcs"));
+    }
+
+    // -----------------------------------------------------------------------
+    // isServiceEnabled delegates to dynamic map
+    // -----------------------------------------------------------------------
+
+    @Test
+    void isServiceEnabledReflectsRuntimeToggle() {
+        LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
+        assertTrue(config.isServiceEnabled("gcs"), "gcs should be enabled by default");
+
+        // Runtime toggle off
+        config.setServiceEnabled("gcs", false);
+        assertFalse(config.isServiceEnabled("gcs"),
+                "isServiceEnabled should reflect runtime toggle");
+    }
+
+    // -----------------------------------------------------------------------
+    // All 15 services present in registry
+    // -----------------------------------------------------------------------
+
+    @Test
+    void serviceRegistryContainsAllFifteenServices() {
+        LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
+        var allServices = config.getServiceRegistry().getAllServices();
+        assertTrue(allServices.containsKey("gcs"));
+        assertTrue(allServices.containsKey("pubsub"));
+        assertTrue(allServices.containsKey("firestore"));
+        assertTrue(allServices.containsKey("bigquery"));
+        assertTrue(allServices.containsKey("spanner"));
+        assertTrue(allServices.containsKey("bigtable"));
+        assertTrue(allServices.containsKey("secretmanager"));
+        assertTrue(allServices.containsKey("cloudtasks"));
+        assertTrue(allServices.containsKey("logging"));
+        assertTrue(allServices.containsKey("monitoring"));
+        assertTrue(allServices.containsKey("gke"));
+        assertTrue(allServices.containsKey("compute"));
+        assertTrue(allServices.containsKey("cloudrun"));
+        assertTrue(allServices.containsKey("memorystore"));
+        assertTrue(allServices.containsKey("workflows"));
+        assertEquals(15, allServices.size(), "services.yaml should define exactly 15 services");
+    }
 }

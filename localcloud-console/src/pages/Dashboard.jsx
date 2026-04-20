@@ -16,9 +16,10 @@ const SERVICE_NAMES = {
     compute: 'Compute Engine',
     cloudrun: 'Cloud Run',
     memorystore: 'Memorystore (Redis)',
+    workflows: 'Cloud Workflows',
 };
 
-// All 14 services — ensures disabled ones still appear as greyed cards
+// All 15 services — ensures disabled ones still appear as greyed cards
 const ALL_SERVICE_IDS = [
     { id: 'gcs', port: 4443, protocol: 'REST' },
     { id: 'pubsub', port: 8085, protocol: 'GRPC' },
@@ -34,6 +35,7 @@ const ALL_SERVICE_IDS = [
     { id: 'gke', port: 8080, protocol: 'GRPC' },
     { id: 'compute', port: 8080, protocol: 'REST' },
     { id: 'cloudrun', port: 8080, protocol: 'GRPC' },
+    { id: 'workflows', port: 8080, protocol: 'REST' },
 ];
 
 function ServiceIcon({ id, size = 20 }) {

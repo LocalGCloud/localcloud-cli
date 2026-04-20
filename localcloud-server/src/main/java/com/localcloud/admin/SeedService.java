@@ -331,8 +331,23 @@ public class SeedService {
             String projectId = (projectParam != null && !projectParam.isBlank())
                     ? projectParam : config.getProjectId();
 
+            // Clear all data for the target project
+            int cleared = 0;
+            cleared += resetSecretManager(projectId);
+            cleared += resetCloudTasks(projectId);
+            cleared += resetLogging(projectId);
+            cleared += resetMonitoring(projectId);
+            cleared += resetMemorystore(projectId);
+            cleared += resetBigtable(projectId);
+            cleared += resetCompute(projectId);
+            cleared += resetCloudRun(projectId);
+            cleared += resetGke(projectId);
+            cleared += resetWorkflows(projectId);
+            logger.info("Reset: cleared {} rows for project '{}'", cleared, projectId);
+
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("status", "success");
+            response.put("rows_cleared", cleared);
 
             if (restoreSeed && lastSeedYaml != null) {
                 // Re-apply seed
@@ -352,7 +367,7 @@ public class SeedService {
                 if (seedData.containsKey("firestore")) totalSeeded += seedFirestore(seedData.get("firestore"));
                 if (seedData.containsKey("bigtable")) totalSeeded += seedBigtable(seedData.get("bigtable"));
                 if (seedData.containsKey("cloudtasks")) totalSeeded += seedCloudTasks(seedData.get("cloudtasks"));
-                if (seedData.containsKey("workflows")) totalSeeded += seedWorkflows(seedData.get("workflows"), config.getProjectId());
+                if (seedData.containsKey("workflows")) totalSeeded += seedWorkflows(seedData.get("workflows"), projectId);
 
                 response.put("seed_restored", true);
                 response.put("records_restored", totalSeeded);
@@ -1710,7 +1725,7 @@ public class SeedService {
 
     private int resetWorkflows(String projectId) {
         try {
-            workflowsStore.resetAll();
+            workflowsStore.resetByProject(projectId);
             logger.info("Reset workflows for project {}", projectId);
             return 1;
         } catch (Exception e) {

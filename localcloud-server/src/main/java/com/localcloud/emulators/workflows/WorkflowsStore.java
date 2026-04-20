@@ -184,6 +184,21 @@ public class WorkflowsStore {
         }
     }
 
+    public void resetByProject(String projectId) {
+        try (Connection conn = dataSource.getConnection()) {
+            try (var ps = conn.prepareStatement("DELETE FROM workflow_executions WHERE project_id = ?")) {
+                ps.setString(1, projectId);
+                ps.executeUpdate();
+            }
+            try (var ps = conn.prepareStatement("DELETE FROM workflows WHERE project_id = ?")) {
+                ps.setString(1, projectId);
+                ps.executeUpdate();
+            }
+        } catch (SQLException e) {
+            logger.error("Failed to reset workflows for project {}", projectId, e);
+        }
+    }
+
     // --- Seed support (UPSERT) ---
 
     public void upsertWorkflow(String projectId, String locationId, String workflowId,

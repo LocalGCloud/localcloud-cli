@@ -112,7 +112,8 @@ public class ProjectService {
                     "log_entries", "time_series", "metric_points",
                     "compute_instances", "cloudrun_services", "cloudrun_revisions",
                     "gke_clusters", "redis_data", "bigtable_data", "service_routing",
-                    "usage_metrics", "gcs_bucket_projects"
+                    "usage_metrics", "gcs_bucket_projects",
+                    "workflow_executions", "workflows", "workflow_env_vars", "workflow_config"
                 };
 
                 for (String table : tables) {

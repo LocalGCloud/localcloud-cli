@@ -42,6 +42,7 @@ import com.localcloud.docker.DockerClientProvider;
 import com.localcloud.gateway.ApiGateway;
 import com.localcloud.gateway.HealthCheckService;
 import com.localcloud.gateway.IamMiddleware;
+import com.localcloud.gateway.ServiceGatingDecorator;
 import com.localcloud.gateway.ProcessHealthChecker;
 import com.localcloud.gateway.RequestLogger;
 import com.localcloud.persistence.PostgresDataSource;
@@ -141,6 +142,9 @@ public class LocalCloudApplication {
         // IAM middleware — applied to all services
         iamMiddleware = new IamMiddleware(config);
         sb.decorator(iamMiddleware);
+
+        // Service gating — returns 503 for requests to disabled facade services
+        sb.decorator(new ServiceGatingDecorator(config));
 
         // Register admin/health check annotated services
         sb.annotatedService("/_localcloud", healthCheckService);

@@ -37,6 +37,7 @@ const ALL_SERVICES = [
     { id: 'gke', port: 8080, protocol: 'gRPC', env_var: 'GKE_EMULATOR_HOST', endpoint: 'localhost:8080', defaultEnabled: false },
     { id: 'compute', port: 8080, protocol: 'REST', env_var: 'COMPUTE_EMULATOR_HOST', endpoint: 'http://localhost:8080', defaultEnabled: false },
     { id: 'cloudrun', port: 8080, protocol: 'gRPC', env_var: 'CLOUD_RUN_EMULATOR_HOST', endpoint: 'localhost:8080', defaultEnabled: false },
+    { id: 'workflows', port: 8080, protocol: 'REST', env_var: 'WORKFLOWS_EMULATOR_HOST', endpoint: 'http://localhost:8080', defaultEnabled: true },
 ];
 
 function ServiceIcon({ id, size = 18 }) {

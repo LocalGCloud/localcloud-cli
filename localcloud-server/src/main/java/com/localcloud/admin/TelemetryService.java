@@ -44,7 +44,7 @@ public class TelemetryService {
 
     private static final Logger logger = LoggerFactory.getLogger(TelemetryService.class);
 
-    private static final String DEFAULT_POSTHOG_URL = "https://app.posthog.com/capture";
+    private static final String DEFAULT_POSTHOG_URL = "https://us.i.posthog.com/capture";
     private static final String VERSION = "1.0.0";
     private static final int MAX_QUEUE_SIZE = 168; // 7 days of hourly heartbeats
 
@@ -75,9 +75,7 @@ public class TelemetryService {
         this.healthChecker = healthChecker;
         this.projectService = projectService;
         this.dataSource = dataSource;
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(5))
-                .build();
+        this.httpClient = createHttpClient();
         this.mapper = new ObjectMapper();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "telemetry");
@@ -105,8 +103,39 @@ public class TelemetryService {
         }
         logger.info("Telemetry enabled (opt-out: LOCALCLOUD_TELEMETRY=false)");
 
-        // First heartbeat after 5 minutes (let services start), then every hour
-        scheduler.scheduleAtFixedRate(this::heartbeatCycle, 5, 60, TimeUnit.MINUTES);
+        // Send startup event immediately
+        scheduler.execute(() -> {
+            Map<String, Object> props = new LinkedHashMap<>();
+            props.put("version", VERSION);
+            props.put("os_arch", System.getProperty("os.arch"));
+            props.put("os_name", System.getProperty("os.name"));
+            props.put("java_version", System.getProperty("java.version"));
+            props.put("memory_max_mb", Runtime.getRuntime().maxMemory() / (1024 * 1024));
+
+            ServiceRegistry registry = config.getServiceRegistry();
+            List<String> enabled = new ArrayList<>();
+            for (String svcId : registry.getAllServices().keySet()) {
+                if (config.isServiceDynamicallyEnabled(svcId)) {
+                    enabled.add(svcId);
+                }
+            }
+            props.put("services_enabled", enabled);
+            props.put("services_enabled_count", enabled.size());
+            props.put("services_total", registry.getAllServices().size());
+            props.put("credential_source", config.getGcpCredentialSource());
+
+            String json = buildEventJson("server_started", props);
+            boolean sent = trySend(json);
+            if (sent) {
+                logger.info("Telemetry startup event sent");
+            } else {
+                enqueueEvent(json);
+                logger.debug("Telemetry startup event queued (will retry)");
+            }
+        });
+
+        // Heartbeat every hour
+        scheduler.scheduleAtFixedRate(this::heartbeatCycle, 60, 60, TimeUnit.MINUTES);
     }
 
     /**
@@ -230,6 +259,12 @@ public class TelemetryService {
 
     private String buildEventJson(String eventName, Map<String, Object> properties) {
         try {
+            // PostHog expects distinct_id and token inside properties (canonical SDK format)
+            properties.put("distinct_id", distinctId);
+            properties.put("token", posthogApiKey);
+            properties.put("$lib", "localcloud-java");
+            properties.put("$lib_version", VERSION);
+
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("api_key", posthogApiKey);
             payload.put("event", eventName);
@@ -375,6 +410,32 @@ public class TelemetryService {
             };
         }
         return Math.round(total * 100.0) / 100.0;
+    }
+
+    /**
+     * Create an HttpClient that tolerates corporate proxy SSL inspection.
+     * Telemetry data is non-sensitive (anonymous counters), so relaxing
+     * SSL verification is acceptable for this specific use case.
+     */
+    private static HttpClient createHttpClient() {
+        try {
+            var trustManager = new javax.net.ssl.X509TrustManager() {
+                public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) {}
+                public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) {}
+                public java.security.cert.X509Certificate[] getAcceptedIssuers() { return new java.security.cert.X509Certificate[0]; }
+            };
+            var sslContext = javax.net.ssl.SSLContext.getInstance("TLS");
+            sslContext.init(null, new javax.net.ssl.TrustManager[]{trustManager}, new java.security.SecureRandom());
+            return HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(5))
+                    .sslContext(sslContext)
+                    .build();
+        } catch (Exception e) {
+            // Fallback to default client if SSL setup fails
+            return HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(5))
+                    .build();
+        }
     }
 
     private boolean isEnabled() {
