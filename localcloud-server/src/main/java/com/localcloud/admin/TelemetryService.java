@@ -95,6 +95,15 @@ public class TelemetryService {
     public void start() {
         if (!isEnabled()) {
             logger.info("Telemetry disabled (LOCALCLOUD_TELEMETRY=false)");
+            // Send one opt-out ping so we know how many instances exist but opted out
+            if (!posthogApiKey.isEmpty()) {
+                scheduler.execute(() -> {
+                    Map<String, Object> props = new LinkedHashMap<>();
+                    props.put("version", VERSION);
+                    props.put("os_arch", System.getProperty("os.arch"));
+                    trySend(buildEventJson("telemetry_disabled", props));
+                });
+            }
             return;
         }
         if (posthogApiKey.isEmpty()) {

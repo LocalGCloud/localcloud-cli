@@ -21,6 +21,8 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { syntaxHighlighting, indentOnInput, bracketMatching, foldGutter, foldKeymap, HighlightStyle } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
+import { linter, lintGutter } from '@codemirror/lint';
+import { getUnsupportedKeywords, getWarningMessage } from '../data/compatibility.js';
 
 // ─── SQL Dialect Map ───────────────────────────────────────────────────
 const DIALECTS = {
@@ -32,6 +34,37 @@ const DIALECTS = {
 
 function getDialect(name) {
     return DIALECTS[name] || StandardSQL;
+}
+
+// ─── Compatibility Linter ─────────────────────────────────────────────
+function createCompatibilityLinter(dialect) {
+    const keywords = getUnsupportedKeywords(dialect);
+    if (keywords.length === 0) return [];
+
+    // Build regex patterns for each unsupported keyword (word-boundary match)
+    const patterns = keywords.map(kw => ({
+        regex: new RegExp('\\b' + kw.replace(/\./g, '\\.') + '\\b', 'gi'),
+        keyword: kw,
+    }));
+
+    return linter((view) => {
+        const text = view.state.doc.toString();
+        const diagnostics = [];
+        for (const { regex, keyword } of patterns) {
+            regex.lastIndex = 0;
+            let match;
+            while ((match = regex.exec(text))) {
+                const msg = getWarningMessage(dialect, keyword);
+                diagnostics.push({
+                    from: match.index,
+                    to: match.index + match[0].length,
+                    severity: 'warning',
+                    message: `${keyword} is not supported by the ${dialect === 'bigquery' ? 'BigQuery' : 'Spanner'} emulator. ${msg || ''}`.trim(),
+                });
+            }
+        }
+        return diagnostics;
+    }, { delay: 500 });
 }
 
 // ─── Theme (uses CSS variables — auto-switches with data-theme) ───────
@@ -253,6 +286,10 @@ export default function CodeEditor(props) {
             // Theme + syntax highlighting
             editorTheme,
             syntaxHighlighting(highlightStyle),
+
+            // Compatibility linter (yellow warnings for unsupported SQL)
+            lintGutter(),
+            createCompatibilityLinter(props.dialect || 'postgresql'),
 
             // Placeholder
             props.placeholder ? placeholderExt(props.placeholder) : [],

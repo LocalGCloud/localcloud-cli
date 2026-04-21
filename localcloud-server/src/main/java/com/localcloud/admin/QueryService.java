@@ -223,7 +223,7 @@ public class QueryService {
             @SuppressWarnings("unchecked")
             Map<String, Object> error = (Map<String, Object>) queryResp.get("error");
             if (error != null) {
-                return errorResponse("BigQuery error: " + error.get("message"));
+                return errorResponse(enrichErrorMessage("bigquery", String.valueOf(error.get("message"))));
             }
 
             // Parse schema fields into columns
@@ -270,7 +270,7 @@ public class QueryService {
 
         } catch (Exception e) {
             logger.warn("BigQuery query failed: {}", e.getMessage());
-            return errorResponse("BigQuery query failed: " + e.getMessage());
+            return errorResponse(enrichErrorMessage("bigquery", e.getMessage()));
         }
     }
 
@@ -425,7 +425,7 @@ public class QueryService {
 
         } catch (Exception e) {
             logger.warn("Spanner query failed: {}", e.getMessage());
-            return errorResponse("Spanner query failed: " + e.getMessage());
+            return errorResponse(enrichErrorMessage("spanner", e.getMessage()));
         } finally {
             if (sessionName != null) {
                 try {
@@ -1128,6 +1128,44 @@ public class QueryService {
     /** Quote a string literal for PostgreSQL, preventing SQL injection. */
     private String quoteStringLiteral(String value) {
         return "'" + value.replace("'", "''") + "'";
+    }
+
+    /**
+     * Enrich raw emulator error messages with user-friendly explanations.
+     */
+    private String enrichErrorMessage(String service, String rawError) {
+        if (rawError == null) return "Unknown error";
+
+        if ("bigquery".equals(service)) {
+            // DuckDB: "Catalog Error: Scalar Function with name X does not exist"
+            java.util.regex.Matcher fnMatch = java.util.regex.Pattern.compile(
+                    "(?i)Scalar Function with name (\\w+) does not exist").matcher(rawError);
+            if (fnMatch.find()) {
+                String fn = fnMatch.group(1).toUpperCase();
+                return "Function " + fn + " is not supported by the BigQuery emulator (DuckDB). " +
+                        switch (fn) {
+                            case "APPROX_COUNT_DISTINCT" -> "Use COUNT(DISTINCT ...) instead.";
+                            case "SAFE_DIVIDE" -> "Use CASE WHEN divisor = 0 THEN NULL ELSE a/b END.";
+                            case "SAFE_CAST" -> "Use TRY_CAST(...) instead.";
+                            case "GENERATE_UUID" -> "Use gen_random_uuid() instead.";
+                            default -> "Check DuckDB docs for alternatives.";
+                        };
+            }
+            if (rawError.contains("GEOGRAPHY") || rawError.contains("geography")) {
+                return "GEOGRAPHY type is not supported by the BigQuery emulator (DuckDB).";
+            }
+            if (rawError.contains("BIGNUMERIC") || rawError.contains("bignumeric")) {
+                return "BIGNUMERIC type is not supported by the BigQuery emulator. Use DECIMAL or DOUBLE instead.";
+            }
+        }
+
+        if ("spanner".equals(service)) {
+            if (rawError.toUpperCase().contains("MERGE")) {
+                return "MERGE is not supported by the Spanner emulator. Use separate INSERT/UPDATE/DELETE statements.";
+            }
+        }
+
+        return rawError;
     }
 
     private HttpResponse errorResponse(String message) {
