@@ -170,7 +170,14 @@ public class LocalCloudApplication {
 
         // Register facade gRPC services (backed by PostgreSQL, running in-process)
         // Enable HTTP/JSON transcoding so gRPC services are also accessible via REST
-        // (uses google.api.http annotations from proto files — enables gcloud CLI support)
+        // (uses google.api.http annotations from proto files — enables gcloud CLI support).
+        //
+        // DUAL REGISTRATION: Secret Manager and Cloud Tasks register both gRPC (here)
+        // and explicit REST services (annotatedService below). The explicit REST handlers
+        // are registered FIRST and take priority in Armeria's route resolution, handling
+        // Terraform-compatible CRUD operations. gRPC transcoding handles remaining
+        // operations (e.g. secret versions, task operations) that the REST services
+        // don't explicitly cover.
         var grpcBuilder = GrpcService.builder()
                 .enableHttpJsonTranscoding(true);
         boolean hasGrpcServices = false;
@@ -180,6 +187,9 @@ public class LocalCloudApplication {
             secretManagerEmulator.start();
             grpcBuilder.addService(secretManagerEmulator.getServiceImpl());
             gateway.registerGrpcEmulator(secretManagerEmulator, secretManagerEmulator.getServiceImpl());
+            // REST endpoints for Terraform compatibility
+            sb.annotatedService("/v1", new com.localcloud.emulators.secretmanager.SecretManagerRestService(
+                    secretManagerEmulator.getStore(), secretManagerEmulator));
             hasGrpcServices = true;
             logger.info("Secret Manager facade registered on gateway port {}", config.getGatewayPort());
         }
@@ -189,6 +199,9 @@ public class LocalCloudApplication {
             cloudTasksEmulator.start();
             grpcBuilder.addService(cloudTasksEmulator.getServiceImpl());
             gateway.registerGrpcEmulator(cloudTasksEmulator, cloudTasksEmulator.getServiceImpl());
+            // REST endpoints for Terraform compatibility
+            sb.annotatedService("/v2", new com.localcloud.emulators.cloudtasks.CloudTasksRestService(
+                    cloudTasksEmulator.getStore(), cloudTasksEmulator));
             hasGrpcServices = true;
             logger.info("Cloud Tasks facade registered on gateway port {}", config.getGatewayPort());
         }
@@ -267,7 +280,11 @@ public class LocalCloudApplication {
         if (config.isServiceEnabled("workflows")) {
             WorkflowsEmulator workflowsEmulator = new WorkflowsEmulator(dataSource);
             workflowsEmulator.start();
-            gateway.registerGrpcEmulator(workflowsEmulator, new io.grpc.BindableService[0]);
+            var workflowsGrpc = new com.localcloud.emulators.workflows.WorkflowsGrpcServiceImpl(workflowsEmulator.getWorkflowsService());
+            var executionsGrpc = new com.localcloud.emulators.workflows.ExecutionsGrpcServiceImpl(workflowsEmulator.getWorkflowsService());
+            grpcBuilder.addService(workflowsGrpc);
+            grpcBuilder.addService(executionsGrpc);
+            gateway.registerGrpcEmulator(workflowsEmulator, workflowsGrpc, executionsGrpc);
 
             // Workflow env vars and connector services (register before callbacks to avoid path conflicts)
             var envVarsRepo = new WorkflowEnvVarsRepository(dataSource);
