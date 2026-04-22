@@ -115,23 +115,33 @@ public class WorkflowExecutor {
      * Execute a single step based on its type.
      */
     private void executeStep(WorkflowDefinition.StepDef step) {
-        switch (step.getType()) {
-            case "assign" -> executeAssign(step);
-            case "call" -> executeCall(step);
-            case "switch" -> executeSwitch(step);
-            case "for" -> executeFor(step);
-            case "parallel" -> executeParallel(step);
-            case "try" -> executeTry(step);
-            case "raise" -> executeRaise(step);
-            case "return" -> executeReturn(step);
-            case "next" -> executeNext(step);
-            case "steps" -> {
-                Object stepsObj = step.get("steps");
-                if (stepsObj instanceof List<?> list) {
-                    executeSteps(parseInlineSteps(list));
+        context.pushStepChain(step.getName());
+        try {
+            switch (step.getType()) {
+                case "assign" -> executeAssign(step);
+                case "call" -> executeCall(step);
+                case "switch" -> executeSwitch(step);
+                case "for" -> executeFor(step);
+                case "parallel" -> executeParallel(step);
+                case "try" -> executeTry(step);
+                case "raise" -> executeRaise(step);
+                case "return" -> executeReturn(step);
+                case "next" -> executeNext(step);
+                case "steps" -> {
+                    Object stepsObj = step.get("steps");
+                    if (stepsObj instanceof List<?> list) {
+                        executeSteps(parseInlineSteps(list));
+                    }
                 }
+                default -> logger.warn("Unknown step type: {} in step {}", step.getType(), step.getName());
             }
-            default -> logger.warn("Unknown step type: {} in step {}", step.getType(), step.getName());
+        } catch (WorkflowException e) {
+            if (e.getWorkflowStackTrace() == null) {
+                e.setWorkflowStackTrace(context.getStepChain());
+            }
+            throw e;
+        } finally {
+            context.popStepChain();
         }
     }
 

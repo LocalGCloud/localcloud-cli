@@ -1,5 +1,6 @@
 package com.localcloud.emulators.workflows.engine;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -9,6 +10,7 @@ import java.util.Map;
 public class WorkflowException extends RuntimeException {
     private final String code;
     private final Map<String, Object> tags;
+    private List<String> workflowStackTrace;
 
     public WorkflowException(String message) {
         super(message);
@@ -37,11 +39,15 @@ public class WorkflowException extends RuntimeException {
     public String getCode() { return code; }
     public Map<String, Object> getTags() { return tags; }
 
+    public void setWorkflowStackTrace(List<String> stackTrace) { this.workflowStackTrace = stackTrace; }
+    public List<String> getWorkflowStackTrace() { return workflowStackTrace; }
+
     public Map<String, Object> toErrorMap() {
         Map<String, Object> error = new java.util.LinkedHashMap<>();
         error.put("code", code);
         error.put("message", getMessage());
         if (tags != null) error.put("tags", tags);
+        if (workflowStackTrace != null && !workflowStackTrace.isEmpty()) error.put("stack_trace", workflowStackTrace);
         return error;
     }
 }

@@ -387,4 +387,29 @@ class WorkflowExecutorTest {
             """;
         assertEquals(2, runWorkflow(yaml));
     }
+
+    @Test
+    void testErrorStackTrace() {
+        String yaml = """
+            main:
+              steps:
+                - call_sub:
+                    call: inner
+                    args: {}
+                    result: r
+            inner:
+              params: []
+              steps:
+                - fail:
+                    raise:
+                      code: "TestError"
+                      message: "deliberate"
+            """;
+        WorkflowException ex = assertThrows(WorkflowException.class, () -> runWorkflow(yaml));
+        Map<String, Object> error = ex.toErrorMap();
+        assertTrue(error.containsKey("stack_trace"), "Error should contain stack_trace");
+        @SuppressWarnings("unchecked")
+        List<String> stack = (List<String>) error.get("stack_trace");
+        assertFalse(stack.isEmpty());
+    }
 }

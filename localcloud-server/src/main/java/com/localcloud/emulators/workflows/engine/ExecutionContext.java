@@ -13,6 +13,7 @@ public class ExecutionContext {
     private volatile String state = "ACTIVE";
     private volatile int callDepth = 0;
     private static final int MAX_CALL_DEPTH = 20;
+    private final Deque<String> stepChain = new ArrayDeque<>();
 
     public ExecutionContext() {
         this.scopeStack = new ArrayDeque<>();
@@ -30,7 +31,7 @@ public class ExecutionContext {
 
     // Private constructor for child contexts
     private ExecutionContext(Map<String, Object> parentVars, List<Map<String, Object>> sharedStepHistory,
-                             String state, int callDepth) {
+                             String state, int callDepth, Deque<String> parentStepChain) {
         this.scopeStack = new ArrayDeque<>();
         Map<String, Object> scope = Collections.synchronizedMap(new LinkedHashMap<>());
         if (parentVars != null) scope.putAll(parentVars);
@@ -38,6 +39,7 @@ public class ExecutionContext {
         this.stepHistory = sharedStepHistory; // Share step history across parallel tasks
         this.state = state;
         this.callDepth = callDepth;
+        this.stepChain.addAll(parentStepChain);
     }
 
     /**
@@ -48,7 +50,7 @@ public class ExecutionContext {
     public ExecutionContext createChildContext(Map<String, Object> additionalVars) {
         Map<String, Object> snapshot = getAllVariables();
         if (additionalVars != null) snapshot.putAll(additionalVars);
-        return new ExecutionContext(snapshot, this.stepHistory, this.state, this.callDepth);
+        return new ExecutionContext(snapshot, this.stepHistory, this.state, this.callDepth, this.stepChain);
     }
 
     // --- Variable management ---
@@ -121,5 +123,19 @@ public class ExecutionContext {
 
     public List<Map<String, Object>> getStepHistory() {
         return Collections.unmodifiableList(stepHistory);
+    }
+
+    public synchronized void pushStepChain(String entry) {
+        stepChain.push(entry);
+    }
+
+    public synchronized void popStepChain() {
+        if (!stepChain.isEmpty()) stepChain.pop();
+    }
+
+    public synchronized List<String> getStepChain() {
+        List<String> result = new ArrayList<>(stepChain);
+        Collections.reverse(result);
+        return result;
     }
 }
