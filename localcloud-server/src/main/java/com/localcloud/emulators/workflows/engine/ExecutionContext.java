@@ -2,6 +2,7 @@ package com.localcloud.emulators.workflows.engine;
 
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Manages variable scopes (stack-based for subworkflows) and execution state.
@@ -14,6 +15,8 @@ public class ExecutionContext {
     private volatile int callDepth = 0;
     private static final int MAX_CALL_DEPTH = 20;
     private final Deque<String> stepChain = new ArrayDeque<>();
+    private Map<String, Object> sharedVars;
+    private ReentrantLock sharedLock;
 
     public ExecutionContext() {
         this.scopeStack = new ArrayDeque<>();
@@ -53,13 +56,35 @@ public class ExecutionContext {
         return new ExecutionContext(snapshot, this.stepHistory, this.state, this.callDepth, this.stepChain);
     }
 
+    /**
+     * Create a child context that shares specified variables with other children via a shared map.
+     * Reads and writes to shared variables are synchronized via the provided lock.
+     */
+    public ExecutionContext createChildContextWithShared(Map<String, Object> additionalVars,
+                                                         Map<String, Object> sharedVars,
+                                                         ReentrantLock sharedLock) {
+        ExecutionContext child = createChildContext(additionalVars);
+        child.sharedVars = sharedVars;
+        child.sharedLock = sharedLock;
+        return child;
+    }
+
     // --- Variable management ---
 
     public synchronized void setVariable(String name, Object value) {
+        if (sharedVars != null && sharedVars.containsKey(name)) {
+            sharedLock.lock();
+            try { sharedVars.put(name, value); } finally { sharedLock.unlock(); }
+            return;
+        }
         scopeStack.peek().put(name, value);
     }
 
     public synchronized Object getVariable(String name) {
+        if (sharedVars != null && sharedVars.containsKey(name)) {
+            sharedLock.lock();
+            try { return sharedVars.get(name); } finally { sharedLock.unlock(); }
+        }
         for (Map<String, Object> scope : scopeStack) {
             if (scope.containsKey(name)) return scope.get(name);
         }
@@ -67,6 +92,9 @@ public class ExecutionContext {
     }
 
     public synchronized boolean hasVariable(String name) {
+        if (sharedVars != null && sharedVars.containsKey(name)) {
+            return true;
+        }
         for (Map<String, Object> scope : scopeStack) {
             if (scope.containsKey(name)) return true;
         }
@@ -79,6 +107,10 @@ public class ExecutionContext {
         Collections.reverse(scopes);
         for (Map<String, Object> scope : scopes) {
             merged.putAll(scope);
+        }
+        if (sharedVars != null) {
+            sharedLock.lock();
+            try { merged.putAll(sharedVars); } finally { sharedLock.unlock(); }
         }
         return merged;
     }

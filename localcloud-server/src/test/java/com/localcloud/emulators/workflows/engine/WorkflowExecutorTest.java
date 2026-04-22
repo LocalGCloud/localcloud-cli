@@ -412,4 +412,30 @@ class WorkflowExecutorTest {
         List<String> stack = (List<String>) error.get("stack_trace");
         assertFalse(stack.isEmpty());
     }
+
+    @Test
+    void testParallelSharedVariables() {
+        String yaml = """
+            main:
+              steps:
+                - init:
+                    assign:
+                      - total: 0
+                      - items: [10, 20, 30]
+                - aggregate:
+                    parallel:
+                      shared: [total]
+                      for:
+                        value: item
+                        in: ${items}
+                        steps:
+                          - add:
+                              assign:
+                                - total: ${total + item}
+                - done:
+                    return: ${total}
+            """;
+        Object result = runWorkflow(yaml);
+        assertEquals(60, result);
+    }
 }

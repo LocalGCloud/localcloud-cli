@@ -299,6 +299,23 @@ public class WorkflowExecutor {
         }
         concurrencyLimit = Math.min(concurrencyLimit, 10);
 
+        // Parse shared variable names
+        List<String> sharedVarNames = parallelConfig.containsKey("shared")
+            ? ((List<?>) parallelConfig.get("shared")).stream().map(String::valueOf).toList()
+            : Collections.emptyList();
+
+        Map<String, Object> sharedVars = null;
+        java.util.concurrent.locks.ReentrantLock sharedLock = null;
+        if (!sharedVarNames.isEmpty()) {
+            sharedVars = new java.util.concurrent.ConcurrentHashMap<>();
+            sharedLock = new java.util.concurrent.locks.ReentrantLock();
+            for (String name : sharedVarNames) {
+                Object val = context.getVariable(name);
+                if (val != null) sharedVars.put(name, val);
+                else sharedVars.put(name, 0); // default to 0 for unset shared vars
+            }
+        }
+
         // Parallel for loop
         if (parallelConfig.containsKey("for")) {
             Map<String, Object> forConfig = (Map<String, Object>) parallelConfig.get("for");
@@ -317,14 +334,24 @@ public class WorkflowExecutor {
                 Semaphore semaphore = new Semaphore(concurrencyLimit);
                 final List<WorkflowDefinition.StepDef> finalBodySteps = bodySteps;
 
+                final var finalSharedLock = sharedLock;
                 for (Object item : items) {
                     try { semaphore.acquire(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
-                    // Each parallel task gets its own isolated child context
-                    ExecutionContext childCtx = context.createChildContext(Map.of(valueVar, item));
+                    // Each parallel task gets its own child context (with shared vars if declared)
+                    ExecutionContext childCtx = sharedVars != null
+                        ? context.createChildContextWithShared(Map.of(valueVar, item), sharedVars, sharedLock)
+                        : context.createChildContext(Map.of(valueVar, item));
                     WorkflowExecutor childExecutor = new WorkflowExecutor(definition, childCtx, stdlib);
                     futures.add(executor.submit(() -> {
                         try {
-                            childExecutor.executeSteps(finalBodySteps);
+                            if (finalSharedLock != null) {
+                                // Serialize execution of steps that access shared variables
+                                // to prevent read-modify-write races on shared state
+                                finalSharedLock.lock();
+                                try { childExecutor.executeSteps(finalBodySteps); } finally { finalSharedLock.unlock(); }
+                            } else {
+                                childExecutor.executeSteps(finalBodySteps);
+                            }
                         } finally {
                             semaphore.release();
                         }
@@ -339,6 +366,13 @@ public class WorkflowExecutor {
                         throw new WorkflowException("ParallelError", e.getCause().getMessage());
                     } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
                 }
+
+                // Merge shared vars back to parent context
+                if (sharedVars != null) {
+                    for (Map.Entry<String, Object> entry : sharedVars.entrySet()) {
+                        context.setVariable(entry.getKey(), entry.getValue());
+                    }
+                }
             } finally {
                 executor.shutdown();
             }
@@ -350,15 +384,25 @@ public class WorkflowExecutor {
             try {
                 List<Future<?>> futures = new ArrayList<>();
 
+                final var finalSharedLock2 = sharedLock;
                 for (Object branch : branches) {
                     if (branch instanceof Map<?, ?> branchMap) {
                         Object stepsObj = ((Map<?, ?>) branchMap).values().iterator().next();
                         if (stepsObj instanceof Map<?, ?> branchBody && branchBody.containsKey("steps")) {
                             List<WorkflowDefinition.StepDef> branchSteps = parseInlineSteps((List<?>) branchBody.get("steps"));
-                            // Each branch gets its own isolated child context
-                            ExecutionContext childCtx = context.createChildContext(Map.of());
+                            // Each branch gets its own child context (with shared vars if declared)
+                            ExecutionContext childCtx = sharedVars != null
+                                ? context.createChildContextWithShared(Map.of(), sharedVars, sharedLock)
+                                : context.createChildContext(Map.of());
                             WorkflowExecutor childExecutor = new WorkflowExecutor(definition, childCtx, stdlib);
-                            futures.add(executor.submit(() -> childExecutor.executeSteps(branchSteps)));
+                            futures.add(executor.submit(() -> {
+                                if (finalSharedLock2 != null) {
+                                    finalSharedLock2.lock();
+                                    try { childExecutor.executeSteps(branchSteps); } finally { finalSharedLock2.unlock(); }
+                                } else {
+                                    childExecutor.executeSteps(branchSteps);
+                                }
+                            }));
                         }
                     }
                 }
@@ -368,6 +412,13 @@ public class WorkflowExecutor {
                         if (e.getCause() instanceof WorkflowException we) throw we;
                         throw new WorkflowException("ParallelError", e.getCause().getMessage());
                     } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                }
+
+                // Merge shared vars back to parent context
+                if (sharedVars != null) {
+                    for (Map.Entry<String, Object> entry : sharedVars.entrySet()) {
+                        context.setVariable(entry.getKey(), entry.getValue());
+                    }
                 }
             } finally {
                 executor.shutdown();
