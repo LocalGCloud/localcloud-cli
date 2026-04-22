@@ -23,9 +23,14 @@ public class ConnectorRegistry {
             .connectTimeout(Duration.ofSeconds(10)).build();
 
     private final Map<String, ConnectorDef> connectors = new HashMap<>();
+    private java.util.function.BiFunction<String, Map<String, Object>, Object> childWorkflowRunner;
 
     public ConnectorRegistry() {
         registerDefaults();
+    }
+
+    public void setChildWorkflowRunner(java.util.function.BiFunction<String, Map<String, Object>, Object> runner) {
+        this.childWorkflowRunner = runner;
     }
 
     private void registerDefaults() {
@@ -63,6 +68,10 @@ public class ConnectorRegistry {
         // Firestore
         register("googleapis.firestore.v1.projects.databases.documents.get", "GET",
                 "http://localhost:8086/v1/projects/{project}/databases/{database}/documents/{document}");
+
+        // Child workflow execution (handled specially in execute())
+        connectors.put("googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run",
+            new ConnectorDef("googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run", "POST", "__CHILD_WORKFLOW__"));
     }
 
     public void register(String connectorPath, String httpMethod, String urlTemplate) {
@@ -82,6 +91,19 @@ public class ConnectorRegistry {
         if (def == null) {
             logger.warn("Unknown connector: {}. Attempting direct HTTP call.", connectorPath);
             return executeUnknownConnector(connectorPath, args);
+        }
+
+        // Special handling for child workflow execution
+        if ("__CHILD_WORKFLOW__".equals(def.urlTemplate())) {
+            if (childWorkflowRunner == null) {
+                throw new RuntimeException("Child workflow execution not configured");
+            }
+            String workflowId = String.valueOf(args.getOrDefault("workflow_id",
+                args.getOrDefault("workflowId", "")));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> argument = args.get("argument") instanceof Map ?
+                (Map<String, Object>) args.get("argument") : Map.of();
+            return childWorkflowRunner.apply(workflowId, argument);
         }
 
         try {

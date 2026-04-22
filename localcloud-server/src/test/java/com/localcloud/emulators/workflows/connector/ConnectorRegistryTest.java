@@ -32,4 +32,10 @@ class ConnectorRegistryTest {
         registry.register("custom.service.v1.items.list", "GET", "http://localhost:9999/items");
         assertTrue(registry.has("custom.service.v1.items.list"));
     }
+
+    @Test
+    void testHasChildWorkflowConnector() {
+        ConnectorRegistry registry = new ConnectorRegistry();
+        assertTrue(registry.has("googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run"));
+    }
 }

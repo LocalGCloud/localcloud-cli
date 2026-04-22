@@ -32,6 +32,20 @@ public class WorkflowsServiceImpl {
         this.store = store;
         this.stdlib = new StdlibRegistry();
         this.connectorRegistry = new ConnectorRegistry();
+        this.connectorRegistry.setChildWorkflowRunner((workflowId, childArgs) -> {
+            try {
+                // Look up workflow — try multiple project/location combos
+                Map<String, Object> workflow = store.getWorkflow("local-project", "us-central1", workflowId);
+                if (workflow == null) throw new RuntimeException("Child workflow not found: " + workflowId);
+                String source = (String) workflow.get("source_contents");
+                WorkflowDefinition def = WorkflowParser.parse(source);
+                ExecutionContext ctx = new ExecutionContext(childArgs);
+                WorkflowExecutor executor = new WorkflowExecutor(def, ctx, this.stdlib);
+                return executor.execute();
+            } catch (Exception e) {
+                throw new RuntimeException("Child workflow execution failed: " + e.getMessage(), e);
+            }
+        });
         this.callbackManager = new CallbackManager();
         this.executionPool = Executors.newVirtualThreadPerTaskExecutor();
 
