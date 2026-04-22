@@ -440,4 +440,60 @@ class StdlibRegistryTest {
     void testRegistryGetNull() {
         assertNull(registry.get("nonexistent.func"));
     }
+
+    // --- hash ---
+
+    @Test
+    void testHashComputeChecksumSha256() {
+        String result = (String) call("hash.compute_checksum", "hello", "SHA-256");
+        assertEquals("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", result);
+    }
+
+    @Test
+    void testHashComputeChecksumMd5() {
+        String result = (String) call("hash.compute_checksum", "hello", "MD5");
+        assertEquals("5d41402abc4b2a76b9719d911017c592", result);
+    }
+
+    @Test
+    void testHashComputeHmacSha256() {
+        String result = (String) call("hash.compute_hmac", "hello", "secret", "SHA-256");
+        assertNotNull(result);
+        assertEquals(64, result.length());
+    }
+
+    @Test
+    void testHashComputeChecksumUnsupportedAlgorithm() {
+        assertThrows(RuntimeException.class, () -> call("hash.compute_checksum", "hello", "UNSUPPORTED"));
+    }
+
+    // --- time ---
+
+    @Test
+    void testTimeFormatDefault() {
+        String result = (String) call("time.format", 0.0);
+        assertTrue(result.startsWith("1970-01-01T00:00:00"));
+    }
+
+    @Test
+    void testTimeFormatWithTimezone() {
+        String result = (String) call("time.format", 0.0, "America/New_York");
+        assertTrue(result.contains("1969-12-31") || result.contains("1970-01-01"));
+    }
+
+    @Test
+    void testTimeParse() {
+        Object result = call("time.parse", "2026-04-22T12:00:00Z");
+        assertTrue(result instanceof Number);
+        double epoch = ((Number) result).doubleValue();
+        assertTrue(epoch > 1_700_000_000);
+    }
+
+    @Test
+    void testTimeRoundTrip() {
+        double now = System.currentTimeMillis() / 1000.0;
+        String formatted = (String) call("time.format", now);
+        double parsed = ((Number) call("time.parse", formatted)).doubleValue();
+        assertEquals(now, parsed, 1.0);
+    }
 }

@@ -21,6 +21,7 @@ public class StdlibRegistry {
         MapFunctions.register(this);
         TypeCastFunctions.register(this);
         EventsFunctions.register(this);
+        HashFunctions.register(this);
     }
 
     public void register(String name, Function<List<Object>, Object> func) {
