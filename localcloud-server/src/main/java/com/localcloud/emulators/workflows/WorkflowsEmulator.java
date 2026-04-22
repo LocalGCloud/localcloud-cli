@@ -3,10 +3,14 @@ package com.localcloud.emulators.workflows;
 import com.localcloud.emulators.AbstractEmulator;
 import com.localcloud.persistence.PostgresDataSource;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 public class WorkflowsEmulator extends AbstractEmulator {
     private final WorkflowsStore store;
     private final WorkflowsServiceImpl workflowsService;
     private final ExecutionsServiceImpl executionsService;
+    private WorkflowFileWatcher fileWatcher;
 
     public WorkflowsEmulator(PostgresDataSource dataSource) {
         super("workflows", "Cloud Workflows", 8080, "grpc", "WORKFLOWS_EMULATOR_HOST");
@@ -21,8 +25,24 @@ public class WorkflowsEmulator extends AbstractEmulator {
 
     @Override protected void doStart() throws Exception {
         logger.info("Workflows emulator initialized");
+
+        String workflowsDir = System.getenv("LOCALCLOUD_WORKFLOWS_DIR");
+        if (workflowsDir != null && !workflowsDir.isBlank()) {
+            Path dir = Path.of(workflowsDir);
+            if (Files.isDirectory(dir)) {
+                String projectId = System.getenv().getOrDefault("LOCALCLOUD_PROJECT", "local-project");
+                fileWatcher = new WorkflowFileWatcher(dir, store, projectId, "us-central1");
+                Thread watchThread = new Thread(fileWatcher, "workflow-file-watcher");
+                watchThread.setDaemon(true);
+                watchThread.start();
+                logger.info("Workflow hot-reload enabled for directory: {}", dir);
+            } else {
+                logger.warn("LOCALCLOUD_WORKFLOWS_DIR={} is not a valid directory, hot-reload disabled", workflowsDir);
+            }
+        }
     }
     @Override protected void doStop() {
+        if (fileWatcher != null) fileWatcher.stop();
         workflowsService.shutdown();
     }
     @Override protected void doReset() {
