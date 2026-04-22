@@ -69,6 +69,11 @@ public class WorkflowsServiceImpl {
 
     public Map<String, Object> createWorkflow(String projectId, String locationId, String workflowId,
                                                String sourceContents, String labelsJson, String serviceAccount) throws SQLException {
+        // Check source size limit
+        if (sourceContents.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > com.localcloud.emulators.workflows.engine.WorkflowLimits.MAX_WORKFLOW_SOURCE_BYTES) {
+            throw new IllegalArgumentException("Workflow source exceeds maximum size of 128 KB");
+        }
+
         // Validate YAML parses
         try {
             WorkflowParser.parse(sourceContents);
@@ -141,6 +146,11 @@ public class WorkflowsServiceImpl {
 
     public Map<String, Object> createExecution(String projectId, String locationId, String workflowId,
                                                 String argument) throws SQLException {
+        // Check argument size limit
+        if (argument != null && argument.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > com.localcloud.emulators.workflows.engine.WorkflowLimits.MAX_EXECUTION_ARGUMENT_BYTES) {
+            throw new IllegalArgumentException("Execution argument exceeds maximum size of 32 KB");
+        }
+
         Map<String, Object> workflow = store.getWorkflow(projectId, locationId, workflowId);
         if (workflow == null) {
             throw new IllegalArgumentException("Workflow not found: " + workflowId);

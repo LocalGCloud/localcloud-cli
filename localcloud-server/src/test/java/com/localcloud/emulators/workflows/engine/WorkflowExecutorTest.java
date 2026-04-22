@@ -414,6 +414,31 @@ class WorkflowExecutorTest {
     }
 
     @Test
+    void testStepLimitExceeded() {
+        // A workflow that will exceed 100,000 steps
+        String yaml = """
+            main:
+              steps:
+                - init:
+                    assign:
+                      - count: 0
+                - loop:
+                    for:
+                      value: n
+                      range: [1, 50001]
+                      steps:
+                        - inc:
+                            assign:
+                              - count: ${count + 1}
+                        - inc2:
+                            assign:
+                              - count: ${count + 0}
+            """;
+        WorkflowException ex = assertThrows(WorkflowException.class, () -> runWorkflow(yaml));
+        assertTrue(ex.getMessage().toLowerCase().contains("step limit") || ex.getMessage().contains("100000") || ex.getCode().contains("StepLimit"));
+    }
+
+    @Test
     void testParallelSharedVariables() {
         String yaml = """
             main:

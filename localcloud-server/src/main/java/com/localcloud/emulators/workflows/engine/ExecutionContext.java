@@ -15,6 +15,7 @@ public class ExecutionContext {
     private volatile int callDepth = 0;
     private static final int MAX_CALL_DEPTH = 20;
     private final Deque<String> stepChain = new ArrayDeque<>();
+    private int stepCount = 0;
     private Map<String, Object> sharedVars;
     private ReentrantLock sharedLock;
 
@@ -135,6 +136,10 @@ public class ExecutionContext {
     }
 
     public int getCallDepth() { return callDepth; }
+
+    public int incrementAndGetStepCount() {
+        return ++stepCount;
+    }
 
     // --- Execution state ---
 

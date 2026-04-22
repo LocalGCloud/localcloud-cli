@@ -115,6 +115,11 @@ public class WorkflowExecutor {
      * Execute a single step based on its type.
      */
     private void executeStep(WorkflowDefinition.StepDef step) {
+        int steps = context.incrementAndGetStepCount();
+        if (steps > WorkflowLimits.MAX_STEPS_PER_EXECUTION) {
+            throw new WorkflowException("StepLimitExceeded",
+                "Execution exceeded maximum step limit of " + WorkflowLimits.MAX_STEPS_PER_EXECUTION);
+        }
         context.pushStepChain(step.getName());
         try {
             switch (step.getType()) {
