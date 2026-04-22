@@ -239,13 +239,26 @@ public class WorkflowExecutor {
         Map<String, Object> forConfig = (Map<String, Object>) step.get("for");
         String valueVar = String.valueOf(forConfig.get("value"));
         String indexVar = forConfig.containsKey("index") ? String.valueOf(forConfig.get("index")) : null;
-        Object inObj = evaluateValue(forConfig.get("in"));
 
         List<?> items;
-        if (inObj instanceof List<?> list) {
-            items = list;
+        if (forConfig.containsKey("range")) {
+            Object rangeObj = evaluateValue(forConfig.get("range"));
+            if (rangeObj instanceof List<?> rangeList && rangeList.size() == 2) {
+                int start = ((Number) rangeList.get(0)).intValue();
+                int end = ((Number) rangeList.get(1)).intValue();
+                List<Integer> rangeItems = new ArrayList<>();
+                for (int r = start; r <= end; r++) rangeItems.add(r);
+                items = rangeItems;
+            } else {
+                throw new WorkflowException("TypeError", "for 'range' must be a list of [start, end]");
+            }
         } else {
-            throw new WorkflowException("TypeError", "for 'in' must be a list, got " + (inObj == null ? "null" : inObj.getClass().getSimpleName()));
+            Object inObj = evaluateValue(forConfig.get("in"));
+            if (inObj instanceof List<?> list) {
+                items = list;
+            } else {
+                throw new WorkflowException("TypeError", "for 'in' must be a list, got " + (inObj == null ? "null" : inObj.getClass().getSimpleName()));
+            }
         }
 
         List<WorkflowDefinition.StepDef> bodySteps = Collections.emptyList();

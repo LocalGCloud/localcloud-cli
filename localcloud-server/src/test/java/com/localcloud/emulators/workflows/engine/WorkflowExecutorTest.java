@@ -340,4 +340,51 @@ class WorkflowExecutorTest {
         Map<String, Object> input = Map.of("args", Map.of("key", "value"));
         assertEquals(Map.of("key", "value"), runWorkflow(yaml, input));
     }
+
+    // --- For range ---
+
+    @Test
+    void testForRange() {
+        String yaml = """
+            main:
+              steps:
+                - init:
+                    assign:
+                      - total: 0
+                - loop:
+                    for:
+                      value: n
+                      range: [1, 5]
+                      steps:
+                        - add:
+                            assign:
+                              - total: ${total + n}
+                - done:
+                    return: ${total}
+            """;
+        assertEquals(15, runWorkflow(yaml));
+    }
+
+    @Test
+    void testForRangeWithIndex() {
+        String yaml = """
+            main:
+              steps:
+                - init:
+                    assign:
+                      - last_idx: 0
+                - loop:
+                    for:
+                      value: n
+                      index: i
+                      range: [10, 12]
+                      steps:
+                        - track:
+                            assign:
+                              - last_idx: ${i}
+                - done:
+                    return: ${last_idx}
+            """;
+        assertEquals(2, runWorkflow(yaml));
+    }
 }
