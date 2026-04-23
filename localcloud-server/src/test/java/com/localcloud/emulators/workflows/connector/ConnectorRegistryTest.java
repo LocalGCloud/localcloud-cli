@@ -23,9 +23,16 @@ class ConnectorRegistryTest {
     @Test void testFirestoreRegistered() { assertTrue(registry.has("googleapis.firestore.v1.projects.databases.documents.get")); }
     @Test void testUnknownConnector() { assertFalse(registry.has("googleapis.unknown.v1.resources.list")); }
 
-    @Test void testUnknownConnectorThrows() {
-        assertThrows(RuntimeException.class, () ->
+    @Test void testUnknownGoogleapisConnectorAttemptsFallback() {
+        // googleapis.* unknown connectors attempt HTTP fallback instead of throwing
+        assertDoesNotThrow(() ->
             registry.execute("googleapis.unknown.v1.resources.list", java.util.Map.of()));
+    }
+
+    @Test void testNonGoogleapisConnectorThrows() {
+        // Non-googleapis connectors still throw immediately
+        assertThrows(RuntimeException.class, () ->
+            registry.execute("custom.unknown.v1.resources.list", java.util.Map.of()));
     }
 
     @Test void testCustomRegistration() {

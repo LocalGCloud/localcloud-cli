@@ -85,6 +85,12 @@
 #     curl -X POST http://localhost:8080/_localcloud/seed \
 #       -H "Content-Type: application/x-yaml" --data-binary @seed.yaml
 #
+# TERRAFORM
+# ---------
+#   Point Terraform at LocalCloud (zero .tf changes needed):
+#     eval $(curl -s 'http://localhost:8080/_localcloud/env?format=terraform')
+#     terraform init && terraform plan && terraform apply
+#
 # BUILD (for contributors)
 # ------------------------
 #   cd localcloud-server && ./gradlew shadowJar
@@ -97,8 +103,8 @@
 ARG SPANNER_EMULATOR_IMAGE=jaysen2apache/spanner-emulator-extended:latest
 ARG BIGQUERY_EMULATOR_IMAGE=jaysen2apache/bigquery-emulator-on-duckdb
 ARG GCLOUD_SDK_IMAGE=gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
-ARG GCS_EMULATOR_IMAGE=fsouza/fake-gcs-server:1.52.1
-ARG DOCKER_CLI_IMAGE=docker:27-cli
+ARG GCS_EMULATOR_IMAGE=fsouza/fake-gcs-server:1.54.0
+ARG DOCKER_CLI_IMAGE=docker:27.1-cli
 ARG JDK_IMAGE=eclipse-temurin:25-jdk
 
 # --- Named build stages for COPY --from references ---
@@ -154,7 +160,7 @@ COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 # Install k3d (lightweight k3s wrapper for GKE emulation)
 # Set --build-arg INCLUDE_K3D=false for slim images without GKE support
 ARG INCLUDE_K3D=true
-ARG K3D_VERSION=v5.7.5
+ARG K3D_VERSION=v5.8.3
 RUN if [ "$INCLUDE_K3D" = "true" ]; then \
       ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/') && \
       curl -fsSLk -o /usr/local/bin/k3d "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-${ARCH}" && \

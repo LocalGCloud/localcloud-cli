@@ -9,6 +9,7 @@
 #   envValuePrefix: "" for grpc (host:port), "http://" for rest (http://host:port)
 #   additionalPorts: optional map of extra ports the service exposes
 #   healthCheck: how to verify the external service is running
+#   terraformEnvVar: Terraform Google provider GOOGLE_*_CUSTOM_ENDPOINT name
 
 gateway:
   port: 8080
@@ -23,6 +24,7 @@ services:
     type: external
     defaultEnabled: true
     gcloudApiName: storage
+    terraformEnvVar: GOOGLE_STORAGE_CUSTOM_ENDPOINT
     healthCheck:
       type: tcp
 
@@ -35,6 +37,7 @@ services:
     type: external
     defaultEnabled: true
     gcloudApiName: pubsub
+    terraformEnvVar: GOOGLE_PUBSUB_CUSTOM_ENDPOINT
     healthCheck:
       type: http
 
@@ -47,6 +50,7 @@ services:
     type: external
     defaultEnabled: true
     gcloudApiName: firestore
+    terraformEnvVar: GOOGLE_FIRESTORE_CUSTOM_ENDPOINT
     healthCheck:
       type: http
 
@@ -60,6 +64,7 @@ services:
     defaultEnabled: true
     # No gcloudApiName: Bigtable emulator is gRPC data-plane only; gcloud bigtable
     # commands use the bigtableadmin REST API which the emulator does not serve.
+    terraformEnvVar: GOOGLE_BIGTABLE_CUSTOM_ENDPOINT
     healthCheck:
       type: tcp
 
@@ -73,6 +78,7 @@ services:
     defaultEnabled: true
     gcloudApiName: spanner
     gcloudPort: 9020
+    terraformEnvVar: GOOGLE_SPANNER_CUSTOM_ENDPOINT
     persistence: true
     dataDir: "/var/lib/localcloud/spanner-data"
     additionalPorts:
@@ -91,6 +97,7 @@ services:
     type: external
     defaultEnabled: true
     gcloudApiName: bigquery
+    terraformEnvVar: GOOGLE_BIGQUERY_CUSTOM_ENDPOINT
     additionalPorts:
       grpc: 9060
     healthCheck:
@@ -106,6 +113,7 @@ services:
     type: facade
     defaultEnabled: true
     gcloudApiName: secretmanager
+    terraformEnvVar: GOOGLE_SECRET_MANAGER_CUSTOM_ENDPOINT
 
   cloudtasks:
     displayName: "Cloud Tasks"
@@ -116,6 +124,7 @@ services:
     type: facade
     defaultEnabled: true
     gcloudApiName: cloudtasks
+    terraformEnvVar: GOOGLE_CLOUD_TASKS_CUSTOM_ENDPOINT
 
   logging:
     displayName: "Cloud Logging"
@@ -126,6 +135,7 @@ services:
     type: facade
     defaultEnabled: true
     gcloudApiName: logging
+    terraformEnvVar: GOOGLE_LOGGING_CUSTOM_ENDPOINT
 
   monitoring:
     displayName: "Cloud Monitoring"
@@ -136,6 +146,7 @@ services:
     type: facade
     defaultEnabled: true
     gcloudApiName: monitoring
+    terraformEnvVar: GOOGLE_MONITORING_CUSTOM_ENDPOINT
 
   gke:
     displayName: "GKE"
@@ -146,6 +157,7 @@ services:
     type: facade
     defaultEnabled: false
     gcloudApiName: container
+    terraformEnvVar: GOOGLE_CONTAINER_CUSTOM_ENDPOINT
     additionalPorts:
       k3d: 6443
 
@@ -158,6 +170,7 @@ services:
     type: facade
     defaultEnabled: false
     gcloudApiName: compute
+    terraformEnvVar: GOOGLE_COMPUTE_CUSTOM_ENDPOINT
 
   cloudrun:
     displayName: "Cloud Run"
@@ -168,6 +181,7 @@ services:
     type: facade
     defaultEnabled: false
     gcloudApiName: run
+    terraformEnvVar: GOOGLE_CLOUD_RUN_CUSTOM_ENDPOINT
 
   memorystore:
     displayName: "Memorystore (Redis)"
@@ -177,6 +191,7 @@ services:
     envValuePrefix: ""
     type: facade
     defaultEnabled: true
+    terraformEnvVar: GOOGLE_REDIS_CUSTOM_ENDPOINT
 
   workflows:
     displayName: "Cloud Workflows"
@@ -187,3 +202,4 @@ services:
     type: facade
     defaultEnabled: true
     gcloudApiName: workflows
+    terraformEnvVar: GOOGLE_WORKFLOWS_CUSTOM_ENDPOINT

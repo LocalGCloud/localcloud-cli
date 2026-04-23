@@ -64,13 +64,17 @@ public class AdminApiService {
         this.mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
+    // Terraform env var names are sourced from ServiceDefinition.terraformEnvVar()
+    // in services.yaml — no hardcoded map needed.
+
     /**
      * Return environment variables for all enabled emulator services.
-     * Supports three output formats via the {@code format} query parameter:
+     * Supports output formats via the {@code format} query parameter:
      * <ul>
      *   <li>{@code shell} (default) - {@code export KEY=VALUE} lines</li>
      *   <li>{@code json} - JSON object mapping variable names to values</li>
      *   <li>{@code docker-compose} - YAML snippet suitable for a compose file</li>
+     *   <li>{@code terraform} - {@code export GOOGLE_*_CUSTOM_ENDPOINT=...} lines for Terraform</li>
      * </ul>
      */
     @Get("/env")
@@ -126,6 +130,33 @@ public class AdminApiService {
                         sb.append("  ").append(e.getKey()).append(": \"")
                           .append(e.getValue()).append("\"\n");
                     }
+                    yield HttpResponse.of(HttpStatus.OK, MediaType.PLAIN_TEXT_UTF_8, sb.toString());
+                }
+                case "terraform" -> {
+                    // Terraform Google provider endpoint overrides
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("# LocalCloud Terraform environment — run:\n");
+                    sb.append("# eval $(curl -s http://localhost:8080/_localcloud/env?format=terraform)\n\n");
+                    for (Map.Entry<String, ServiceDefinition> entry : registry.getAllServices().entrySet()) {
+                        String service = entry.getKey();
+                        if (!config.isServiceEnabled(service)) continue;
+                        ServiceDefinition def = entry.getValue();
+                        String tfVar = def.terraformEnvVar();
+                        if (tfVar == null || tfVar.isEmpty()) continue;
+                        // Spanner uses REST port for Terraform (not gRPC)
+                        String endpoint;
+                        if ("spanner".equals(service) && def.additionalPorts().containsKey("rest")) {
+                            endpoint = "http://localhost:" + def.additionalPorts().get("rest");
+                        } else {
+                            endpoint = def.envValue("localhost");
+                            if (!endpoint.startsWith("http")) {
+                                endpoint = "http://" + endpoint;
+                            }
+                        }
+                        sb.append("export ").append(tfVar).append("=\"").append(endpoint).append("\"\n");
+                    }
+                    sb.append("export GOOGLE_PROJECT=\"").append(projectId).append("\"\n");
+                    sb.append("export GOOGLE_APPLICATION_CREDENTIALS=\"/dev/null\"\n");
                     yield HttpResponse.of(HttpStatus.OK, MediaType.PLAIN_TEXT_UTF_8, sb.toString());
                 }
                 default -> {

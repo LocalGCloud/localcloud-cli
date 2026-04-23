@@ -82,6 +82,10 @@ public class ConnectorRegistry {
         return connectors.containsKey(connectorPath);
     }
 
+    public Set<String> getAllConnectorPaths() {
+        return Collections.unmodifiableSet(connectors.keySet());
+    }
+
     /**
      * Execute a connector call. Maps args to URL template vars and body.
      */
@@ -157,16 +161,49 @@ public class ConnectorRegistry {
     }
 
     private Object executeUnknownConnector(String connectorPath, Map<String, Object> args) {
-        // Try to derive a URL from the connector path
-        // googleapis.service.version.resource.method → https://service.googleapis.com/version/...
         String[] parts = connectorPath.split("\\.");
-        if (parts.length >= 3 && "googleapis".equals(parts[0])) {
-            String service = parts[1];
-            String version = parts[2];
-            String url = "https://" + service + ".googleapis.com/" + version;
-            logger.warn("Attempting fallback HTTP call for unknown connector {} to {}", connectorPath, url);
+        if (parts.length < 3 || !"googleapis".equals(parts[0])) {
+            throw new RuntimeException("Unknown connector: " + connectorPath);
         }
-        throw new RuntimeException("Unknown connector: " + connectorPath + ". Add it to ConnectorRegistry or use http.post directly.");
+        String service = parts[1];
+        String version = parts[2];
+        // Build path from remaining parts
+        StringBuilder pathBuilder = new StringBuilder();
+        for (int i = 3; i < parts.length; i++) {
+            pathBuilder.append("/").append(parts[i]);
+        }
+        String url = "https://" + service + ".googleapis.com/" + version + pathBuilder;
+        logger.warn("Attempting fallback HTTP call for unknown connector {} to {}", connectorPath, url);
+
+        try {
+            // Substitute any path variables from args
+            for (Map.Entry<String, Object> entry : args.entrySet()) {
+                url = url.replace("{" + entry.getKey() + "}", String.valueOf(entry.getValue()));
+            }
+
+            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .timeout(Duration.ofSeconds(30));
+
+            Object body = args.get("body");
+            if (body != null) {
+                String bodyStr = body instanceof String ? (String) body : mapper.writeValueAsString(body);
+                reqBuilder.method("POST", HttpRequest.BodyPublishers.ofString(bodyStr));
+                reqBuilder.header("Content-Type", "application/json");
+            } else {
+                reqBuilder.GET();
+            }
+
+            HttpResponse<String> response = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+
+            Object result = response.body();
+            try {
+                result = mapper.readValue(response.body(), Object.class);
+            } catch (Exception ignored) {}
+            return result;
+        } catch (Exception e) {
+            throw new RuntimeException("Connector " + connectorPath + " fallback failed: " + e.getMessage(), e);
+        }
     }
 
     private record ConnectorDef(String path, String httpMethod, String urlTemplate) {}

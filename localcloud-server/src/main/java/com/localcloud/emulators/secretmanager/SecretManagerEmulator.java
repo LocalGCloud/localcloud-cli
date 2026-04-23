@@ -73,6 +73,10 @@ public class SecretManagerEmulator extends AbstractEmulator {
         return serviceImpl;
     }
 
+    public SecretManagerStore getStore() {
+        return store;
+    }
+
     // --- gRPC Service Implementation ---
 
     public class SecretManagerServiceImpl extends SecretManagerServiceGrpc.SecretManagerServiceImplBase {

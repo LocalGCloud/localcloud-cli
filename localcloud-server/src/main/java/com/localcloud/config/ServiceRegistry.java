@@ -56,13 +56,15 @@ public class ServiceRegistry {
      * @param gcloudPort     optional port override for gcloud REST endpoint (e.g. Spanner REST on 9020)
      * @param additionalPorts optional map of extra named ports
      * @param healthCheck    optional health check definition (external only)
+     * @param terraformEnvVar Terraform Google provider env var name (e.g. "GOOGLE_STORAGE_CUSTOM_ENDPOINT")
      */
     public record ServiceDefinition(
             String id, String displayName, int port, String protocol,
             String envVar, String envValuePrefix, String type,
             boolean defaultEnabled, String gcloudApiName, int gcloudPort,
             Map<String, Integer> additionalPorts,
-            HealthCheckDef healthCheck
+            HealthCheckDef healthCheck,
+            String terraformEnvVar
     ) {
         /**
          * Build the full environment variable value for a given host.
@@ -245,9 +247,12 @@ public class ServiceRegistry {
             healthCheck = new HealthCheckDef(hcType, hcPath, hcPort);
         }
 
+        String terraformEnvVar = (String) map.get("terraformEnvVar");
+
         return new ServiceDefinition(id, displayName, port, protocol,
                 envVar, envValuePrefix, type, defaultEnabled,
-                gcloudApiName, gcloudPort, additionalPorts, healthCheck);
+                gcloudApiName, gcloudPort, additionalPorts, healthCheck,
+                terraformEnvVar);
     }
 
     // ---- Lookup methods ----

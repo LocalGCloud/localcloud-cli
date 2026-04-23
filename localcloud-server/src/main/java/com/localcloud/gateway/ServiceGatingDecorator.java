@@ -25,14 +25,13 @@ public class ServiceGatingDecorator implements DecoratingHttpServiceFunction {
 
     private final LocalCloudConfig config;
 
-    // Map gRPC/REST path prefixes to service IDs
-    private static final Map<String, String> PATH_TO_SERVICE = Map.ofEntries(
+    // Map gRPC path prefixes to service IDs
+    private static final Map<String, String> GRPC_PATH_TO_SERVICE = Map.ofEntries(
         Map.entry("/google.cloud.secretmanager", "secretmanager"),
         Map.entry("/google.cloud.tasks", "cloudtasks"),
         Map.entry("/google.logging", "logging"),
         Map.entry("/google.monitoring", "monitoring"),
         Map.entry("/google.container", "gke"),
-        Map.entry("/compute.", "compute"),
         Map.entry("/google.cloud.run", "cloudrun"),
         Map.entry("/google.cloud.workflows", "workflows"),
         Map.entry("/google.cloud.redis", "memorystore")
@@ -58,18 +57,37 @@ public class ServiceGatingDecorator implements DecoratingHttpServiceFunction {
         }
 
         // Check if this path maps to a known facade service
-        for (Map.Entry<String, String> entry : PATH_TO_SERVICE.entrySet()) {
-            if (path.startsWith(entry.getKey())) {
-                String serviceId = entry.getValue();
-                if (!config.isServiceDynamicallyEnabled(serviceId)) {
-                    logger.debug("Service '{}' is disabled, returning 503 for path: {}", serviceId, path);
-                    return HttpResponse.of(HttpStatus.SERVICE_UNAVAILABLE, MediaType.JSON,
-                            "{\"error\":\"Service '" + serviceId + "' is disabled\"}");
-                }
-                break;
-            }
+        String serviceId = resolveService(path);
+        if (serviceId != null && !config.isServiceDynamicallyEnabled(serviceId)) {
+            logger.debug("Service '{}' is disabled, returning 503 for path: {}", serviceId, path);
+            return HttpResponse.of(HttpStatus.SERVICE_UNAVAILABLE, MediaType.JSON,
+                    "{\"error\":\"Service '" + serviceId + "' is disabled\"}");
         }
 
         return delegate.serve(ctx, req);
+    }
+
+    /**
+     * Resolve a request path to a service ID. Uses prefix matching for gRPC paths
+     * and service-specific path segment checks for REST paths to avoid false positives.
+     */
+    static String resolveService(String path) {
+        // gRPC service paths (dot-prefixed, unambiguous)
+        for (Map.Entry<String, String> entry : GRPC_PATH_TO_SERVICE.entrySet()) {
+            if (path.startsWith(entry.getKey())) {
+                return entry.getValue();
+            }
+        }
+        // REST paths — match on service-specific segments to avoid overly broad prefixes
+        if (path.startsWith("/v1/") && path.contains("/secrets")) {
+            return "secretmanager";
+        }
+        if (path.startsWith("/v2/") && path.contains("/queues")) {
+            return "cloudtasks";
+        }
+        if (path.startsWith("/compute/v1")) {
+            return "compute";
+        }
+        return null;
     }
 }

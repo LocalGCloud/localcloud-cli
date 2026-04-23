@@ -74,6 +74,10 @@ public class CloudTasksEmulator extends AbstractEmulator {
         return serviceImpl;
     }
 
+    public CloudTasksStore getStore() {
+        return store;
+    }
+
     // --- gRPC Service Implementation ---
 
     public class CloudTasksServiceImpl extends CloudTasksGrpc.CloudTasksImplBase {

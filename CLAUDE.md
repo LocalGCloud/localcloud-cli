@@ -60,6 +60,8 @@ Java 21 (LTS, primary): Follow standard conventions
 - Seed YAML supports both flat format (`gcs: ...`) and nested format (`services: { gcs: ... }`)
 - BigQuery emulator v2 is Python-based (DuckDB+SQLGlot), native on both arm64 and amd64
 - Container needs `-m 4g` memory limit for stable operation
+- Terraform integration via `GOOGLE_*_CUSTOM_ENDPOINT` env vars — `GET /_localcloud/env?format=terraform` outputs all overrides
+- Phase 1 Terraform resources verified: google_storage_bucket, google_pubsub_topic/subscription, google_bigquery_dataset/table, google_spanner_instance/database
 
 ## Recent Changes
 - 002-memorystore-emulator: Added Java 21 LTS (primary) + Netty codec-redis (RESP2 parser), Armeria (lifecycle), HikariCP (PostgreSQL pool), Jackson (JSONB)
@@ -107,3 +109,33 @@ Java 21 (LTS, primary): Follow standard conventions
 - Story files live in `openspec/` directory. Specs live in `specs/`.
 
 <!-- MANUAL ADDITIONS END -->
+
+<!-- gortex:communities:start -->
+<!-- gortex:skills:start -->
+## Community Skills
+
+| Area | Description | Skill |
+|------|-------------|-------|
+| Get | 178 symbols | `/gortex-get` |
+| Admin | 117 symbols | `/gortex-admin` |
+| Memorystore | 95 symbols | `/gortex-memorystore` |
+| Get | 87 symbols | `/gortex-get` |
+| Get | 73 symbols | `/gortex-get` |
+| Stdlib | 66 symbols | `/gortex-stdlib` |
+| Expression | 62 symbols | `/gortex-expression` |
+| Get | 43 symbols | `/gortex-get` |
+| Workflows | 36 symbols | `/gortex-workflows` |
+| Engine | 35 symbols | `/gortex-engine` |
+| Gateway | 30 symbols | `/gortex-gateway` |
+| Admin | 30 symbols | `/gortex-admin` |
+| Expression | 29 symbols | `/gortex-expression` |
+| Engine | 28 symbols | `/gortex-engine` |
+| Localcloud | 27 symbols | `/gortex-localcloud` |
+| Pages | 26 symbols | `/gortex-pages` |
+| Events | 24 symbols | `/gortex-events` |
+| Gateway | 23 symbols | `/gortex-gateway` |
+| Config | 23 symbols | `/gortex-config` |
+| Expression | 22 symbols | `/gortex-expression` |
+<!-- gortex:skills:end -->
+
+<!-- gortex:communities:end -->

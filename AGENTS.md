@@ -107,3 +107,33 @@ Java 21 (LTS, primary): Follow standard conventions
 - Story files live in `openspec/` directory. Specs live in `specs/`.
 
 <!-- MANUAL ADDITIONS END -->
+
+<!-- gortex:communities:start -->
+<!-- gortex:skills:start -->
+## Community Skills
+
+| Area | Description | Skill |
+|------|-------------|-------|
+| Get | 178 symbols | `/gortex-get` |
+| Admin | 117 symbols | `/gortex-admin` |
+| Memorystore | 95 symbols | `/gortex-memorystore` |
+| Get | 87 symbols | `/gortex-get` |
+| Get | 73 symbols | `/gortex-get` |
+| Stdlib | 66 symbols | `/gortex-stdlib` |
+| Expression | 62 symbols | `/gortex-expression` |
+| Get | 43 symbols | `/gortex-get` |
+| Workflows | 36 symbols | `/gortex-workflows` |
+| Engine | 35 symbols | `/gortex-engine` |
+| Gateway | 30 symbols | `/gortex-gateway` |
+| Admin | 30 symbols | `/gortex-admin` |
+| Expression | 29 symbols | `/gortex-expression` |
+| Engine | 28 symbols | `/gortex-engine` |
+| Localcloud | 27 symbols | `/gortex-localcloud` |
+| Pages | 26 symbols | `/gortex-pages` |
+| Events | 24 symbols | `/gortex-events` |
+| Gateway | 23 symbols | `/gortex-gateway` |
+| Config | 23 symbols | `/gortex-config` |
+| Expression | 22 symbols | `/gortex-expression` |
+<!-- gortex:skills:end -->
+
+<!-- gortex:communities:end -->
