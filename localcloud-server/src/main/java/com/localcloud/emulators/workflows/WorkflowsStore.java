@@ -131,17 +131,21 @@ public class WorkflowsStore {
         }
     }
 
-    public void updateExecutionState(String executionId, String state, String result, String error) throws SQLException {
+    public boolean updateExecutionState(String executionId, String state, String result, String error) throws SQLException {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
                 "UPDATE workflow_executions SET state = ?, result = ?::jsonb, error = ?::jsonb, end_time = CASE WHEN ? IN ('SUCCEEDED','FAILED','CANCELLED') THEN CURRENT_TIMESTAMP ELSE end_time END " +
-                "WHERE execution_id = ?")) {
+                "WHERE execution_id = ? AND state NOT IN ('SUCCEEDED', 'FAILED', 'CANCELLED')")) {
             ps.setString(1, state);
             ps.setString(2, result);
             ps.setString(3, error);
             ps.setString(4, state);
             ps.setString(5, executionId);
-            ps.executeUpdate();
+            int rowsUpdated = ps.executeUpdate();
+            if (rowsUpdated == 0) {
+                logger.warn("State update to '{}' skipped for execution {} — already in a terminal state", state, executionId);
+            }
+            return rowsUpdated > 0;
         }
     }
 

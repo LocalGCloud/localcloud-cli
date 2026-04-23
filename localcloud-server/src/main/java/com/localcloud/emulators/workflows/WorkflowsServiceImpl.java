@@ -12,6 +12,7 @@ import com.localcloud.emulators.workflows.stdlib.SysFunctions;
 import java.sql.SQLException;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * REST service implementation for Cloud Workflows management and execution APIs.
@@ -26,6 +27,7 @@ public class WorkflowsServiceImpl {
     private final ConnectorRegistry connectorRegistry;
     private final CallbackManager callbackManager;
     private final ExecutorService executionPool;
+    private final ConcurrentHashMap<String, ExecutionContext> activeExecutions = new ConcurrentHashMap<>();
     private WorkflowEnvVarsRepository envVarsRepository;
 
     public WorkflowsServiceImpl(WorkflowsStore store) {
@@ -195,6 +197,13 @@ public class WorkflowsServiceImpl {
         }
 
         store.updateExecutionState(executionId, "CANCELLED", null, null);
+
+        // Propagate cancellation to running execution context
+        ExecutionContext ctx = activeExecutions.get(executionId);
+        if (ctx != null) {
+            ctx.setState("CANCELLED");
+        }
+
         execution = store.getExecution(projectId, locationId, workflowId, executionId);
         return formatExecution(execution, projectId, locationId, workflowId);
     }
@@ -241,6 +250,7 @@ public class WorkflowsServiceImpl {
             }
 
             ExecutionContext context = new ExecutionContext(initialVars);
+            activeExecutions.put(executionId, context);
 
             // Register all connector calls as stdlib functions
             for (String connectorPath : connectorRegistry.getAllConnectorPaths()) {
@@ -279,6 +289,7 @@ public class WorkflowsServiceImpl {
             }
             logger.error("Workflow execution {} crashed", executionId, e);
         } finally {
+            activeExecutions.remove(executionId);
             SysFunctions.clearWorkflowEnvVars();
         }
     }
