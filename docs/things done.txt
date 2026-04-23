@@ -1,0 +1,50 @@
+Docker Image Optimization (complete)
+
+  - 2.35 GB → 1.39 GB (41% reduction)
+  - Switched base from gcloud SDK to debian:trixie-slim
+  - Custom Java 25 JRE via jlink (72 MB vs 194 MB)
+  - Emulators run as direct JAR/binary execution (no gcloud CLI)
+  - Spanner binaries stripped (326 MB → 107 MB)
+  - PostgreSQL 15 → 17
+
+  Service Toggle UI (complete)
+
+  - Toggle switches on Services page
+  - Persisted to PostgreSQL (service_config table)
+  - Config precedence: env > persisted > default
+  - Facade service gating via ServiceGatingDecorator
+
+  Telemetry (complete)
+
+  - Hourly heartbeat + startup event to PostHog
+  - Persistent queue (168 events, 7 days)
+  - Configurable via LOCALCLOUD_EVENT_API_KEY
+  - Opt-out ping when LOCALCLOUD_TELEMETRY=false
+
+  SQL Compatibility Warnings (complete)
+
+  - Live CodeMirror linting for unsupported BigQuery/Spanner SQL
+  - Enriched error messages from DuckDB/Spanner
+  - Curated compatibility data (tested against real emulators)
+
+  Terraform Integration (Phase 1 complete)
+
+  - eval $(curl -s 'http://localhost:8080/_localcloud/env?format=terraform') works
+  - GCS, Pub/Sub, BigQuery, Spanner verified working
+  - Example main.tf, GitHub Actions CI, compatibility matrix
+
+  Bug Fixes Applied
+
+  - Reset endpoint now clears data before re-seeding
+  - isServiceEnabled() delegates to dynamic map
+  - Workflow reset scoped to project
+  - Project delete includes workflow tables
+  - LOCALCLOUD_ENABLE_* flags actually applied
+  - CTE SQL injection fixed (read-only transactions)
+  - JAVA_OPTS single-line (supervisor compatibility)
+  - Entrypoint permissions for all data dirs
+
+  Pending Changes (proposed, not implemented)
+
+  - remote-cloud-browser — browse real GCP data from console
+  - Terraform Phase 2-3 (REST transcoding, Compute/CloudRun endpoints)
