@@ -242,21 +242,15 @@ public class WorkflowsServiceImpl {
 
             ExecutionContext context = new ExecutionContext(initialVars);
 
-            // Register connector calls as stdlib functions
-            for (String connectorPath : List.of(
-                    "googleapis.storage.v1.objects.list", "googleapis.storage.v1.buckets.insert",
-                    "googleapis.bigquery.v2.jobs.query", "googleapis.bigquery.v2.datasets.list",
-                    "googleapis.pubsub.v1.projects.topics.publish",
-                    "googleapis.secretmanager.v1.projects.secrets.list")) {
-                if (connectorRegistry.has(connectorPath)) {
-                    final String path = connectorPath;
-                    stdlib.register(path, args -> {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> callArgs = args.isEmpty() ? Map.of() :
-                                (args.get(0) instanceof Map ? (Map<String, Object>) args.get(0) : Map.of());
-                        return connectorRegistry.execute(path, callArgs);
-                    });
-                }
+            // Register all connector calls as stdlib functions
+            for (String connectorPath : connectorRegistry.getAllConnectorPaths()) {
+                final String path = connectorPath;
+                stdlib.register(path, args -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> callArgs = args.isEmpty() ? Map.of() :
+                            (args.get(0) instanceof Map ? (Map<String, Object>) args.get(0) : Map.of());
+                    return connectorRegistry.execute(path, callArgs);
+                });
             }
 
             // Execute
@@ -284,6 +278,8 @@ public class WorkflowsServiceImpl {
                 logger.error("Failed to update execution state for {}", executionId, ex);
             }
             logger.error("Workflow execution {} crashed", executionId, e);
+        } finally {
+            SysFunctions.clearWorkflowEnvVars();
         }
     }
 

@@ -10,11 +10,15 @@ import java.util.Map;
 public class SysFunctions {
     private static final Logger logger = LoggerFactory.getLogger(SysFunctions.class);
 
-    // Env vars from the workflow_env_vars table, set before execution
-    private static Map<String, String> workflowEnvVars = Map.of();
+    // Env vars from the workflow_env_vars table, set before execution (per-thread to avoid cross-execution races)
+    private static final ThreadLocal<Map<String, String>> workflowEnvVars = ThreadLocal.withInitial(Map::of);
 
     public static void setWorkflowEnvVars(Map<String, String> vars) {
-        workflowEnvVars = vars != null ? vars : Map.of();
+        workflowEnvVars.set(vars != null ? vars : Map.of());
+    }
+
+    public static void clearWorkflowEnvVars() {
+        workflowEnvVars.remove();
     }
 
     public static void register(StdlibRegistry registry) {
@@ -22,7 +26,7 @@ public class SysFunctions {
             if (args.isEmpty()) throw new RuntimeException("sys.get_env requires a variable name");
             String name = String.valueOf(args.get(0));
             // 1. Check workflow env vars table first
-            String val = workflowEnvVars.get(name);
+            String val = workflowEnvVars.get().get(name);
             if (val != null) return val;
             // 2. Fall back to OS env var
             val = System.getenv(name);
