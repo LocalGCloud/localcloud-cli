@@ -54,7 +54,9 @@ public class CallbackManager {
 
         long timeout = timeoutSeconds > 0 ? timeoutSeconds : DEFAULT_TIMEOUT_MS / 1000;
         try {
-            return future.get(timeout, TimeUnit.SECONDS);
+            Object result = future.get(timeout, TimeUnit.SECONDS);
+            pendingCallbacks.remove(callbackId);
+            return result;
         } catch (TimeoutException e) {
             pendingCallbacks.remove(callbackId);
             throw new WorkflowException("TimeoutError", "Callback timed out after " + timeout + "s");
@@ -73,7 +75,7 @@ public class CallbackManager {
      * @return true if callback was found and delivered, false if expired/unknown
      */
     public boolean deliverCallback(String callbackId, Object payload) {
-        CompletableFuture<Object> future = pendingCallbacks.remove(callbackId);
+        CompletableFuture<Object> future = pendingCallbacks.get(callbackId);
         if (future == null || future.isDone()) {
             return false;
         }

@@ -67,6 +67,17 @@ class CallbackManagerTest {
         assertTrue(manager.isPending(id2));
     }
 
+    @Test void testDeliverBeforeAwait() throws Exception {
+        String callbackId = manager.createCallback();
+        // Deliver BEFORE await
+        assertTrue(manager.deliverCallback(callbackId, Map.of("key", "value")));
+        // Await should return immediately with the delivered payload
+        Object result = manager.awaitCallback(callbackId, 5);
+        assertNotNull(result);
+        assertTrue(result instanceof Map);
+        assertEquals("value", ((Map<?, ?>) result).get("key"));
+    }
+
     @Test void testShutdownCancels() {
         String id = manager.createCallback();
         manager.shutdown();
