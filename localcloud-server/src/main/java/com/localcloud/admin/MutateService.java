@@ -24,6 +24,7 @@ import com.linecorp.armeria.server.annotation.Post;
 import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.config.ServiceRegistry;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
+import com.localcloud.emulators.workflows.WorkflowsServiceImpl;
 import com.localcloud.persistence.PostgresDataSource;
 
 import org.slf4j.Logger;
@@ -43,6 +44,9 @@ public class MutateService {
     private final ServiceRegistry registry;
     private final HttpClient httpClient;
     private final ObjectMapper mapper;
+
+    // Delegate for workflow execution (set after construction to break circular dependency)
+    private WorkflowsServiceImpl workflowsService;
 
     // Base URLs computed from registry
     private final String gcsBase;
@@ -74,6 +78,10 @@ public class MutateService {
 
         ServiceDefinition bigtableDef = registry.getService("bigtable");
         this.bigtablePort = bigtableDef != null ? bigtableDef.port() : 8087;
+    }
+
+    public void setWorkflowsService(WorkflowsServiceImpl service) {
+        this.workflowsService = service;
     }
 
     private static String baseUrl(ServiceDefinition def) {
@@ -968,118 +976,53 @@ public class MutateService {
         String locationId = (String) body.getOrDefault("location", "us-central1");
 
         // POST /_localcloud/mutate/workflows/execute — create and run an execution
+        // Delegates to WorkflowsServiceImpl.createExecution() for full feature parity
+        // (connectors, callbacks, env vars, child workflows).
         if ("execute".equals(operation)) {
             String workflowId = (String) body.get("workflow_id");
             if (workflowId == null) return mapper.writeValueAsString(Map.of("error", true, "message", "workflow_id is required"));
 
-            String argument = body.containsKey("argument") ? mapper.writeValueAsString(body.get("argument")) : null;
+            if (workflowsService == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "Workflows service not initialized"));
+            }
 
-            // Fetch the workflow source
-            String sourceContents = null;
-            String revisionId = "1";
-            try (var conn = dataSource.getConnection();
-                 var ps = conn.prepareStatement(
-                     "SELECT source_contents, revision_id FROM workflows WHERE project_id = ? AND location_id = ? AND workflow_id = ? AND state = 'ACTIVE'")) {
-                ps.setString(1, projectId);
-                ps.setString(2, locationId);
-                ps.setString(3, workflowId);
-                try (var rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        sourceContents = rs.getString("source_contents");
-                        revisionId = String.valueOf(rs.getInt("revision_id"));
+            // Normalize argument to a JSON string — createExecution() expects a JSON string or null.
+            // The console may send the argument as a raw object, a string, or omit it entirely.
+            String argument = null;
+            if (body.containsKey("argument")) {
+                Object rawArg = body.get("argument");
+                if (rawArg instanceof String) {
+                    // Already a string — verify it's valid JSON, otherwise wrap it
+                    String argStr = (String) rawArg;
+                    try {
+                        mapper.readTree(argStr);
+                        argument = argStr;
+                    } catch (Exception e) {
+                        // Not valid JSON — serialize the raw string as a JSON value
+                        argument = mapper.writeValueAsString(argStr);
                     }
+                } else if (rawArg != null) {
+                    argument = mapper.writeValueAsString(rawArg);
                 }
             }
-            if (sourceContents == null) {
-                return mapper.writeValueAsString(Map.of("error", true, "message", "Workflow not found: " + workflowId));
+
+            try {
+                Map<String, Object> execution = workflowsService.createExecution(projectId, locationId, workflowId, argument);
+                // Extract execution_id from the formatted response name
+                // name format: projects/{p}/locations/{l}/workflows/{w}/executions/{id}
+                String executionName = (String) execution.get("name");
+                String executionId = executionName != null
+                        ? executionName.substring(executionName.lastIndexOf('/') + 1)
+                        : "unknown";
+                return mapper.writeValueAsString(Map.of(
+                    "status", "started",
+                    "execution_id", executionId,
+                    "workflow_id", workflowId,
+                    "state", execution.getOrDefault("state", "ACTIVE")
+                ));
+            } catch (IllegalArgumentException e) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", e.getMessage()));
             }
-
-            // Create execution record
-            String executionId = java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16);
-            try (var conn = dataSource.getConnection();
-                 var ps = conn.prepareStatement(
-                     "INSERT INTO workflow_executions (execution_id, workflow_id, project_id, location_id, state, argument, workflow_revision_id, start_time) " +
-                     "VALUES (?, ?, ?, ?, 'ACTIVE', ?::jsonb, ?, CURRENT_TIMESTAMP)")) {
-                ps.setString(1, executionId);
-                ps.setString(2, workflowId);
-                ps.setString(3, projectId);
-                ps.setString(4, locationId);
-                ps.setString(5, argument != null ? argument : "null");
-                ps.setString(6, revisionId);
-                ps.executeUpdate();
-            }
-
-            // Execute workflow synchronously (simple for now)
-            final String src = sourceContents;
-            final String execId = executionId;
-            final String arg = argument;
-            final String projId = projectId;
-            Thread.startVirtualThread(() -> {
-                try {
-                    var definition = com.localcloud.emulators.workflows.engine.WorkflowParser.parse(src);
-                    var stdlib = new com.localcloud.emulators.workflows.stdlib.StdlibRegistry();
-                    com.localcloud.emulators.workflows.stdlib.SysFunctions.register(stdlib);
-                    var initialVars = new java.util.LinkedHashMap<String, Object>();
-
-                    // Inject workflow env vars from DB
-                    try {
-                        var envRepo = new com.localcloud.emulators.workflows.WorkflowEnvVarsRepository(dataSource);
-                        String activePreset = envRepo.getActivePreset(projId);
-                        java.util.Map<String, String> envVars = envRepo.getEnvVarsForPreset(projId, activePreset);
-                        com.localcloud.emulators.workflows.stdlib.SysFunctions.setWorkflowEnvVars(envVars);
-                        initialVars.putAll(envVars);
-                    } catch (Exception envEx) {
-                        logger.warn("Failed to load workflow env vars: {}", envEx.getMessage());
-                    }
-
-                    if (arg != null && !"null".equals(arg)) {
-                        try {
-                            Object parsed = mapper.readValue(arg, Object.class);
-                            if (parsed instanceof java.util.Map) {
-                                @SuppressWarnings("unchecked")
-                                var argMap = (java.util.Map<String, Object>) parsed;
-                                initialVars.putAll(argMap);
-                            }
-                            initialVars.put("args", parsed);
-                        } catch (Exception e) {
-                            initialVars.put("args", arg);
-                        }
-                    }
-                    var ctx = new com.localcloud.emulators.workflows.engine.ExecutionContext(initialVars);
-                    var executor = new com.localcloud.emulators.workflows.engine.WorkflowExecutor(definition, ctx, stdlib);
-                    Object result = executor.execute();
-                    String resultJson = result != null ? mapper.writeValueAsString(result) : "null";
-                    try (var conn = dataSource.getConnection();
-                         var ps = conn.prepareStatement(
-                             "UPDATE workflow_executions SET state = 'SUCCEEDED', result = ?::jsonb, end_time = CURRENT_TIMESTAMP WHERE execution_id = ?")) {
-                        ps.setString(1, resultJson);
-                        ps.setString(2, execId);
-                        ps.executeUpdate();
-                    }
-                    logger.info("Workflow execution {} completed successfully", execId);
-                } catch (Exception e) {
-                    try {
-                        var error = java.util.Map.of("code", "RuntimeError", "message", e.getMessage() != null ? e.getMessage() : "Unknown error");
-                        try (var conn = dataSource.getConnection();
-                             var ps = conn.prepareStatement(
-                                 "UPDATE workflow_executions SET state = 'FAILED', error = ?::jsonb, end_time = CURRENT_TIMESTAMP WHERE execution_id = ?")) {
-                            ps.setString(1, mapper.writeValueAsString(error));
-                            ps.setString(2, execId);
-                            ps.executeUpdate();
-                        }
-                    } catch (Exception ex) {
-                        logger.error("Failed to update execution state for {}", execId, ex);
-                    }
-                    logger.warn("Workflow execution {} failed: {}", execId, e.getMessage());
-                }
-            });
-
-            return mapper.writeValueAsString(Map.of(
-                "status", "started",
-                "execution_id", executionId,
-                "workflow_id", workflowId,
-                "state", "ACTIVE"
-            ));
         }
 
         // POST /_localcloud/mutate/workflows/cancel — cancel an execution

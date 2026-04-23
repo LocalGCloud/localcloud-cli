@@ -300,6 +300,10 @@ public class LocalCloudApplication {
                     workflowsEmulator.getWorkflowsService().getCallbackManager());
             sb.annotatedService("/_localcloud/workflows", callbackService);
 
+            // Wire WorkflowsServiceImpl into MutateService so console executions
+            // route through the full execution path (connectors, callbacks, env vars)
+            mutateService.setWorkflowsService(workflowsEmulator.getWorkflowsService());
+
             hasGrpcServices = true;
             logger.info("Cloud Workflows facade registered on gateway port {}", config.getGatewayPort());
         }
