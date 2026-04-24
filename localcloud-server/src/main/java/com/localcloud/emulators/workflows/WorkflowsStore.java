@@ -178,6 +178,18 @@ public class WorkflowsStore {
         }
     }
 
+    public Map<String, Object> getExecutionById(String executionId) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                "SELECT * FROM workflow_executions WHERE execution_id = ?")) {
+            ps.setString(1, executionId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return rowToMap(rs);
+                return null;
+            }
+        }
+    }
+
     public void resetAll() {
         try (Connection conn = dataSource.getConnection();
              Statement st = conn.createStatement()) {
