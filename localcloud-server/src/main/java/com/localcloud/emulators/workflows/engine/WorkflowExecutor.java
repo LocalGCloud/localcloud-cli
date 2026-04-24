@@ -1,5 +1,6 @@
 package com.localcloud.emulators.workflows.engine;
 
+import com.localcloud.emulators.workflows.connector.ConnectorRegistry;
 import com.localcloud.emulators.workflows.expression.ExpressionEvaluator;
 import com.localcloud.emulators.workflows.stdlib.StdlibRegistry;
 import org.slf4j.Logger;
@@ -348,6 +349,7 @@ public class WorkflowExecutor {
                         : context.createChildContext(Map.of(valueVar, item));
                     WorkflowExecutor childExecutor = new WorkflowExecutor(definition, childCtx, stdlib);
                     futures.add(executor.submit(() -> {
+                        ConnectorRegistry.setCurrentContext(context);
                         try {
                             if (finalSharedLock != null) {
                                 // Serialize execution of steps that access shared variables
@@ -358,6 +360,7 @@ public class WorkflowExecutor {
                                 childExecutor.executeSteps(finalBodySteps);
                             }
                         } finally {
+                            ConnectorRegistry.clearCurrentContext();
                             semaphore.release();
                         }
                     }));
@@ -401,11 +404,16 @@ public class WorkflowExecutor {
                                 : context.createChildContext(Map.of());
                             WorkflowExecutor childExecutor = new WorkflowExecutor(definition, childCtx, stdlib);
                             futures.add(executor.submit(() -> {
-                                if (finalSharedLock2 != null) {
-                                    finalSharedLock2.lock();
-                                    try { childExecutor.executeSteps(branchSteps); } finally { finalSharedLock2.unlock(); }
-                                } else {
-                                    childExecutor.executeSteps(branchSteps);
+                                ConnectorRegistry.setCurrentContext(context);
+                                try {
+                                    if (finalSharedLock2 != null) {
+                                        finalSharedLock2.lock();
+                                        try { childExecutor.executeSteps(branchSteps); } finally { finalSharedLock2.unlock(); }
+                                    } else {
+                                        childExecutor.executeSteps(branchSteps);
+                                    }
+                                } finally {
+                                    ConnectorRegistry.clearCurrentContext();
                                 }
                             }));
                         }
@@ -464,7 +472,12 @@ public class WorkflowExecutor {
                 attempt++;
                 if (attempt <= maxRetries) {
                     double delay = Math.min(initialDelay * Math.pow(multiplier, attempt - 1), maxDelay);
-                    try { Thread.sleep((long) (delay * 1000)); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                    try {
+                        Thread.sleep((long) (delay * 1000));
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new WorkflowException("Cancelled", "Execution was cancelled during retry delay");
+                    }
                     logger.debug("Retry attempt {} for step {} after {}s", attempt, step.getName(), delay);
                     continue;
                 }
