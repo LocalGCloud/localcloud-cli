@@ -972,7 +972,9 @@ public class MutateService {
     // --- Cloud Workflows ---
 
     private String mutateWorkflows(String operation, String subOp, Map<String, Object> body) throws Exception {
-        String projectId = config.getProjectId();
+        String projectId = body.containsKey("project_id")
+                ? (String) body.get("project_id")
+                : config.getProjectId();
         String locationId = (String) body.getOrDefault("location", "us-central1");
 
         // POST /_localcloud/mutate/workflows/execute — create and run an execution
@@ -1030,17 +1032,25 @@ public class MutateService {
             String executionId = (String) body.get("execution_id");
             if (executionId == null) return mapper.writeValueAsString(Map.of("error", true, "message", "execution_id is required"));
 
-            try (var conn = dataSource.getConnection();
-                 var ps = conn.prepareStatement(
-                     "UPDATE workflow_executions SET state = 'CANCELLED', end_time = CURRENT_TIMESTAMP " +
-                     "WHERE execution_id = ? AND state IN ('QUEUED', 'ACTIVE')")) {
-                ps.setString(1, executionId);
-                int updated = ps.executeUpdate();
-                if (updated == 0) {
-                    return mapper.writeValueAsString(Map.of("error", true, "message", "Execution not found or already terminal"));
-                }
+            if (workflowsService == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "Workflows service not initialized"));
             }
-            return mapper.writeValueAsString(Map.of("status", "cancelled", "execution_id", executionId));
+
+            try {
+                // Look up execution to find workflowId
+                Map<String, Object> execRow = workflowsService.getStore().getExecutionById(executionId);
+                if (execRow == null) {
+                    return mapper.writeValueAsString(Map.of("error", true, "message", "Execution not found: " + executionId));
+                }
+                String workflowId = (String) execRow.get("workflow_id");
+
+                workflowsService.cancelExecution(projectId, locationId, workflowId, executionId);
+                return mapper.writeValueAsString(Map.of("status", "cancelled", "execution_id", executionId));
+            } catch (IllegalStateException e) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", e.getMessage()));
+            } catch (IllegalArgumentException e) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", e.getMessage()));
+            }
         }
 
         return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown workflows operation: " + operation));
