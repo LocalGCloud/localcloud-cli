@@ -201,7 +201,7 @@ public class WorkflowsServiceImpl {
         // Propagate cancellation to running execution context
         ExecutionContext ctx = activeExecutions.get(executionId);
         if (ctx != null) {
-            ctx.setState("CANCELLED");
+            ctx.cancelAndInterrupt();
         }
 
         execution = store.getExecution(projectId, locationId, workflowId, executionId);
@@ -250,7 +250,11 @@ public class WorkflowsServiceImpl {
             }
 
             ExecutionContext context = new ExecutionContext(initialVars);
+            context.setExecutingThread(Thread.currentThread());
             activeExecutions.put(executionId, context);
+
+            // Set execution context for connector cancellation checks
+            ConnectorRegistry.setCurrentContext(context);
 
             // Register all connector calls as stdlib functions
             for (String connectorPath : connectorRegistry.getAllConnectorPaths()) {
@@ -266,6 +270,12 @@ public class WorkflowsServiceImpl {
             // Execute
             WorkflowExecutor executor = new WorkflowExecutor(definition, context, stdlib);
             Object result = executor.execute();
+
+            // If cancelled during execution, don't overwrite with SUCCEEDED
+            if (context.isCancelled()) {
+                logger.info("Workflow execution {} was cancelled", executionId);
+                return;
+            }
 
             // Transition to SUCCEEDED
             String resultJson = result != null ? mapper.writeValueAsString(result) : "null";
@@ -290,6 +300,7 @@ public class WorkflowsServiceImpl {
             logger.error("Workflow execution {} crashed", executionId, e);
         } finally {
             activeExecutions.remove(executionId);
+            ConnectorRegistry.clearCurrentContext();
             SysFunctions.clearWorkflowEnvVars();
         }
     }
