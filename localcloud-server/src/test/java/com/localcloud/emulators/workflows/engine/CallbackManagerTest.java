@@ -83,4 +83,51 @@ class CallbackManagerTest {
         manager.shutdown();
         assertFalse(manager.isPending(id));
     }
+
+    // --- Execution tracking and cancellation tests ---
+
+    @Test
+    void createCallback_withExecutionId_tracksMapping() {
+        String callbackId = manager.createCallback("exec-1");
+        assertNotNull(callbackId);
+        assertTrue(manager.isPending(callbackId));
+    }
+
+    @Test
+    void cancelCallbacksForExecution_unblocksPendingWait() throws Exception {
+        String callbackId = manager.createCallback("exec-cancel");
+        ExecutorService exec = Executors.newSingleThreadExecutor();
+        Future<?> future = exec.submit(() -> {
+            assertThrows(WorkflowException.class,
+                    () -> manager.awaitCallback(callbackId, 30));
+        });
+        Thread.sleep(100);
+        manager.cancelCallbacksForExecution("exec-cancel");
+        assertDoesNotThrow(() -> future.get(2, TimeUnit.SECONDS));
+        exec.shutdown();
+    }
+
+    @Test
+    void cancelCallbacksForExecution_nonExistentExecution_doesNotThrow() {
+        assertDoesNotThrow(() -> manager.cancelCallbacksForExecution("no-such-execution"));
+    }
+
+    @Test
+    void createCallback_noExecutionId_backwardCompatible() {
+        String callbackId = manager.createCallback();
+        assertNotNull(callbackId);
+        assertTrue(manager.isPending(callbackId));
+    }
+
+    @Test
+    void getExecutionIdForCallback_returnsCorrectMapping() {
+        String callbackId = manager.createCallback("exec-lookup");
+        assertEquals("exec-lookup", manager.getExecutionIdForCallback(callbackId));
+    }
+
+    @Test
+    void getExecutionIdForCallback_noExecutionId_returnsNull() {
+        String callbackId = manager.createCallback();
+        assertNull(manager.getExecutionIdForCallback(callbackId));
+    }
 }
