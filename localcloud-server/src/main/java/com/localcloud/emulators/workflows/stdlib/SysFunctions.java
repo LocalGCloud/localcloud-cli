@@ -51,7 +51,12 @@ public class SysFunctions {
             if (args.isEmpty()) throw new RuntimeException("sys.sleep requires seconds");
             double seconds = ((Number) args.get(0)).doubleValue();
             long millis = (long) (Math.min(seconds, 60) * 1000); // Cap at 60s in emulator
-            try { Thread.sleep(millis); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            try {
+                Thread.sleep(millis);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Cancelled: execution was cancelled during sleep");
+            }
             return null;
         });
     }
