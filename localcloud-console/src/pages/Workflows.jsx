@@ -635,10 +635,11 @@ export default function Workflows(props) {
     const handleCreateExecution = async () => {
         setCreating(true);
         try {
-            await fetch('/_localcloud/mutate/workflows/execute', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ workflow_id: selectedWorkflow(), argument: execArgument() }),
+            const p = typeof props.activeProject === 'function' ? props.activeProject() : props.activeProject;
+            await api.mutate('workflows', 'execute', {
+                workflow_id: selectedWorkflow(),
+                argument: execArgument(),
+                project_id: p
             });
             setShowCreateExec(false);
             setExecArgument('{}');
@@ -649,6 +650,27 @@ export default function Workflows(props) {
             setError('Failed to create execution: ' + err.message);
         } finally {
             setCreating(false);
+        }
+    };
+
+    const handleCancelExecution = async (executionId) => {
+        try {
+            const p = typeof props.activeProject === 'function' ? props.activeProject() : props.activeProject;
+            await api.mutate('workflows', 'cancel', {
+                execution_id: executionId,
+                project_id: p
+            });
+            // Refresh executions list
+            const execs = await api.browse('workflows/' + selectedWorkflow() + '/executions');
+            setExecutions(Array.isArray(execs) ? execs : (execs.executions || []));
+            // Refresh selected execution if viewing
+            if (selectedExecution() && (selectedExecution().execution_id === executionId || selectedExecution().name?.endsWith(executionId))) {
+                const updated = (Array.isArray(execs) ? execs : (execs.executions || [])).find(e =>
+                    e.execution_id === executionId || e.name?.endsWith(executionId));
+                if (updated) setSelectedExecution(updated);
+            }
+        } catch (err) {
+            setError('Failed to cancel execution: ' + err.message);
         }
     };
 
@@ -668,6 +690,23 @@ export default function Workflows(props) {
                 <div style={{ display: 'flex', 'align-items': 'center', gap: '12px', 'margin-bottom': '20px' }}>
                     <h2 style={{ margin: 0, 'font-size': '18px' }}>Execution {execId}</h2>
                     <StateBadge state={exec.state} />
+                    <Show when={exec.state === 'ACTIVE' || exec.state === 'QUEUED'}>
+                        <button
+                            onClick={() => handleCancelExecution(exec.execution_id || exec.name?.split('/').pop())}
+                            style={{
+                                padding: '4px 12px',
+                                border: '1px solid var(--error, #d93025)',
+                                'border-radius': '4px',
+                                background: 'transparent',
+                                color: 'var(--error, #d93025)',
+                                cursor: 'pointer',
+                                'font-size': '12px',
+                                'font-weight': '500'
+                            }}
+                        >
+                            Cancel
+                        </button>
+                    </Show>
                 </div>
 
                 <div style={{ display: 'grid', 'grid-template-columns': '1fr 1fr 1fr', gap: '12px', 'margin-bottom': '20px' }}>
