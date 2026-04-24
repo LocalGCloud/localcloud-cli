@@ -18,6 +18,7 @@ public class ExecutionContext {
     private int stepCount = 0;
     private Map<String, Object> sharedVars;
     private ReentrantLock sharedLock;
+    private volatile Thread executingThread;
 
     public ExecutionContext() {
         this.scopeStack = new ArrayDeque<>();
@@ -146,6 +147,17 @@ public class ExecutionContext {
     public String getState() { return state; }
     public void setState(String state) { this.state = state; }
     public boolean isCancelled() { return "CANCELLED".equals(state); }
+
+    public Thread getExecutingThread() { return executingThread; }
+    public void setExecutingThread(Thread t) { this.executingThread = t; }
+
+    public void cancelAndInterrupt() {
+        this.state = "CANCELLED";
+        Thread t = this.executingThread;
+        if (t != null) {
+            t.interrupt();
+        }
+    }
 
     // --- Step history (thread-safe via CopyOnWriteArrayList) ---
 
