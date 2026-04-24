@@ -25,6 +25,20 @@ public class ConnectorRegistry {
     private final Map<String, ConnectorDef> connectors = new HashMap<>();
     private java.util.function.BiFunction<String, Map<String, Object>, Object> childWorkflowRunner;
 
+    private static final ThreadLocal<com.localcloud.emulators.workflows.engine.ExecutionContext> currentContext = new ThreadLocal<>();
+
+    public static void setCurrentContext(com.localcloud.emulators.workflows.engine.ExecutionContext ctx) {
+        currentContext.set(ctx);
+    }
+
+    public static com.localcloud.emulators.workflows.engine.ExecutionContext getCurrentContext() {
+        return currentContext.get();
+    }
+
+    public static void clearCurrentContext() {
+        currentContext.remove();
+    }
+
     public ConnectorRegistry() {
         registerDefaults();
     }
@@ -132,6 +146,12 @@ public class ConnectorRegistry {
             }
 
             HttpResponse<String> response = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+
+            // Check if execution was cancelled while HTTP call was in flight
+            var ctx = currentContext.get();
+            if (ctx != null && ctx.isCancelled()) {
+                throw new RuntimeException("Cancelled: execution was cancelled during connector call");
+            }
 
             if (response.statusCode() >= 400) {
                 Map<String, Object> error = new LinkedHashMap<>();

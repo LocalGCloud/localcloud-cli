@@ -1,5 +1,6 @@
 package com.localcloud.emulators.workflows.connector;
 
+import com.localcloud.emulators.workflows.engine.ExecutionContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import static org.junit.jupiter.api.Assertions.*;
@@ -44,5 +45,20 @@ class ConnectorRegistryTest {
     void testHasChildWorkflowConnector() {
         ConnectorRegistry registry = new ConnectorRegistry();
         assertTrue(registry.has("googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run"));
+    }
+
+    @Test
+    void currentContext_setAndGet_roundTrips() {
+        ExecutionContext ctx = new ExecutionContext();
+        ConnectorRegistry.setCurrentContext(ctx);
+        assertSame(ctx, ConnectorRegistry.getCurrentContext());
+        ConnectorRegistry.clearCurrentContext();
+        assertNull(ConnectorRegistry.getCurrentContext());
+    }
+
+    @Test
+    void currentContext_defaultIsNull() {
+        ConnectorRegistry.clearCurrentContext();
+        assertNull(ConnectorRegistry.getCurrentContext());
     }
 }
