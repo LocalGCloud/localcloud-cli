@@ -37,4 +37,13 @@ class ExecutionContextTest {
         ctx.setExecutingThread(Thread.currentThread());
         assertEquals(Thread.currentThread(), ctx.getExecutingThread());
     }
+
+    @Test
+    void isCancelled_childSeesParentCancellation() {
+        ExecutionContext parent = new ExecutionContext();
+        ExecutionContext child = parent.createChildContext(null);
+        assertFalse(child.isCancelled());
+        parent.setState("CANCELLED");
+        assertTrue(child.isCancelled(), "Child should see parent cancellation");
+    }
 }

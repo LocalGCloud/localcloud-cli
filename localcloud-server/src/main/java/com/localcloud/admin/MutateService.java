@@ -973,7 +973,7 @@ public class MutateService {
 
     private String mutateWorkflows(String operation, String subOp, Map<String, Object> body) throws Exception {
         String projectId = body.containsKey("project_id")
-                ? (String) body.get("project_id")
+                ? String.valueOf(body.get("project_id"))
                 : config.getProjectId();
         String locationId = (String) body.getOrDefault("location", "us-central1");
 

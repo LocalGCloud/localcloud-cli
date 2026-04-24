@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.util.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.localcloud.emulators.workflows.engine.ExecutionContext;
 
 /**
  * Maps googleapis.SERVICE.VERSION.RESOURCE.METHOD connector calls
@@ -25,13 +26,13 @@ public class ConnectorRegistry {
     private final Map<String, ConnectorDef> connectors = new HashMap<>();
     private java.util.function.BiFunction<String, Map<String, Object>, Object> childWorkflowRunner;
 
-    private static final ThreadLocal<com.localcloud.emulators.workflows.engine.ExecutionContext> currentContext = new ThreadLocal<>();
+    private static final ThreadLocal<ExecutionContext> currentContext = new ThreadLocal<>();
 
-    public static void setCurrentContext(com.localcloud.emulators.workflows.engine.ExecutionContext ctx) {
+    public static void setCurrentContext(ExecutionContext ctx) {
         currentContext.set(ctx);
     }
 
-    public static com.localcloud.emulators.workflows.engine.ExecutionContext getCurrentContext() {
+    public static ExecutionContext getCurrentContext() {
         return currentContext.get();
     }
 
@@ -215,6 +216,12 @@ public class ConnectorRegistry {
             }
 
             HttpResponse<String> response = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+
+            // Check if execution was cancelled during HTTP call
+            var ctx = currentContext.get();
+            if (ctx != null && ctx.isCancelled()) {
+                throw new RuntimeException("Cancelled: execution was cancelled during connector call");
+            }
 
             Object result = response.body();
             try {

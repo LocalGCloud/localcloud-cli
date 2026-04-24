@@ -19,6 +19,7 @@ public class ExecutionContext {
     private Map<String, Object> sharedVars;
     private ReentrantLock sharedLock;
     private volatile Thread executingThread;
+    private volatile ExecutionContext parentContext;
 
     public ExecutionContext() {
         this.scopeStack = new ArrayDeque<>();
@@ -36,7 +37,8 @@ public class ExecutionContext {
 
     // Private constructor for child contexts
     private ExecutionContext(Map<String, Object> parentVars, List<Map<String, Object>> sharedStepHistory,
-                             String state, int callDepth, Deque<String> parentStepChain) {
+                             String state, int callDepth, Deque<String> parentStepChain,
+                             ExecutionContext parent) {
         this.scopeStack = new ArrayDeque<>();
         Map<String, Object> scope = Collections.synchronizedMap(new LinkedHashMap<>());
         if (parentVars != null) scope.putAll(parentVars);
@@ -45,6 +47,7 @@ public class ExecutionContext {
         this.state = state;
         this.callDepth = callDepth;
         this.stepChain.addAll(parentStepChain);
+        this.parentContext = parent;
     }
 
     /**
@@ -55,7 +58,7 @@ public class ExecutionContext {
     public ExecutionContext createChildContext(Map<String, Object> additionalVars) {
         Map<String, Object> snapshot = getAllVariables();
         if (additionalVars != null) snapshot.putAll(additionalVars);
-        return new ExecutionContext(snapshot, this.stepHistory, this.state, this.callDepth, this.stepChain);
+        return new ExecutionContext(snapshot, this.stepHistory, this.state, this.callDepth, this.stepChain, this);
     }
 
     /**
@@ -146,7 +149,10 @@ public class ExecutionContext {
 
     public String getState() { return state; }
     public void setState(String state) { this.state = state; }
-    public boolean isCancelled() { return "CANCELLED".equals(state); }
+    public boolean isCancelled() {
+        if ("CANCELLED".equals(state)) return true;
+        return parentContext != null && parentContext.isCancelled();
+    }
 
     public Thread getExecutingThread() { return executingThread; }
     public void setExecutingThread(Thread t) { this.executingThread = t; }
