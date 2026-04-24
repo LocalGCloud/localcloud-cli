@@ -203,6 +203,8 @@ public class WorkflowsServiceImpl {
         if (ctx != null) {
             ctx.cancelAndInterrupt();
         }
+        // Cancel any pending callbacks for this execution
+        callbackManager.cancelCallbacksForExecution(executionId);
 
         execution = store.getExecution(projectId, locationId, workflowId, executionId);
         return formatExecution(execution, projectId, locationId, workflowId);
@@ -255,6 +257,7 @@ public class WorkflowsServiceImpl {
 
             // Set execution context for connector cancellation checks
             ConnectorRegistry.setCurrentContext(context);
+            EventsFunctions.setCurrentExecutionId(executionId);
 
             // Register all connector calls as stdlib functions
             for (String connectorPath : connectorRegistry.getAllConnectorPaths()) {
@@ -301,6 +304,7 @@ public class WorkflowsServiceImpl {
         } finally {
             activeExecutions.remove(executionId);
             ConnectorRegistry.clearCurrentContext();
+            EventsFunctions.clearCurrentExecutionId();
             SysFunctions.clearWorkflowEnvVars();
         }
     }

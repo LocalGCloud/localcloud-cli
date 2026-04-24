@@ -11,10 +11,21 @@ import java.util.Map;
  */
 public class EventsFunctions {
 
+    private static final ThreadLocal<String> currentExecutionId = new ThreadLocal<>();
+
+    public static void setCurrentExecutionId(String executionId) {
+        currentExecutionId.set(executionId);
+    }
+
+    public static void clearCurrentExecutionId() {
+        currentExecutionId.remove();
+    }
+
     public static void register(StdlibRegistry registry, CallbackManager callbackManager, String callbackBaseUrl) {
         registry.register("events.create_callback_endpoint", args -> {
             if (callbackManager == null) throw new RuntimeException("Callback manager not initialized");
-            String callbackId = callbackManager.createCallback();
+            String execId = currentExecutionId.get();
+            String callbackId = (execId != null) ? callbackManager.createCallback(execId) : callbackManager.createCallback();
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("url", callbackBaseUrl + "/" + callbackId);
             return result;
