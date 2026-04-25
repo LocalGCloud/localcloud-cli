@@ -56,4 +56,53 @@ class SyncFilterValidatorTest {
         SyncFilter filter = new SyncFilter("1=1); DROP TABLE", "=", "x", "STRING");
         assertThrows(IllegalArgumentException.class, () -> SyncFilterValidator.validate(filter));
     }
+
+    // -----------------------------------------------------------------------
+    // Additional edge cases — dot-separated column names
+    // -----------------------------------------------------------------------
+
+    @Test
+    void validateColumn_dotSeparated_throws() {
+        // BigQuery uses dataset.table, but column names shouldn't have dots
+        assertThrows(IllegalArgumentException.class,
+                () -> SyncFilterValidator.validateColumn("table.column"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Additional edge cases — case-insensitive operators
+    // -----------------------------------------------------------------------
+
+    @Test
+    void validateOperator_caseInsensitive_passes() {
+        // Operators should be accepted in any case since validateOperator calls toUpperCase()
+        assertDoesNotThrow(() -> SyncFilterValidator.validateOperator("like"));
+        assertDoesNotThrow(() -> SyncFilterValidator.validateOperator("Like"));
+        assertDoesNotThrow(() -> SyncFilterValidator.validateOperator("LIKE"));
+    }
+
+    @Test
+    void validateOperator_inLowercase_passes() {
+        assertDoesNotThrow(() -> SyncFilterValidator.validateOperator("in"));
+    }
+
+    @Test
+    void validateOperator_betweenMixedCase_passes() {
+        assertDoesNotThrow(() -> SyncFilterValidator.validateOperator("Between"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Additional edge cases — operators with spaces
+    // -----------------------------------------------------------------------
+
+    @Test
+    void validateOperator_withSpaces_throws() {
+        assertThrows(IllegalArgumentException.class,
+                () -> SyncFilterValidator.validateOperator(" = "));
+    }
+
+    @Test
+    void validateOperator_leadingSpace_throws() {
+        assertThrows(IllegalArgumentException.class,
+                () -> SyncFilterValidator.validateOperator(" LIKE"));
+    }
 }

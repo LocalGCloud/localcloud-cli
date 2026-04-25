@@ -264,6 +264,34 @@ class SyncServiceTest {
         verify(manifestRepo).delete(99);
     }
 
+    @Test
+    void deleteManifest_callsAdapterDeleteLocal() throws Exception {
+        Map<String, Object> manifest = new LinkedHashMap<>();
+        manifest.put("service_id", "bigquery");
+        manifest.put("resource_path", "ds.tbl");
+        manifest.put("project_id", "proj");
+        when(manifestRepo.getById(1)).thenReturn(manifest);
+
+        service.deleteManifest(1);
+
+        verify(bigqueryAdapter).deleteLocal("proj", "ds.tbl");
+        verify(manifestRepo).delete(1);
+    }
+
+    @Test
+    void deleteManifest_adapterFailure_stillDeletesManifest() throws Exception {
+        Map<String, Object> manifest = new LinkedHashMap<>();
+        manifest.put("service_id", "bigquery");
+        manifest.put("resource_path", "ds.tbl");
+        manifest.put("project_id", "proj");
+        when(manifestRepo.getById(1)).thenReturn(manifest);
+        doThrow(new RuntimeException("cleanup failed")).when(bigqueryAdapter).deleteLocal(any(), any());
+
+        // Should not throw — manifest deletion continues even if adapter cleanup fails
+        assertDoesNotThrow(() -> service.deleteManifest(1));
+        verify(manifestRepo).delete(1);
+    }
+
     // -----------------------------------------------------------------------
     // startSync — progress tracking
     // -----------------------------------------------------------------------

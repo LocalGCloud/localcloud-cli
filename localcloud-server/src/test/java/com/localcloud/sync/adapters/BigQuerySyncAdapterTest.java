@@ -285,4 +285,22 @@ class BigQuerySyncAdapterTest {
         assertThrows(IllegalArgumentException.class,
                 () -> adapter.buildSyncQuery("ds", "tbl", filters, 100));
     }
+
+    // -----------------------------------------------------------------------
+    // deleteLocal — parseResource is validated on the delete path
+    // -----------------------------------------------------------------------
+
+    @Test
+    void deleteLocal_parsesResourceCorrectly() {
+        // deleteLocal calls parseResource internally — verify the parse path works
+        // The actual HTTP call to the emulator will fail since there's no emulator running,
+        // but parseResource validation happens first and can be tested
+        assertDoesNotThrow(() -> adapter.parseResource("dataset.table"));
+    }
+
+    @Test
+    void deleteLocal_invalidResource_throws() {
+        // parseResource on the delete path should reject invalid resources
+        assertThrows(IllegalArgumentException.class, () -> adapter.parseResource("just-a-table"));
+    }
 }

@@ -135,4 +135,24 @@ class GcsSyncAdapterTest {
     void maxObjectSizeConstant_is100MB() {
         assertEquals(100L * 1024 * 1024, GcsSyncAdapter.MAX_OBJECT_SIZE);
     }
+
+    // -----------------------------------------------------------------------
+    // deleteLocal — parseResource is validated on the delete path
+    // -----------------------------------------------------------------------
+
+    @Test
+    void deleteLocal_parsesResourceWithPrefix() {
+        // Test that resource parsing works for the delete path
+        String[] parts = adapter.parseResource("my-bucket/some/prefix");
+        assertEquals("my-bucket", parts[0]);
+        assertEquals("some/prefix", parts[1]);
+    }
+
+    @Test
+    void deleteLocal_parsesResourceBucketOnly() {
+        // Delete with bucket-only resource
+        String[] parts = adapter.parseResource("my-bucket");
+        assertEquals("my-bucket", parts[0]);
+        assertNull(parts[1]);
+    }
 }

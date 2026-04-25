@@ -44,4 +44,40 @@ class CredentialEncryptionTest {
         byte[] bytes = java.util.Base64.getDecoder().decode(key);
         assertEquals(32, bytes.length); // 256 bits = 32 bytes
     }
+
+    // -----------------------------------------------------------------------
+    // Edge cases — empty string
+    // -----------------------------------------------------------------------
+
+    @Test
+    void encrypt_emptyString() throws Exception {
+        String key = CredentialEncryption.generateKey();
+        CredentialEncryption enc = new CredentialEncryption(key);
+        String encrypted = enc.encrypt("");
+        assertEquals("", enc.decrypt(encrypted));
+    }
+
+    // -----------------------------------------------------------------------
+    // Edge cases — unicode text with emojis
+    // -----------------------------------------------------------------------
+
+    @Test
+    void encrypt_unicodeText() throws Exception {
+        String key = CredentialEncryption.generateKey();
+        CredentialEncryption enc = new CredentialEncryption(key);
+        String original = "\u65e5\u672c\u8a9e\u30c6\u30b9\u30c8 \ud83d\udd10 \u00e9mojis";
+        assertEquals(original, enc.decrypt(enc.encrypt(original)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Edge cases — large payload (100KB)
+    // -----------------------------------------------------------------------
+
+    @Test
+    void encrypt_largePayload() throws Exception {
+        String key = CredentialEncryption.generateKey();
+        CredentialEncryption enc = new CredentialEncryption(key);
+        String large = "x".repeat(100000); // 100KB
+        assertEquals(large, enc.decrypt(enc.encrypt(large)));
+    }
 }
