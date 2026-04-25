@@ -21,9 +21,15 @@ public class SyncCredentialRepository {
     private static final Logger logger = LoggerFactory.getLogger(SyncCredentialRepository.class);
 
     private final DataSource dataSource;
+    private final CredentialEncryption encryption; // nullable
 
     public SyncCredentialRepository(DataSource dataSource) {
+        this(dataSource, null);
+    }
+
+    public SyncCredentialRepository(DataSource dataSource, CredentialEncryption encryption) {
         this.dataSource = dataSource;
+        this.encryption = encryption;
     }
 
     /**
@@ -51,7 +57,12 @@ public class SyncCredentialRepository {
                     ins.setString(1, projectId);
                     ins.setString(2, sourceProject);
                     ins.setString(3, authMethod);
-                    ins.setString(4, credentialData);
+                    String dataToStore = credentialData;
+                    if (encryption != null && credentialData != null) {
+                        try { dataToStore = encryption.encrypt(credentialData); }
+                        catch (Exception e) { throw new RuntimeException("Failed to encrypt credentials", e); }
+                    }
+                    ins.setString(4, dataToStore);
                     ins.executeUpdate();
                 }
                 conn.commit();
@@ -105,7 +116,12 @@ public class SyncCredentialRepository {
             stmt.setString(1, projectId);
             ResultSet rs = stmt.executeQuery();
             if (rs.next()) {
-                return rs.getString("credential_data");
+                String raw = rs.getString("credential_data");
+                if (encryption != null && raw != null) {
+                    try { return encryption.decrypt(raw); }
+                    catch (Exception e) { throw new RuntimeException("Failed to decrypt credentials", e); }
+                }
+                return raw;
             }
         }
         return null;

@@ -48,6 +48,7 @@ import com.localcloud.gateway.RequestLogger;
 import com.localcloud.persistence.PostgresDataSource;
 import com.localcloud.persistence.SchemaManager;
 import com.localcloud.sync.SyncApiService;
+import com.localcloud.sync.CredentialEncryption;
 import com.localcloud.sync.SyncCredentialRepository;
 import com.localcloud.sync.SyncManifestRepository;
 import com.localcloud.sync.SyncService;
@@ -162,7 +163,25 @@ public class LocalCloudApplication {
         // Data Mirror sync service
         var registry = config.getServiceRegistry();
         SyncManifestRepository syncManifestRepo = new SyncManifestRepository(dataSource.getDataSource());
-        SyncCredentialRepository syncCredentialRepo = new SyncCredentialRepository(dataSource.getDataSource());
+
+        // Encryption key for sync credentials — use env var, or auto-generate ephemeral key
+        String encKeyValue = System.getProperty("localcloud.encryption.key",
+            System.getenv().getOrDefault("LOCALCLOUD_ENCRYPTION_KEY", ""));
+        CredentialEncryption credEncryption = null;
+        if (!encKeyValue.isBlank()) {
+            credEncryption = new CredentialEncryption(encKeyValue);
+        } else {
+            // Generate ephemeral key for this session (credentials won't survive restart without config)
+            try {
+                String key = CredentialEncryption.generateKey();
+                credEncryption = new CredentialEncryption(key);
+                logger.info("Generated ephemeral encryption key for sync credentials (configure LOCALCLOUD_ENCRYPTION_KEY to persist)");
+            } catch (Exception e) {
+                logger.warn("Failed to initialize credential encryption: {}", e.getMessage());
+            }
+        }
+        SyncCredentialRepository syncCredentialRepo = new SyncCredentialRepository(
+            dataSource.getDataSource(), credEncryption);
         SyncService syncService = new SyncService(syncManifestRepo, syncCredentialRepo, 1.0);
 
         // Register sync adapters for services that have emulators
