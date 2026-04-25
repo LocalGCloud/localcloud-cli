@@ -367,6 +367,38 @@ public class SchemaManager {
                 ")"
             );
 
+            // Data Mirror: sync_manifests — tracks what data was synced from production
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS sync_manifests (" +
+                "    id SERIAL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    service_id VARCHAR(50) NOT NULL," +
+                "    resource_path VARCHAR(500) NOT NULL," +
+                "    source_project VARCHAR(255) NOT NULL," +
+                "    filters_json TEXT DEFAULT '[]'," +
+                "    row_count BIGINT DEFAULT 0," +
+                "    bytes_synced BIGINT DEFAULT 0," +
+                "    estimated_cost DECIMAL(10,6) DEFAULT 0," +
+                "    status VARCHAR(20) DEFAULT 'pending'," +
+                "    error_message TEXT," +
+                "    synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    UNIQUE(project_id, service_id, resource_path)" +
+                ")"
+            );
+
+            // Data Mirror: sync_credentials — auth credentials for connecting to real GCP
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS sync_credentials (" +
+                "    id SERIAL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    source_project VARCHAR(255) NOT NULL," +
+                "    auth_method VARCHAR(20) NOT NULL," +
+                "    credential_data TEXT," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    UNIQUE(project_id, source_project)" +
+                ")"
+            );
+
             // Auto-insert default project (use PreparedStatement to avoid SQL injection)
             try (PreparedStatement ps = conn.prepareStatement(
                     "INSERT INTO projects (project_id, display_name) " +
