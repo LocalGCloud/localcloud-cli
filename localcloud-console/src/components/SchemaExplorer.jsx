@@ -17,7 +17,8 @@ export function SchemaExplorer(props) {
         try {
             if (props.source === 'remote') {
                 const data = await api.syncBrowse(svc);
-                setNodes(data.nodes || []);
+                const rawNodes = data.nodes || data || [];
+                setNodes(normalizeRemoteBrowse(rawNodes, svc));
             } else {
                 // Local schema
                 const data = await api.schema(svc);
@@ -146,6 +147,136 @@ function normalizeLocalSchema(data, serviceId) {
         name: dbName,
         type: 'database',
         children
+    }));
+}
+
+/**
+ * Normalize the remote browse API response into the tree node format
+ * used by SchemaExplorer. Each adapter returns a different shape inside
+ * BrowseResult.nodes — this function maps them all to the standard:
+ *   [{ id, name, type, children: [{ id, name, type, metadata, schema }] }]
+ *
+ * Adapter shapes:
+ *   BigQuery:   {id, type:"dataset", tables: [{id, name, type, numRows, numBytes, columns}]}
+ *   Firestore:  {id, type:"collection", documentCount, fields: [string]}
+ *   GCS:        {id, type:"bucket", storageClass, location, prefixes, topLevelObjects}
+ *   Spanner:    {id, type:"instance", databases: [{id, name, type:"database", tables: [string]}]}
+ *   Bigtable:   {id, type:"instance", tables: [{id, name, type:"table", columnFamilies}]}
+ */
+function normalizeRemoteBrowse(rawNodes, serviceId) {
+    if (!rawNodes || rawNodes.length === 0) return [];
+
+    // Detect adapter type from the first node
+    const first = rawNodes[0];
+    const nodeType = first.type;
+
+    if (nodeType === 'dataset') {
+        // BigQuery: datasets with tables
+        return rawNodes.map(ds => ({
+            id: ds.id,
+            name: ds.id,
+            type: 'dataset',
+            children: (ds.tables || []).map(t => ({
+                id: t.id,
+                name: t.name || t.id,
+                type: 'table',
+                metadata: {
+                    rowCount: parseInt(t.numRows, 10) || 0,
+                    sizeBytes: parseInt(t.numBytes, 10) || 0,
+                },
+                schema: (t.columns || []).map(c => ({
+                    name: c.name,
+                    type: c.type,
+                })),
+            })),
+        }));
+    }
+
+    if (nodeType === 'collection') {
+        // Firestore: flat collections (no nested children)
+        return rawNodes.map(col => ({
+            id: col.id,
+            name: col.id,
+            type: 'collection',
+            children: [{
+                id: col.id,
+                name: col.id,
+                type: 'collection',
+                metadata: { rowCount: col.documentCount || 0 },
+                schema: (col.fields || []).map(f => ({
+                    name: typeof f === 'string' ? f : f.name,
+                    type: typeof f === 'string' ? 'VALUE' : (f.type || 'VALUE'),
+                })),
+            }],
+        }));
+    }
+
+    if (nodeType === 'bucket') {
+        // GCS: buckets with prefixes as children
+        return rawNodes.map(b => ({
+            id: b.id,
+            name: b.id,
+            type: 'bucket',
+            children: (b.prefixes || []).map(p => ({
+                id: `${b.id}/${p}`,
+                name: p,
+                type: 'prefix',
+                metadata: { storageClass: b.storageClass, location: b.location },
+                schema: [],
+            })).concat(b.topLevelObjects > 0 ? [{
+                id: `${b.id}/`,
+                name: `${b.topLevelObjects} root object${b.topLevelObjects !== 1 ? 's' : ''}`,
+                type: 'objects',
+                metadata: { rowCount: b.topLevelObjects },
+                schema: [],
+            }] : []),
+        }));
+    }
+
+    if (nodeType === 'instance' && first.databases) {
+        // Spanner: instances -> databases -> tables
+        return rawNodes.map(inst => ({
+            id: inst.id,
+            name: inst.id,
+            type: 'instance',
+            children: (inst.databases || []).map(db => ({
+                id: db.id,
+                name: db.name || db.id,
+                type: 'database',
+                metadata: { rowCount: (db.tables || []).length },
+                schema: (db.tables || []).map(t => ({
+                    name: typeof t === 'string' ? t : t.name,
+                    type: 'TABLE',
+                })),
+            })),
+        }));
+    }
+
+    if (nodeType === 'instance' && first.tables) {
+        // Bigtable: instances -> tables with column families
+        return rawNodes.map(inst => ({
+            id: inst.id,
+            name: inst.id,
+            type: 'instance',
+            children: (inst.tables || []).map(t => ({
+                id: t.id,
+                name: t.name || t.id,
+                type: 'table',
+                metadata: { columnFamilies: (t.columnFamilies || []).length },
+                schema: (t.columnFamilies || []).map(cf => ({
+                    name: typeof cf === 'string' ? cf : cf.name,
+                    type: 'COLUMN_FAMILY',
+                })),
+            })),
+        }));
+    }
+
+    // Fallback: wrap each raw node as-is with minimal normalization
+    return rawNodes.map(n => ({
+        id: n.id || n.name || 'unknown',
+        name: n.name || n.id || 'unknown',
+        type: n.type || 'unknown',
+        children: (n.children || []),
     }));
 }
 

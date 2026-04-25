@@ -1,4 +1,4 @@
-import { createSignal, createEffect, Show, For } from 'solid-js';
+import { createSignal, createEffect, Show, For, onCleanup } from 'solid-js';
 import { api } from '../api.js';
 import { SchemaExplorer } from './SchemaExplorer.jsx';
 import { SyncFilterBuilder } from './SyncFilterBuilder.jsx';
@@ -20,6 +20,10 @@ export function RemoteSyncPanel(props) {
     const [connectToken, setConnectToken] = createSignal('');
     const [selectedManifest, setSelectedManifest] = createSignal(null);
 
+    // Track active polling interval for cleanup on unmount
+    let activePolling = null;
+    onCleanup(() => { if (activePolling) clearInterval(activePolling); });
+
     // Check auth
     createEffect(async () => {
         try {
@@ -32,7 +36,9 @@ export function RemoteSyncPanel(props) {
 
     const loadManifests = async () => {
         try {
-            const m = await api.syncServiceManifests(props.serviceId);
+            const resp = await api.syncServiceManifests(props.serviceId);
+            // Server wraps list in {manifests: [...]}, extract the array
+            const m = resp?.manifests ?? resp;
             setSyncManifests(Array.isArray(m) ? m : []);
         } catch (e) { /* ignore */ }
     };
@@ -77,9 +83,66 @@ export function RemoteSyncPanel(props) {
                 filters: filters(),
                 row_limit: rowLimit()
             });
-            setSyncProgress({ percent: 100, ...result });
-            await loadManifests();
-            setTimeout(() => setPanel('preview'), 2000);
+
+            const manifestId = result.manifest_id;
+
+            // Clear any previous polling
+            if (activePolling) clearInterval(activePolling);
+
+            // Poll progress until complete
+            activePolling = setInterval(async () => {
+                try {
+                    const progress = await api.syncProgress(props.serviceId, res.id);
+
+                    if (progress.status === 'running') {
+                        setSyncProgress({
+                            percent: progress.percent || 0,
+                            rowsTransferred: progress.rows_transferred || 0,
+                            bytesTransferred: progress.bytes_transferred || 0,
+                            estimatedTotal: progress.estimated_total || 0,
+                            elapsedMs: progress.elapsed_ms || 0,
+                            status: 'running'
+                        });
+                    } else {
+                        // Not running anymore - check manifest for final status
+                        clearInterval(activePolling);
+                        activePolling = null;
+                        await loadManifests();
+
+                        // Get final manifest data
+                        const manifests = await api.syncServiceManifests(props.serviceId);
+                        const final_ = (Array.isArray(manifests) ? manifests : [])
+                            .find(m => m.id === manifestId || m.resource_path === res.id);
+
+                        if (final_ && final_.status === 'completed') {
+                            setSyncProgress({
+                                percent: 100,
+                                rowsSynced: final_.row_count,
+                                bytesSynced: final_.bytes_synced,
+                                status: 'completed'
+                            });
+                        } else if (final_ && final_.status === 'failed') {
+                            setSyncError(final_.error_message || 'Sync failed');
+                            setSyncProgress(prev => ({ ...prev, status: 'failed' }));
+                        } else if (final_ && final_.status === 'cancelled') {
+                            setSyncProgress(prev => ({ ...prev, status: 'cancelled' }));
+                        } else {
+                            setSyncProgress(prev => ({ ...prev, status: 'completed' }));
+                        }
+                    }
+                } catch (e) {
+                    // Progress endpoint might fail - keep polling
+                }
+            }, 2000);
+
+            // Safety timeout - stop polling after 30 minutes
+            setTimeout(() => {
+                if (activePolling) {
+                    clearInterval(activePolling);
+                    activePolling = null;
+                }
+            }, 1800000);
+
         } catch (e) {
             setSyncError(e.message);
             setSyncProgress(prev => ({ ...prev, status: 'failed' }));
@@ -164,6 +227,14 @@ export function RemoteSyncPanel(props) {
         if (b >= 1e6) return (b / 1e6).toFixed(1) + ' MB';
         if (b >= 1e3) return (b / 1e3).toFixed(1) + ' KB';
         return b + ' B';
+    };
+
+    const fmtElapsed = (ms) => {
+        if (!ms) return '0s';
+        const totalSec = Math.floor(ms / 1000);
+        const m = Math.floor(totalSec / 60);
+        const s = totalSec % 60;
+        return m > 0 ? `${m}m ${s}s` : `${s}s`;
     };
 
     // Not connected view
@@ -316,7 +387,7 @@ export function RemoteSyncPanel(props) {
                     <div class="card" style="margin-bottom: 16px">
                         <div class="card-header"><h4 style="margin: 0">Filters</h4></div>
                         <div class="card-body">
-                            <SyncFilterBuilder schema={selectedResource()?.schema} onChange={setFilters} />
+                            <SyncFilterBuilder schema={selectedResource()?.schema} onChange={setFilters} initialFilters={filters()} />
                         </div>
                     </div>
                     <div style="margin-bottom: 16px">
@@ -361,17 +432,23 @@ export function RemoteSyncPanel(props) {
                     </div>
                     <Show when={syncProgress()}>
                         <div style="font-size: 13px; color: var(--text-secondary); display: grid; grid-template-columns: 1fr 1fr; gap: 8px">
-                            <div>Rows: {fmtNum(syncProgress().rowsSynced || syncProgress().rowsTransferred || 0)}</div>
+                            <div>Rows: {fmtNum(syncProgress().rowsTransferred || syncProgress().rowsSynced || 0)}{syncProgress().estimatedTotal > 0 ? ` / ${fmtNum(syncProgress().estimatedTotal)}` : ''}</div>
                             <div>Status: {syncProgress().status}</div>
+                            <Show when={syncProgress().bytesTransferred || syncProgress().bytesSynced}>
+                                <div>Size: {fmtBytes(syncProgress().bytesTransferred || syncProgress().bytesSynced || 0)}</div>
+                            </Show>
+                            <Show when={syncProgress().elapsedMs}>
+                                <div>Elapsed: {fmtElapsed(syncProgress().elapsedMs)}</div>
+                            </Show>
                         </div>
                     </Show>
                     <Show when={syncProgress()?.status === 'running'}>
                         <div style="margin-top: 16px">
                             <button class="btn btn-danger" onClick={async () => {
+                                if (activePolling) { clearInterval(activePolling); activePolling = null; }
                                 await api.syncCancel(props.serviceId, { resource: selectedResource()?.id });
                                 setSyncProgress(prev => ({ ...prev, status: 'cancelled' }));
                                 await loadManifests();
-                                setTimeout(() => setPanel('preview'), 2000);
                             }}>Cancel Sync</button>
                         </div>
                     </Show>
