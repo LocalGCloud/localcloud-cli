@@ -13,7 +13,8 @@ const OPS = {
 };
 
 export function SyncFilterBuilder(props) {
-    const [filters, setFilters] = createSignal([]);
+    // props: schema, onChange, initialFilters
+    const [filters, setFilters] = createSignal(props.initialFilters || []);
 
     const addFilter = () => {
         const schema = props.schema || [];

@@ -35,6 +35,11 @@ public class SyncManifestRepository {
      * Save (upsert) a sync manifest. Deletes any existing manifest for the same
      * project+service+resource combination, then inserts the new one within a transaction.
      *
+     * <p>Design decision: we keep exactly one manifest per resource (latest sync wins).
+     * The "sync history" UI shows the most recent sync state for each resource.
+     * Resync replaces the previous manifest rather than appending a new row.
+     * This keeps the table small and avoids unbounded growth from repeated resyncs.
+     *
      * @param manifest the sync manifest to save
      * @return the generated id of the inserted row
      */

@@ -258,6 +258,8 @@ class SyncServiceTest {
 
     @Test
     void deleteManifest_delegatesToRepo() throws Exception {
+        // getById returns null (manifest not found) — deleteManifest should still call delete
+        when(manifestRepo.getById(99)).thenReturn(null);
         service.deleteManifest(99);
         verify(manifestRepo).delete(99);
     }
