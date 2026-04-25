@@ -365,8 +365,23 @@ export function RemoteSyncPanel(props) {
                             <div>Status: {syncProgress().status}</div>
                         </div>
                     </Show>
+                    <Show when={syncProgress()?.status === 'running'}>
+                        <div style="margin-top: 16px">
+                            <button class="btn btn-danger" onClick={async () => {
+                                await api.syncCancel(props.serviceId, { resource: selectedResource()?.id });
+                                setSyncProgress(prev => ({ ...prev, status: 'cancelled' }));
+                                await loadManifests();
+                                setTimeout(() => setPanel('preview'), 2000);
+                            }}>Cancel Sync</button>
+                        </div>
+                    </Show>
                     <Show when={syncError()}>
                         <div class="alert alert-error" style="margin-top: 16px">{syncError()}</div>
+                    </Show>
+                    <Show when={syncProgress()?.status === 'cancelled'}>
+                        <div class="alert" style="margin-top: 16px; background: var(--warning-bg, #fef7e0); color: var(--warning, #fbbc04); border: 1px solid var(--warning, #fbbc04); border-radius: 8px; padding: 12px">
+                            Sync cancelled.
+                        </div>
                     </Show>
                     <Show when={syncProgress()?.status === 'completed'}>
                         <div class="alert" style="margin-top: 16px; background: var(--success-bg, #e6f4ea); color: var(--success, #34a853); border: 1px solid var(--success, #34a853); border-radius: 8px; padding: 12px">

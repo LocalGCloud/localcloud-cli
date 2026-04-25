@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -51,6 +52,15 @@ class SyncIntegrationTest {
 
         when(manifestRepo.save(any())).thenReturn(42);
 
+        // Mock getById for the async-to-sync bridge
+        Map<String, Object> manifestRow = new LinkedHashMap<>();
+        manifestRow.put("row_count", 1000L);
+        manifestRow.put("bytes_synced", 5000000L);
+        manifestRow.put("estimated_cost", 0.025);
+        manifestRow.put("status", "completed");
+        manifestRow.put("error_message", null);
+        when(manifestRepo.getById(42)).thenReturn(manifestRow);
+
         // Act: estimate
         CostEstimate est = syncService.estimate("test-project", "bigquery",
                 "prod-project", "analytics.events", List.of(), 1000);
@@ -87,6 +97,15 @@ class SyncIntegrationTest {
                 .thenReturn(new SyncResult(-1, 312000, 1200000000, 0.006, "completed", null));
         when(manifestRepo.save(any())).thenReturn(43);
 
+        // Mock getById for the async-to-sync bridge
+        Map<String, Object> manifestRow = new LinkedHashMap<>();
+        manifestRow.put("row_count", 312000L);
+        manifestRow.put("bytes_synced", 1200000000L);
+        manifestRow.put("estimated_cost", 0.006);
+        manifestRow.put("status", "completed");
+        manifestRow.put("error_message", null);
+        when(manifestRepo.getById(43)).thenReturn(manifestRow);
+
         SyncResult result = syncService.startSync("test-project", "bigquery",
                 "prod-project", "analytics.events", filters, 500000, null);
 
@@ -118,6 +137,15 @@ class SyncIntegrationTest {
                 .thenReturn(new SyncResult(-1, 0, 0, 0, "failed", "Network timeout"));
         when(manifestRepo.save(any())).thenReturn(44);
 
+        // Mock getById for the async-to-sync bridge
+        Map<String, Object> manifestRow = new LinkedHashMap<>();
+        manifestRow.put("row_count", 0L);
+        manifestRow.put("bytes_synced", 0L);
+        manifestRow.put("estimated_cost", 0.0);
+        manifestRow.put("status", "failed");
+        manifestRow.put("error_message", "Network timeout");
+        when(manifestRepo.getById(44)).thenReturn(manifestRow);
+
         SyncResult result = syncService.startSync("test-project", "bigquery",
                 "prod-project", "analytics.events", List.of(), 100, null);
 
@@ -145,14 +173,23 @@ class SyncIntegrationTest {
                 });
         when(manifestRepo.save(any())).thenReturn(45);
 
-        // Track external callback calls
-        java.util.concurrent.atomic.AtomicInteger callCount = new java.util.concurrent.atomic.AtomicInteger(0);
-        SyncProgressCallback externalCb = (rows, bytes, total) -> callCount.incrementAndGet();
+        // Mock getById for the async-to-sync bridge
+        Map<String, Object> manifestRow = new LinkedHashMap<>();
+        manifestRow.put("row_count", 1000L);
+        manifestRow.put("bytes_synced", 5000L);
+        manifestRow.put("estimated_cost", 0.001);
+        manifestRow.put("status", "completed");
+        manifestRow.put("error_message", null);
+        when(manifestRepo.getById(45)).thenReturn(manifestRow);
 
         syncService.startSync("test-project", "bigquery",
-                "prod-project", "analytics.events", List.of(), 1000, externalCb);
+                "prod-project", "analytics.events", List.of(), 1000, null);
 
-        assertEquals(2, callCount.get());
+        // Verify progress was tracked via manifest repo updates (async path)
+        verify(manifestRepo, atLeastOnce()).updateProgress(eq(45), eq("in_progress"),
+                anyLong(), anyLong(), isNull());
+        verify(manifestRepo).updateProgress(eq(45), eq("completed"),
+                eq(1000L), eq(5000L), isNull());
     }
 
     @Test

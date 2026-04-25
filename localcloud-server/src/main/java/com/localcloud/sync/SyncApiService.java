@@ -371,7 +371,8 @@ public class SyncApiService {
     }
 
     /**
-     * Execute a sync operation.
+     * Execute a sync operation asynchronously.
+     * Returns manifest ID immediately; poll {@code /{service}/progress} for updates.
      * Expects JSON body: {@code {resource, source_project, filters[], row_limit}}.
      */
     @Post("/{service}/start")
@@ -387,11 +388,83 @@ public class SyncApiService {
             List<SyncFilter> filters = parseFilters(body.get("filters"));
             int rowLimit = body.containsKey("row_limit") ? ((Number) body.get("row_limit")).intValue() : 0;
 
-            SyncResult result = syncService.startSync(project, service, sourceProject,
-                    resource, filters, rowLimit, null);
-            return jsonResponse(result);
+            int manifestId = syncService.startSyncAsync(project, service, sourceProject,
+                    resource, filters, rowLimit);
+            return jsonResponse(Map.of("manifest_id", manifestId, "status", "in_progress"));
         } catch (Exception e) {
             logger.error("Error starting sync for {}", service, e);
+            return errorResponse(e);
+        }
+    }
+
+    /**
+     * Get progress of an active sync operation.
+     * Query params: {@code resource} (required).
+     */
+    @Get("/{service}/progress")
+    public HttpResponse progress(ServiceRequestContext ctx, @Param("service") String service) {
+        try {
+            String project = resolveProject(ctx);
+            String resource = ctx.queryParams().get("resource");
+
+            if (resource == null || resource.isBlank()) {
+                return HttpResponse.of(HttpStatus.BAD_REQUEST, MediaType.JSON,
+                        mapper.writeValueAsString(Map.of("error", true,
+                                "message", "resource query param required")));
+            }
+
+            SyncService.SyncProgress progress = syncService.getProgress(project, service, resource);
+            if (progress == null) {
+                return jsonResponse(Map.of("status", "not_running"));
+            }
+            return jsonResponse(Map.of(
+                    "status", "running",
+                    "rows_transferred", progress.rowsTransferred(),
+                    "bytes_transferred", progress.bytesTransferred(),
+                    "estimated_total", progress.estimatedTotal(),
+                    "percent", progress.percent(),
+                    "elapsed_ms", progress.elapsedMs()
+            ));
+        } catch (Exception e) {
+            logger.error("Error getting progress for {}", service, e);
+            return errorResponse(e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Cancel and resync endpoints
+    // -----------------------------------------------------------------------
+
+    /**
+     * Cancel a running sync operation.
+     * Expects JSON body: {@code {resource}}.
+     */
+    @Post("/{service}/cancel")
+    public HttpResponse cancelSync(ServiceRequestContext ctx, @Param("service") String service,
+                                    AggregatedHttpRequest req) {
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> body = mapper.readValue(req.contentUtf8(), Map.class);
+            String resource = (String) body.get("resource");
+            boolean cancelled = syncService.cancelSync(resolveProject(ctx), service, resource);
+            return jsonResponse(Map.of("cancelled", cancelled));
+        } catch (Exception e) {
+            logger.error("Error cancelling sync for {}", service, e);
+            return errorResponse(e);
+        }
+    }
+
+    /**
+     * Re-run a previous sync using stored manifest parameters.
+     * Starts a fresh sync with the same configuration.
+     */
+    @Post("/resync/{id}")
+    public HttpResponse resync(@Param("id") int id) {
+        try {
+            int newManifestId = syncService.resync(id);
+            return jsonResponse(Map.of("manifest_id", newManifestId, "status", "in_progress"));
+        } catch (Exception e) {
+            logger.error("Error resyncing manifest {}", id, e);
             return errorResponse(e);
         }
     }

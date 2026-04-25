@@ -134,5 +134,7 @@ export const api = {
     syncStart:            (service, body) => postJson(appendProject(`/_localcloud/sync/${service}/start`), body),
     syncManifests:        ()           => get(appendProject('/_localcloud/sync/manifests')),
     syncServiceManifests: (service)    => get(appendProject(`/_localcloud/sync/${service}/manifests`)),
+    syncCancel:           (service, body) => postJson(appendProject(`/_localcloud/sync/${service}/cancel`), body),
+    syncResync:           (id)         => postJson(appendProject(`/_localcloud/sync/resync/${id}`), {}),
     syncDeleteManifest:   (id)         => del(appendProject(`/_localcloud/sync/manifests/${id}`)),
 };

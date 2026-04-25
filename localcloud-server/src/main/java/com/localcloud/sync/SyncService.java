@@ -9,6 +9,10 @@ import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Central orchestrator for Data Mirror sync operations.
@@ -37,6 +41,16 @@ public class SyncService {
 
     /** Active sync progress keyed by "projectId:serviceId:resource". */
     private final ConcurrentHashMap<String, SyncProgress> activeProgress = new ConcurrentHashMap<>();
+
+    /** Thread pool for async sync execution. */
+    private final ExecutorService syncExecutor = Executors.newFixedThreadPool(2, r -> {
+        Thread t = new Thread(r, "sync-worker");
+        t.setDaemon(true);
+        return t;
+    });
+
+    /** Active futures for cancellation support (keyed by "projectId:serviceId:resource"). */
+    private final Map<String, Future<?>> activeFutures = new ConcurrentHashMap<>();
 
     public SyncService(SyncManifestRepository manifestRepo,
                        SyncCredentialRepository credentialRepo,
@@ -120,36 +134,30 @@ public class SyncService {
     // -----------------------------------------------------------------------
 
     /**
-     * Execute a sync operation with cost ceiling enforcement and manifest tracking.
+     * Start sync asynchronously. Returns manifest ID immediately.
+     * Poll {@link #getProgress} or use SSE for updates.
      *
-     * <ol>
-     *   <li>Estimates cost via the adapter's dry-run
-     *   <li>Rejects if estimated cost exceeds the configured ceiling
-     *   <li>Saves a manifest with status "in_progress"
-     *   <li>Calls the adapter's sync method with a progress-tracking callback
-     *   <li>Updates the manifest to "completed" or "failed"
-     * </ol>
+     * <p>Performs cost estimation and manifest creation synchronously (fast),
+     * then submits the actual data sync to a background thread pool.
      *
-     * @param projectId        the local project identifier
-     * @param serviceId        the service to sync
-     * @param sourceProject    the remote GCP project
-     * @param resource         the resource path
-     * @param filters          optional filters
-     * @param rowLimit         max rows (0 for unlimited)
-     * @param externalCallback optional callback for progress updates
-     * @return sync result with manifest ID and final stats
+     * @param projectId     the local project identifier
+     * @param serviceId     the service to sync
+     * @param sourceProject the remote GCP project
+     * @param resource      the resource path
+     * @param filters       optional filters
+     * @param rowLimit      max rows (0 for unlimited)
+     * @return the manifest ID (can be used to poll progress)
+     * @throws IllegalStateException if cost exceeds ceiling or credentials are missing
      */
-    public SyncResult startSync(String projectId, String serviceId, String sourceProject,
-                                 String resource, List<SyncFilter> filters, int rowLimit,
-                                 SyncProgressCallback externalCallback) {
+    public int startSyncAsync(String projectId, String serviceId, String sourceProject,
+                               String resource, List<SyncFilter> filters, int rowLimit) {
         SyncAdapter adapter = getAdapter(serviceId);
         String accessToken = getAccessToken(projectId);
 
-        // 1. Estimate cost first
+        // 1. Cost check (synchronous — fast)
         CostEstimate estimate = adapter.estimate(sourceProject, resource,
                 filters, rowLimit, accessToken);
 
-        // 2. Enforce cost ceiling
         if (estimate.estimatedCostUsd() > costCeilingUsd) {
             throw new IllegalStateException(String.format(
                     "Estimated cost $%.2f exceeds ceiling $%.2f. " +
@@ -157,7 +165,7 @@ public class SyncService {
                     estimate.estimatedCostUsd(), costCeilingUsd));
         }
 
-        // 3. Save manifest as in_progress
+        // 2. Save manifest as in_progress
         String filtersJson = filtersToJson(filters);
         SyncManifest manifest = new SyncManifest(
                 projectId, serviceId, resource, sourceProject,
@@ -172,46 +180,101 @@ public class SyncService {
             throw new RuntimeException("Failed to save sync manifest", e);
         }
 
-        // 4. Build progress-tracking callback
+        // 3. Run sync in background
         String progressKey = progressKey(projectId, serviceId, resource);
         long startTime = System.currentTimeMillis();
 
-        SyncProgressCallback progressTracker = (rowsTransferred, bytesTransferred, estimatedTotal) -> {
-            long elapsed = System.currentTimeMillis() - startTime;
-            int percent = estimatedTotal > 0
-                    ? (int) (100 * rowsTransferred / estimatedTotal)
-                    : 0;
-            activeProgress.put(progressKey, new SyncProgress(
-                    rowsTransferred, bytesTransferred, estimatedTotal, percent, elapsed));
+        Future<?> future = syncExecutor.submit(() -> {
+            try {
+                SyncProgressCallback progressTracker = (rows, bytes, total) -> {
+                    long elapsed = System.currentTimeMillis() - startTime;
+                    int pct = total > 0 ? (int) (rows * 100 / total) : 0;
+                    activeProgress.put(progressKey, new SyncProgress(rows, bytes, total, pct, elapsed));
+                    try {
+                        manifestRepo.updateProgress(manifestId, "in_progress", rows, bytes, null);
+                    } catch (Exception e) {
+                        logger.warn("Failed to update progress: {}", e.getMessage());
+                    }
+                };
 
-            // Forward to external callback if provided
-            if (externalCallback != null) {
-                externalCallback.onProgress(rowsTransferred, bytesTransferred, estimatedTotal);
+                SyncResult result = adapter.sync(sourceProject, resource, filters,
+                        rowLimit, accessToken, projectId, progressTracker);
+
+                manifestRepo.updateProgress(manifestId, result.status(),
+                        result.rowsSynced(), result.bytesSynced(), result.errorMessage());
+
+                // Keep progress for 60 seconds after completion so SSE clients can read it
+                activeProgress.put(progressKey, new SyncProgress(
+                        result.rowsSynced(), result.bytesSynced(), result.rowsSynced(), 100,
+                        System.currentTimeMillis() - startTime));
+
+            } catch (Exception e) {
+                logger.error("Sync failed: {}", e.getMessage());
+                try {
+                    manifestRepo.updateProgress(manifestId, "failed", 0, 0, e.getMessage());
+                } catch (Exception ex) {
+                    logger.error("Failed to update manifest on error: {}", ex.getMessage());
+                }
+            } finally {
+                activeFutures.remove(progressKey);
+                // Delayed cleanup of progress
+                syncExecutor.submit(() -> {
+                    try { Thread.sleep(60000); } catch (InterruptedException ignored) {}
+                    activeProgress.remove(progressKey);
+                });
             }
-        };
+        });
 
-        // 5. Execute sync
-        SyncResult adapterResult;
-        try {
-            adapterResult = adapter.sync(sourceProject, resource, filters,
-                    rowLimit, accessToken, projectId, progressTracker);
-        } finally {
-            activeProgress.remove(progressKey);
+        activeFutures.put(progressKey, future);
+        return manifestId;
+    }
+
+    /**
+     * Execute a sync operation synchronously (blocking).
+     *
+     * <p>Delegates to {@link #startSyncAsync} and waits for completion.
+     * Retained for backward compatibility with tests and CLI callers.
+     *
+     * @param projectId        the local project identifier
+     * @param serviceId        the service to sync
+     * @param sourceProject    the remote GCP project
+     * @param resource         the resource path
+     * @param filters          optional filters
+     * @param rowLimit         max rows (0 for unlimited)
+     * @param externalCallback optional callback for progress updates (not used in async path)
+     * @return sync result with manifest ID and final stats
+     */
+    public SyncResult startSync(String projectId, String serviceId, String sourceProject,
+                                 String resource, List<SyncFilter> filters, int rowLimit,
+                                 SyncProgressCallback externalCallback) {
+        int manifestId = startSyncAsync(projectId, serviceId, sourceProject, resource, filters, rowLimit);
+
+        // Wait for completion (blocking — used by tests and CLI)
+        String syncKey = progressKey(projectId, serviceId, resource);
+        Future<?> future = activeFutures.get(syncKey);
+        if (future != null) {
+            try {
+                future.get(300, TimeUnit.SECONDS); // 5 minute timeout
+            } catch (Exception e) {
+                logger.error("Sync wait interrupted for manifest {}: {}", manifestId, e.getMessage());
+            }
         }
 
-        // 6. Update manifest with final status
         try {
-            manifestRepo.updateProgress(manifestId, adapterResult.status(),
-                    adapterResult.rowsSynced(), adapterResult.bytesSynced(),
-                    adapterResult.errorMessage());
+            Map<String, Object> manifest = manifestRepo.getById(manifestId);
+            if (manifest != null) {
+                return new SyncResult(manifestId,
+                        ((Number) manifest.get("row_count")).longValue(),
+                        ((Number) manifest.get("bytes_synced")).longValue(),
+                        ((Number) manifest.get("estimated_cost")).doubleValue(),
+                        (String) manifest.get("status"),
+                        (String) manifest.get("error_message"));
+            }
         } catch (SQLException e) {
-            logger.error("Failed to update sync manifest {}: {}", manifestId, e.getMessage(), e);
+            logger.error("Failed to read manifest {}: {}", manifestId, e.getMessage());
         }
 
-        // Return result with the real manifest ID
-        return new SyncResult(manifestId, adapterResult.rowsSynced(),
-                adapterResult.bytesSynced(), adapterResult.costIncurred(),
-                adapterResult.status(), adapterResult.errorMessage());
+        return new SyncResult(manifestId, 0, 0, 0, "unknown", "Failed to read final manifest");
     }
 
     // -----------------------------------------------------------------------
@@ -265,6 +328,79 @@ public class SyncService {
             logger.error("Failed to delete manifest {}: {}", id, e.getMessage(), e);
             throw new RuntimeException("Failed to delete sync manifest", e);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Cancel and resync
+    // -----------------------------------------------------------------------
+
+    /**
+     * Cancel a running sync. Returns true if a sync was cancelled.
+     *
+     * @param projectId the local project identifier
+     * @param serviceId the service being synced
+     * @param resource  the resource path
+     * @return true if a running sync was found and cancelled
+     */
+    public boolean cancelSync(String projectId, String serviceId, String resource) {
+        String syncKey = progressKey(projectId, serviceId, resource);
+        Future<?> future = activeFutures.get(syncKey);
+        if (future != null && !future.isDone()) {
+            future.cancel(true); // interrupt the thread
+            activeFutures.remove(syncKey);
+            activeProgress.remove(syncKey);
+            // Update manifest to cancelled
+            try {
+                var manifests = manifestRepo.getByService(projectId, serviceId);
+                for (var m : manifests) {
+                    if (resource.equals(m.get("resource_path")) && "in_progress".equals(m.get("status"))) {
+                        manifestRepo.updateProgress(
+                            ((Number) m.get("id")).intValue(), "cancelled",
+                            ((Number) m.get("row_count")).longValue(),
+                            ((Number) m.get("bytes_synced")).longValue(),
+                            "Cancelled by user");
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                logger.warn("Failed to update manifest on cancel: {}", e.getMessage());
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Re-run a previous sync using its stored parameters.
+     * For partial/cancelled syncs, this starts fresh (resume from checkpoint is a future enhancement).
+     *
+     * @param manifestId the manifest ID to re-sync
+     * @return the new manifest ID
+     * @throws Exception if the manifest is not found or sync fails to start
+     */
+    public int resync(int manifestId) throws Exception {
+        Map<String, Object> manifest = manifestRepo.getById(manifestId);
+        if (manifest == null) {
+            throw new IllegalArgumentException("Manifest not found: " + manifestId);
+        }
+
+        String projectId = (String) manifest.get("project_id");
+        String serviceId = (String) manifest.get("service_id");
+        String resource = (String) manifest.get("resource_path");
+        String sourceProject = (String) manifest.get("source_project");
+        String filtersJson = (String) manifest.get("filters_json");
+        long rowCount = ((Number) manifest.get("row_count")).longValue();
+
+        List<SyncFilter> filters = List.of();
+        if (filtersJson != null && !filtersJson.equals("[]")) {
+            filters = mapper.readValue(filtersJson,
+                mapper.getTypeFactory().constructCollectionType(List.class, SyncFilter.class));
+        }
+
+        // Use original row count as limit, or default
+        int rowLimit = rowCount > 0 ? (int) Math.min(rowCount * 2, Integer.MAX_VALUE) : 1000000;
+
+        return startSyncAsync(projectId, serviceId, sourceProject, resource, filters, rowLimit);
     }
 
     // -----------------------------------------------------------------------

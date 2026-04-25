@@ -8,6 +8,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.sql.SQLException;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -100,6 +101,15 @@ class SyncServiceTest {
                 anyList(), eq(500), eq("tok123"), eq(PROJECT),
                 any(SyncProgressCallback.class))).thenReturn(adapterResult);
 
+        // Mock getById for the async-to-sync bridge in startSync
+        Map<String, Object> manifestRow = new LinkedHashMap<>();
+        manifestRow.put("row_count", 100L);
+        manifestRow.put("bytes_synced", 1000L);
+        manifestRow.put("estimated_cost", 0.01);
+        manifestRow.put("status", "completed");
+        manifestRow.put("error_message", null);
+        when(manifestRepo.getById(42)).thenReturn(manifestRow);
+
         SyncResult result = service.startSync(PROJECT, SERVICE, SOURCE_PROJECT,
                 RESOURCE, List.of(), 500, null);
 
@@ -161,6 +171,15 @@ class SyncServiceTest {
         when(bigqueryAdapter.sync(eq(SOURCE_PROJECT), eq(RESOURCE),
                 anyList(), eq(0), eq("tok123"), eq(PROJECT),
                 any(SyncProgressCallback.class))).thenReturn(failedResult);
+
+        // Mock getById for the async-to-sync bridge in startSync
+        Map<String, Object> manifestRow = new LinkedHashMap<>();
+        manifestRow.put("row_count", 50L);
+        manifestRow.put("bytes_synced", 500L);
+        manifestRow.put("estimated_cost", 0.005);
+        manifestRow.put("status", "failed");
+        manifestRow.put("error_message", "Connection timeout");
+        when(manifestRepo.getById(7)).thenReturn(manifestRow);
 
         SyncResult result = service.startSync(PROJECT, SERVICE, SOURCE_PROJECT,
                 RESOURCE, List.of(), 0, null);
@@ -267,13 +286,25 @@ class SyncServiceTest {
             return adapterResult;
         });
 
-        SyncProgressCallback externalCallback = mock(SyncProgressCallback.class);
-        service.startSync(PROJECT, SERVICE, SOURCE_PROJECT,
-                RESOURCE, List.of(), 0, externalCallback);
+        // Mock getById for the async-to-sync bridge in startSync
+        Map<String, Object> manifestRow = new LinkedHashMap<>();
+        manifestRow.put("row_count", 1000L);
+        manifestRow.put("bytes_synced", 10000L);
+        manifestRow.put("estimated_cost", 0.05);
+        manifestRow.put("status", "completed");
+        manifestRow.put("error_message", null);
+        when(manifestRepo.getById(10)).thenReturn(manifestRow);
 
-        // External callback should have been invoked
-        verify(externalCallback).onProgress(500, 5000, 1000);
-        verify(externalCallback).onProgress(1000, 10000, 1000);
+        // Note: externalCallback is not forwarded in async path,
+        // progress is tracked via getProgress() polling instead
+        service.startSync(PROJECT, SERVICE, SOURCE_PROJECT,
+                RESOURCE, List.of(), 0, null);
+
+        // Verify progress was tracked via manifestRepo updates
+        verify(manifestRepo, atLeastOnce()).updateProgress(eq(10), eq("in_progress"),
+                anyLong(), anyLong(), isNull());
+        verify(manifestRepo).updateProgress(eq(10), eq("completed"),
+                eq(1000L), eq(10000L), isNull());
     }
 
     // -----------------------------------------------------------------------
