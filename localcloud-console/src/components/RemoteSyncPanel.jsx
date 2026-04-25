@@ -100,6 +100,35 @@ export function RemoteSyncPanel(props) {
         } catch (e) { setSyncError(e.message); }
     };
 
+    const handleResync = async (manifest) => {
+        // Parse stored filters
+        let parsedFilters = [];
+        try {
+            parsedFilters = JSON.parse(manifest.filters_json || '[]');
+        } catch (e) { /* use empty */ }
+
+        // Pre-populate sync form with manifest's params
+        setSelectedResource({
+            id: manifest.resource_path,
+            name: manifest.resource_path,
+            schema: selectedResource()?.schema || []
+        });
+        setFilters(parsedFilters);
+        setRowLimit(manifest.row_count || 1000000);
+        setPanel('sync');
+
+        // Auto-estimate cost
+        try {
+            const est = await api.syncEstimate(props.serviceId, {
+                resource: manifest.resource_path,
+                source_project: manifest.source_project,
+                filters: parsedFilters,
+                row_limit: manifest.row_count || 1000000
+            });
+            setCostEstimate(est);
+        } catch (e) { /* user can click estimate manually */ }
+    };
+
     // OAuth disabled — requires client_id/client_secret configuration
     const handleOAuth = () => {};
 
@@ -368,7 +397,7 @@ export function RemoteSyncPanel(props) {
                         </div>
                     </div>
                     <div style="margin-top: 16px; display: flex; gap: 8px">
-                        <button class="btn btn-primary" onClick={() => { /* resync would go here */ }}>Resync</button>
+                        <button class="btn btn-primary" onClick={() => handleResync(selectedManifest())}>Resync</button>
                         <button class="btn btn-danger" onClick={() => deleteManifest(selectedManifest().id)}>Remove from Local</button>
                     </div>
                 </Show>

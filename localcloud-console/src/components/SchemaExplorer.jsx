@@ -18,6 +18,10 @@ export function SchemaExplorer(props) {
             if (props.source === 'remote') {
                 const data = await api.syncBrowse(svc);
                 setNodes(data.nodes || []);
+            } else {
+                // Local schema
+                const data = await api.schema(svc);
+                setNodes(normalizeLocalSchema(data, svc));
             }
         } catch (e) {
             setError(e.message || 'Failed to load');
@@ -106,6 +110,43 @@ export function SchemaExplorer(props) {
             </Show>
         </div>
     );
+}
+
+/**
+ * Normalize the local schema API response into the tree node format
+ * used by SchemaExplorer. api.schema() returns:
+ *   { tables: [{ name: "dataset.table" | "table", columns: [{ name, type }] }] }
+ * We group by database/dataset (splitting on '.') and produce:
+ *   [{ id, name, type: 'database', children: [{ id, name, type: 'table', schema, metadata }] }]
+ */
+function normalizeLocalSchema(data, serviceId) {
+    const tables = data?.tables || [];
+    const groups = {};
+    for (const t of tables) {
+        let dbName, tableName;
+        if (t.name && t.name.includes('.')) {
+            const parts = t.name.split('.');
+            dbName = parts[0];
+            tableName = parts.slice(1).join('.');
+        } else {
+            dbName = 'public';
+            tableName = t.name;
+        }
+        if (!groups[dbName]) groups[dbName] = [];
+        groups[dbName].push({
+            id: `${serviceId}/${t.name}`,
+            name: tableName,
+            type: 'table',
+            schema: (t.columns || []).map(c => ({ name: c.name || c, type: c.type || 'unknown' })),
+            metadata: { rowCount: t.row_count || null }
+        });
+    }
+    return Object.entries(groups).map(([dbName, children]) => ({
+        id: `${serviceId}/${dbName}`,
+        name: dbName,
+        type: 'database',
+        children
+    }));
 }
 
 function formatNum(n) {
