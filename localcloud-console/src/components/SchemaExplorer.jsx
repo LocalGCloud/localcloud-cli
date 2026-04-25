@@ -34,6 +34,16 @@ export function SchemaExplorer(props) {
     const toggle = (key) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
     const select = (node) => { setSelected(node.id); props.onSelect?.(node); };
 
+    const typeLabel = (type) => {
+        switch(type) {
+            case 'dataset': return 'dataset';
+            case 'collection': return 'collection';
+            case 'bucket': return 'bucket';
+            case 'instance': return 'instance';
+            default: return '';
+        }
+    };
+
     const getSyncBadge = (id) => {
         const manifests = typeof props.syncManifests === 'function' ? props.syncManifests() : props.syncManifests;
         if (!manifests) return null;
@@ -59,50 +69,57 @@ export function SchemaExplorer(props) {
                 <div class="alert alert-error" style="margin: 8px">{error()}</div>
             </Show>
             <Show when={!loading() && !error()}>
-                <div class="sql-explorer-tree" style="flex: 1; overflow-y: auto; padding: 4px 0">
+                <div class="sql-explorer-tree" role="tree" aria-label="Resource explorer" style="flex: 1; overflow-y: auto; padding: 4px 0">
                     <For each={nodes()}>
                         {(node) => (
                             <div>
-                                <div class={`tree-row tree-row-db`} onClick={() => toggle(node.id)}
-                                     style="cursor: pointer">
+                                <button class={`tree-row tree-row-db`} onClick={() => toggle(node.id)}
+                                     aria-expanded={!!expanded()[node.id]}
+                                     role="treeitem"
+                                     style="cursor: pointer; width: 100%; text-align: left; background: none; border: none; color: inherit; font: inherit; padding: inherit">
                                     <span class="tree-chevron" style={{ transform: expanded()[node.id] ? 'rotate(90deg)' : 'none' }}>&rsaquo;</span>
-                                    <span class="tree-name">{node.name}</span>
+                                    <span class="tree-name" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px" title={node.name}>{node.name}</span>
                                     <span class="tree-badge" style="margin-left: auto; font-size: 11px; color: var(--text-secondary)">
-                                        {node.children?.length || 0} tbl
+                                        {node.children?.length || 0} {typeLabel(node.type) || 'items'}
                                     </span>
-                                </div>
+                                </button>
                                 <Show when={expanded()[node.id]}>
-                                    <For each={node.children || []}>
-                                        {(child) => {
-                                            const syncInfo = () => getSyncBadge(child.id);
-                                            return (
-                                                <div>
-                                                    <div class={`tree-row tree-row-tbl ${selected() === child.id ? 'active' : ''}`}
-                                                         onClick={() => select(child)} style="cursor: pointer; padding-left: 28px">
-                                                        <span class="tree-name">{child.name}</span>
-                                                        <span class="tree-badge" style="margin-left: auto; font-size: 11px; color: var(--text-secondary)">
-                                                            {child.metadata?.rowCount ? formatNum(child.metadata.rowCount) + ' rows' : ''}
-                                                        </span>
-                                                        <Show when={syncInfo()}>
-                                                            <span style={`margin-left: 4px; font-size: 11px; color: ${syncInfo().class === 'synced' ? 'var(--success, #34a853)' : 'var(--warning, #fbbc04)'}`}>
-                                                                {syncInfo().badge}
+                                    <div role="group">
+                                        <For each={node.children || []}>
+                                            {(child) => {
+                                                const syncInfo = () => getSyncBadge(child.id);
+                                                return (
+                                                    <div>
+                                                        <button class={`tree-row tree-row-tbl ${selected() === child.id ? 'active' : ''}`}
+                                                             onClick={() => select(child)}
+                                                             role="treeitem"
+                                                             aria-selected={selected() === child.id}
+                                                             style="cursor: pointer; width: 100%; text-align: left; background: none; border: none; color: inherit; font: inherit; padding-left: 28px">
+                                                            <span class="tree-name" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px" title={child.name}>{child.name}</span>
+                                                            <span class="tree-badge" style="margin-left: auto; font-size: 11px; color: var(--text-secondary)">
+                                                                {child.metadata?.rowCount ? formatNum(child.metadata.rowCount) + ' rows' : ''}
                                                             </span>
+                                                            <Show when={syncInfo()}>
+                                                                <span style={`margin-left: 4px; font-size: 11px; color: ${syncInfo().class === 'synced' ? 'var(--success, #34a853)' : 'var(--warning, #fbbc04)'}`}>
+                                                                    {syncInfo().badge}
+                                                                </span>
+                                                            </Show>
+                                                        </button>
+                                                        <Show when={selected() === child.id && child.schema}>
+                                                            <For each={child.schema || []}>
+                                                                {(col) => (
+                                                                    <div class="tree-row tree-row-col" role="none" style="padding-left: 44px">
+                                                                        <span class="tree-col-name">{col.name}</span>
+                                                                        <span class="tree-col-type" style="margin-left: auto">{col.type}</span>
+                                                                    </div>
+                                                                )}
+                                                            </For>
                                                         </Show>
                                                     </div>
-                                                    <Show when={selected() === child.id && child.schema}>
-                                                        <For each={child.schema || []}>
-                                                            {(col) => (
-                                                                <div class="tree-row tree-row-col" style="padding-left: 44px">
-                                                                    <span class="tree-col-name">{col.name}</span>
-                                                                    <span class="tree-col-type" style="margin-left: auto">{col.type}</span>
-                                                                </div>
-                                                            )}
-                                                        </For>
-                                                    </Show>
-                                                </div>
-                                            );
-                                        }}
-                                    </For>
+                                                );
+                                            }}
+                                        </For>
+                                    </div>
                                 </Show>
                             </div>
                         )}
