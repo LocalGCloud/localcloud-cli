@@ -474,9 +474,15 @@ public class SyncApiService {
     }
 
     private HttpResponse errorResponse(Exception e) {
-        String message = e.getMessage() != null ? e.getMessage().replace("\"", "'") : "Unknown error";
-        return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
-                "{\"error\":true,\"message\":\"" + message + "\"}");
+        logger.error("Sync API error: {}", e.getMessage());
+        try {
+            return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
+                    mapper.writeValueAsString(Map.of("error", true,
+                            "message", e.getMessage() != null ? e.getMessage() : "Unknown error")));
+        } catch (Exception je) {
+            return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
+                    "{\"error\":true,\"message\":\"Internal error\"}");
+        }
     }
 
     /**
@@ -485,6 +491,7 @@ public class SyncApiService {
      * to close the tab and return to the console.
      */
     String buildCallbackHtml(boolean success, String message) {
+        String safeMessage = escapeHtml(message);
         String color = success ? "#34a853" : "#ea4335";
         String icon = success ? "\u2713" : "\u2717";
         return "<!DOCTYPE html><html><head><title>LocalCloud - Auth</title>"
@@ -498,8 +505,17 @@ public class SyncApiService {
                 + "<body><div class='card'><div class='icon'>" + icon + "</div>"
                 + "<h2 style='margin:0;color:#202124'>"
                 + (success ? "Connected!" : "Connection Failed") + "</h2>"
-                + "<p class='msg'>" + message + "</p>"
+                + "<p class='msg'>" + safeMessage + "</p>"
                 + "<p class='hint'>You can close this tab and return to the LocalCloud console.</p>"
                 + "</div></body></html>";
+    }
+
+    private static String escapeHtml(String s) {
+        if (s == null) return "";
+        return s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
     }
 }

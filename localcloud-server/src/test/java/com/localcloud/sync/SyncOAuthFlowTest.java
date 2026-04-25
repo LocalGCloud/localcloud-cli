@@ -27,6 +27,16 @@ class SyncOAuthFlowTest {
         assertTrue(html.contains("#ea4335")); // red
     }
 
+    @Test
+    void buildCallbackHtml_escapesHtmlInMessage() throws Exception {
+        var method = SyncApiService.class.getDeclaredMethod("buildCallbackHtml", boolean.class, String.class);
+        method.setAccessible(true);
+        var service = createTestInstance();
+        String html = (String) method.invoke(service, false, "<script>alert('xss')</script>");
+        assertFalse(html.contains("<script>"));
+        assertTrue(html.contains("&lt;script&gt;"));
+    }
+
     private SyncApiService createTestInstance() {
         return new SyncApiService(
             org.mockito.Mockito.mock(SyncService.class),
