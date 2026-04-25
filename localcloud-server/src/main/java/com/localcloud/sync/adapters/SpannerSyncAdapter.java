@@ -51,11 +51,13 @@ public class SpannerSyncAdapter implements SyncAdapter {
     private final String localEmulatorHost;
     private final int localEmulatorPort;
     private final ObjectMapper mapper;
+    private final RetryableHttpClient httpClient;
 
     public SpannerSyncAdapter(String localEmulatorHost, int localEmulatorPort, ObjectMapper mapper) {
         this.localEmulatorHost = localEmulatorHost;
         this.localEmulatorPort = localEmulatorPort;
         this.mapper = mapper;
+        this.httpClient = new RetryableHttpClient();
     }
 
     // -----------------------------------------------------------------------
@@ -420,52 +422,19 @@ public class SpannerSyncAdapter implements SyncAdapter {
     }
 
     // -----------------------------------------------------------------------
-    // Private helpers — GCP HTTP
+    // Private helpers — GCP HTTP (delegated to RetryableHttpClient)
     // -----------------------------------------------------------------------
 
     private JsonNode gcpGet(String path, String accessToken) throws IOException {
-        HttpURLConnection conn = openGcpConnection(path, "GET", accessToken);
-        return readResponse(conn, "Spanner");
+        String url = GCP_SPANNER_BASE + path;
+        String body = httpClient.get(url, accessToken).body();
+        return mapper.readTree(body);
     }
 
     private JsonNode gcpPost(String path, String body, String accessToken) throws IOException {
-        HttpURLConnection conn = openGcpConnection(path, "POST", accessToken);
-        conn.setDoOutput(true);
-        try (OutputStream os = conn.getOutputStream()) {
-            os.write(body.getBytes(StandardCharsets.UTF_8));
-        }
-        return readResponse(conn, "Spanner");
-    }
-
-    private HttpURLConnection openGcpConnection(String path, String method,
-                                                  String accessToken) throws IOException {
         String url = GCP_SPANNER_BASE + path;
-        HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
-        conn.setRequestMethod(method);
-        conn.setRequestProperty("Authorization", "Bearer " + accessToken);
-        conn.setRequestProperty("Content-Type", "application/json");
-        conn.setConnectTimeout(TIMEOUT_MS);
-        conn.setReadTimeout(TIMEOUT_MS);
-        return conn;
-    }
-
-    private JsonNode readResponse(HttpURLConnection conn, String serviceName) throws IOException {
-        int statusCode = conn.getResponseCode();
-        InputStream is = (statusCode >= 200 && statusCode < 300)
-                ? conn.getInputStream()
-                : conn.getErrorStream();
-
-        String body = "";
-        if (is != null) {
-            body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-        }
-        conn.disconnect();
-
-        if (statusCode < 200 || statusCode >= 300) {
-            throw new IOException(serviceName + " API returned " + statusCode + ": " + body);
-        }
-
-        return mapper.readTree(body);
+        String responseBody = httpClient.post(url, body, accessToken).body();
+        return mapper.readTree(responseBody);
     }
 
     // -----------------------------------------------------------------------
@@ -541,31 +510,7 @@ public class SpannerSyncAdapter implements SyncAdapter {
     }
 
     private String localPost(String url, String body) throws IOException {
-        HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
-        conn.setRequestMethod("POST");
-        conn.setRequestProperty("Content-Type", "application/json");
-        conn.setConnectTimeout(TIMEOUT_MS);
-        conn.setReadTimeout(TIMEOUT_MS);
-        conn.setDoOutput(true);
-
-        try (OutputStream os = conn.getOutputStream()) {
-            os.write(body.getBytes(StandardCharsets.UTF_8));
-        }
-
-        int statusCode = conn.getResponseCode();
-        InputStream is = (statusCode >= 200 && statusCode < 300)
-                ? conn.getInputStream()
-                : conn.getErrorStream();
-
-        String responseBody = "";
-        if (is != null) {
-            responseBody = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-        }
-        conn.disconnect();
-
-        if (statusCode < 200 || statusCode >= 300) {
-            throw new IOException("Local Spanner emulator returned " + statusCode + ": " + responseBody);
-        }
+        String responseBody = httpClient.localPost(url, body).body();
 
         // Return session name if present in response
         try {

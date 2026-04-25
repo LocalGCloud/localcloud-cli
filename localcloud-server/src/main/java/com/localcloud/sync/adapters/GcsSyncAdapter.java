@@ -43,10 +43,12 @@ public class GcsSyncAdapter implements SyncAdapter {
 
     private final String localEmulatorBase;
     private final ObjectMapper mapper;
+    private final RetryableHttpClient httpClient;
 
     public GcsSyncAdapter(String localEmulatorBase, ObjectMapper mapper) {
         this.localEmulatorBase = localEmulatorBase;
         this.mapper = mapper;
+        this.httpClient = new RetryableHttpClient();
     }
 
     // -----------------------------------------------------------------------
@@ -309,66 +311,22 @@ public class GcsSyncAdapter implements SyncAdapter {
     }
 
     // -----------------------------------------------------------------------
-    // Private helpers — GCP HTTP
+    // Private helpers — GCP HTTP (delegated to RetryableHttpClient)
     // -----------------------------------------------------------------------
 
     private JsonNode gcpGet(String path, String accessToken) throws IOException {
-        HttpURLConnection conn = openGcpConnection(path, "GET", accessToken);
-        return readResponse(conn, "GCS");
+        String url = GCP_GCS_BASE + path;
+        String body = httpClient.get(url, accessToken).body();
+        return mapper.readTree(body);
     }
 
     private byte[] downloadObject(String bucket, String objectName,
                                    String accessToken) throws IOException {
         String encodedName = objectName.replace("/", "%2F");
         String url = GCP_GCS_BASE + "/storage/v1/b/" + bucket + "/o/" + encodedName + "?alt=media";
-        HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
-        conn.setRequestMethod("GET");
-        conn.setRequestProperty("Authorization", "Bearer " + accessToken);
-        conn.setConnectTimeout(TIMEOUT_MS);
-        conn.setReadTimeout(TIMEOUT_MS);
-
-        int statusCode = conn.getResponseCode();
-        if (statusCode < 200 || statusCode >= 300) {
-            InputStream errIs = conn.getErrorStream();
-            String errBody = errIs != null ? new String(errIs.readAllBytes(), StandardCharsets.UTF_8) : "";
-            conn.disconnect();
-            throw new IOException("GCS download returned " + statusCode + ": " + errBody);
-        }
-
-        byte[] data = conn.getInputStream().readAllBytes();
-        conn.disconnect();
-        return data;
-    }
-
-    private HttpURLConnection openGcpConnection(String path, String method,
-                                                  String accessToken) throws IOException {
-        String url = GCP_GCS_BASE + path;
-        HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
-        conn.setRequestMethod(method);
-        conn.setRequestProperty("Authorization", "Bearer " + accessToken);
-        conn.setRequestProperty("Content-Type", "application/json");
-        conn.setConnectTimeout(TIMEOUT_MS);
-        conn.setReadTimeout(TIMEOUT_MS);
-        return conn;
-    }
-
-    private JsonNode readResponse(HttpURLConnection conn, String serviceName) throws IOException {
-        int statusCode = conn.getResponseCode();
-        InputStream is = (statusCode >= 200 && statusCode < 300)
-                ? conn.getInputStream()
-                : conn.getErrorStream();
-
-        String body = "";
-        if (is != null) {
-            body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-        }
-        conn.disconnect();
-
-        if (statusCode < 200 || statusCode >= 300) {
-            throw new IOException(serviceName + " API returned " + statusCode + ": " + body);
-        }
-
-        return mapper.readTree(body);
+        // Download uses get() with retry; body is returned as String, convert to bytes
+        String body = httpClient.get(url, accessToken).body();
+        return body.getBytes(StandardCharsets.UTF_8);
     }
 
     // -----------------------------------------------------------------------
