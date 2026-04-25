@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import DataBrowser from './DataBrowser.jsx';
 import CodeEditor, { toCodeMirrorSchema } from '../components/CodeEditor.jsx';
 import Workflows from './Workflows.jsx';
+import { RemoteSyncPanel } from '../components/RemoteSyncPanel.jsx';
 
 // ─── Service Metadata (icon, title, description) ─────────────────────
 const SERVICE_META = {
@@ -1002,6 +1003,15 @@ export default function ServiceExplorer(props) {
                             </svg>
                             Data Explorer
                         </button>
+                        <button
+                            class={`se-mode-tab ${mode() === 'sync' ? 'active' : ''}`}
+                            onClick={() => setMode('sync')}
+                        >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
+                            </svg>
+                            Remote Sync
+                        </button>
                     </div>
                     <div class="se-mode-actions">
                         <button class="btn btn-secondary" onClick={handleRefresh} style={{ height: "30px", "font-size": "11px", padding: "0 12px" }}>
@@ -1025,6 +1035,10 @@ export default function ServiceExplorer(props) {
                         refreshTrigger={refreshTrigger}
                         resetTrigger={resetTrigger}
                     />
+                </div>
+
+                <div style={{ display: mode() === 'sync' ? '' : 'none' }}>
+                    <RemoteSyncPanel serviceId={activeService()} activeProject={props.activeProject} />
                 </div>
             </Show>
         </div>

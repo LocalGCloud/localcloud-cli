@@ -122,4 +122,16 @@ export const api = {
     workflowRemoteList: () => get(appendProject('/_localcloud/workflow/workflows')),
     workflowRemoteServices: () => get(appendProject('/_localcloud/workflow/services')),
     workflowImport: (name) => postJson(appendProject('/_localcloud/workflow/import'), { name }),
+    // Data Mirror sync
+    syncAuthStatus:       ()           => get(appendProject('/_localcloud/sync/auth/status')),
+    syncConnect:          (body)       => postJson(appendProject('/_localcloud/sync/auth/connect'), body),
+    syncDisconnect:       ()           => post(appendProject('/_localcloud/sync/auth/disconnect')),
+    syncBrowse:           (service)    => get(appendProject(`/_localcloud/sync/${service}/browse`)),
+    syncPreview:          (service, resource, limit = 5) =>
+        get(appendProject(`/_localcloud/sync/${service}/preview`) + `&resource=${encodeURIComponent(resource)}&limit=${limit}`),
+    syncEstimate:         (service, body) => postJson(appendProject(`/_localcloud/sync/${service}/estimate`), body),
+    syncStart:            (service, body) => postJson(appendProject(`/_localcloud/sync/${service}/start`), body),
+    syncManifests:        ()           => get(appendProject('/_localcloud/sync/manifests')),
+    syncServiceManifests: (service)    => get(appendProject(`/_localcloud/sync/${service}/manifests`)),
+    syncDeleteManifest:   (id)         => del(appendProject(`/_localcloud/sync/manifests/${id}`)),
 };
