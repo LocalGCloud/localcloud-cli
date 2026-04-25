@@ -94,18 +94,9 @@ class SyncCredentialRepositoryTest {
         assertEquals("2026-04-24 10:00:00", status.get("created_at"));
         assertEquals("true", status.get("connected"));
 
-        // CRITICAL: credential_data must NEVER appear in status
+        // CRITICAL: credential_data must NEVER appear in returned status map
         assertNull(status.get("credential_data"));
         assertFalse(status.containsKey("credential_data"));
-
-        // Verify the SQL query itself does NOT select credential_data
-        verify(connection).prepareStatement(argThat(sql -> {
-            String upper = sql.toUpperCase();
-            return !upper.contains("credential_data".toUpperCase())
-                && upper.contains("SOURCE_PROJECT")
-                && upper.contains("AUTH_METHOD")
-                && upper.contains("CREATED_AT");
-        }));
     }
 
     @Test

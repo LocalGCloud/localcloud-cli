@@ -87,10 +87,22 @@ public class SyncCredentialRepository {
     public Map<String, String> getStatus(String projectId) throws SQLException {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement stmt = conn.prepareStatement(
-                 "SELECT source_project, auth_method, created_at FROM sync_credentials WHERE project_id = ?")) {
+                 "SELECT source_project, auth_method, created_at, credential_data FROM sync_credentials WHERE project_id = ?")) {
             stmt.setString(1, projectId);
             ResultSet rs = stmt.executeQuery();
             if (rs.next()) {
+                // Verify credential is still decryptable (ephemeral key may have changed)
+                if (encryption != null) {
+                    String raw = rs.getString("credential_data");
+                    if (raw != null) {
+                        try { encryption.decrypt(raw); }
+                        catch (Exception e) {
+                            logger.warn("Stale encrypted credential for project {} (key changed?), removing", projectId);
+                            delete(projectId);
+                            return null;
+                        }
+                    }
+                }
                 Map<String, String> status = new LinkedHashMap<>();
                 status.put("source_project", rs.getString("source_project"));
                 status.put("auth_method", rs.getString("auth_method"));
@@ -119,7 +131,12 @@ public class SyncCredentialRepository {
                 String raw = rs.getString("credential_data");
                 if (encryption != null && raw != null) {
                     try { return encryption.decrypt(raw); }
-                    catch (Exception e) { throw new RuntimeException("Failed to decrypt credentials", e); }
+                    catch (Exception e) {
+                        // Ephemeral key changed (container restart) — stale credential, auto-cleanup
+                        logger.warn("Cannot decrypt credential for project {} (encryption key changed?), removing stale entry", projectId);
+                        delete(projectId);
+                        return null;
+                    }
                 }
                 return raw;
             }

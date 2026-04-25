@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import javax.net.ssl.SSLException;
 
 /**
  * HTTP client with exponential backoff retry on 429 (rate limit) responses.
@@ -15,11 +16,11 @@ import java.nio.charset.StandardCharsets;
 public class RetryableHttpClient {
 
     private static final Logger logger = LoggerFactory.getLogger(RetryableHttpClient.class);
-    private static final int MAX_RETRIES = 5;
-    private static final long INITIAL_BACKOFF_MS = 2000;
+    private static final int MAX_RETRIES = 2;
+    private static final long INITIAL_BACKOFF_MS = 1000;
     private static final long MAX_BACKOFF_MS = 30000;
-    private static final int CONNECT_TIMEOUT = 30000;
-    private static final int READ_TIMEOUT = 60000;
+    private static final int CONNECT_TIMEOUT = 10000;
+    private static final int READ_TIMEOUT = 15000;
 
     public record HttpResult(int statusCode, String body) {}
 
@@ -70,6 +71,12 @@ public class RetryableHttpClient {
 
                 return result;
 
+            } catch (NonRetryableException e) {
+                // Auth errors (401/403) — fail immediately, no retry
+                throw e;
+            } catch (SSLException e) {
+                // SSL/TLS errors (cert validation, handshake) — fail immediately
+                throw new NonRetryableException("SSL error: " + e.getMessage());
             } catch (IOException e) {
                 lastException = e;
                 if (attempt < MAX_RETRIES) {
@@ -102,9 +109,18 @@ public class RetryableHttpClient {
         java.io.InputStream is = (status >= 200 && status < 300) ? conn.getInputStream() : conn.getErrorStream();
         String body = is != null ? new String(is.readAllBytes(), StandardCharsets.UTF_8) : "";
         conn.disconnect();
+        if (status == 401 || status == 403) {
+            // Auth errors are not retryable — fail immediately
+            throw new NonRetryableException("HTTP " + status + ": " + body);
+        }
         if (status >= 400 && status != 429) {
             throw new IOException("HTTP " + status + ": " + body);
         }
         return new HttpResult(status, body);
+    }
+
+    /** Thrown for errors that should not be retried (auth failures, etc). */
+    public static class NonRetryableException extends IOException {
+        public NonRetryableException(String message) { super(message); }
     }
 }
