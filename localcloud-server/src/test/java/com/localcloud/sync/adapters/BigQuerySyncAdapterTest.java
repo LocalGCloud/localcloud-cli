@@ -263,4 +263,26 @@ class BigQuerySyncAdapterTest {
         String sql = adapter.buildSyncQuery("ds", "tbl", List.of(), 1000);
         assertEquals("SELECT * FROM `ds.tbl` LIMIT 1000", sql);
     }
+
+    // -----------------------------------------------------------------------
+    // buildSyncQuery — SQL injection prevention
+    // -----------------------------------------------------------------------
+
+    @Test
+    void buildQuery_invalidColumn_throws() {
+        List<SyncFilter> filters = List.of(
+            new SyncFilter("1=1); DROP TABLE", "=", "x", "STRING")
+        );
+        assertThrows(IllegalArgumentException.class,
+                () -> adapter.buildSyncQuery("ds", "tbl", filters, 100));
+    }
+
+    @Test
+    void buildQuery_invalidOperator_throws() {
+        List<SyncFilter> filters = List.of(
+            new SyncFilter("name", "OR 1=1 --", "x", "STRING")
+        );
+        assertThrows(IllegalArgumentException.class,
+                () -> adapter.buildSyncQuery("ds", "tbl", filters, 100));
+    }
 }

@@ -291,6 +291,11 @@ public class SpannerSyncAdapter implements SyncAdapter {
      * Build a Spanner SQL query with optional filters and row limit.
      */
     String buildSyncQuery(String table, List<SyncFilter> filters, int rowLimit) {
+        // Validate all filters before building query to prevent SQL injection
+        if (filters != null) {
+            filters.forEach(SyncFilterValidator::validate);
+        }
+
         StringBuilder sb = new StringBuilder();
         sb.append("SELECT * FROM ").append(table);
 
@@ -319,6 +324,11 @@ public class SpannerSyncAdapter implements SyncAdapter {
      * Build a COUNT query for estimating row count.
      */
     String buildCountQuery(String table, List<SyncFilter> filters) {
+        // Validate all filters before building query to prevent SQL injection
+        if (filters != null) {
+            filters.forEach(SyncFilterValidator::validate);
+        }
+
         StringBuilder sb = new StringBuilder();
         sb.append("SELECT COUNT(*) FROM ").append(table);
 

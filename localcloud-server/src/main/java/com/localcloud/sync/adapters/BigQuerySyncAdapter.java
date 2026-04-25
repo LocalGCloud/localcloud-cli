@@ -257,6 +257,11 @@ public class BigQuerySyncAdapter implements SyncAdapter {
      * Build a BigQuery SQL query with optional filters and row limit.
      */
     String buildSyncQuery(String dataset, String table, List<SyncFilter> filters, int rowLimit) {
+        // Validate all filters before building query to prevent SQL injection
+        if (filters != null) {
+            filters.forEach(SyncFilterValidator::validate);
+        }
+
         StringBuilder sb = new StringBuilder();
         sb.append("SELECT * FROM `").append(dataset).append('.').append(table).append('`');
 
