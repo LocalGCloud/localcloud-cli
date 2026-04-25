@@ -1,6 +1,17 @@
 #!/bin/bash
 # LocalCloud Build Script
 # Builds all components and creates the Docker image
+#
+# Configurable emulator images (override at build time):
+#   SPANNER_EMULATOR_IMAGE  - Spanner emulator binary source (default: jaysen2apache/spanner-emulator-extended:latest)
+#   BIGQUERY_EMULATOR_IMAGE - BigQuery emulator source (default: jaysen2apache/bigquery-emulator-on-duckdb)
+#   GCS_EMULATOR_IMAGE      - GCS emulator source (default: fsouza/fake-gcs-server:1.54.0)
+#   GCLOUD_SDK_IMAGE        - gcloud SDK for Firestore/PubSub/Bigtable (default: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators)
+#   DOCKER_CLI_IMAGE        - Docker CLI binary source (default: docker:27.1-cli)
+#   JDK_IMAGE               - JDK for jlink custom JRE (default: eclipse-temurin:25-jdk)
+#
+# Example: use custom Spanner image:
+#   SPANNER_EMULATOR_IMAGE=my-registry/spanner:v2 ./build.sh
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -57,10 +68,16 @@ fi
 echo "[4/4] Building Docker image..."
 docker volume create localcloud-data >/dev/null 2>&1 || true
 
-# Dockerfile is the single source of truth for image defaults.
-# To override, set environment variables:
-#   SPANNER_EMULATOR_IMAGE=... BIGQUERY_EMULATOR_IMAGE=... ./build.sh
-if ! docker compose build; then
+# Configurable emulator images — Dockerfile defaults used when unset
+BUILD_ARGS=""
+[ -n "$SPANNER_EMULATOR_IMAGE" ]  && BUILD_ARGS="$BUILD_ARGS --build-arg SPANNER_EMULATOR_IMAGE=$SPANNER_EMULATOR_IMAGE"
+[ -n "$BIGQUERY_EMULATOR_IMAGE" ] && BUILD_ARGS="$BUILD_ARGS --build-arg BIGQUERY_EMULATOR_IMAGE=$BIGQUERY_EMULATOR_IMAGE"
+[ -n "$GCS_EMULATOR_IMAGE" ]      && BUILD_ARGS="$BUILD_ARGS --build-arg GCS_EMULATOR_IMAGE=$GCS_EMULATOR_IMAGE"
+[ -n "$GCLOUD_SDK_IMAGE" ]        && BUILD_ARGS="$BUILD_ARGS --build-arg GCLOUD_SDK_IMAGE=$GCLOUD_SDK_IMAGE"
+[ -n "$DOCKER_CLI_IMAGE" ]        && BUILD_ARGS="$BUILD_ARGS --build-arg DOCKER_CLI_IMAGE=$DOCKER_CLI_IMAGE"
+[ -n "$JDK_IMAGE" ]               && BUILD_ARGS="$BUILD_ARGS --build-arg JDK_IMAGE=$JDK_IMAGE"
+
+if ! docker build $BUILD_ARGS -t localcloud/localcloud:latest .; then
     echo "ERROR: Docker image build failed."
     echo "  Check that Docker daemon is running and has enough resources."
     exit 1
@@ -73,7 +90,7 @@ echo ""
 echo "============================================"
 echo "  Build complete! (image: ${IMAGE_SIZE:-unknown})"
 echo ""
-echo "  Start:   docker compose up -d"
+echo "  Start:   ./start.sh"
 echo "  Health:  curl localhost:8080/_localcloud/health"
 echo "  Console: http://localhost:8080"
 echo "============================================"

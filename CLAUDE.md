@@ -31,8 +31,11 @@ cd localcloud-server && ./gradlew shadowJar
 cd localcloud-console && npm install && npm run build
 
 # Docker image (requires shadow JAR built first)
-docker compose build
-docker compose up -d
+docker build -t localcloud/localcloud:latest .
+
+# Start/stop container
+./start.sh
+./stop.sh
 ```
 
 ## Code Style
@@ -85,7 +88,7 @@ Java 21 (LTS, primary): Follow standard conventions
 - Always check ARG placement (must be after FROM for multi-stage builds).
 - Verify volume mount paths and avoid relying on Docker cache during debugging iterations.
 - Prefer incremental rebuilds over full rebuilds when debugging build issues.
-- Always build the shadow JAR before `docker compose build` — the Dockerfile copies the pre-built JAR.
+- Always build the shadow JAR before `docker build` — the Dockerfile copies the pre-built JAR.
 
 ## Frontend / UI (Solid.js)
 
