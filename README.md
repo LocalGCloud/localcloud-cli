@@ -200,12 +200,37 @@ docker run -d --name localcloud \
 # Custom seed data (overrides the built-in seed)
 -v ./my-seed.yaml:/etc/localcloud/seed.yaml:ro
 
+# Custom CA certificates (corporate proxy / VPN — see below)
+-v /path/to/certs:/etc/localcloud/certs:ro
+
 # GKE emulation (requires Docker-in-Docker)
 -v /var/run/docker.sock:/var/run/docker.sock
 
 # GCP credential bridging (for hybrid local+cloud routing)
 -v ~/.config/gcloud:/credentials/adc:ro -e LOCALCLOUD_GCP_CREDENTIAL_SOURCE=adc
 ```
+
+### Custom CA Certificates
+
+If you're behind a corporate proxy or VPN that intercepts HTTPS, LocalCloud handles it automatically.
+
+**Auto-detect (zero config):** On startup, LocalCloud probes `googleapis.com`. If TLS fails due to a proxy intercepting HTTPS, it extracts the proxy CA certificate from the connection chain and imports it into both the Java truststore and system CA bundle. No action needed — just start the container.
+
+```bash
+# Disable auto-detect if needed
+docker run -e LOCALCLOUD_AUTO_DETECT_CA=false ...
+```
+
+**Manual mount (fallback):** If auto-detect doesn't cover your case, mount `.pem`, `.crt`, or `.cer` files directly:
+
+```bash
+docker run -d --name localcloud \
+  -v /path/to/corporate-ca.pem:/etc/localcloud/certs/corporate-ca.pem:ro \
+  ... \
+  localcloud/localcloud:latest
+```
+
+On startup, container logs will show: `Imported N CA certificate(s) into Java truststore and system bundle`
 
 ## Seed Data
 

@@ -62,6 +62,10 @@
 #   GKE emulation (requires Docker-in-Docker):
 #     -v /var/run/docker.sock:/var/run/docker.sock
 #
+#   Custom CA certificates (corporate proxy / VPN):
+#     -v /path/to/certs:/etc/localcloud/certs:ro
+#     Auto-imports .pem/.crt/.cer into Java truststore + system CA bundle.
+#
 #   GCP credential bridging (for hybrid local+cloud routing):
 #     -v ~/.config/gcloud:/credentials/adc:ro
 #     -e LOCALCLOUD_GCP_CREDENTIAL_SOURCE=adc
@@ -146,6 +150,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         supervisor \
         curl \
         ca-certificates \
+        openssl \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
         /usr/share/doc/* /usr/share/man/* /usr/share/locale/*
 

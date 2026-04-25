@@ -1,6 +1,85 @@
 #!/bin/bash
 set -e
 
+# ---------------------------------------------------------------------------
+# Custom CA Certificates — two modes:
+#
+# 1. MANUAL: Mount certs to /etc/localcloud/certs/ (read-only)
+#    docker run -v /path/to/certs:/etc/localcloud/certs:ro ...
+#
+# 2. AUTO-DETECT: Probes googleapis.com on startup. If a corporate proxy
+#    or VPN intercepts TLS, extracts the proxy CA from the connection
+#    chain and imports it. Zero config needed.
+#
+# Both import into Java truststore + system CA bundle (Python/curl).
+# Disable auto-detect: -e LOCALCLOUD_AUTO_DETECT_CA=false
+# ---------------------------------------------------------------------------
+
+import_cert() {
+    local cert="$1" alias_name="$2"
+    /opt/java/bin/keytool -importcert -trustcacerts \
+        -keystore /opt/java/lib/security/cacerts \
+        -storepass changeit -noprompt \
+        -alias "$alias_name" -file "$cert" 2>/dev/null || return 1
+    # Copy to Debian's extra CA dir so update-ca-certificates includes it
+    cp "$cert" "/usr/local/share/ca-certificates/${alias_name}.crt"
+    return 0
+}
+
+ca_imported=0
+
+# --- Mode 1: Manually mounted certs ---
+CA_CERT_DIR="/etc/localcloud/certs"
+if [ -d "$CA_CERT_DIR" ]; then
+    for cert in "$CA_CERT_DIR"/*.pem "$CA_CERT_DIR"/*.crt "$CA_CERT_DIR"/*.cer; do
+        [ -f "$cert" ] || continue
+        alias_name="localcloud-$(basename "$cert" | sed 's/\.[^.]*$//')"
+        if import_cert "$cert" "$alias_name"; then
+            ca_imported=$((ca_imported + 1))
+        else
+            echo "WARNING: Failed to import $cert into Java truststore" >&2
+        fi
+    done
+fi
+
+# --- Mode 2: Auto-detect proxy/VPN CA from TLS probe ---
+if [ "${LOCALCLOUD_AUTO_DETECT_CA:-true}" != "false" ]; then
+    curl_exit=0
+    curl -sf --max-time 5 https://storage.googleapis.com >/dev/null 2>&1 || curl_exit=$?
+
+    if [ "$curl_exit" -eq 60 ] || [ "$curl_exit" -eq 35 ]; then
+        # TLS verification failed — likely a proxy intercepting HTTPS
+        probe_dir="/tmp/proxy-ca-probe"
+        mkdir -p "$probe_dir"
+
+        if timeout 5 openssl s_client -connect storage.googleapis.com:443 -showcerts \
+            </dev/null 2>/dev/null | \
+            awk '/BEGIN CERTIFICATE/{n++} n>0{print > "'"$probe_dir"'/cert-" sprintf("%02d",n) ".pem"}'; then
+
+            for cert in "$probe_dir"/*.pem; do
+                [ -f "$cert" ] || continue
+                # Only import CA certs (skip leaf/server cert)
+                openssl x509 -in "$cert" -noout -text 2>/dev/null | grep -q "CA:TRUE" || continue
+
+                fingerprint=$(openssl x509 -in "$cert" -noout -fingerprint -sha256 2>/dev/null | \
+                              cut -d= -f2 | tr -d ':' | head -c 16 | tr '[:upper:]' '[:lower:]')
+                [ -n "$fingerprint" ] || continue
+
+                if import_cert "$cert" "proxy-ca-${fingerprint}"; then
+                    ca_imported=$((ca_imported + 1))
+                fi
+            done
+        fi
+
+        rm -rf "$probe_dir"
+    fi
+fi
+
+if [ "$ca_imported" -gt 0 ]; then
+    update-ca-certificates 2>/dev/null || true
+    echo "Imported $ca_imported CA certificate(s) into Java truststore and system bundle"
+fi
+
 # Ensure data directories exist and have correct ownership.
 # Docker volume mounts replace the build-time directory, so we must
 # re-create subdirectories and fix permissions on every startup.
