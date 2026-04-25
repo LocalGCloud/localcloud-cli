@@ -126,4 +126,13 @@ class GcsSyncAdapterTest {
         double expectedEgress = 0.12 * 1024; // 1 TB = 1024 GB
         assertEquals(expectedOps + expectedEgress, cost, 0.1);
     }
+
+    // -----------------------------------------------------------------------
+    // MAX_OBJECT_SIZE guard
+    // -----------------------------------------------------------------------
+
+    @Test
+    void maxObjectSizeConstant_is100MB() {
+        assertEquals(100L * 1024 * 1024, GcsSyncAdapter.MAX_OBJECT_SIZE);
+    }
 }

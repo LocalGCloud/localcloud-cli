@@ -37,6 +37,9 @@ public class GcsSyncAdapter implements SyncAdapter {
     private static final int TIMEOUT_MS = 120_000;
     private static final int PAGE_SIZE = 1000;
 
+    /** Maximum object size to sync (100 MB). Objects larger than this are skipped. */
+    static final long MAX_OBJECT_SIZE = 100L * 1024 * 1024;
+
     /** GCS charges ~$0.004 per 10K Class A operations + egress ($0.12/GB). */
     private static final double COST_PER_10K_OPS = 0.004;
     private static final double EGRESS_PER_GB = 0.12;
@@ -206,6 +209,7 @@ public class GcsSyncAdapter implements SyncAdapter {
 
         long totalObjectsSynced = 0;
         long totalBytesSynced = 0;
+        int skippedCount = 0;
 
         try {
             // Ensure local bucket exists
@@ -237,6 +241,14 @@ public class GcsSyncAdapter implements SyncAdapter {
                     long objectSize = obj.path("size").asLong(0);
                     String contentType = obj.path("contentType").asText("application/octet-stream");
 
+                    // Skip objects exceeding the max size limit
+                    if (objectSize > MAX_OBJECT_SIZE) {
+                        logger.warn("Skipping oversized object: {} ({} bytes, max {})",
+                                objectName, objectSize, MAX_OBJECT_SIZE);
+                        skippedCount++;
+                        continue;
+                    }
+
                     // Download from remote
                     byte[] data = downloadObject(bucket, objectName, accessToken);
 
@@ -256,11 +268,19 @@ public class GcsSyncAdapter implements SyncAdapter {
             } while (pageToken != null && !pageToken.isEmpty());
 
             double cost = estimateCost(totalObjectsSynced, totalBytesSynced);
-            logger.info("Sync complete: {} objects, {} bytes from {}/{} -> local",
-                    totalObjectsSynced, totalBytesSynced, bucket, prefix);
+            String errorDetail = null;
+            if (skippedCount > 0) {
+                errorDetail = skippedCount + " object(s) skipped (exceeded "
+                        + MAX_OBJECT_SIZE + " byte max size)";
+                logger.info("Sync complete with skips: {} objects, {} bytes, {} skipped from {}/{} -> local",
+                        totalObjectsSynced, totalBytesSynced, skippedCount, bucket, prefix);
+            } else {
+                logger.info("Sync complete: {} objects, {} bytes from {}/{} -> local",
+                        totalObjectsSynced, totalBytesSynced, bucket, prefix);
+            }
 
             return new SyncResult(0, totalObjectsSynced, totalBytesSynced, cost,
-                    "completed", null);
+                    "completed", errorDetail);
 
         } catch (Exception e) {
             logger.error("sync failed for {}: {}", resource, e.getMessage(), e);
