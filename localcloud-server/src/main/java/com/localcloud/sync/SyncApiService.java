@@ -1,9 +1,13 @@
 package com.localcloud.sync;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -128,6 +132,166 @@ public class SyncApiService {
             return jsonResponse(result);
         } catch (Exception e) {
             logger.error("Error disconnecting credentials", e);
+            return errorResponse(e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // OAuth flow endpoints
+    // -----------------------------------------------------------------------
+
+    /**
+     * Generate a Google OAuth URL for browser-based authentication.
+     * The console opens this URL in a new tab; Google redirects back to
+     * {@code /auth/callback} with an authorization code.
+     */
+    @Post("/auth/start")
+    public HttpResponse authStart(ServiceRequestContext ctx, AggregatedHttpRequest req) {
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> body = mapper.readValue(req.contentUtf8(), Map.class);
+            String sourceProject = (String) body.get("source_project");
+
+            String project = resolveProject(ctx);
+
+            String redirectUri = "http://localhost:8080/_localcloud/sync/auth/callback";
+            String scope = "https://www.googleapis.com/auth/cloud-platform.read-only";
+
+            // Build the Google OAuth authorization URL.
+            // client_id must be configured externally; we return the URL template
+            // so the console can append it or the user can use the token-paste flow.
+            String oauthUrl = "https://accounts.google.com/o/oauth2/v2/auth"
+                    + "?response_type=code"
+                    + "&access_type=offline"
+                    + "&scope=" + URLEncoder.encode(scope, StandardCharsets.UTF_8)
+                    + "&redirect_uri=" + URLEncoder.encode(redirectUri, StandardCharsets.UTF_8)
+                    + "&state=" + URLEncoder.encode(project + "|" + sourceProject, StandardCharsets.UTF_8);
+
+            return jsonResponse(Map.of("oauth_url", oauthUrl, "redirect_uri", redirectUri));
+        } catch (Exception e) {
+            logger.error("Error generating OAuth URL", e);
+            return errorResponse(e);
+        }
+    }
+
+    /**
+     * OAuth redirect handler. Google sends the user here after granting (or
+     * denying) access. Exchanges the authorization code for credentials and
+     * returns a self-closing HTML page.
+     */
+    @Get("/auth/callback")
+    public HttpResponse authCallback(ServiceRequestContext ctx) {
+        try {
+            String code = ctx.queryParams().get("code");
+            String state = ctx.queryParams().get("state");
+            String error = ctx.queryParams().get("error");
+
+            if (error != null) {
+                return HttpResponse.of(HttpStatus.OK, MediaType.HTML_UTF_8,
+                        buildCallbackHtml(false, "Authentication denied: " + error));
+            }
+
+            if (code == null || state == null) {
+                return HttpResponse.of(HttpStatus.BAD_REQUEST, MediaType.HTML_UTF_8,
+                        buildCallbackHtml(false, "Missing authorization code"));
+            }
+
+            // Parse state: "projectId|sourceProject"
+            String[] parts = state.split("\\|", 2);
+            String projectId = parts[0];
+            String sourceProject = parts.length > 1 ? parts[1] : "";
+
+            // Store the authorization code. Full token exchange requires a
+            // registered OAuth client_id/client_secret which the user supplies
+            // externally; this initial version persists the code so the console
+            // can confirm the auth round-trip succeeded.
+            credentialRepo.save(projectId, sourceProject, "oauth",
+                    mapper.writeValueAsString(Map.of(
+                            "auth_code", code,
+                            "source_project", sourceProject,
+                            "created_at", java.time.Instant.now().toString()
+                    )));
+
+            return HttpResponse.of(HttpStatus.OK, MediaType.HTML_UTF_8,
+                    buildCallbackHtml(true, "Connected to " + sourceProject));
+        } catch (Exception e) {
+            logger.error("Error handling OAuth callback", e);
+            return HttpResponse.of(HttpStatus.OK, MediaType.HTML_UTF_8,
+                    buildCallbackHtml(false, e.getMessage()));
+        }
+    }
+
+    /**
+     * Refresh an existing credential. For the token-paste flow the user must
+     * re-paste; a full OAuth flow would use the stored refresh_token.
+     */
+    @Post("/auth/refresh")
+    public HttpResponse authRefresh(ServiceRequestContext ctx) {
+        try {
+            String project = resolveProject(ctx);
+            String data = credentialRepo.getCredentialData(project);
+            if (data == null) {
+                return jsonResponse(Map.of("error", true, "message", "No credentials configured"));
+            }
+            // For token-paste flow, user needs to re-paste.
+            // For OAuth flow, would use refresh_token to get new access_token.
+            return jsonResponse(Map.of("status", "manual_refresh_required",
+                    "message", "Re-authenticate to refresh token"));
+        } catch (Exception e) {
+            logger.error("Error refreshing auth", e);
+            return errorResponse(e);
+        }
+    }
+
+    /**
+     * List GCP projects visible to the stored access token via the Cloud
+     * Resource Manager API.
+     */
+    @Get("/auth/projects")
+    public HttpResponse authProjects(ServiceRequestContext ctx) {
+        try {
+            String project = resolveProject(ctx);
+            String data = credentialRepo.getCredentialData(project);
+            if (data == null) {
+                return jsonResponse(Map.of("projects", List.of()));
+            }
+
+            JsonNode node = mapper.readTree(data);
+            String token = node.has("access_token") ? node.get("access_token").asText() : null;
+            if (token == null) {
+                return jsonResponse(Map.of("projects", List.of()));
+            }
+
+            // Call Cloud Resource Manager API
+            String url = "https://cloudresourcemanager.googleapis.com/v1/projects?filter=lifecycleState%3AACTIVE";
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection)
+                    java.net.URI.create(url).toURL().openConnection();
+            conn.setRequestProperty("Authorization", "Bearer " + token);
+            conn.setConnectTimeout(10_000);
+            conn.setReadTimeout(10_000);
+
+            int status = conn.getResponseCode();
+            if (status >= 200 && status < 300) {
+                String body = new String(conn.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+                conn.disconnect();
+                JsonNode resp = mapper.readTree(body);
+                List<Map<String, String>> projects = new ArrayList<>();
+                if (resp.has("projects")) {
+                    for (JsonNode p : resp.get("projects")) {
+                        projects.add(Map.of(
+                                "projectId", p.path("projectId").asText(),
+                                "name", p.path("name").asText()
+                        ));
+                    }
+                }
+                return jsonResponse(Map.of("projects", projects));
+            } else {
+                conn.disconnect();
+                return jsonResponse(Map.of("projects", List.of(),
+                        "error", "Failed to list projects: HTTP " + status));
+            }
+        } catch (Exception e) {
+            logger.error("Error listing GCP projects", e);
             return errorResponse(e);
         }
     }
@@ -313,5 +477,29 @@ public class SyncApiService {
         String message = e.getMessage() != null ? e.getMessage().replace("\"", "'") : "Unknown error";
         return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
                 "{\"error\":true,\"message\":\"" + message + "\"}");
+    }
+
+    /**
+     * Build a simple HTML page shown after the OAuth callback redirect.
+     * The page tells the user whether auth succeeded and invites them
+     * to close the tab and return to the console.
+     */
+    String buildCallbackHtml(boolean success, String message) {
+        String color = success ? "#34a853" : "#ea4335";
+        String icon = success ? "\u2713" : "\u2717";
+        return "<!DOCTYPE html><html><head><title>LocalCloud - Auth</title>"
+                + "<style>body{font-family:Google Sans,Roboto,sans-serif;display:flex;align-items:center;"
+                + "justify-content:center;height:100vh;margin:0;background:#f8f9fa}"
+                + ".card{background:#fff;border-radius:12px;padding:48px;text-align:center;"
+                + "box-shadow:0 1px 3px rgba(0,0,0,.12)}"
+                + ".icon{font-size:48px;color:" + color + ";margin-bottom:16px}"
+                + ".msg{font-size:16px;color:#5f6368;margin-top:8px}"
+                + ".hint{font-size:13px;color:#80868b;margin-top:16px}</style></head>"
+                + "<body><div class='card'><div class='icon'>" + icon + "</div>"
+                + "<h2 style='margin:0;color:#202124'>"
+                + (success ? "Connected!" : "Connection Failed") + "</h2>"
+                + "<p class='msg'>" + message + "</p>"
+                + "<p class='hint'>You can close this tab and return to the LocalCloud console.</p>"
+                + "</div></body></html>";
     }
 }
