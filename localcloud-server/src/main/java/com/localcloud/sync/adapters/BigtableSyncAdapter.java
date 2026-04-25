@@ -239,6 +239,27 @@ public class BigtableSyncAdapter implements SyncAdapter {
         }
     }
 
+    @Override
+    public void deleteLocal(String localProject, String resource) {
+        String[] parts = parseResource(resource);
+        String instance = parts[0];
+        String table = parts[1];
+        // Bigtable emulator supports dropRowRange to delete all rows.
+        // Use the Admin API to drop all row data from the table.
+        try {
+            String tablePath = "projects/" + localProject + "/instances/" + instance + "/tables/" + table;
+            ObjectNode body = mapper.createObjectNode();
+            body.put("deleteAllDataFromTable", true);
+            String url = "http://" + localEmulatorHost + ":" + localEmulatorPort
+                    + "/v2/" + tablePath + ":dropRowRange";
+            localPost("/v2/" + tablePath + ":dropRowRange",
+                    mapper.writeValueAsString(body));
+            logger.info("Dropped all rows from local Bigtable table {}/{}", instance, table);
+        } catch (Exception e) {
+            logger.warn("Failed to delete local Bigtable table data for {}: {}", resource, e.getMessage());
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Package-visible helpers (tested directly)
     // -----------------------------------------------------------------------

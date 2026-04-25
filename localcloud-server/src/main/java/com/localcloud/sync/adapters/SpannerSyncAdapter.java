@@ -263,6 +263,28 @@ public class SpannerSyncAdapter implements SyncAdapter {
         }
     }
 
+    @Override
+    public void deleteLocal(String localProject, String resource) {
+        String[] parts = parseResource(resource);
+        String instance = parts[0];
+        String database = parts[1];
+        String table = parts[2];
+        // Truncate table data via DELETE DML on the local Spanner emulator.
+        // Full table drop would require DDL, but DELETE removes all synced rows.
+        try {
+            String sessionName = createLocalSession(localProject, instance, database);
+            String deleteSql = "DELETE FROM " + table + " WHERE true";
+            ObjectNode body = mapper.createObjectNode();
+            body.put("sql", deleteSql);
+            String url = "http://" + localEmulatorHost + ":" + localEmulatorPort
+                    + "/v1/" + sessionName + ":executeSql";
+            localPost(url, mapper.writeValueAsString(body));
+            logger.info("Truncated local Spanner table {}/{}/{}", instance, database, table);
+        } catch (Exception e) {
+            logger.warn("Failed to delete local Spanner table data for {}: {}", resource, e.getMessage());
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Package-visible helpers (tested directly)
     // -----------------------------------------------------------------------

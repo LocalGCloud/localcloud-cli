@@ -144,6 +144,11 @@ public class SyncApiService {
      * Generate a Google OAuth URL for browser-based authentication.
      * The console opens this URL in a new tab; Google redirects back to
      * {@code /auth/callback} with an authorization code.
+     *
+     * <p>Requires {@code client_id} in the request body. Create OAuth
+     * credentials at console.cloud.google.com and pass the client_id here.
+     * Without a valid client_id, Google will reject the OAuth request.
+     * For quick setup, use the token-paste flow instead.
      */
     @Post("/auth/start")
     public HttpResponse authStart(ServiceRequestContext ctx, AggregatedHttpRequest req) {
@@ -151,17 +156,24 @@ public class SyncApiService {
             @SuppressWarnings("unchecked")
             Map<String, Object> body = mapper.readValue(req.contentUtf8(), Map.class);
             String sourceProject = (String) body.get("source_project");
+            String clientId = (String) body.get("client_id");
+
+            if (clientId == null || clientId.isBlank()) {
+                return jsonResponse(Map.of("error", true,
+                        "message", "OAuth requires client_id. Create OAuth credentials at "
+                                + "console.cloud.google.com, then pass client_id in the request. "
+                                + "For now, use the token paste flow."));
+            }
 
             String project = resolveProject(ctx);
 
             String redirectUri = "http://localhost:8080/_localcloud/sync/auth/callback";
             String scope = "https://www.googleapis.com/auth/cloud-platform.read-only";
 
-            // Build the Google OAuth authorization URL.
-            // client_id must be configured externally; we return the URL template
-            // so the console can append it or the user can use the token-paste flow.
+            // Build the Google OAuth authorization URL with the supplied client_id.
             String oauthUrl = "https://accounts.google.com/o/oauth2/v2/auth"
                     + "?response_type=code"
+                    + "&client_id=" + URLEncoder.encode(clientId, StandardCharsets.UTF_8)
                     + "&access_type=offline"
                     + "&scope=" + URLEncoder.encode(scope, StandardCharsets.UTF_8)
                     + "&redirect_uri=" + URLEncoder.encode(redirectUri, StandardCharsets.UTF_8)

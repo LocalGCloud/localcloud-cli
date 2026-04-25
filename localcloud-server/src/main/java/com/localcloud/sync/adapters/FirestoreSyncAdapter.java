@@ -246,6 +246,46 @@ public class FirestoreSyncAdapter implements SyncAdapter {
         }
     }
 
+    @Override
+    public void deleteLocal(String localProject, String resource) {
+        String collectionId = parseResource(resource);
+        // Delete documents from local Firestore emulator by listing and deleting each.
+        // The Firestore emulator supports document deletion via REST DELETE.
+        try {
+            String listUrl = "http://" + localEmulatorHost + ":" + localEmulatorPort
+                    + "/v1/projects/" + localProject + "/databases/(default)/documents/"
+                    + collectionId + "?pageSize=" + PAGE_SIZE;
+            String listBody = httpClient.get(listUrl, null).body();
+            JsonNode resp = mapper.readTree(listBody);
+            JsonNode docs = resp.path("documents");
+            if (docs.isArray()) {
+                for (JsonNode doc : docs) {
+                    String docName = doc.path("name").asText();
+                    // docName is the full resource name; extract path after /documents/
+                    String docPath = docName;
+                    int docsIdx = docName.indexOf("/documents/");
+                    if (docsIdx >= 0) {
+                        docPath = docName.substring(docsIdx);
+                    }
+                    String delUrl = "http://" + localEmulatorHost + ":" + localEmulatorPort
+                            + "/v1/projects/" + localProject + "/databases/(default)" + docPath;
+                    try {
+                        HttpURLConnection conn = (HttpURLConnection) URI.create(delUrl).toURL().openConnection();
+                        conn.setRequestMethod("DELETE");
+                        conn.setConnectTimeout(10_000);
+                        conn.setReadTimeout(10_000);
+                        conn.getResponseCode();
+                        conn.disconnect();
+                    } catch (Exception ignored) {
+                        // Best-effort per-document deletion
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to delete local Firestore collection {}: {}", resource, e.getMessage());
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Package-visible helpers (tested directly)
     // -----------------------------------------------------------------------

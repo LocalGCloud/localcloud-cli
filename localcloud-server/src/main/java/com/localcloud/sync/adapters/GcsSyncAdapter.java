@@ -290,6 +290,39 @@ public class GcsSyncAdapter implements SyncAdapter {
         }
     }
 
+    @Override
+    public void deleteLocal(String localProject, String resource) {
+        String[] parts = parseResource(resource);
+        String bucket = parts[0];
+        String prefix = parts[1];
+        try {
+            // List and delete objects with prefix from local GCS emulator
+            String listUrl = localEmulatorBase + "/storage/v1/b/" + bucket + "/o"
+                    + (prefix != null && !prefix.isEmpty() ? "?prefix=" + prefix : "");
+            String listBody = httpClient.get(listUrl, null).body();
+            JsonNode items = mapper.readTree(listBody).path("items");
+            if (items.isArray()) {
+                for (JsonNode item : items) {
+                    String name = item.path("name").asText();
+                    String encodedName = java.net.URLEncoder.encode(name, StandardCharsets.UTF_8);
+                    String delUrl = localEmulatorBase + "/storage/v1/b/" + bucket + "/o/" + encodedName;
+                    try {
+                        HttpURLConnection conn = (HttpURLConnection) URI.create(delUrl).toURL().openConnection();
+                        conn.setRequestMethod("DELETE");
+                        conn.setConnectTimeout(10_000);
+                        conn.setReadTimeout(10_000);
+                        conn.getResponseCode();
+                        conn.disconnect();
+                    } catch (Exception ignored) {
+                        // Best-effort per-object deletion
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to delete local GCS objects for {}: {}", resource, e.getMessage());
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Package-visible helpers (tested directly)
     // -----------------------------------------------------------------------

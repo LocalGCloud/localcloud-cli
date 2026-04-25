@@ -251,6 +251,26 @@ public class BigQuerySyncAdapter implements SyncAdapter {
         }
     }
 
+    @Override
+    public void deleteLocal(String localProject, String resource) {
+        String[] parts = parseResource(resource);
+        String dataset = parts[0];
+        String table = parts[1];
+        try {
+            // Delete table from local BigQuery emulator
+            String url = localEmulatorBase + "/bigquery/v2/projects/" + localProject
+                    + "/datasets/" + dataset + "/tables/" + table;
+            HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+            conn.setRequestMethod("DELETE");
+            conn.setConnectTimeout(10_000);
+            conn.setReadTimeout(10_000);
+            conn.getResponseCode(); // execute
+            conn.disconnect();
+        } catch (Exception e) {
+            logger.warn("Failed to delete local BQ table {}: {}", resource, e.getMessage());
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Package-visible helpers (tested directly)
     // -----------------------------------------------------------------------
