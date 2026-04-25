@@ -124,6 +124,7 @@ export const api = {
     workflowImport: (name) => postJson(appendProject('/_localcloud/workflow/import'), { name }),
     // Data Mirror sync
     syncAuthStatus:       ()           => get(appendProject('/_localcloud/sync/auth/status')),
+    syncAuthStart:        (body)       => postJson(appendProject('/_localcloud/sync/auth/start'), body),
     syncConnect:          (body)       => postJson(appendProject('/_localcloud/sync/auth/connect'), body),
     syncDisconnect:       ()           => post(appendProject('/_localcloud/sync/auth/disconnect')),
     syncBrowse:           (service)    => get(appendProject(`/_localcloud/sync/${service}/browse`)),

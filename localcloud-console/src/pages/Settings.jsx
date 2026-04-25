@@ -670,6 +670,31 @@ export default function Settings(props) {
     const [intervalMsg, setIntervalMsg] = createSignal(null);
     const [quickCopied, setQuickCopied] = createSignal(false);
 
+    // Remote connection state (Data Mirror)
+    const [remoteAuth, setRemoteAuth] = createSignal(null);
+    const [remoteAuthLoading, setRemoteAuthLoading] = createSignal(false);
+    const [remoteDisconnecting, setRemoteDisconnecting] = createSignal(false);
+
+    const fetchRemoteAuth = async () => {
+        setRemoteAuthLoading(true);
+        try {
+            const s = await api.syncAuthStatus();
+            setRemoteAuth(s);
+        } catch (e) { setRemoteAuth(null); }
+        finally { setRemoteAuthLoading(false); }
+    };
+
+    const handleRemoteDisconnect = async () => {
+        setRemoteDisconnecting(true);
+        try {
+            await api.syncDisconnect();
+            setRemoteAuth(null);
+        } catch (e) { /* ignore */ }
+        finally { setRemoteDisconnecting(false); }
+    };
+
+    fetchRemoteAuth();
+
     // Tab navigation with localStorage persistence
     const savedTab = (() => { try { return localStorage.getItem('localcloud-settings-tab'); } catch { return null; } })();
     const [settingsTab, setSettingsTab] = createSignal(savedTab || 'environment');
@@ -973,6 +998,51 @@ environment:
                         </table>
                     </div>
                 </Show>
+            </div>
+
+            {/* Remote Connection (Data Mirror) */}
+            <div class="section">
+                <div class="section-title">Remote Connection</div>
+                <p style={{ "margin-bottom": "12px" }}>
+                    Data Mirror connection for browsing and syncing remote GCP data into local emulators.
+                </p>
+                <div class="card" style={{ padding: "16px 20px" }}>
+                    <Show when={remoteAuthLoading()}>
+                        <div class="loading-state"><div class="loading-spinner" /> Checking connection...</div>
+                    </Show>
+                    <Show when={!remoteAuthLoading()}>
+                        <div style={{ display: "flex", "align-items": "center", gap: "10px", "margin-bottom": "12px" }}>
+                            <span classList={{
+                                "status-dot": true,
+                                "healthy": remoteAuth()?.connected === true || remoteAuth()?.connected === 'true',
+                                "unhealthy": remoteAuth() && remoteAuth()?.connected !== true && remoteAuth()?.connected !== 'true',
+                            }} style={{ width: "8px", height: "8px" }} />
+                            <span style={{ "font-size": "13px", "font-weight": "500" }}>
+                                {remoteAuth()?.connected === true || remoteAuth()?.connected === 'true' ? 'Connected' : 'Not connected'}
+                            </span>
+                        </div>
+                        <Show when={remoteAuth()?.connected === true || remoteAuth()?.connected === 'true'}>
+                            <div class="env-var-row">
+                                <span class="env-var-key">Source Project</span>
+                                <span class="env-var-value">{remoteAuth()?.source_project || 'Unknown'}</span>
+                            </div>
+                            <div class="env-var-row">
+                                <span class="env-var-key">Auth Method</span>
+                                <span class="env-var-value">{remoteAuth()?.auth_method || 'OAuth'}</span>
+                            </div>
+                            <div style={{ "margin-top": "12px" }}>
+                                <button class="btn btn-danger" onClick={handleRemoteDisconnect} disabled={remoteDisconnecting()}>
+                                    {remoteDisconnecting() ? 'Disconnecting...' : 'Disconnect'}
+                                </button>
+                            </div>
+                        </Show>
+                        <Show when={!(remoteAuth()?.connected === true || remoteAuth()?.connected === 'true')}>
+                            <div style={{ "font-size": "13px", color: "var(--text-secondary)", "line-height": "1.6" }}>
+                                Navigate to any service's <strong>Remote Sync</strong> tab to connect to a GCP project and sync data.
+                            </div>
+                        </Show>
+                    </Show>
+                </div>
             </div>
             </Show>
 
