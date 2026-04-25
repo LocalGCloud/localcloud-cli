@@ -1,5 +1,6 @@
 import { createSignal, createEffect, For, Show } from 'solid-js';
 import { api } from '../api.js';
+import { IconChevron, IconColumn, iconForType } from './TreeIcons.jsx';
 
 export function SchemaExplorer(props) {
     // props: source ("local"|"remote"), serviceId, onSelect, syncManifests
@@ -20,7 +21,6 @@ export function SchemaExplorer(props) {
                 const rawNodes = data.nodes || data || [];
                 setNodes(normalizeRemoteBrowse(rawNodes, svc));
             } else {
-                // Local schema
                 const data = await api.schema(svc);
                 setNodes(normalizeLocalSchema(data, svc));
             }
@@ -34,16 +34,6 @@ export function SchemaExplorer(props) {
     const toggle = (key) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
     const select = (node) => { setSelected(node.id); props.onSelect?.(node); };
 
-    const typeLabel = (type) => {
-        switch(type) {
-            case 'dataset': return 'dataset';
-            case 'collection': return 'collection';
-            case 'bucket': return 'bucket';
-            case 'instance': return 'instance';
-            default: return '';
-        }
-    };
-
     const getSyncBadge = (id) => {
         const manifests = typeof props.syncManifests === 'function' ? props.syncManifests() : props.syncManifests;
         if (!manifests) return null;
@@ -51,6 +41,68 @@ export function SchemaExplorer(props) {
         if (!m) return null;
         const stale = Date.now() - new Date(m.synced_at).getTime() > 86400000;
         return { badge: stale ? '\u26A0' : '\u2713', class: stale ? 'stale' : 'synced' };
+    };
+
+    /** Render a tree node recursively */
+    const TreeNode = (nodeProps) => {
+        const node = nodeProps.node;
+        const depth = nodeProps.depth || 0;
+        const hasChildren = node.children && node.children.length > 0;
+        const isLeaf = !hasChildren;
+        const Icon = iconForType(node.type);
+        const syncInfo = () => isLeaf ? getSyncBadge(node.id) : null;
+
+        return (
+            <div class="tree-group">
+                <div class={`tree-row ${isLeaf ? 'tree-row-tbl' : 'tree-row-db'} ${isLeaf && selected() === node.id ? 'active' : ''}`}
+                     onClick={() => isLeaf ? select(node) : toggle(node.id)}
+                     role={isLeaf ? 'treeitem' : 'button'}
+                     aria-selected={isLeaf ? selected() === node.id : undefined}
+                     aria-expanded={!isLeaf ? !!expanded()[node.id] : undefined}
+                     tabIndex={0}
+                     style={depth > 0 ? {} : {}}>
+                    <Show when={!isLeaf} fallback={<span style="width: 10px; display: inline-block" />}>
+                        <IconChevron open={expanded()[node.id]} />
+                    </Show>
+                    <Icon />
+                    <span class="tree-name" title={node.name}>{node.name}</span>
+                    <Show when={!isLeaf}>
+                        <span class="tree-badge tree-badge-db">{node.children.length} {typeLabel(node.type)}</span>
+                    </Show>
+                    <Show when={isLeaf && node.metadata?.rowCount != null}>
+                        <span class="tree-badge">{formatNum(node.metadata.rowCount)}</span>
+                    </Show>
+                    <Show when={syncInfo()}>
+                        <span style={`margin-left: 4px; font-size: 11px; color: ${syncInfo().class === 'synced' ? 'var(--success)' : 'var(--warning)'}`}>
+                            {syncInfo().badge}
+                        </span>
+                    </Show>
+                </div>
+                <Show when={!isLeaf && expanded()[node.id]}>
+                    <div class="tree-children">
+                        <For each={node.children}>
+                            {(child) => (
+                                <>
+                                    <TreeNode node={child} depth={depth + 1} />
+                                    {/* Show columns inline when leaf is selected */}
+                                    <Show when={!child.children?.length && selected() === child.id && child.schema?.length > 0}>
+                                        <For each={child.schema}>
+                                            {(col) => (
+                                                <div class="tree-row tree-row-col" title={`${col.name} (${col.type})`}>
+                                                    <IconColumn />
+                                                    <span class="tree-col-name">{col.name}</span>
+                                                    <span class="tree-col-type">{col.type}</span>
+                                                </div>
+                                            )}
+                                        </For>
+                                    </Show>
+                                </>
+                            )}
+                        </For>
+                    </div>
+                </Show>
+            </div>
+        );
     };
 
     return (
@@ -69,60 +121,18 @@ export function SchemaExplorer(props) {
                 <div class="alert alert-error" style="margin: 8px">{error()}</div>
             </Show>
             <Show when={!loading() && !error()}>
+                <Show when={nodes().length === 0}>
+                    <div class="sql-explorer-empty">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.12 }}>
+                            <ellipse cx="12" cy="5.5" rx="9" ry="3.5"/>
+                            <path d="M3 5.5v13c0 1.93 4.03 3.5 9 3.5s9-1.57 9-3.5v-13"/>
+                        </svg>
+                        <span>No resources found</span>
+                    </div>
+                </Show>
                 <div class="sql-explorer-tree" role="tree" aria-label="Resource explorer" style="flex: 1; overflow-y: auto; padding: 4px 0">
                     <For each={nodes()}>
-                        {(node) => (
-                            <div>
-                                <button class={`tree-row tree-row-db`} onClick={() => toggle(node.id)}
-                                     aria-expanded={!!expanded()[node.id]}
-                                     role="treeitem"
-                                     style="cursor: pointer; width: 100%; text-align: left; background: none; border: none; color: inherit; font: inherit; padding: inherit">
-                                    <span class="tree-chevron" style={{ transform: expanded()[node.id] ? 'rotate(90deg)' : 'none' }}>&rsaquo;</span>
-                                    <span class="tree-name" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px" title={node.name}>{node.name}</span>
-                                    <span class="tree-badge" style="margin-left: auto; font-size: 11px; color: var(--text-secondary)">
-                                        {node.children?.length || 0} {typeLabel(node.type) || 'items'}
-                                    </span>
-                                </button>
-                                <Show when={expanded()[node.id]}>
-                                    <div role="group">
-                                        <For each={node.children || []}>
-                                            {(child) => {
-                                                const syncInfo = () => getSyncBadge(child.id);
-                                                return (
-                                                    <div>
-                                                        <button class={`tree-row tree-row-tbl ${selected() === child.id ? 'active' : ''}`}
-                                                             onClick={() => select(child)}
-                                                             role="treeitem"
-                                                             aria-selected={selected() === child.id}
-                                                             style="cursor: pointer; width: 100%; text-align: left; background: none; border: none; color: inherit; font: inherit; padding-left: 28px">
-                                                            <span class="tree-name" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px" title={child.name}>{child.name}</span>
-                                                            <span class="tree-badge" style="margin-left: auto; font-size: 11px; color: var(--text-secondary)">
-                                                                {child.metadata?.rowCount ? formatNum(child.metadata.rowCount) + ' rows' : ''}
-                                                            </span>
-                                                            <Show when={syncInfo()}>
-                                                                <span style={`margin-left: 4px; font-size: 11px; color: ${syncInfo().class === 'synced' ? 'var(--success, #34a853)' : 'var(--warning, #fbbc04)'}`}>
-                                                                    {syncInfo().badge}
-                                                                </span>
-                                                            </Show>
-                                                        </button>
-                                                        <Show when={selected() === child.id && child.schema}>
-                                                            <For each={child.schema || []}>
-                                                                {(col) => (
-                                                                    <div class="tree-row tree-row-col" role="none" style="padding-left: 44px">
-                                                                        <span class="tree-col-name">{col.name}</span>
-                                                                        <span class="tree-col-type" style="margin-left: auto">{col.type}</span>
-                                                                    </div>
-                                                                )}
-                                                            </For>
-                                                        </Show>
-                                                    </div>
-                                                );
-                                            }}
-                                        </For>
-                                    </div>
-                                </Show>
-                            </div>
-                        )}
+                        {(node) => <TreeNode node={node} depth={0} />}
                     </For>
                 </div>
             </Show>
@@ -130,12 +140,19 @@ export function SchemaExplorer(props) {
     );
 }
 
+function typeLabel(type) {
+    switch(type) {
+        case 'dataset': return 'tables';
+        case 'collection': return 'docs';
+        case 'bucket': return 'items';
+        case 'instance': return 'dbs';
+        case 'database': return 'tables';
+        default: return 'items';
+    }
+}
+
 /**
- * Normalize the local schema API response into the tree node format
- * used by SchemaExplorer. api.schema() returns:
- *   { tables: [{ name: "dataset.table" | "table", columns: [{ name, type }] }] }
- * We group by database/dataset (splitting on '.') and produce:
- *   [{ id, name, type: 'database', children: [{ id, name, type: 'table', schema, metadata }] }]
+ * Normalize the local schema API response into tree nodes.
  */
 function normalizeLocalSchema(data, serviceId) {
     const tables = data?.tables || [];
@@ -168,57 +185,30 @@ function normalizeLocalSchema(data, serviceId) {
 }
 
 /**
- * Normalize the remote browse API response into the tree node format
- * used by SchemaExplorer. Each adapter returns a different shape inside
- * BrowseResult.nodes — this function maps them all to the standard:
- *   [{ id, name, type, children: [{ id, name, type, metadata, schema }] }]
- *
- * Adapter shapes:
- *   BigQuery:   {id, type:"dataset", tables: [{id, name, type, numRows, numBytes, columns}]}
- *   Firestore:  {id, type:"collection", documentCount, fields: [string]}
- *   GCS:        {id, type:"bucket", storageClass, location, prefixes, topLevelObjects}
- *   Spanner:    {id, type:"instance", databases: [{id, name, type:"database", tables: [string]}]}
- *   Bigtable:   {id, type:"instance", tables: [{id, name, type:"table", columnFamilies}]}
+ * Normalize the remote browse API response into tree nodes.
  */
 function normalizeRemoteBrowse(rawNodes, serviceId) {
     if (!rawNodes || rawNodes.length === 0) return [];
 
-    // Detect adapter type from the first node
     const first = rawNodes[0];
     const nodeType = first.type;
 
     if (nodeType === 'dataset') {
-        // BigQuery: datasets with tables
         return rawNodes.map(ds => ({
-            id: ds.id,
-            name: ds.id,
-            type: 'dataset',
+            id: ds.id, name: ds.id, type: 'dataset',
             children: (ds.tables || []).map(t => ({
-                id: t.id,
-                name: t.name || t.id,
-                type: 'table',
-                metadata: {
-                    rowCount: parseInt(t.numRows, 10) || 0,
-                    sizeBytes: parseInt(t.numBytes, 10) || 0,
-                },
-                schema: (t.columns || []).map(c => ({
-                    name: c.name,
-                    type: c.type,
-                })),
+                id: t.id, name: t.name || t.id, type: 'table',
+                metadata: { rowCount: parseInt(t.numRows, 10) || 0, sizeBytes: parseInt(t.numBytes, 10) || 0 },
+                schema: (t.columns || []).map(c => ({ name: c.name, type: c.type })),
             })),
         }));
     }
 
     if (nodeType === 'collection') {
-        // Firestore: flat collections (no nested children)
         return rawNodes.map(col => ({
-            id: col.id,
-            name: col.id,
-            type: 'collection',
+            id: col.id, name: col.id, type: 'collection',
             children: [{
-                id: col.id,
-                name: col.id,
-                type: 'collection',
+                id: col.id, name: col.id, type: 'collection',
                 metadata: { rowCount: col.documentCount || 0 },
                 schema: (col.fields || []).map(f => ({
                     name: typeof f === 'string' ? f : f.name,
@@ -229,71 +219,48 @@ function normalizeRemoteBrowse(rawNodes, serviceId) {
     }
 
     if (nodeType === 'bucket') {
-        // GCS: buckets with prefixes as children
         return rawNodes.map(b => ({
-            id: b.id,
-            name: b.id,
-            type: 'bucket',
+            id: b.id, name: b.id, type: 'bucket',
             children: (b.prefixes || []).map(p => ({
-                id: `${b.id}/${p}`,
-                name: p,
-                type: 'prefix',
+                id: `${b.id}/${p}`, name: p, type: 'prefix',
                 metadata: { storageClass: b.storageClass, location: b.location },
                 schema: [],
             })).concat(b.topLevelObjects > 0 ? [{
-                id: `${b.id}/`,
-                name: `${b.topLevelObjects} root object${b.topLevelObjects !== 1 ? 's' : ''}`,
-                type: 'objects',
-                metadata: { rowCount: b.topLevelObjects },
-                schema: [],
+                id: `${b.id}/`, name: `${b.topLevelObjects} root object${b.topLevelObjects !== 1 ? 's' : ''}`,
+                type: 'objects', metadata: { rowCount: b.topLevelObjects }, schema: [],
             }] : []),
         }));
     }
 
     if (nodeType === 'instance' && first.databases) {
-        // Spanner: instances -> databases -> tables
         return rawNodes.map(inst => ({
-            id: inst.id,
-            name: inst.id,
-            type: 'instance',
+            id: inst.id, name: inst.id, type: 'instance',
             children: (inst.databases || []).map(db => ({
-                id: db.id,
-                name: db.name || db.id,
-                type: 'database',
+                id: db.id, name: db.name || db.id, type: 'database',
                 metadata: { rowCount: (db.tables || []).length },
                 schema: (db.tables || []).map(t => ({
-                    name: typeof t === 'string' ? t : t.name,
-                    type: 'TABLE',
+                    name: typeof t === 'string' ? t : t.name, type: 'TABLE',
                 })),
             })),
         }));
     }
 
     if (nodeType === 'instance' && first.tables) {
-        // Bigtable: instances -> tables with column families
         return rawNodes.map(inst => ({
-            id: inst.id,
-            name: inst.id,
-            type: 'instance',
+            id: inst.id, name: inst.id, type: 'instance',
             children: (inst.tables || []).map(t => ({
-                id: t.id,
-                name: t.name || t.id,
-                type: 'table',
+                id: t.id, name: t.name || t.id, type: 'table',
                 metadata: { columnFamilies: (t.columnFamilies || []).length },
                 schema: (t.columnFamilies || []).map(cf => ({
-                    name: typeof cf === 'string' ? cf : cf.name,
-                    type: 'COLUMN_FAMILY',
+                    name: typeof cf === 'string' ? cf : cf.name, type: 'COLUMN_FAMILY',
                 })),
             })),
         }));
     }
 
-    // Fallback: wrap each raw node as-is with minimal normalization
     return rawNodes.map(n => ({
-        id: n.id || n.name || 'unknown',
-        name: n.name || n.id || 'unknown',
-        type: n.type || 'unknown',
-        children: (n.children || []),
+        id: n.id || n.name || 'unknown', name: n.name || n.id || 'unknown',
+        type: n.type || 'unknown', children: (n.children || []),
     }));
 }
 

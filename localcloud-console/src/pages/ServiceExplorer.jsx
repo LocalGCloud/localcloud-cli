@@ -4,6 +4,7 @@ import DataBrowser from './DataBrowser.jsx';
 import CodeEditor, { toCodeMirrorSchema } from '../components/CodeEditor.jsx';
 import Workflows from './Workflows.jsx';
 import { RemoteSyncPanel } from '../components/RemoteSyncPanel.jsx';
+import { IconDatabase, IconTable, IconColumn, IconChevron } from '../components/TreeIcons.jsx';
 
 // ─── Service Metadata (icon, title, description) ─────────────────────
 const SERVICE_META = {
@@ -412,36 +413,7 @@ function SQLEditor(props) {
     function loadHistoryItem(item) { setSqlText(item.sql); setShowHistory(false); }
     function clearEditor() { setSqlText(''); setIsPlaceholder(true); setResult(null); setError(null); }
 
-    // SVG icon components for the tree
-    const IconDatabase = () => (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" class="tree-icon tree-icon-db">
-            <ellipse cx="12" cy="5.5" rx="9" ry="3.5" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.12"/>
-            <path d="M3 5.5v13c0 1.93 4.03 3.5 9 3.5s9-1.57 9-3.5v-13" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-            <path d="M3 12c0 1.93 4.03 3.5 9 3.5s9-1.57 9-3.5" stroke="currentColor" strokeWidth="1.5" fill="none" opacity="0.5"/>
-        </svg>
-    );
-    const IconTable = () => (
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" class="tree-icon tree-icon-tbl">
-            <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.08"/>
-            <line x1="3" y1="9" x2="21" y2="9" stroke="currentColor" strokeWidth="1.5"/>
-            <line x1="3" y1="15" x2="21" y2="15" stroke="currentColor" strokeWidth="1" opacity="0.4"/>
-            <line x1="9" y1="9" x2="9" y2="21" stroke="currentColor" strokeWidth="1" opacity="0.4"/>
-        </svg>
-    );
-    const IconColumn = () => (
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" class="tree-icon tree-icon-col">
-            <rect x="5" y="3" width="14" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.06"/>
-            <line x1="8" y1="8" x2="16" y2="8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.6"/>
-            <line x1="8" y1="12" x2="14" y2="12" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" opacity="0.35"/>
-            <line x1="8" y1="16" x2="12" y2="16" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" opacity="0.35"/>
-        </svg>
-    );
-    const IconChevron = (props) => (
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"
-             class={props.open ? 'tree-chevron open' : 'tree-chevron'}>
-            <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
-        </svg>
-    );
+    // Tree icons imported from ../components/TreeIcons.jsx
 
     // Track whether current sqlText is still auto-generated placeholder
     const [isPlaceholder, setIsPlaceholder] = createSignal(true);
@@ -1023,11 +995,11 @@ export default function ServiceExplorer(props) {
                     </div>
                 </div>
 
-                <div style={{ display: mode() === 'editor' ? '' : 'none' }}>
+                <div style={{ display: mode() === 'editor' ? 'flex' : 'none', flex: '1', "min-height": '0', "flex-direction": 'column' }}>
                     <SQLEditor serviceId={activeService()} />
                 </div>
 
-                <div style={{ display: mode() === 'explorer' ? '' : 'none' }}>
+                <div style={{ display: mode() === 'explorer' ? 'flex' : 'none', flex: '1', "min-height": '0', "flex-direction": 'column' }}>
                     <DataBrowser
                         selectedService={props.selectedService}
                         onTabChange={props.onTabChange}
@@ -1037,7 +1009,7 @@ export default function ServiceExplorer(props) {
                     />
                 </div>
 
-                <div style={{ display: mode() === 'sync' ? '' : 'none' }}>
+                <div style={{ display: mode() === 'sync' ? 'flex' : 'none', flex: '1', "min-height": '0', "flex-direction": 'column' }}>
                     <RemoteSyncPanel serviceId={activeService()} activeProject={props.activeProject} />
                 </div>
             </Show>
