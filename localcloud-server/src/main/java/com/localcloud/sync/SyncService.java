@@ -12,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -45,6 +46,13 @@ public class SyncService {
     /** Thread pool for async sync execution. */
     private final ExecutorService syncExecutor = Executors.newFixedThreadPool(2, r -> {
         Thread t = new Thread(r, "sync-worker");
+        t.setDaemon(true);
+        return t;
+    });
+
+    /** Dedicated scheduler for delayed progress cleanup — avoids blocking the sync pool. */
+    private final ScheduledExecutorService cleanupScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "sync-cleanup");
         t.setDaemon(true);
         return t;
     });
@@ -217,11 +225,8 @@ public class SyncService {
                 }
             } finally {
                 activeFutures.remove(progressKey);
-                // Delayed cleanup of progress
-                syncExecutor.submit(() -> {
-                    try { Thread.sleep(60000); } catch (InterruptedException ignored) {}
-                    activeProgress.remove(progressKey);
-                });
+                // Delayed cleanup — uses dedicated scheduler to avoid blocking the sync pool
+                cleanupScheduler.schedule(() -> activeProgress.remove(progressKey), 60, TimeUnit.SECONDS);
             }
         });
 
@@ -319,10 +324,31 @@ public class SyncService {
     }
 
     /**
-     * Delete a sync manifest by id.
+     * Delete a sync manifest by id, cleaning up synced data from the local
+     * emulator before removing the manifest record.
      */
     public void deleteManifest(int id) {
         try {
+            // Get manifest details before deleting so we can clean up local data
+            Map<String, Object> manifest = manifestRepo.getById(id);
+            if (manifest != null) {
+                String serviceId = (String) manifest.get("service_id");
+                String resource = (String) manifest.get("resource_path");
+                String projectId = (String) manifest.get("project_id");
+
+                // Delete local data via adapter
+                SyncAdapter adapter = adapters.get(serviceId);
+                if (adapter != null) {
+                    try {
+                        adapter.deleteLocal(projectId, resource);
+                        logger.info("Deleted local data for {}/{}", serviceId, resource);
+                    } catch (Exception e) {
+                        logger.warn("Failed to delete local data for {}/{}: {}",
+                                serviceId, resource, e.getMessage());
+                        // Continue with manifest deletion even if data cleanup fails
+                    }
+                }
+            }
             manifestRepo.delete(id);
         } catch (SQLException e) {
             logger.error("Failed to delete manifest {}: {}", id, e.getMessage(), e);
@@ -397,8 +423,9 @@ public class SyncService {
                 mapper.getTypeFactory().constructCollectionType(List.class, SyncFilter.class));
         }
 
-        // Use original row count as limit, or default
-        int rowLimit = rowCount > 0 ? (int) Math.min(rowCount * 2, Integer.MAX_VALUE) : 1000000;
+        // Use the original row count as limit — user approved this amount.
+        // If user wants more data, they go through the sync form again with a new limit.
+        int rowLimit = rowCount > 0 ? (int) rowCount : 1000000;
 
         return startSyncAsync(projectId, serviceId, sourceProject, resource, filters, rowLimit);
     }

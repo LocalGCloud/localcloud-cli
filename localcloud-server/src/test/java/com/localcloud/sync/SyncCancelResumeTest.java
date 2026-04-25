@@ -67,4 +67,34 @@ class SyncCancelResumeTest {
         verify(manifestRepo).save(argThat(m ->
             m.serviceId().equals("bigquery") && m.resourcePath().equals("ds.tbl")));
     }
+
+    @Test
+    void resync_usesExactOriginalRowCount() throws Exception {
+        // Setup manifest with 5000 rows
+        Map<String, Object> manifest = new LinkedHashMap<>();
+        manifest.put("project_id", "proj");
+        manifest.put("service_id", "bigquery");
+        manifest.put("resource_path", "ds.tbl");
+        manifest.put("source_project", "prod-123");
+        manifest.put("filters_json", "[]");
+        manifest.put("row_count", 5000L);
+        manifest.put("bytes_synced", 10000L);
+        manifest.put("estimated_cost", 0.01);
+        manifest.put("status", "completed");
+
+        when(manifestRepo.getById(1)).thenReturn(manifest);
+        when(credentialRepo.getCredentialData("proj")).thenReturn("{\"access_token\":\"tok\"}");
+        when(adapter.estimate(eq("prod-123"), eq("ds.tbl"), eq(List.of()), eq(5000), eq("tok")))
+                .thenReturn(new CostEstimate(5000, 10000, 0.01, "ok"));
+        when(manifestRepo.save(any())).thenReturn(2);
+        lenient().when(adapter.sync(any(), any(), any(), anyInt(), any(), any(), any()))
+                .thenReturn(new SyncResult(-1, 5000, 10000, 0.01, "completed", null));
+
+        SyncService service = new SyncService(manifestRepo, credentialRepo, 1.0);
+        service.registerAdapter("bigquery", adapter);
+        service.resync(1);
+
+        // Verify exact row limit 5000 was used, NOT 10000 (5000*2)
+        verify(adapter).estimate(eq("prod-123"), eq("ds.tbl"), eq(List.of()), eq(5000), eq("tok"));
+    }
 }
