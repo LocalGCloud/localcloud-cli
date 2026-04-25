@@ -4,6 +4,7 @@ localcloud-server/.gradle/
 localcloud-server/out/
 *.class
 *.jar
+!localcloud-server/gradle/wrapper/gradle-wrapper.jar
 *.war
 *.ear
 *.iml
@@ -40,3 +41,4 @@ localcloud-data/
 
 # LocalCloud data
 /var/lib/localcloud/
+.design-extract/
