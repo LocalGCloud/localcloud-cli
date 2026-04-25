@@ -19,6 +19,9 @@ export function RemoteSyncPanel(props) {
     const [connectProject, setConnectProject] = createSignal('');
     const [connectToken, setConnectToken] = createSignal('');
     const [selectedManifest, setSelectedManifest] = createSignal(null);
+    const [confirmDelete, setConfirmDelete] = createSignal(null); // manifest id or null
+    const [previewError, setPreviewError] = createSignal(null);
+    const [manifestError, setManifestError] = createSignal(null);
 
     // Track active polling interval for cleanup on unmount
     let activePolling = null;
@@ -40,17 +43,19 @@ export function RemoteSyncPanel(props) {
             // Server wraps list in {manifests: [...]}, extract the array
             const m = resp?.manifests ?? resp;
             setSyncManifests(Array.isArray(m) ? m : []);
-        } catch (e) { /* ignore */ }
+            setManifestError(null);
+        } catch (e) { setManifestError(e.message); }
     };
 
     const handleSelect = async (node) => {
         setSelectedResource(node);
         setPanel('preview');
         setPreviewLoading(true);
+        setPreviewError(null);
         try {
             const r = await api.syncPreview(props.serviceId, node.id, 5);
             setPreview(r);
-        } catch (e) { setPreview(null); }
+        } catch (e) { setPreview(null); setPreviewError(e.message); }
         finally { setPreviewLoading(false); }
     };
 
@@ -110,8 +115,9 @@ export function RemoteSyncPanel(props) {
                         await loadManifests();
 
                         // Get final manifest data
-                        const manifests = await api.syncServiceManifests(props.serviceId);
-                        const final_ = (Array.isArray(manifests) ? manifests : [])
+                        const resp = await api.syncServiceManifests(props.serviceId);
+                        const manifestList = resp?.manifests ?? (Array.isArray(resp) ? resp : []);
+                        const final_ = manifestList
                             .find(m => m.id === manifestId || m.resource_path === res.id);
 
                         if (final_ && final_.status === 'completed') {
@@ -189,7 +195,7 @@ export function RemoteSyncPanel(props) {
                 row_limit: manifest.row_count || 1000000
             });
             setCostEstimate(est);
-        } catch (e) { /* user can click estimate manually */ }
+        } catch (e) { setCostEstimate({ error: e.message }); }
     };
 
     // OAuth disabled — requires client_id/client_secret configuration
@@ -209,25 +215,28 @@ export function RemoteSyncPanel(props) {
 
     const timeAgo = (ts) => {
         if (!ts) return '';
+        const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
         const ms = Date.now() - new Date(ts).getTime();
-        if (ms < 3600000) return Math.round(ms / 60000) + 'm ago';
-        if (ms < 86400000) return Math.round(ms / 3600000) + 'h ago';
-        return Math.round(ms / 86400000) + 'd ago';
+        if (ms < 60000) return rtf.format(-Math.round(ms / 1000), 'second');
+        if (ms < 3600000) return rtf.format(-Math.round(ms / 60000), 'minute');
+        if (ms < 86400000) return rtf.format(-Math.round(ms / 3600000), 'hour');
+        return rtf.format(-Math.round(ms / 86400000), 'day');
     };
 
     const fmtNum = (n) => {
-        if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-        if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-        return String(n || 0);
+        if (n == null) return '0';
+        if (n >= 1e6) return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
+        return new Intl.NumberFormat('en').format(n);
     };
 
     const fmtBytes = (b) => {
         if (!b) return '0 B';
-        if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
-        if (b >= 1e6) return (b / 1e6).toFixed(1) + ' MB';
-        if (b >= 1e3) return (b / 1e3).toFixed(1) + ' KB';
-        return b + ' B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(b) / Math.log(1024));
+        return new Intl.NumberFormat('en', { maximumFractionDigits: 1 }).format(b / Math.pow(1024, i)) + ' ' + units[i];
     };
+
+    const fmtCost = (c) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 4 }).format(c || 0);
 
     const fmtElapsed = (ms) => {
         if (!ms) return '0s';
@@ -241,49 +250,54 @@ export function RemoteSyncPanel(props) {
     if (!connected()) {
         return (
             <div style="display: flex; align-items: center; justify-content: center; height: 100%; padding: 48px">
-                <div class="card" style="max-width: 420px; width: 100%">
-                    <div class="card-header"><h3 style="margin: 0">Connect to GCP</h3></div>
+                <div class="card" style="max-width: 440px; width: 100%">
+                    <div class="card-header" style="display: flex; align-items: center; gap: 8px">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="var(--primary)">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                        </svg>
+                        <h3 style="margin: 0">Connect to GCP Project</h3>
+                    </div>
                     <div class="card-body" style="display: flex; flex-direction: column; gap: 16px">
-                        <p style="color: var(--text-secondary); margin: 0">Connect to browse and sync remote data.</p>
-
-                        <label class="form-label">Source Project</label>
-                        <input class="form-input" placeholder="prod-project-123"
-                               value={connectProject()} onInput={e => setConnectProject(e.target.value)} />
-
-                        {/* OAuth option — disabled, requires client config */}
-                        <button class="btn" disabled
-                                style="display: flex; align-items: center; gap: 8px; justify-content: center; opacity: 0.5; cursor: not-allowed">
-                            <svg width="18" height="18" viewBox="0 0 18 18">
-                                <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z"/>
-                                <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z"/>
-                                <path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.997 8.997 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332Z"/>
-                                <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58Z"/>
-                            </svg>
-                            Sign in with Google (Coming Soon)
-                        </button>
-                        <p style="font-size: 11px; color: var(--text-secondary); margin: 0; text-align: center">
-                            Requires OAuth client configuration. Use token paste below.
-                        </p>
-
-                        <div style="display: flex; align-items: center; gap: 12px; color: var(--text-secondary)">
-                            <hr style="flex: 1; border: 0; border-top: 1px solid var(--border)" />
-                            <span style="font-size: 12px">or paste a token</span>
-                            <hr style="flex: 1; border: 0; border-top: 1px solid var(--border)" />
+                        <div>
+                            <label class="form-label" for="sync-project">Source Project ID</label>
+                            <input id="sync-project" name="project" class="form-input"
+                                   placeholder="my-production-project"
+                                   value={connectProject()} onInput={e => setConnectProject(e.target.value)}
+                                   autocomplete="off" />
                         </div>
-
-                        <label class="form-label">Access Token</label>
-                        <input class="form-input form-input-mono" type="password" placeholder="ya29...."
-                               value={connectToken()} onInput={e => setConnectToken(e.target.value)} />
-                        <p style="font-size: 11px; color: var(--text-secondary); margin: 0">
-                            Run: gcloud auth print-access-token
-                        </p>
-
+                        <div>
+                            <label class="form-label" for="sync-token">Access Token</label>
+                            <input id="sync-token" name="token" class="form-input form-input-mono"
+                                   type="password" placeholder="ya29.a0AfH6SM..."
+                                   value={connectToken()} onInput={e => setConnectToken(e.target.value)}
+                                   autocomplete="off" />
+                            <div style="margin-top: 6px; font-size: 11px; color: var(--text-secondary); line-height: 1.5">
+                                Generate with: <code style="background: var(--surface-elevated, var(--border)); padding: 1px 4px; border-radius: 3px; font-size: 10px">gcloud auth print-access-token</code>
+                                <br/>Required scope: <code style="background: var(--surface-elevated, var(--border)); padding: 1px 4px; border-radius: 3px; font-size: 10px">cloud-platform.read-only</code>
+                                <br/>Token expires in ~1 hour. Re-paste to refresh.
+                            </div>
+                        </div>
                         <Show when={syncError()}>
-                            <div class="alert alert-error">{syncError()}</div>
+                            <div class="alert alert-error" style="margin: 0">{syncError()}</div>
                         </Show>
-
-                        <button class="btn btn-secondary" onClick={handleConnect}
-                                disabled={!connectProject() || !connectToken()}>Connect with Token</button>
+                        <button class="btn btn-primary" onClick={handleConnect}
+                                disabled={!connectProject() || !connectToken()}
+                                style="width: 100%">
+                            Connect
+                        </button>
+                        <div style="border-top: 1px solid var(--border); padding-top: 12px; margin-top: 4px">
+                            <div style="display: flex; align-items: center; gap: 8px; opacity: 0.5">
+                                <svg width="16" height="16" viewBox="0 0 18 18">
+                                    <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z"/>
+                                    <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z"/>
+                                    <path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.997 8.997 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332Z"/>
+                                    <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58Z"/>
+                                </svg>
+                                <span style="font-size: 12px; color: var(--text-secondary)">
+                                    Google Sign-In — requires OAuth client configuration
+                                </span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -304,6 +318,11 @@ export function RemoteSyncPanel(props) {
                     <SchemaExplorer source="remote" serviceId={props.serviceId}
                                     onSelect={handleSelect} syncManifests={syncManifests} />
                 </div>
+                <Show when={manifestError()}>
+                    <div style="padding: 8px 12px">
+                        <div class="alert alert-error" style="margin: 0; font-size: 12px">{manifestError()}</div>
+                    </div>
+                </Show>
                 <Show when={syncManifests().length > 0}>
                     <div style="border-top: 1px solid var(--border); max-height: 200px; overflow-y: auto">
                         <div style="padding: 8px 12px; font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase">Sync History</div>
@@ -352,6 +371,9 @@ export function RemoteSyncPanel(props) {
                         </div>
                         <Show when={previewLoading()}>
                             <div class="loading-state"><div class="loading-spinner" /></div>
+                        </Show>
+                        <Show when={!previewLoading() && previewError()}>
+                            <div class="alert alert-error" style="margin-bottom: 16px">{previewError()}</div>
                         </Show>
                         <Show when={!previewLoading() && preview()}>
                             <div class="data-table-wrapper" style="margin-bottom: 16px">
@@ -409,7 +431,7 @@ export function RemoteSyncPanel(props) {
                                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px">
                                         <div><strong>Est. rows:</strong> {fmtNum(costEstimate().estimatedRows)}</div>
                                         <div><strong>Scan size:</strong> {fmtBytes(costEstimate().estimatedBytes)}</div>
-                                        <div><strong>Est. cost:</strong> ${costEstimate().estimatedCostUsd?.toFixed(4)}</div>
+                                        <div><strong>Est. cost:</strong> {fmtCost(costEstimate().estimatedCostUsd)}</div>
                                         <div><strong>Details:</strong> {costEstimate().details}</div>
                                     </div>
                                 </Show>
@@ -480,7 +502,7 @@ export function RemoteSyncPanel(props) {
                             <div><strong>Synced:</strong> {timeAgo(selectedManifest().synced_at)}</div>
                             <div><strong>Rows:</strong> {fmtNum(selectedManifest().row_count)}</div>
                             <div><strong>Size:</strong> {fmtBytes(selectedManifest().bytes_synced)}</div>
-                            <div><strong>Cost:</strong> ${selectedManifest().estimated_cost?.toFixed(4) || '0.0000'}</div>
+                            <div><strong>Cost:</strong> {fmtCost(selectedManifest().estimated_cost)}</div>
                             <div><strong>Source:</strong> {selectedManifest().source_project}</div>
                             <div><strong>Status:</strong> {selectedManifest().status}</div>
                             <Show when={selectedManifest().filters_json && selectedManifest().filters_json !== '[]'}>
@@ -488,9 +510,35 @@ export function RemoteSyncPanel(props) {
                             </Show>
                         </div>
                     </div>
-                    <div style="margin-top: 16px; display: flex; gap: 8px">
-                        <button class="btn btn-primary" onClick={() => handleResync(selectedManifest())}>Resync</button>
-                        <button class="btn btn-danger" onClick={() => deleteManifest(selectedManifest().id)}>Remove from Local</button>
+                    <div style="margin-top: 16px; display: flex; flex-direction: column; gap: 8px">
+                        <div style="display: flex; gap: 8px">
+                            <button class="btn btn-primary" onClick={() => handleResync(selectedManifest())}>Resync</button>
+                            <Show when={confirmDelete() === selectedManifest()?.id} fallback={
+                                <button class="btn btn-danger" onClick={() => setConfirmDelete(selectedManifest()?.id)}>
+                                    Remove Data & History
+                                </button>
+                            }>
+                                <span />
+                            </Show>
+                        </div>
+                        <Show when={confirmDelete() === selectedManifest()?.id}>
+                            <div class="alert" style="background: var(--danger-bg, #fce8e6); border: 1px solid var(--danger, #ea4335); border-radius: 8px; padding: 12px; margin-bottom: 8px">
+                                <div style="font-weight: 500; color: var(--danger, #ea4335); margin-bottom: 4px">
+                                    Remove "{selectedManifest()?.resource_path}" from local?
+                                </div>
+                                <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px">
+                                    This deletes synced data from local emulators and removes the sync history entry. Production data is not affected.
+                                </div>
+                                <div style="display: flex; gap: 8px">
+                                    <button class="btn btn-danger" onClick={() => { deleteManifest(selectedManifest()?.id); setConfirmDelete(null); }}>
+                                        Yes, Remove
+                                    </button>
+                                    <button class="btn btn-secondary" onClick={() => setConfirmDelete(null)}>
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        </Show>
                     </div>
                 </Show>
             </div>
