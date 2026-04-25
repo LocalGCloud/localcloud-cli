@@ -26,10 +26,23 @@ function appendProject(path) {
     return `${path}${sep}project=${encodeURIComponent(_activeProject)}`;
 }
 
+async function handleResponse(r) {
+    if (!r.ok) {
+        // Try to extract server error message from JSON body
+        try {
+            const body = await r.json();
+            throw new Error(body.message || `${r.status} ${r.statusText}`);
+        } catch (e) {
+            if (e.message && !e.message.startsWith('Unexpected')) throw e;
+            throw new Error(`${r.status} ${r.statusText}`);
+        }
+    }
+    return r.json();
+}
+
 async function get(path) {
     const r = await fetch(`${BASE}${path}`);
-    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-    return r.json();
+    return handleResponse(r);
 }
 
 async function post(path, body) {
@@ -39,8 +52,7 @@ async function post(path, body) {
         opts.body = JSON.stringify(body);
     }
     const r = await fetch(`${BASE}${path}`, opts);
-    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-    return r.json();
+    return handleResponse(r);
 }
 
 async function put(path, body) {
@@ -49,14 +61,12 @@ async function put(path, body) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
-    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-    return r.json();
+    return handleResponse(r);
 }
 
 async function del(path) {
     const r = await fetch(`${BASE}${path}`, { method: 'DELETE' });
-    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-    return r.json();
+    return handleResponse(r);
 }
 
 async function postJson(path, body) {
