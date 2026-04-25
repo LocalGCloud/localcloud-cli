@@ -47,6 +47,10 @@ import com.localcloud.gateway.ProcessHealthChecker;
 import com.localcloud.gateway.RequestLogger;
 import com.localcloud.persistence.PostgresDataSource;
 import com.localcloud.persistence.SchemaManager;
+import com.localcloud.sync.SyncApiService;
+import com.localcloud.sync.SyncCredentialRepository;
+import com.localcloud.sync.SyncManifestRepository;
+import com.localcloud.sync.SyncService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -154,6 +158,38 @@ public class LocalCloudApplication {
         sb.annotatedService("/_localcloud", seedService);
         sb.annotatedService("/_localcloud", exportService);
         sb.annotatedService("/_localcloud", queryService);
+
+        // Data Mirror sync service
+        var registry = config.getServiceRegistry();
+        SyncManifestRepository syncManifestRepo = new SyncManifestRepository(dataSource.getDataSource());
+        SyncCredentialRepository syncCredentialRepo = new SyncCredentialRepository(dataSource.getDataSource());
+        SyncService syncService = new SyncService(syncManifestRepo, syncCredentialRepo, 1.0);
+
+        // Register sync adapters for services that have emulators
+        com.fasterxml.jackson.databind.ObjectMapper syncMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        if (registry.getService("bigquery") != null) {
+            syncService.registerAdapter("bigquery", new com.localcloud.sync.adapters.BigQuerySyncAdapter(
+                    "http://localhost:" + registry.getService("bigquery").port(), syncMapper));
+        }
+        if (registry.getService("firestore") != null) {
+            syncService.registerAdapter("firestore", new com.localcloud.sync.adapters.FirestoreSyncAdapter(
+                    "localhost", registry.getService("firestore").port(), syncMapper));
+        }
+        if (registry.getService("gcs") != null) {
+            syncService.registerAdapter("gcs", new com.localcloud.sync.adapters.GcsSyncAdapter(
+                    "http://localhost:" + registry.getService("gcs").port(), syncMapper));
+        }
+        if (registry.getService("spanner") != null) {
+            syncService.registerAdapter("spanner", new com.localcloud.sync.adapters.SpannerSyncAdapter(
+                    "localhost", registry.getService("spanner").port(), syncMapper));
+        }
+        if (registry.getService("bigtable") != null) {
+            syncService.registerAdapter("bigtable", new com.localcloud.sync.adapters.BigtableSyncAdapter(
+                    "localhost", registry.getService("bigtable").port(), syncMapper));
+        }
+
+        SyncApiService syncApiService = new SyncApiService(syncService, syncCredentialRepo, config);
+        sb.annotatedService("/_localcloud/sync", syncApiService);
 
         // Dashboard static files (served from classpath resources)
         sb.serviceUnder("/_localcloud/dashboard/",
