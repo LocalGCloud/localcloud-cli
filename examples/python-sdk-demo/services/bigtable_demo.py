@@ -20,6 +20,14 @@ def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]
 
     client = bigtable.Client(project=project_id, admin=True, credentials=AnonymousCredentials())
     instance = client.instance("demo-instance")
+    try:
+        if not instance.exists():
+            instance.create(location_id="local", serve_nodes=1)
+            results.append(("Create instance", True, "demo-instance"))
+    except Exception as e:
+        results.append(("Create instance", False, str(e)))
+        return results
+
     table_id = f"demo-table-{uuid.uuid4().hex[:8]}"
     cf_id = "cf1"
 

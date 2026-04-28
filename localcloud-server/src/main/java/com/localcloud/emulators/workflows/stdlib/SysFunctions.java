@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 
@@ -45,7 +46,7 @@ public class SysFunctions {
             return null;
         });
 
-        registry.register("sys.now", args -> Instant.now().toString());
+        registry.register("sys.now", args -> Instant.now().toEpochMilli() / 1000.0);
 
         registry.register("sys.sleep", args -> {
             if (args.isEmpty()) throw new RuntimeException("sys.sleep requires seconds");
@@ -59,5 +60,34 @@ public class SysFunctions {
             }
             return null;
         });
+
+        registry.register("sys.sleep_until", args -> {
+            if (args.isEmpty()) throw new RuntimeException("sys.sleep_until requires a timestamp");
+            double targetEpochSeconds = toEpochSeconds(args.get(0));
+            double now = Instant.now().toEpochMilli() / 1000.0;
+            double seconds = Math.max(0, targetEpochSeconds - now);
+            long millis = (long) (Math.min(seconds, 60) * 1000);
+            try {
+                Thread.sleep(millis);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Cancelled: execution was cancelled during sleep_until");
+            }
+            return null;
+        });
+    }
+
+    private static double toEpochSeconds(Object value) {
+        if (value instanceof Number n) return n.doubleValue();
+        String text = String.valueOf(value);
+        try {
+            return Double.parseDouble(text);
+        } catch (NumberFormatException ignored) {
+            try {
+                return Instant.parse(text).toEpochMilli() / 1000.0;
+            } catch (DateTimeParseException e) {
+                throw new RuntimeException("sys.sleep_until requires epoch seconds or an RFC3339 timestamp");
+            }
+        }
     }
 }

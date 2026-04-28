@@ -463,4 +463,57 @@ class WorkflowExecutorTest {
         Object result = runWorkflow(yaml);
         assertEquals(60, result);
     }
+
+    @Test
+    void testForLoopBreakAndContinue() {
+        String yaml = """
+            main:
+              steps:
+                - init:
+                    assign:
+                      - total: 0
+                      - nums: [1, 2, 3, 4, 5]
+                - loop:
+                    for:
+                      value: n
+                      in: ${nums}
+                      steps:
+                        - skip_two:
+                            switch:
+                              - condition: ${n == 2}
+                                next: continue
+                        - stop_at_five:
+                            switch:
+                              - condition: ${n == 5}
+                                next: break
+                        - add:
+                            assign:
+                              - total: ${total + n}
+                - done:
+                    return: ${total}
+            """;
+        assertEquals(8, runWorkflow(yaml));
+    }
+
+    @Test
+    void testFailedStepIsRecordedInHistory() {
+        String yaml = """
+            main:
+              steps:
+                - fail:
+                    raise:
+                      code: "TestError"
+                      message: "history"
+            """;
+        WorkflowDefinition def = WorkflowParser.parse(yaml);
+        ExecutionContext ctx = new ExecutionContext();
+        WorkflowExecutor executor = new WorkflowExecutor(def, ctx, stdlib);
+
+        assertThrows(WorkflowException.class, executor::execute);
+        assertEquals(1, ctx.getStepHistory().size());
+        Map<String, Object> entry = ctx.getStepHistory().get(0);
+        assertEquals("fail", entry.get("step"));
+        assertEquals("FAILED", entry.get("state"));
+        assertTrue(entry.containsKey("error"));
+    }
 }

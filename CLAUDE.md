@@ -57,6 +57,7 @@ Java 21 (LTS, primary): Follow standard conventions
 - JVM tuned to `-Xmx512m -Xms128m` to coexist with emulators in container
 - Docker image uses debian:trixie-slim base with custom Java 25 JRE (jlink, ~72 MB) — no gcloud SDK at runtime
 - Emulators (Firestore, Pub/Sub, Bigtable) run as direct JAR/binary execution, not via gcloud CLI
+- Bigtable emulator: `github.com/jhsenjaliya/little_bigtable@v0.0.1` — pulled and built from published Go module during `docker build`
 - PostgreSQL 17 (matching Debian Trixie's glibc requirements)
 - `/_localcloud/services` returns array format with id, name, status, port, protocol, endpoint, env_var, env_value, request_count
 - `/_localcloud/reset` reads `restore_seed` from JSON body (not query params)

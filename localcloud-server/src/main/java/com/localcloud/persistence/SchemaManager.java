@@ -233,7 +233,8 @@ public class SchemaManager {
             );
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_redis_ttl ON redis_data (ttl_expires_at) WHERE ttl_expires_at IS NOT NULL");
 
-            // Bigtable: bigtable_data
+            // Bigtable: legacy compatibility table only. The Bigtable emulator is
+            // now the source of truth through gRPC admin/data APIs.
             stmt.execute(
                 "CREATE TABLE IF NOT EXISTS bigtable_data (" +
                 "    project_id VARCHAR(255) NOT NULL DEFAULT 'local-project'," +
@@ -306,14 +307,25 @@ public class SchemaManager {
                 "    source_contents TEXT NOT NULL," +
                 "    state VARCHAR(20) DEFAULT 'ACTIVE'," +
                 "    revision_id INT DEFAULT 1," +
+                "    description TEXT DEFAULT ''," +
                 "    labels JSONB DEFAULT '{}'," +
                 "    service_account VARCHAR(500)," +
                 "    call_log_level VARCHAR(30) DEFAULT 'LOG_NONE'," +
+                "    execution_history_level VARCHAR(50) DEFAULT 'EXECUTION_HISTORY_BASIC'," +
+                "    crypto_key_name VARCHAR(500)," +
+                "    user_env_vars JSONB DEFAULT '{}'," +
+                "    tags JSONB DEFAULT '{}'," +
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
                 "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
                 "    PRIMARY KEY (project_id, location_id, workflow_id)" +
                 ")"
             );
+            stmt.execute("ALTER TABLE workflows ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''");
+            stmt.execute("ALTER TABLE workflows ADD COLUMN IF NOT EXISTS call_log_level VARCHAR(30) DEFAULT 'LOG_NONE'");
+            stmt.execute("ALTER TABLE workflows ADD COLUMN IF NOT EXISTS execution_history_level VARCHAR(50) DEFAULT 'EXECUTION_HISTORY_BASIC'");
+            stmt.execute("ALTER TABLE workflows ADD COLUMN IF NOT EXISTS crypto_key_name VARCHAR(500)");
+            stmt.execute("ALTER TABLE workflows ADD COLUMN IF NOT EXISTS user_env_vars JSONB DEFAULT '{}'");
+            stmt.execute("ALTER TABLE workflows ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '{}'");
 
             // Cloud Workflows: workflow_executions
             stmt.execute(
@@ -329,10 +341,39 @@ public class SchemaManager {
                 "    start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
                 "    end_time TIMESTAMP," +
                 "    call_log_level VARCHAR(30) DEFAULT 'LOG_NONE'," +
+                "    labels JSONB DEFAULT '{}'," +
+                "    status JSONB DEFAULT '{}'," +
+                "    state_error JSONB," +
+                "    duration_ms BIGINT," +
                 "    workflow_revision_id VARCHAR(50)" +
                 ")"
             );
+            stmt.execute("ALTER TABLE workflow_executions ADD COLUMN IF NOT EXISTS call_log_level VARCHAR(30) DEFAULT 'LOG_NONE'");
+            stmt.execute("ALTER TABLE workflow_executions ADD COLUMN IF NOT EXISTS labels JSONB DEFAULT '{}'");
+            stmt.execute("ALTER TABLE workflow_executions ADD COLUMN IF NOT EXISTS status JSONB DEFAULT '{}'");
+            stmt.execute("ALTER TABLE workflow_executions ADD COLUMN IF NOT EXISTS state_error JSONB");
+            stmt.execute("ALTER TABLE workflow_executions ADD COLUMN IF NOT EXISTS duration_ms BIGINT");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_workflow_executions_workflow ON workflow_executions (project_id, location_id, workflow_id)");
+
+            // Cloud Workflows: persisted execution step history
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS workflow_step_entries (" +
+                "    execution_id VARCHAR(255) NOT NULL," +
+                "    step_entry_id BIGSERIAL NOT NULL," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    workflow_id VARCHAR(255) NOT NULL," +
+                "    step_name VARCHAR(255) NOT NULL," +
+                "    step_type VARCHAR(50)," +
+                "    state VARCHAR(30) DEFAULT 'SUCCEEDED'," +
+                "    start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    end_time TIMESTAMP," +
+                "    duration_ms BIGINT DEFAULT 0," +
+                "    entry_json JSONB DEFAULT '{}'," +
+                "    PRIMARY KEY (execution_id, step_entry_id)" +
+                ")"
+            );
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_workflow_step_entries_execution ON workflow_step_entries (project_id, location_id, workflow_id, execution_id)");
 
             // Cloud Storage: storage_objects (referenced by index below)
             // Indexes for high-volume tables

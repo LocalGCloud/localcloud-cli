@@ -1576,34 +1576,52 @@ function FirestoreView(props) {
     );
 }
 
-// -- Bigtable View (drill-down: tables -> rows) --
+// -- Bigtable View (drill-down: instances -> tables -> rows) --
 function BigtableView(props) {
     const d = () => props.data();
+    const [selectedInstance, setSelectedInstance] = createSignal(null);
     const [selectedTable, setSelectedTable] = createSignal(null);
     const [rows, setRows] = createSignal([]);
     const [subLoading, setSubLoading] = createSignal(false);
 
-    const tables = () => {
+    // Browse response is now an array of instances: [{id, type, tables: [{id, columnFamilies}]}]
+    const instances = () => {
         const raw = d();
         if (!raw) return [];
-        return raw.tables || [];
+        // Support both array (new) and {tables: [...]} (legacy) formats
+        if (Array.isArray(raw)) return raw;
+        if (raw.tables) {
+            // Legacy flat format — group by instance
+            const byInst = {};
+            raw.tables.forEach(t => {
+                const inst = t.instance || 'default';
+                if (!byInst[inst]) byInst[inst] = { id: inst, type: 'instance', tables: [] };
+                byInst[inst].tables.push({ id: t.table, name: t.table, columnFamilies: [] });
+            });
+            return Object.values(byInst);
+        }
+        return [];
     };
 
-    const selectTable = async (tableName) => {
-        setSelectedTable(tableName);
+    const currentTables = () => {
+        const inst = instances().find(i => i.id === selectedInstance());
+        return inst ? (inst.tables || []) : [];
+    };
+
+    const selectTable = async (instanceId, tableId) => {
+        setSelectedInstance(instanceId);
+        setSelectedTable(tableId);
         setRows([]);
         setSubLoading(true);
         try {
-            const result = await api.browse('bigtable', 'tables/' + tableName);
+            const result = await api.browse('bigtable', 'tables/' + instanceId + '/' + tableId);
             setRows(result.rows || []);
         } catch { setRows([]); }
         finally { setSubLoading(false); }
     };
 
-    const goBack = () => {
-        setSelectedTable(null);
-        setRows([]);
-    };
+    const goBackToTables = () => { setSelectedTable(null); setRows([]); };
+    const goBackToInstances = () => { setSelectedInstance(null); setSelectedTable(null); setRows([]); };
 
     // Extract all unique column families/qualifiers from rows
     const rowColumns = () => {
@@ -1611,9 +1629,8 @@ function BigtableView(props) {
         if (!r || r.length === 0) return [];
         const colSet = new Set();
         r.forEach(row => {
-            Object.keys(row).forEach(k => {
-                if (k !== 'rowKey' && k !== 'row_key') colSet.add(k);
-            });
+            const cells = row.cells || {};
+            Object.keys(cells).forEach(k => colSet.add(k));
         });
         return Array.from(colSet);
     };
@@ -1624,13 +1641,13 @@ function BigtableView(props) {
                 <div class="loading-state"><div class="loading-spinner" /> Loading...</div>
             </Show>
             <Show when={!subLoading()}>
-                {/* Level 2: Rows in table */}
+                {/* Level 3: Rows in table */}
                 <Show when={selectedTable()}>
-                    <button class="back-link" onClick={goBack}>
-                        {'\u2190'} Back to tables
+                    <button class="back-link" onClick={goBackToTables}>
+                        {'\u2190'} Back to {selectedInstance()}
                     </button>
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                        <h2 style="margin:0">Table: {selectedTable()}</h2>
+                        <h2 style="margin:0">{selectedInstance()} / {selectedTable()}</h2>
                         <Show when={props.onAdd}>
                             <button onClick={() => props.onAdd('Add Row to ' + selectedTable(), [
                                 {name: 'rowKey', type: 'text'},
@@ -1638,7 +1655,7 @@ function BigtableView(props) {
                                 {name: 'column', type: 'text'},
                                 {name: 'value', type: 'textarea'}
                             ], async (formData) => {
-                                await api.mutate('bigtable', 'rows', { table: selectedTable(), ...formData });
+                                await api.mutate('bigtable', 'rows', { table: selectedInstance() + '/' + selectedTable(), ...formData });
                             })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
                                 + Add Row
                             </button>
@@ -1666,12 +1683,16 @@ function BigtableView(props) {
                                             <tr>
                                                 <td style="font-weight:500">{row.rowKey || row.row_key || '--'}</td>
                                                 <For each={rowColumns()}>
-                                                    {(c) => <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">{row[c] != null ? (typeof row[c] === 'object' ? JSON.stringify(row[c]) : String(row[c])) : '--'}</td>}
+                                                    {(c) => {
+                                                        const cells = row.cells || {};
+                                                        const val = cells[c];
+                                                        return <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">{val != null ? (typeof val === 'object' ? JSON.stringify(val) : String(val)) : '--'}</td>;
+                                                    }}
                                                 </For>
                                                 <td>
                                                     <Show when={props.onDelete}>
                                                         <button onClick={() => props.onDelete('Delete row "' + (row.rowKey || row.row_key) + '" from ' + selectedTable() + '?', async () => {
-                                                            await api.mutate('bigtable', 'rows/delete', { table: selectedTable(), rowKey: row.rowKey || row.row_key });
+                                                            await api.mutate('bigtable', 'rows/delete', { table: selectedInstance() + '/' + selectedTable(), rowKey: row.rowKey || row.row_key });
                                                         })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete">Del</button>
                                                     </Show>
                                                 </td>
@@ -1684,28 +1705,57 @@ function BigtableView(props) {
                     </Show>
                 </Show>
 
-                {/* Level 1: Tables */}
-                <Show when={!selectedTable()}>
-                    <Show when={tables().length > 0} fallback={
+                {/* Level 2: Tables in instance */}
+                <Show when={selectedInstance() && !selectedTable()}>
+                    <button class="back-link" onClick={goBackToInstances}>
+                        {'\u2190'} Back to instances
+                    </button>
+                    <h2 style="margin-bottom:16px">Instance: {selectedInstance()}</h2>
+                    <Show when={currentTables().length > 0} fallback={
                         <div class="empty-state">
                             <div class="empty-state-icon">{'\u2205'}</div>
-                            <div class="empty-state-title">No tables found</div>
-                            <div class="empty-state-text">Create Bigtable tables to see them here.</div>
+                            <div class="empty-state-title">No tables</div>
+                            <div class="empty-state-text">This instance has no tables.</div>
                         </div>
                     }>
                         <div class="data-table-wrapper">
                             <table class="data-table">
-                                <thead><tr><th>Table Name</th></tr></thead>
+                                <thead><tr><th>Table</th><th>Column Families</th></tr></thead>
                                 <tbody>
-                                    <For each={tables()}>
-                                        {(tbl) => {
-                                            const tblName = typeof tbl === 'string' ? tbl : (tbl.table || tbl.table_name || tbl.name || tbl.id || '--');
-                                            return (
-                                                <tr class="clickable-row" onClick={() => selectTable(tblName)}>
-                                                    <td style="font-weight:500">{tblName}</td>
-                                                </tr>
-                                            );
-                                        }}
+                                    <For each={currentTables()}>
+                                        {(tbl) => (
+                                            <tr class="clickable-row" onClick={() => selectTable(selectedInstance(), tbl.id || tbl.name)}>
+                                                <td style="font-weight:500">{tbl.id || tbl.name}</td>
+                                                <td style="font-size:12px;color:var(--text-secondary)">{(tbl.columnFamilies || []).join(', ') || '--'}</td>
+                                            </tr>
+                                        )}
+                                    </For>
+                                </tbody>
+                            </table>
+                        </div>
+                    </Show>
+                </Show>
+
+                {/* Level 1: Instances */}
+                <Show when={!selectedInstance()}>
+                    <Show when={instances().length > 0} fallback={
+                        <div class="empty-state">
+                            <div class="empty-state-icon">{'\u2205'}</div>
+                            <div class="empty-state-title">No instances found</div>
+                            <div class="empty-state-text">Create Bigtable instances to see them here.</div>
+                        </div>
+                    }>
+                        <div class="data-table-wrapper">
+                            <table class="data-table">
+                                <thead><tr><th>Instance</th><th>Tables</th></tr></thead>
+                                <tbody>
+                                    <For each={instances()}>
+                                        {(inst) => (
+                                            <tr class="clickable-row" onClick={() => setSelectedInstance(inst.id)}>
+                                                <td style="font-weight:500">{inst.id}</td>
+                                                <td style="font-size:12px;color:var(--text-secondary)">{(inst.tables || []).length} table(s)</td>
+                                            </tr>
+                                        )}
                                     </For>
                                 </tbody>
                             </table>

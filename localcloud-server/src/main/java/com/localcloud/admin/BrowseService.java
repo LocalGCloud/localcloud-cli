@@ -167,6 +167,7 @@ public class BrowseService {
             String json = switch (service) {
                 case "spanner" -> browseSpannerDatabase(a, b, c, projectId);
                 case "bigquery" -> browseBigQueryTables(a, b, c, projectId);
+                case "bigtable" -> browseBigtable(a, b + "/" + c, projectId);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unsupported 4-segment browse for service: " + service));
@@ -822,54 +823,34 @@ public class BrowseService {
         return firestoreValue;
     }
 
-    // ========== Bigtable (query PostgreSQL for seeded data) ==========
+    // ========== Bigtable (proxy to emulator gRPC) ==========
 
     private String browseBigtable(String resourceType, String resourceId, String projectId) throws Exception {
-        if (!config.isPersistenceEnabled()) {
-            // Fallback to connection info
-            Map<String, Object> info = new LinkedHashMap<>();
-            info.put("info", "Bigtable emulator runs on port " + bigtablePort + " (gRPC). Persistence not enabled.");
-            info.put("port", bigtablePort);
-            return mapper.writeValueAsString(info);
-        }
-
-        if (resourceType == null || "tables".equals(resourceType) && resourceId == null) {
-            // List all tables from bigtable_data
-            List<Map<String, Object>> tables = new ArrayList<>();
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(
-                     "SELECT DISTINCT instance_id, table_name FROM bigtable_data WHERE project_id = ? ORDER BY instance_id, table_name")) {
-                ps.setString(1, projectId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        Map<String, Object> t = new LinkedHashMap<>();
-                        t.put("instance", rs.getString("instance_id"));
-                        t.put("table", rs.getString("table_name"));
-                        tables.add(t);
-                    }
-                }
+        try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+            // Top-level: return instances with tables and column families
+            if (resourceType == null) {
+                return mapper.writeValueAsString(client.listInstancesWithDetails(projectId));
             }
-            return mapper.writeValueAsString(Map.of("tables", tables));
-        }
 
-        if ("tables".equals(resourceType) && resourceId != null) {
-            // List rows in a table
-            List<Map<String, Object>> rows = new ArrayList<>();
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(
-                     "SELECT row_key, cells FROM bigtable_data WHERE project_id = ? AND table_name = ? ORDER BY row_key LIMIT 50")) {
-                ps.setString(1, projectId);
-                ps.setString(2, resourceId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        Map<String, Object> row = new LinkedHashMap<>();
-                        row.put("rowKey", rs.getString("row_key"));
-                        row.put("cells", mapper.readValue(rs.getString("cells"), Map.class));
-                        rows.add(row);
-                    }
-                }
+            // Flat table list (legacy)
+            if ("tables".equals(resourceType) && resourceId == null) {
+                return mapper.writeValueAsString(Map.of("tables", client.listTables(projectId)));
             }
-            return mapper.writeValueAsString(Map.of("rows", rows, "table", resourceId));
+
+            // Read rows from a specific table
+            if ("tables".equals(resourceType) && resourceId != null) {
+                String instanceId = "local-instance";
+                String tableId = resourceId;
+                int slash = resourceId.indexOf('/');
+                if (slash > 0) {
+                    instanceId = resourceId.substring(0, slash);
+                    tableId = resourceId.substring(slash + 1);
+                }
+                return mapper.writeValueAsString(Map.of(
+                        "rows", client.readRows(projectId, instanceId, tableId, 50),
+                        "table", tableId,
+                        "instance", instanceId));
+            }
         }
 
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Bigtable browse path"));

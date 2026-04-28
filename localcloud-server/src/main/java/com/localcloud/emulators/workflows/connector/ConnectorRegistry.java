@@ -67,22 +67,108 @@ public class ConnectorRegistry {
 
         // Pub/Sub (REST transcoding on gRPC emulator — limited)
         register("googleapis.pubsub.v1.projects.topics.create", "PUT", "http://localhost:8085/v1/projects/{project}/topics/{topic}");
+        register("googleapis.pubsub.v1.projects.topics.get", "GET", "http://localhost:8085/v1/projects/{project}/topics/{topic}");
         register("googleapis.pubsub.v1.projects.topics.publish", "POST", "http://localhost:8085/v1/projects/{project}/topics/{topic}:publish");
         register("googleapis.pubsub.v1.projects.topics.list", "GET", "http://localhost:8085/v1/projects/{project}/topics");
+        register("googleapis.pubsub.v1.projects.topics.delete", "DELETE", "http://localhost:8085/v1/projects/{project}/topics/{topic}");
+        register("googleapis.pubsub.v1.projects.subscriptions.create", "PUT", "http://localhost:8085/v1/projects/{project}/subscriptions/{subscription}");
+        register("googleapis.pubsub.v1.projects.subscriptions.get", "GET", "http://localhost:8085/v1/projects/{project}/subscriptions/{subscription}");
+        register("googleapis.pubsub.v1.projects.subscriptions.list", "GET", "http://localhost:8085/v1/projects/{project}/subscriptions");
+        register("googleapis.pubsub.v1.projects.subscriptions.delete", "DELETE", "http://localhost:8085/v1/projects/{project}/subscriptions/{subscription}");
+        register("googleapis.pubsub.v1.projects.subscriptions.pull", "POST", "http://localhost:8085/v1/projects/{project}/subscriptions/{subscription}:pull");
+        register("googleapis.pubsub.v1.projects.subscriptions.acknowledge", "POST", "http://localhost:8085/v1/projects/{project}/subscriptions/{subscription}:acknowledge");
 
         // Secret Manager (via gateway)
+        register("googleapis.secretmanager.v1.projects.secrets.create", "POST", "http://localhost:8080/v1/projects/{project}/secrets?secretId={secret}");
         register("googleapis.secretmanager.v1.projects.secrets.list", "GET", "http://localhost:8080/v1/projects/{project}/secrets");
         register("googleapis.secretmanager.v1.projects.secrets.get", "GET", "http://localhost:8080/v1/projects/{project}/secrets/{secret}");
+        register("googleapis.secretmanager.v1.projects.secrets.delete", "DELETE", "http://localhost:8080/v1/projects/{project}/secrets/{secret}");
+        register("googleapis.secretmanager.v1.projects.secrets.addVersion", "POST",
+                "http://localhost:8080/v1/projects/{project}/secrets/{secret}:addVersion");
         register("googleapis.secretmanager.v1.projects.secrets.versions.access", "GET",
                 "http://localhost:8080/v1/projects/{project}/secrets/{secret}/versions/{version}:access");
 
         // Cloud Tasks (via gateway)
         register("googleapis.cloudtasks.v2.projects.locations.queues.list", "GET",
                 "http://localhost:8080/v2/projects/{project}/locations/{location}/queues");
+        register("googleapis.cloudtasks.v2.projects.locations.queues.get", "GET",
+                "http://localhost:8080/v2/projects/{project}/locations/{location}/queues/{queue}");
+        register("googleapis.cloudtasks.v2.projects.locations.queues.create", "POST",
+                "http://localhost:8080/v2/projects/{project}/locations/{location}/queues");
+        register("googleapis.cloudtasks.v2.projects.locations.queues.delete", "DELETE",
+                "http://localhost:8080/v2/projects/{project}/locations/{location}/queues/{queue}");
+        register("googleapis.cloudtasks.v2.projects.locations.queues.tasks.create", "POST",
+                "http://localhost:8080/v2/projects/{project}/locations/{location}/queues/{queue}/tasks");
+        register("googleapis.cloudtasks.v2.projects.locations.queues.tasks.get", "GET",
+                "http://localhost:8080/v2/projects/{project}/locations/{location}/queues/{queue}/tasks/{task}");
+        register("googleapis.cloudtasks.v2.projects.locations.queues.tasks.delete", "DELETE",
+                "http://localhost:8080/v2/projects/{project}/locations/{location}/queues/{queue}/tasks/{task}");
 
         // Firestore
         register("googleapis.firestore.v1.projects.databases.documents.get", "GET",
                 "http://localhost:8086/v1/projects/{project}/databases/{database}/documents/{document}");
+        register("googleapis.firestore.v1.projects.databases.documents.createDocument", "POST",
+                "http://localhost:8086/v1/projects/{project}/databases/{database}/documents/{collectionId}");
+        register("googleapis.firestore.v1.projects.databases.documents.patch", "PATCH",
+                "http://localhost:8086/v1/projects/{project}/databases/{database}/documents/{document}");
+        register("googleapis.firestore.v1.projects.databases.documents.delete", "DELETE",
+                "http://localhost:8086/v1/projects/{project}/databases/{database}/documents/{document}");
+
+        // Logging and Monitoring (via gateway gRPC transcoding)
+        register("googleapis.logging.v2.entries.write", "POST", "http://localhost:8080/v2/entries:write");
+        register("googleapis.logging.v2.entries.list", "POST", "http://localhost:8080/v2/entries:list");
+        register("googleapis.monitoring.v3.projects.metricDescriptors.list", "GET",
+                "http://localhost:8080/v3/projects/{project}/metricDescriptors");
+        register("googleapis.monitoring.v3.projects.timeSeries.list", "GET",
+                "http://localhost:8080/v3/projects/{project}/timeSeries");
+
+        // Infrastructure facades
+        register("googleapis.compute.v1.instances.list", "GET",
+                "http://localhost:8080/compute/v1/projects/{project}/zones/{zone}/instances");
+        register("googleapis.compute.v1.instances.get", "GET",
+                "http://localhost:8080/compute/v1/projects/{project}/zones/{zone}/instances/{instance}");
+        register("googleapis.compute.v1.instances.insert", "POST",
+                "http://localhost:8080/compute/v1/projects/{project}/zones/{zone}/instances");
+        register("googleapis.compute.v1.instances.delete", "DELETE",
+                "http://localhost:8080/compute/v1/projects/{project}/zones/{zone}/instances/{instance}");
+        register("googleapis.compute.v1.instances.start", "POST",
+                "http://localhost:8080/compute/v1/projects/{project}/zones/{zone}/instances/{instance}/start");
+        register("googleapis.compute.v1.instances.stop", "POST",
+                "http://localhost:8080/compute/v1/projects/{project}/zones/{zone}/instances/{instance}/stop");
+        register("googleapis.run.v2.projects.locations.services.list", "GET",
+                "http://localhost:8080/v2/projects/{project}/locations/{location}/services");
+        register("googleapis.run.v2.projects.locations.services.get", "GET",
+                "http://localhost:8080/v2/projects/{project}/locations/{location}/services/{service}");
+        register("googleapis.run.v2.projects.locations.services.create", "POST",
+                "http://localhost:8080/v2/projects/{project}/locations/{location}/services");
+        register("googleapis.run.v2.projects.locations.services.delete", "DELETE",
+                "http://localhost:8080/v2/projects/{project}/locations/{location}/services/{service}");
+        register("googleapis.container.v1.projects.locations.clusters.list", "GET",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/clusters");
+        register("googleapis.container.v1.projects.locations.clusters.get", "GET",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/clusters/{cluster}");
+        register("googleapis.container.v1.projects.locations.clusters.create", "POST",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/clusters");
+        register("googleapis.container.v1.projects.locations.clusters.delete", "DELETE",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/clusters/{cluster}");
+
+        // Workflows management/execution connectors back into the local Workflows facade
+        register("googleapis.workflows.v1.projects.locations.workflows.list", "GET",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/workflows");
+        register("googleapis.workflows.v1.projects.locations.workflows.get", "GET",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/workflows/{workflow}");
+        register("googleapis.workflows.v1.projects.locations.workflows.create", "POST",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/workflows?workflowId={workflow}");
+        register("googleapis.workflows.v1.projects.locations.workflows.delete", "DELETE",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/workflows/{workflow}");
+        register("googleapis.workflowexecutions.v1.projects.locations.workflows.executions.create", "POST",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/workflows/{workflow}/executions");
+        register("googleapis.workflowexecutions.v1.projects.locations.workflows.executions.get", "GET",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/workflows/{workflow}/executions/{execution}");
+        register("googleapis.workflowexecutions.v1.projects.locations.workflows.executions.list", "GET",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/workflows/{workflow}/executions");
+        register("googleapis.workflowexecutions.v1.projects.locations.workflows.executions.cancel", "POST",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/workflows/{workflow}/executions/{execution}:cancel");
 
         // Child workflow execution (handled specially in execute())
         connectors.put("googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run",

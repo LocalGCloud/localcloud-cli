@@ -168,11 +168,17 @@ public class ExecutionContext {
     // --- Step history (thread-safe via CopyOnWriteArrayList) ---
 
     public void recordStep(String stepName, String stepType, long durationMs) {
+        recordStep(stepName, stepType, durationMs, "SUCCEEDED", null);
+    }
+
+    public void recordStep(String stepName, String stepType, long durationMs, String state, Object error) {
         Map<String, Object> entry = new LinkedHashMap<>();
         entry.put("step", stepName);
         entry.put("type", stepType);
+        entry.put("state", state);
         entry.put("duration_ms", durationMs);
         entry.put("timestamp", System.currentTimeMillis());
+        if (error != null) entry.put("error", error);
         stepHistory.add(entry);
     }
 

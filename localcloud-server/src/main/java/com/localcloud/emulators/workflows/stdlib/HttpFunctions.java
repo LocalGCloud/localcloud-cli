@@ -24,6 +24,13 @@ public class HttpFunctions {
         registry.register("http.put", args -> httpCall("PUT", args));
         registry.register("http.patch", args -> httpCall("PATCH", args));
         registry.register("http.delete", args -> httpCall("DELETE", args));
+        registry.register("http.request", args -> {
+            if (args.isEmpty() || !(args.get(0) instanceof Map<?, ?> config)) {
+                throw new RuntimeException("http.request requires a config map");
+            }
+            Object method = config.get("method");
+            return httpCall(method != null ? String.valueOf(method).toUpperCase(Locale.ROOT) : "GET", args);
+        });
     }
 
     @SuppressWarnings("unchecked")

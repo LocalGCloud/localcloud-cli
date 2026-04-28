@@ -5,6 +5,7 @@
 # Configurable emulator images (override at build time):
 #   SPANNER_EMULATOR_IMAGE  - Spanner emulator binary source (default: jaysen2apache/spanner-emulator-extended:latest)
 #   BIGQUERY_EMULATOR_IMAGE - BigQuery emulator source (default: jaysen2apache/bigquery-emulator-on-duckdb)
+#   LITTLE_BIGTABLE_VERSION - little_bigtable Go module version (default: v0.0.1)
 #   GCS_EMULATOR_IMAGE      - GCS emulator source (default: fsouza/fake-gcs-server:1.54.0)
 #   GCLOUD_SDK_IMAGE        - gcloud SDK for Firestore/PubSub/Bigtable (default: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators)
 #   DOCKER_CLI_IMAGE        - Docker CLI binary source (default: docker:27.1-cli)
@@ -72,12 +73,14 @@ docker volume create localcloud-data >/dev/null 2>&1 || true
 BUILD_ARGS=""
 [ -n "$SPANNER_EMULATOR_IMAGE" ]  && BUILD_ARGS="$BUILD_ARGS --build-arg SPANNER_EMULATOR_IMAGE=$SPANNER_EMULATOR_IMAGE"
 [ -n "$BIGQUERY_EMULATOR_IMAGE" ] && BUILD_ARGS="$BUILD_ARGS --build-arg BIGQUERY_EMULATOR_IMAGE=$BIGQUERY_EMULATOR_IMAGE"
+[ -n "$GO_BASE_IMAGE" ]              && BUILD_ARGS="$BUILD_ARGS --build-arg GO_BASE_IMAGE=$GO_BASE_IMAGE"
+[ -n "$LITTLE_BIGTABLE_VERSION" ]    && BUILD_ARGS="$BUILD_ARGS --build-arg LITTLE_BIGTABLE_VERSION=$LITTLE_BIGTABLE_VERSION"
 [ -n "$GCS_EMULATOR_IMAGE" ]      && BUILD_ARGS="$BUILD_ARGS --build-arg GCS_EMULATOR_IMAGE=$GCS_EMULATOR_IMAGE"
 [ -n "$GCLOUD_SDK_IMAGE" ]        && BUILD_ARGS="$BUILD_ARGS --build-arg GCLOUD_SDK_IMAGE=$GCLOUD_SDK_IMAGE"
 [ -n "$DOCKER_CLI_IMAGE" ]        && BUILD_ARGS="$BUILD_ARGS --build-arg DOCKER_CLI_IMAGE=$DOCKER_CLI_IMAGE"
 [ -n "$JDK_IMAGE" ]               && BUILD_ARGS="$BUILD_ARGS --build-arg JDK_IMAGE=$JDK_IMAGE"
 
-if ! docker build $BUILD_ARGS -t localcloud/localcloud:latest .; then
+if ! docker build --progress=plain $BUILD_ARGS -t localcloud/localcloud:latest .; then
     echo "ERROR: Docker image build failed."
     echo "  Check that Docker daemon is running and has enough resources."
     exit 1

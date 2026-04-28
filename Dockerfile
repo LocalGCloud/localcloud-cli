@@ -106,6 +106,7 @@
 # Image repositories for dependencies (can be overridden for air-gapped or internal repos)
 ARG SPANNER_EMULATOR_IMAGE=jaysen2apache/spanner-emulator-extended:latest
 ARG BIGQUERY_EMULATOR_IMAGE=jaysen2apache/bigquery-emulator-on-duckdb
+ARG GO_BASE_IMAGE=public.ecr.aws/docker/library/golang:1.25-alpine
 ARG GCLOUD_SDK_IMAGE=gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
 ARG GCS_EMULATOR_IMAGE=fsouza/fake-gcs-server:1.54.0
 ARG DOCKER_CLI_IMAGE=docker:27.1-cli
@@ -117,6 +118,26 @@ FROM ${BIGQUERY_EMULATOR_IMAGE} AS bq-emulator
 FROM ${GCS_EMULATOR_IMAGE} AS gcs-emulator
 FROM ${DOCKER_CLI_IMAGE} AS docker-cli
 FROM ${GCLOUD_SDK_IMAGE} AS gcloud-sdk
+
+# --- Build little_bigtable from published Go module ---
+# Package: github.com/jhsenjaliya/little_bigtable/bttest@v0.0.1
+FROM ${GO_BASE_IMAGE} AS bigtable-build
+WORKDIR /src
+RUN sed -i 's/https:/http:/' /etc/apk/repositories \
+    && apk add --no-cache gcc musl-dev git
+ARG LITTLE_BIGTABLE_VERSION=v0.0.1
+ENV GOPRIVATE=github.com/jhsenjaliya/*
+ENV GIT_SSL_NO_VERIFY=1
+# GONOSUMCHECK + GOINSECURE scoped to private repo; transitive deps use GOPROXY=direct with TLS
+ENV GONOSUMCHECK=github.com/jhsenjaliya/*
+ENV GOINSECURE=github.com/jhsenjaliya/*
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod init bigtable-build && \
+    GONOSUMDB=* GOPROXY=direct go get github.com/jhsenjaliya/little_bigtable@${LITTLE_BIGTABLE_VERSION}
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -linkmode external -extldflags -static" \
+    -o /out/localcloud-bigtable-emulator github.com/jhsenjaliya/little_bigtable
 
 # --- Build custom JRE with jlink (Java 25 LTS, ~72 MB instead of ~194 MB full JRE) ---
 FROM ${JDK_IMAGE} AS jlink-build
@@ -178,10 +199,10 @@ COPY --from=gcs-emulator /bin/fake-gcs-server /usr/local/bin/fake-gcs-server
 # Extract emulator JARs/binaries from gcloud SDK image (no gcloud CLI needed at runtime)
 # Firestore: Java JAR, launched via java -cp (no Main-Class manifest)
 # Pub/Sub: Java fat JAR, launched via java -jar
-# Bigtable: Go binary, launched directly
+# Bigtable: built from github.com/jhsenjaliya/little_bigtable (PostgreSQL-backed)
 COPY --from=gcloud-sdk /google-cloud-sdk/platform/cloud-firestore-emulator/cloud-firestore-emulator.jar /opt/emulators/cloud-firestore-emulator.jar
 COPY --from=gcloud-sdk /google-cloud-sdk/platform/pubsub-emulator/lib/ /opt/emulators/pubsub-lib/
-COPY --chmod=755 --from=gcloud-sdk /google-cloud-sdk/platform/bigtable-emulator/cbtemulator /usr/local/bin/cbtemulator
+COPY --chmod=755 --from=bigtable-build /out/localcloud-bigtable-emulator /usr/local/bin/localcloud-bigtable-emulator
 
 # BigQuery Emulator v2: copy pre-built venv + Python 3.12 interpreter from the BQ emulator image
 COPY --from=bq-emulator /usr/local/bin/python3.12 /usr/local/bin/python3.12

@@ -15,7 +15,7 @@ import java.util.List;
  *   multiplication → unary (("*"|"/"|"//"|"%") unary)*
  *   unary         → ("not"|"-") unary | postfix
  *   postfix       → primary (("." IDENT) | ("[" expression "]") | ("(" arguments ")"))*
- *   primary       → NUMBER | STRING | BOOLEAN | NULL | IDENTIFIER | "(" expression ")" | "[" list "]"
+ *   primary       → NUMBER | STRING | BOOLEAN | NULL | IDENTIFIER | "(" expression ")" | "[" list "]" | "{" map "}"
  */
 public class ExpressionParser {
     private final List<Token> tokens;
@@ -168,7 +168,33 @@ public class ExpressionParser {
             expect(Token.TokenType.RBRACKET, "Expected ']'");
             return new AstNode.ListLiteral(elements);
         }
+        if (match(Token.TokenType.LBRACE)) {
+            List<String> keys = new ArrayList<>();
+            List<AstNode> values = new ArrayList<>();
+            if (!check(Token.TokenType.RBRACE)) {
+                parseMapEntry(keys, values);
+                while (match(Token.TokenType.COMMA)) {
+                    parseMapEntry(keys, values);
+                }
+            }
+            expect(Token.TokenType.RBRACE, "Expected '}'");
+            return new AstNode.MapLiteral(keys, values);
+        }
         throw new ExpressionException("Unexpected token: " + peek().value() + " at position " + peek().position());
+    }
+
+    private void parseMapEntry(List<String> keys, List<AstNode> values) {
+        String key;
+        if (match(Token.TokenType.STRING)) {
+            key = previous().value();
+        } else if (match(Token.TokenType.IDENTIFIER)) {
+            key = previous().value();
+        } else {
+            throw new ExpressionException("Expected map key at position " + peek().position());
+        }
+        expect(Token.TokenType.COLON, "Expected ':' after map key");
+        keys.add(key);
+        values.add(expression());
     }
 
     private List<AstNode> parseArguments() {

@@ -20,5 +20,11 @@ public class JsonFunctions {
             try { return mapper.writeValueAsString(args.get(0)); }
             catch (Exception e) { throw new RuntimeException("json.encode failed: " + e.getMessage()); }
         });
+
+        registry.register("json.encode_to_string", args -> {
+            if (args.isEmpty()) throw new RuntimeException("json.encode_to_string requires an argument");
+            try { return mapper.writeValueAsString(args.get(0)); }
+            catch (Exception e) { throw new RuntimeException("json.encode_to_string failed: " + e.getMessage()); }
+        });
     }
 }

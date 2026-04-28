@@ -20,9 +20,12 @@ public class StdlibRegistry {
         ListFunctions.register(this);
         MapFunctions.register(this);
         TypeCastFunctions.register(this);
+        ExpressionFunctions.register(this);
         EventsFunctions.register(this);
         HashFunctions.register(this);
         TimeFunctions.register(this);
+        UuidFunctions.register(this);
+        RetryFunctions.register(this);
     }
 
     public void register(String name, Function<List<Object>, Object> func) {

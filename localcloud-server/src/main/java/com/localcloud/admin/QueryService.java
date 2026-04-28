@@ -57,6 +57,7 @@ public class QueryService {
 
     private final String bigqueryBase;
     private final String spannerBase;
+    private final int bigtablePort;
 
     public QueryService(LocalCloudConfig config, PostgresDataSource dataSource,
                         ServiceRegistry registry, UsageMetricsRepository usageMetrics) {
@@ -75,6 +76,9 @@ public class QueryService {
         int spannerRestPort = spannerDef != null && spannerDef.additionalPorts().containsKey("rest")
                 ? spannerDef.additionalPorts().get("rest") : 9020;
         this.spannerBase = "http://localhost:" + spannerRestPort;
+
+        ServiceDefinition bigtableDef = registry.getService("bigtable");
+        this.bigtablePort = bigtableDef != null ? bigtableDef.port() : 8087;
     }
 
     /**
@@ -113,7 +117,9 @@ public class QueryService {
             usageMetrics.incrementCount(projectId, service, 1);
             long startTime = System.currentTimeMillis();
 
-            if (POSTGRES_SERVICES.contains(service)) {
+            if ("bigtable".equals(service)) {
+                return executeBigtableQuery(sql, projectId, startTime);
+            } else if (POSTGRES_SERVICES.contains(service)) {
                 return executePostgresQuery(sql, projectId, startTime);
             } else if ("bigquery".equals(service)) {
                 return executeBigQueryQuery(sql, projectId, startTime);
@@ -627,6 +633,75 @@ public class QueryService {
         }
     }
 
+    // ─── Bigtable Query (translate SQL to gRPC ReadRows) ──────────────
+
+    private HttpResponse executeBigtableQuery(String sql, String projectId, long startTime) {
+        try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+            // Tokenize → Parse → Execute
+            var tokens = new com.localcloud.admin.bigtablesql.SqlTokenizer(sql).tokenize();
+            var ast = new com.localcloud.admin.bigtablesql.SqlParser(tokens).parseStatement();
+            var executor = new com.localcloud.admin.bigtablesql.BigtableSqlExecutor(client, projectId);
+            var result = executor.execute(ast);
+
+            long elapsed = System.currentTimeMillis() - startTime;
+
+            // Convert to frontend-expected format:
+            // columns: array of strings, rows: array of arrays, snake_case keys
+            List<String> colNames = result.columns().stream()
+                    .map(c -> c.get("name"))
+                    .toList();
+            List<List<Object>> rowArrays = result.rows().stream()
+                    .map(row -> colNames.stream()
+                            .map(col -> row.get(col))
+                            .collect(java.util.stream.Collectors.toList()))
+                    .toList();
+
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writeValueAsString(Map.of(
+                            "columns", colNames,
+                            "rows", rowArrays,
+                            "row_count", result.rowCount(),
+                            "execution_time_ms", elapsed)));
+        } catch (com.localcloud.admin.bigtablesql.BigtableSqlException e) {
+            return errorResponse("SQL error: " + e.getMessage());
+        } catch (Exception e) {
+            logger.warn("Bigtable query failed: {}", e.getMessage());
+            return errorResponse("Bigtable query failed: " + e.getMessage());
+        }
+    }
+
+    // ─── Bigtable Schema (proxy to emulator gRPC) ─────────────────────
+
+    @SuppressWarnings("unchecked")
+    private HttpResponse schemaBigtable(String projectId) {
+        try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+            var instances = client.listInstancesWithDetails(projectId);
+            List<Map<String, Object>> tables = new ArrayList<>();
+            for (var inst : instances) {
+                String instanceId = (String) inst.get("id");
+                List<Map<String, Object>> instTables = (List<Map<String, Object>>) inst.get("tables");
+                if (instTables != null) {
+                    for (var tbl : instTables) {
+                        String tableName = instanceId + "." + tbl.get("id");
+                        List<String> cfs = (List<String>) tbl.get("columnFamilies");
+                        List<Map<String, String>> columns = new ArrayList<>();
+                        if (cfs != null) {
+                            for (String cf : cfs) {
+                                columns.add(Map.of("name", cf, "type", "COLUMN_FAMILY"));
+                            }
+                        }
+                        tables.add(Map.of("name", tableName, "columns", columns));
+                    }
+                }
+            }
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of("tables", tables)));
+        } catch (Exception e) {
+            logger.warn("Bigtable schema fetch failed: {}", e.getMessage());
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, "{\"tables\": []}");
+        }
+    }
+
     // ─── GCS File Schema Detection ──────────────────────────────────────
 
     /** Allowlist pattern for bucket/object names — rejects path traversal and SQL injection. */
@@ -765,23 +840,29 @@ public class QueryService {
                 return schemaPubSub(projectId);
             }
 
+            if ("bigtable".equals(service)) {
+                return schemaBigtable(projectId);
+            }
+
             if (service == null || !POSTGRES_SERVICES.contains(service)) {
                 return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
                         mapper.writeValueAsString(Map.of("tables", List.of())));
             }
 
-            // Filter tables by service — each service owns specific PostgreSQL tables
+            // Filter tables by service — only expose services that support SQL queries.
+            // Services like secretmanager, cloudtasks, logging, monitoring use facade APIs
+            // and their PostgreSQL tables are internal storage — not user-facing.
             Map<String, List<String>> serviceTables = Map.ofEntries(
-                Map.entry("secretmanager", List.of("secrets", "secret_versions")),
-                Map.entry("cloudtasks", List.of("task_queues", "cloud_tasks")),
-                Map.entry("logging", List.of("log_entries")),
-                Map.entry("monitoring", List.of("time_series", "metric_points")),
-                Map.entry("bigtable", List.of("bigtable_data")),
-                Map.entry("compute", List.of("compute_instances")),
-                Map.entry("cloudrun", List.of("cloudrun_services", "cloudrun_revisions")),
-                Map.entry("gke", List.of("gke_clusters")),
-                Map.entry("memorystore", List.of("redis_data")),
-                Map.entry("workflows", List.of("workflows", "workflow_executions"))
+                Map.entry("secretmanager", List.of()),
+                Map.entry("cloudtasks", List.of()),
+                Map.entry("logging", List.of()),
+                Map.entry("monitoring", List.of()),
+                Map.entry("bigtable", List.of()),
+                Map.entry("compute", List.of()),
+                Map.entry("cloudrun", List.of()),
+                Map.entry("gke", List.of()),
+                Map.entry("memorystore", List.of()),
+                Map.entry("workflows", List.of("workflows", "workflow_executions", "workflow_step_entries"))
             );
 
             List<String> allowedTables = serviceTables.getOrDefault(service, List.of());
@@ -1086,7 +1167,7 @@ public class QueryService {
             "log_entries", "time_series", "metric_points", "bigtable_data",
             "compute_instances", "cloudrun_services", "cloudrun_revisions",
             "gke_clusters", "redis_data", "workflows", "workflow_executions",
-            "usage_metrics", "projects", "gcs_bucket_projects"
+            "workflow_step_entries", "usage_metrics", "projects", "gcs_bucket_projects"
         };
 
         // Check if query references any of these tables (word-boundary match to avoid

@@ -211,12 +211,28 @@ class StdlibRegistryTest {
 
     @Test
     void testTextUrlEncode() {
-        assertEquals("hello+world", call("text.url_encode", "hello world"));
+        assertEquals("hello%20world", call("text.url_encode", "hello world"));
     }
 
     @Test
     void testTextUrlDecode() {
-        assertEquals("hello world", call("text.url_decode", "hello+world"));
+        assertEquals("hello world", call("text.url_decode", "hello%20world"));
+    }
+
+    @Test
+    void testTextUrlEncodePlus() {
+        assertEquals("hello+world", call("text.url_encode_plus", "hello world"));
+    }
+
+    @Test
+    void testTextUrlDecodePlus() {
+        assertEquals("hello world", call("text.url_decode_plus", "hello+world"));
+    }
+
+    @Test
+    void testTextRegexAliases() {
+        assertEquals(List.of("123", "456"), call("text.find_all_regex", "abc123def456", "\\d+"));
+        assertEquals("a-b-", call("text.replace_all_regex", "a1b2", "\\d", "-"));
     }
 
     @Test
@@ -334,6 +350,23 @@ class StdlibRegistryTest {
         assertEquals(99, result.get("a"));
     }
 
+    @Test
+    void testMapDeleteAndNestedMerge() {
+        Map<String, Object> input = new LinkedHashMap<>(Map.of("a", 1, "b", 2));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> deleted = (Map<String, Object>) call("map.delete", input, "a");
+        assertFalse(deleted.containsKey("a"));
+        assertTrue(input.containsKey("a"), "map.delete should not mutate the input map");
+
+        Map<String, Object> left = new LinkedHashMap<>(Map.of("cfg", new LinkedHashMap<>(Map.of("a", 1, "b", 2))));
+        Map<String, Object> right = new LinkedHashMap<>(Map.of("cfg", new LinkedHashMap<>(Map.of("b", 3, "c", 4))));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> merged = (Map<String, Object>) call("map.merge_nested", left, right);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> cfg = (Map<String, Object>) merged.get("cfg");
+        assertEquals(Map.of("a", 1, "b", 3, "c", 4), cfg);
+    }
+
     // --- type cast ---
 
     @Test
@@ -381,10 +414,9 @@ class StdlibRegistryTest {
 
     @Test
     void testSysNow() {
-        String now = (String) call("sys.now");
-        assertNotNull(now);
-        assertTrue(now.contains("T"), "sys.now should return ISO-8601 format containing 'T'");
-        assertTrue(now.contains("Z") || now.contains("+"), "sys.now should contain timezone info");
+        Object now = call("sys.now");
+        assertTrue(now instanceof Number, "sys.now should return epoch seconds");
+        assertTrue(((Number) now).doubleValue() > 1_700_000_000);
     }
 
     @Test
@@ -429,6 +461,40 @@ class StdlibRegistryTest {
     @Test
     void testRegistryHasSysNow() {
         assertTrue(registry.has("sys.now"));
+    }
+
+    @Test
+    void testProductionParityHelpersRegistered() {
+        assertTrue(registry.has("json.encode_to_string"));
+        assertTrue(registry.has("uuid.generate"));
+        assertTrue(registry.has("retry.always"));
+        assertTrue(registry.has("retry.default_backoff"));
+        assertTrue(registry.has("map.merge_nested"));
+        assertTrue(registry.has("sys.sleep_until"));
+        assertTrue(registry.has("http.request"));
+    }
+
+    @Test
+    void testTopLevelExpressionHelpers() {
+        assertEquals("fallback", call("default", null, "fallback"));
+        assertEquals("value", call("default", "value", "fallback"));
+        assertEquals("yes", call("if", true, "yes", "no"));
+        assertEquals("no", call("if", false, "yes", "no"));
+        assertEquals("map", call("get_type", Map.of("a", 1)));
+        @SuppressWarnings("unchecked")
+        List<String> keys = (List<String>) call("keys", new LinkedHashMap<>(Map.of("a", 1)));
+        assertEquals(List.of("a"), keys);
+    }
+
+    @Test
+    void testUuidAndRetryFunctions() {
+        String id = (String) call("uuid.generate");
+        assertTrue(id.matches("[0-9a-f\\-]{36}"));
+        assertEquals(true, call("retry.always", Map.of()));
+        assertEquals(false, call("retry.never", Map.of()));
+        assertEquals(true, call("retry.default_retry", Map.of("code", 503)));
+        assertEquals(false, call("retry.default_retry", Map.of("code", 400)));
+        assertTrue(call("retry.default_backoff") instanceof Map);
     }
 
     @Test

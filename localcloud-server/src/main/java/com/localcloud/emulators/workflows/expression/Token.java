@@ -6,7 +6,7 @@ public record Token(TokenType type, String value, int position) {
         PLUS, MINUS, STAR, SLASH, DOUBLE_SLASH, PERCENT,
         EQ, NEQ, LT, GT, LTE, GTE,
         AND, OR, NOT, IN,
-        LPAREN, RPAREN, LBRACKET, RBRACKET,
-        DOT, COMMA, EOF
+        LPAREN, RPAREN, LBRACKET, RBRACKET, LBRACE, RBRACE,
+        DOT, COMMA, COLON, EOF
     }
 }

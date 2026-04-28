@@ -349,6 +349,8 @@ public class LocalCloudApplication {
             var connectorService = new WorkflowConnectorService(config, envVarsRepo,
                     workflowsEmulator.getWorkflowsService().getStore());
             sb.annotatedService("/_localcloud/workflow", connectorService);
+            sb.annotatedService("/v1", new com.localcloud.emulators.workflows.WorkflowsRestService(
+                    workflowsEmulator.getWorkflowsService(), workflowsEmulator));
 
             // Register callback HTTP endpoint so external systems can wake waiting executions
             WorkflowsCallbackService callbackService = new WorkflowsCallbackService(

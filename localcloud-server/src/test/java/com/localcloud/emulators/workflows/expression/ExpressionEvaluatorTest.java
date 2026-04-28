@@ -326,6 +326,19 @@ class ExpressionEvaluatorTest {
     }
 
     @Test
+    void testMapLiteral() {
+        Map<String, Object> expected = new LinkedHashMap<>();
+        expected.put("a", 1);
+        expected.put("b", 10);
+        assertEquals(expected, eval("{\"a\": 1, b: x}"));
+    }
+
+    @Test
+    void testMapLiteralAccess() {
+        assertEquals(3, eval("{sum: 3}.sum"));
+    }
+
+    @Test
     void testExpressionTooLong() {
         String longExpr = "x " + "+ 1 ".repeat(200); // > 400 chars
         assertThrows(ExpressionException.class, () -> eval(longExpr));

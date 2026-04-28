@@ -363,14 +363,33 @@ export default function CodeEditor(props) {
 
 /**
  * Utility: Convert a SERVICE_SCHEMAS table list to CodeMirror schema format.
- * Input:  [{ name: 'users', columns: [{ name: 'id', type: 'INT' }, ...] }]
- * Output: { users: ['id', 'name', ...] }
+ * Supports hierarchical nesting for qualified names (schema.table, instance.table).
+ *
+ * Input:  [{ name: 'instance.table', columns: [{ name: 'cf:col', type: 'COLUMN_FAMILY' }] }]
+ * Output: { instance: { table: [{ label: 'cf:col', type: 'variable', info: 'COLUMN_FAMILY' }] } }
+ *
+ * Also works with flat names (no dot): { tableName: ['col1', 'col2'] }
  */
 export function toCodeMirrorSchema(tables) {
     if (!tables || !Array.isArray(tables)) return undefined;
     const schema = {};
     for (const t of tables) {
-        schema[t.name] = (t.columns || []).map(c => typeof c === 'string' ? c : c.name);
+        const cols = (t.columns || []).map(c => {
+            if (typeof c === 'string') return c;
+            // Rich completion with type tooltip
+            return { label: c.name, type: 'variable', info: c.type || undefined };
+        });
+
+        // Split dotted names into nested schema: "instance.table" → { instance: { table: [...] } }
+        if (t.name && t.name.includes('.')) {
+            const parts = t.name.split('.');
+            const parent = parts[0];
+            const child = parts.slice(1).join('.');
+            if (!schema[parent]) schema[parent] = {};
+            schema[parent][child] = cols;
+        } else {
+            schema[t.name] = cols;
+        }
     }
     return Object.keys(schema).length > 0 ? schema : undefined;
 }

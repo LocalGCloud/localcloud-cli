@@ -1,11 +1,17 @@
 package com.localcloud.emulators.workflows;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.cloud.workflows.executions.v1.*;
+import com.google.protobuf.Duration;
+import com.google.protobuf.Timestamp;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
+import java.util.LinkedHashMap;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +22,7 @@ import java.util.Map;
  */
 public class ExecutionsGrpcServiceImpl extends ExecutionsGrpc.ExecutionsImplBase {
     private static final Logger logger = LoggerFactory.getLogger(ExecutionsGrpcServiceImpl.class);
+    private static final ObjectMapper mapper = new ObjectMapper();
     private final WorkflowsServiceImpl service;
 
     public ExecutionsGrpcServiceImpl(WorkflowsServiceImpl service) {
@@ -40,7 +47,15 @@ public class ExecutionsGrpcServiceImpl extends ExecutionsGrpc.ExecutionsImplBase
                 }
             }
 
-            Map<String, Object> result = service.createExecution(projectId, locationId, workflowId, argument);
+            String callLogLevel = request.hasExecution()
+                    ? normalizeExecutionCallLogLevel(request.getExecution().getCallLogLevel())
+                    : "LOG_NONE";
+            String labelsJson = request.hasExecution()
+                    ? toJsonObjectString(request.getExecution().getLabelsMap())
+                    : "{}";
+
+            Map<String, Object> result = service.createExecution(projectId, locationId, workflowId,
+                    argument, callLogLevel, labelsJson);
 
             responseObserver.onNext(mapToExecutionProto(result));
             responseObserver.onCompleted();
@@ -153,6 +168,23 @@ public class ExecutionsGrpcServiceImpl extends ExecutionsGrpc.ExecutionsImplBase
         if (data.get("argument") != null) builder.setArgument(String.valueOf(data.get("argument")));
         if (data.get("result") != null) builder.setResult(String.valueOf(data.get("result")));
         if (data.get("workflowRevisionId") != null) builder.setWorkflowRevisionId(String.valueOf(data.get("workflowRevisionId")));
+        if (data.get("startTime") != null) builder.setStartTime(toTimestamp(data.get("startTime")));
+        if (data.get("endTime") != null) builder.setEndTime(toTimestamp(data.get("endTime")));
+        if (data.get("durationMs") instanceof Number durationMs) {
+            builder.setDuration(Duration.newBuilder()
+                    .setSeconds(durationMs.longValue() / 1000)
+                    .setNanos((int) ((durationMs.longValue() % 1000) * 1_000_000))
+                    .build());
+        }
+        if (data.get("error") != null) {
+            builder.setError(Execution.Error.newBuilder()
+                    .setPayload(String.valueOf(data.get("error")))
+                    .setContext("Execution failed")
+                    .build());
+        }
+        builder.setCallLogLevel(parseExecutionCallLogLevel(data.get("callLogLevel")));
+        builder.putAllLabels(toStringMap(data.get("labels")));
+        setStatus(builder, data.get("status"));
 
         // Map state string to enum
         String state = data.get("state") != null ? String.valueOf(data.get("state")) : "QUEUED";
@@ -167,5 +199,86 @@ public class ExecutionsGrpcServiceImpl extends ExecutionsGrpc.ExecutionsImplBase
         }
 
         return builder.build();
+    }
+
+    private String normalizeExecutionCallLogLevel(Execution.CallLogLevel level) {
+        if (level == null || level == Execution.CallLogLevel.CALL_LOG_LEVEL_UNSPECIFIED ||
+                level == Execution.CallLogLevel.UNRECOGNIZED) {
+            return "LOG_NONE";
+        }
+        return level.name();
+    }
+
+    private Execution.CallLogLevel parseExecutionCallLogLevel(Object value) {
+        if (value == null) return Execution.CallLogLevel.LOG_NONE;
+        try {
+            Execution.CallLogLevel level = Execution.CallLogLevel.valueOf(String.valueOf(value));
+            return level == Execution.CallLogLevel.CALL_LOG_LEVEL_UNSPECIFIED ? Execution.CallLogLevel.LOG_NONE : level;
+        } catch (IllegalArgumentException e) {
+            return Execution.CallLogLevel.LOG_NONE;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void setStatus(Execution.Builder builder, Object value) {
+        if (!(value instanceof Map<?, ?> statusMap)) return;
+        Object steps = statusMap.get("currentSteps");
+        if (!(steps instanceof List<?> list)) return;
+
+        Execution.Status.Builder status = Execution.Status.newBuilder();
+        for (Object item : list) {
+            if (item instanceof Map<?, ?> stepMap) {
+                Object routine = stepMap.get("routine");
+                Object step = stepMap.get("step");
+                status.addCurrentSteps(Execution.Status.Step.newBuilder()
+                        .setRoutine(routine != null ? String.valueOf(routine) : "main")
+                        .setStep(step != null ? String.valueOf(step) : "")
+                        .build());
+            }
+        }
+        builder.setStatus(status.build());
+    }
+
+    private Map<String, String> toStringMap(Object value) {
+        if (value == null) return Map.of();
+        try {
+            Object parsed = value instanceof Map<?, ?> ? value : mapper.readValue(String.valueOf(value), Object.class);
+            if (!(parsed instanceof Map<?, ?> map)) return Map.of();
+            Map<String, String> result = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                result.put(String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
+            }
+            return result;
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
+    private String toJsonObjectString(Map<String, String> value) {
+        try {
+            return mapper.writeValueAsString(value != null ? value : Map.of());
+        } catch (Exception e) {
+            return "{}";
+        }
+    }
+
+    private Timestamp toTimestamp(Object value) {
+        if (value instanceof java.sql.Timestamp ts) {
+            Instant instant = ts.toInstant();
+            return Timestamp.newBuilder().setSeconds(instant.getEpochSecond()).setNanos(instant.getNano()).build();
+        }
+        String text = String.valueOf(value);
+        try {
+            Instant instant = Instant.parse(text);
+            return Timestamp.newBuilder().setSeconds(instant.getEpochSecond()).setNanos(instant.getNano()).build();
+        } catch (DateTimeParseException ignored) {
+            try {
+                java.sql.Timestamp ts = java.sql.Timestamp.valueOf(text);
+                Instant instant = ts.toInstant();
+                return Timestamp.newBuilder().setSeconds(instant.getEpochSecond()).setNanos(instant.getNano()).build();
+            } catch (IllegalArgumentException e) {
+                return Timestamp.getDefaultInstance();
+            }
+        }
     }
 }

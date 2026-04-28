@@ -77,6 +77,23 @@ class WorkflowsServiceImplTest {
         return row;
     }
 
+    private Map<String, Object> stepEntryRow(long id, String step, String state) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("execution_id", "exec-1");
+        row.put("step_entry_id", id);
+        row.put("project_id", PROJECT);
+        row.put("location_id", LOCATION);
+        row.put("workflow_id", WF_ID);
+        row.put("step_name", step);
+        row.put("step_type", "assign");
+        row.put("state", state);
+        row.put("duration_ms", 12L);
+        row.put("start_time", "2024-01-01T00:00:00");
+        row.put("end_time", "2024-01-01T00:00:01");
+        row.put("entry_json", "{\"step\":\"" + step + "\"}");
+        return row;
+    }
+
     // -----------------------------------------------------------------------
     // Management API — createWorkflow
     // -----------------------------------------------------------------------
@@ -148,6 +165,33 @@ class WorkflowsServiceImplTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> response = (Map<String, Object>) op.get("response");
         assertEquals("sa@project.iam.gserviceaccount.com", response.get("serviceAccount"));
+    }
+
+    @Test
+    void createWorkflow_withProductionMetadata_passesToStoreAndFormats() throws SQLException {
+        Map<String, Object> row = workflowRow(WF_ID, 1);
+        row.put("description", "metadata test");
+        row.put("call_log_level", "LOG_ALL_CALLS");
+        row.put("execution_history_level", "EXECUTION_HISTORY_DETAILED");
+        row.put("crypto_key_name", "projects/p/locations/l/keyRings/r/cryptoKeys/k");
+        row.put("user_env_vars", "{\"ENV\":\"local\"}");
+        row.put("tags", "{\"team\":\"platform\"}");
+        when(store.getWorkflow(PROJECT, LOCATION, WF_ID)).thenReturn(row);
+
+        Map<String, Object> op = service.createWorkflow(PROJECT, LOCATION, WF_ID, VALID_YAML,
+                "{\"team\":\"platform\"}", "sa@project.iam.gserviceaccount.com",
+                "metadata test", "LOG_ALL_CALLS", "EXECUTION_HISTORY_DETAILED",
+                "projects/p/locations/l/keyRings/r/cryptoKeys/k", "{\"ENV\":\"local\"}", "{\"team\":\"platform\"}");
+
+        verify(store).createWorkflow(PROJECT, LOCATION, WF_ID, VALID_YAML,
+                "{\"team\":\"platform\"}", "sa@project.iam.gserviceaccount.com",
+                "metadata test", "LOG_ALL_CALLS", "EXECUTION_HISTORY_DETAILED",
+                "projects/p/locations/l/keyRings/r/cryptoKeys/k", "{\"ENV\":\"local\"}", "{\"team\":\"platform\"}");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> response = (Map<String, Object>) op.get("response");
+        assertEquals("metadata test", response.get("description"));
+        assertEquals("LOG_ALL_CALLS", response.get("callLogLevel"));
+        assertEquals("EXECUTION_HISTORY_DETAILED", response.get("executionHistoryLevel"));
     }
 
     @Test
@@ -315,6 +359,16 @@ class WorkflowsServiceImplTest {
         assertTrue(wf.containsKey("sourceContents"));
     }
 
+    @Test
+    void listWorkflowRevisions_returnsCurrentRevision() throws SQLException {
+        when(store.getWorkflow(PROJECT, LOCATION, WF_ID)).thenReturn(workflowRow(WF_ID, 7));
+
+        List<Map<String, Object>> result = service.listWorkflowRevisions(PROJECT, LOCATION, WF_ID);
+
+        assertEquals(1, result.size());
+        assertEquals("7", result.get(0).get("revisionId"));
+    }
+
     // -----------------------------------------------------------------------
     // Execution API — createExecution
     // -----------------------------------------------------------------------
@@ -381,6 +435,22 @@ class WorkflowsServiceImplTest {
         service.createExecution(PROJECT, LOCATION, WF_ID, null);
 
         verify(store).createExecution(WF_ID, PROJECT, LOCATION, null, "5");
+    }
+
+    @Test
+    void createExecution_withLabelsAndCallLog_passesToStore() throws SQLException {
+        when(store.getWorkflow(PROJECT, LOCATION, WF_ID)).thenReturn(workflowRow(WF_ID, 1));
+        when(store.createExecution(eq(WF_ID), eq(PROJECT), eq(LOCATION), isNull(), eq("1"),
+                eq("LOG_ERRORS_ONLY"), eq("{\"run\":\"test\"}"))).thenReturn("exec-meta");
+        when(store.getExecution(PROJECT, LOCATION, WF_ID, "exec-meta"))
+                .thenReturn(executionRow("exec-meta", "QUEUED"));
+
+        Map<String, Object> result = service.createExecution(PROJECT, LOCATION, WF_ID, null,
+                "LOG_ERRORS_ONLY", "{\"run\":\"test\"}");
+
+        assertEquals("QUEUED", result.get("state"));
+        verify(store).createExecution(WF_ID, PROJECT, LOCATION, null, "1",
+                "LOG_ERRORS_ONLY", "{\"run\":\"test\"}");
     }
 
     // -----------------------------------------------------------------------
@@ -485,6 +555,65 @@ class WorkflowsServiceImplTest {
         Map<String, Object> exec = result.get(0);
         assertTrue(exec.containsKey("name"));
         assertTrue(exec.containsKey("state"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Execution API — step entries/history/export
+    // -----------------------------------------------------------------------
+
+    @Test
+    void listStepEntries_formatsNames() throws SQLException {
+        when(store.listStepEntries(PROJECT, LOCATION, WF_ID, "exec-1", 100))
+                .thenReturn(List.of(stepEntryRow(1, "init", "SUCCEEDED")));
+
+        List<Map<String, Object>> result = service.listStepEntries(PROJECT, LOCATION, WF_ID, "exec-1", 100);
+
+        assertEquals(1, result.size());
+        assertTrue(result.get(0).get("name").toString().endsWith("/stepEntries/1"));
+        assertEquals("init", result.get(0).get("step"));
+    }
+
+    @Test
+    void getStepEntry_notFound_returnsNull() throws SQLException {
+        when(store.getStepEntry(PROJECT, LOCATION, WF_ID, "exec-1", 9L)).thenReturn(null);
+
+        assertNull(service.getStepEntry(PROJECT, LOCATION, WF_ID, "exec-1", 9L));
+    }
+
+    @Test
+    void deleteExecutionHistory_existingExecution_returnsDoneOperation() throws SQLException {
+        when(store.getExecution(PROJECT, LOCATION, WF_ID, "exec-1"))
+                .thenReturn(executionRow("exec-1", "SUCCEEDED"));
+        when(store.deleteExecutionHistory(PROJECT, LOCATION, WF_ID, "exec-1")).thenReturn(3);
+
+        Map<String, Object> op = service.deleteExecutionHistory(PROJECT, LOCATION, WF_ID, "exec-1");
+
+        assertEquals(true, op.get("done"));
+        assertEquals(3, op.get("deletedStepEntries"));
+    }
+
+    @Test
+    void deleteExecutionHistory_missingExecution_throwsIllegalArgument() throws SQLException {
+        when(store.getExecution(PROJECT, LOCATION, WF_ID, "missing")).thenReturn(null);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.deleteExecutionHistory(PROJECT, LOCATION, WF_ID, "missing"));
+    }
+
+    @Test
+    void exportExecutionData_includesExecutionAndStepEntries() throws SQLException {
+        when(store.getExecution(PROJECT, LOCATION, WF_ID, "exec-1"))
+                .thenReturn(executionRow("exec-1", "SUCCEEDED"));
+        when(store.listStepEntries(PROJECT, LOCATION, WF_ID, "exec-1", 1000))
+                .thenReturn(List.of(stepEntryRow(1, "done", "SUCCEEDED")));
+
+        Map<String, Object> exported = service.exportExecutionData(PROJECT, LOCATION, WF_ID, "exec-1");
+
+        assertNotNull(exported.get("execution"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> steps = (List<Map<String, Object>>) exported.get("stepEntries");
+        assertEquals(1, steps.size());
+        assertEquals("done", steps.get(0).get("step"));
     }
 
     // -----------------------------------------------------------------------

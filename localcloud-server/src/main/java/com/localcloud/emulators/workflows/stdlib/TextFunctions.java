@@ -28,6 +28,7 @@ public class TextFunctions {
             while (m.find()) results.add(m.group());
             return results;
         });
+        registry.register("text.find_all_regex", registry.get("text.find_all"));
 
         registry.register("text.match_regex", args -> {
             if (args.size() < 2) throw new RuntimeException("text.match_regex requires (string, regex)");
@@ -44,6 +45,7 @@ public class TextFunctions {
                 throw new RuntimeException("text.replace_all failed: " + e.getMessage());
             }
         });
+        registry.register("text.replace_all_regex", registry.get("text.replace_all"));
 
         registry.register("text.split", args -> {
             if (args.size() < 2) throw new RuntimeException("text.split requires (string, delimiter)");
@@ -70,12 +72,35 @@ public class TextFunctions {
 
         registry.register("text.url_encode", args -> {
             if (args.isEmpty()) throw new RuntimeException("text.url_encode requires a string");
+            return URLEncoder.encode(String.valueOf(args.get(0)), StandardCharsets.UTF_8)
+                    .replace("+", "%20");
+        });
+
+        registry.register("text.url_encode_plus", args -> {
+            if (args.isEmpty()) throw new RuntimeException("text.url_encode_plus requires a string");
             return URLEncoder.encode(String.valueOf(args.get(0)), StandardCharsets.UTF_8);
         });
 
         registry.register("text.url_decode", args -> {
             if (args.isEmpty()) throw new RuntimeException("text.url_decode requires a string");
+            return URLDecoder.decode(String.valueOf(args.get(0)).replace("+", "%2B"), StandardCharsets.UTF_8);
+        });
+
+        registry.register("text.url_decode_plus", args -> {
+            if (args.isEmpty()) throw new RuntimeException("text.url_decode_plus requires a string");
             return URLDecoder.decode(String.valueOf(args.get(0)), StandardCharsets.UTF_8);
+        });
+
+        registry.register("text.encode", args -> {
+            if (args.isEmpty()) throw new RuntimeException("text.encode requires a string");
+            return String.valueOf(args.get(0)).getBytes(StandardCharsets.UTF_8);
+        });
+
+        registry.register("text.decode", args -> {
+            if (args.isEmpty()) throw new RuntimeException("text.decode requires bytes or a string");
+            Object input = args.get(0);
+            if (input instanceof byte[] bytes) return new String(bytes, StandardCharsets.UTF_8);
+            return String.valueOf(input);
         });
     }
 }

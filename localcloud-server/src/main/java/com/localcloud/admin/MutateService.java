@@ -776,9 +776,19 @@ public class MutateService {
     private String mutateBigtable(String operation, String subOp, Map<String, Object> json) throws Exception {
         if ("rows".equals(operation) && subOp == null) {
             // Insert/update row
-            String tableName = (String) json.get("table");
+            String tableRef = (String) json.get("table");
             String rowKey = (String) json.get("rowKey");
-            String instanceId = (String) json.getOrDefault("instance", "local-instance");
+            // Split instance/table if combined (e.g., "jay-instance/jay-table")
+            String instanceId;
+            String tableName;
+            if (tableRef != null && tableRef.contains("/")) {
+                int slash = tableRef.indexOf('/');
+                instanceId = tableRef.substring(0, slash);
+                tableName = tableRef.substring(slash + 1);
+            } else {
+                instanceId = (String) json.getOrDefault("instance", "local-instance");
+                tableName = tableRef;
+            }
 
             // Build cells from form data - expect columnFamily, column, value OR cells object
             Map<String, Object> cells = new LinkedHashMap<>();
@@ -795,34 +805,29 @@ public class MutateService {
                 }
             }
 
-            String cellsJson = mapper.writeValueAsString(cells);
-            try (var conn = dataSource.getConnection();
-                 var ps = conn.prepareStatement(
-                     "INSERT INTO bigtable_data (instance_id, table_name, row_key, cells) " +
-                     "VALUES (?, ?, ?, ?::jsonb) " +
-                     "ON CONFLICT (instance_id, table_name, row_key) DO UPDATE SET cells = ?::jsonb")) {
-                ps.setString(1, instanceId);
-                ps.setString(2, tableName);
-                ps.setString(3, rowKey);
-                ps.setString(4, cellsJson);
-                ps.setString(5, cellsJson);
-                ps.executeUpdate();
+            try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+                client.mutateRow(config.getProjectId(), instanceId, tableName, rowKey, cells);
             }
             return mapper.writeValueAsString(Map.of("status", "created", "rowKey", rowKey));
         }
 
         if ("rows".equals(operation) && "delete".equals(subOp)) {
-            String tableName = (String) json.get("table");
+            String tableRef = (String) json.get("table");
             String rowKey = (String) json.get("rowKey");
-            String instanceId = (String) json.getOrDefault("instance", "local-instance");
+            // Split instance/table if combined
+            String instanceId;
+            String tableName;
+            if (tableRef != null && tableRef.contains("/")) {
+                int slash = tableRef.indexOf('/');
+                instanceId = tableRef.substring(0, slash);
+                tableName = tableRef.substring(slash + 1);
+            } else {
+                instanceId = (String) json.getOrDefault("instance", "local-instance");
+                tableName = tableRef;
+            }
 
-            try (var conn = dataSource.getConnection();
-                 var ps = conn.prepareStatement(
-                     "DELETE FROM bigtable_data WHERE instance_id = ? AND table_name = ? AND row_key = ?")) {
-                ps.setString(1, instanceId);
-                ps.setString(2, tableName);
-                ps.setString(3, rowKey);
-                ps.executeUpdate();
+            try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+                client.deleteRow(config.getProjectId(), instanceId, tableName, rowKey);
             }
             return mapper.writeValueAsString(Map.of("status", "deleted", "rowKey", rowKey));
         }

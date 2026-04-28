@@ -62,8 +62,11 @@ public class ExpressionTokenizer {
             else if (c == ')') { addToken(Token.TokenType.RPAREN, ")"); pos++; }
             else if (c == '[') { addToken(Token.TokenType.LBRACKET, "["); pos++; }
             else if (c == ']') { addToken(Token.TokenType.RBRACKET, "]"); pos++; }
+            else if (c == '{') { addToken(Token.TokenType.LBRACE, "{"); pos++; }
+            else if (c == '}') { addToken(Token.TokenType.RBRACE, "}"); pos++; }
             else if (c == '.') { addToken(Token.TokenType.DOT, "."); pos++; }
             else if (c == ',') { addToken(Token.TokenType.COMMA, ","); pos++; }
+            else if (c == ':') { addToken(Token.TokenType.COLON, ":"); pos++; }
             else {
                 throw new ExpressionException("Unexpected character '" + c + "' at position " + pos);
             }

@@ -54,6 +54,7 @@ public class SeedService {
     private final String bigqueryBase;
     private final int spannerRestPort;
     private final int firestorePort;
+    private final int bigtablePort;
 
     /** Stores the last loaded seed YAML so it can be restored on reset. */
     private volatile String lastSeedYaml;
@@ -83,6 +84,9 @@ public class SeedService {
 
         ServiceDefinition firestoreDef = registry.getService("firestore");
         this.firestorePort = firestoreDef != null ? firestoreDef.port() : 8086;
+
+        ServiceDefinition bigtableDef = registry.getService("bigtable");
+        this.bigtablePort = bigtableDef != null ? bigtableDef.port() : 8087;
     }
 
     private static String baseUrl(ServiceDefinition def) {
@@ -780,14 +784,12 @@ public class SeedService {
 
     private int resetBigtable(String projectId) {
         int count = 0;
-        try (var conn = dataSource.getConnection();
-             var ps = conn.prepareStatement("DELETE FROM bigtable_data WHERE project_id = ?")) {
-            ps.setString(1, projectId);
-            count = ps.executeUpdate();
+        try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+            count = client.resetProject(projectId);
         } catch (Exception e) {
             logger.warn("Failed to reset Bigtable: {}", e.getMessage());
         }
-        logger.info("Reset Bigtable: deleted {} rows", count);
+        logger.info("Reset Bigtable: deleted {} instance(s)", count);
         return count;
     }
 
@@ -1609,25 +1611,21 @@ public class SeedService {
                             String tableName = (String) table.get("name");
                             List<String> columnFamilies = (List<String>) table.get("columnFamilies");
                             List<Map<String, Object>> rows = (List<Map<String, Object>>) table.get("rows");
+                            if (columnFamilies == null || columnFamilies.isEmpty()) {
+                                columnFamilies = List.of("cf1");
+                            }
+
+                            try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+                                client.ensureTable(config.getProjectId(), instanceName, tableName, columnFamilies);
+                            }
 
                             if (rows != null) {
                                 for (Map<String, Object> row : rows) {
                                     String rowKey = (String) row.get("key");
                                     Map<String, Object> cells = (Map<String, Object>) row.get("cells");
                                     if (rowKey != null && cells != null) {
-                                        String cellsJson = jsonMapper.writeValueAsString(cells);
-                                        try (var conn = dataSource.getConnection();
-                                             var ps = conn.prepareStatement(
-                                                 "INSERT INTO bigtable_data (project_id, instance_id, table_name, row_key, cells) " +
-                                                 "VALUES (?, ?, ?, ?, ?::jsonb) " +
-                                                 "ON CONFLICT (project_id, instance_id, table_name, row_key) DO UPDATE SET cells = ?::jsonb")) {
-                                            ps.setString(1, config.getProjectId());
-                                            ps.setString(2, instanceName);
-                                            ps.setString(3, tableName);
-                                            ps.setString(4, rowKey);
-                                            ps.setString(5, cellsJson);
-                                            ps.setString(6, cellsJson);
-                                            ps.executeUpdate();
+                                        try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+                                            client.mutateRow(config.getProjectId(), instanceName, tableName, rowKey, cells);
                                         }
                                         count++;
                                     }

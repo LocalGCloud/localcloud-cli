@@ -24,6 +24,21 @@ class ConnectorRegistryTest {
     @Test void testFirestoreRegistered() { assertTrue(registry.has("googleapis.firestore.v1.projects.databases.documents.get")); }
     @Test void testUnknownConnector() { assertFalse(registry.has("googleapis.unknown.v1.resources.list")); }
 
+    @Test
+    void testExpandedNonBigQueryConnectorsRegistered() {
+        assertTrue(registry.has("googleapis.pubsub.v1.projects.subscriptions.pull"));
+        assertTrue(registry.has("googleapis.secretmanager.v1.projects.secrets.addVersion"));
+        assertTrue(registry.has("googleapis.cloudtasks.v2.projects.locations.queues.tasks.create"));
+        assertTrue(registry.has("googleapis.firestore.v1.projects.databases.documents.patch"));
+        assertTrue(registry.has("googleapis.logging.v2.entries.write"));
+        assertTrue(registry.has("googleapis.monitoring.v3.projects.timeSeries.list"));
+        assertTrue(registry.has("googleapis.compute.v1.instances.list"));
+        assertTrue(registry.has("googleapis.run.v2.projects.locations.services.list"));
+        assertTrue(registry.has("googleapis.container.v1.projects.locations.clusters.list"));
+        assertTrue(registry.has("googleapis.workflows.v1.projects.locations.workflows.list"));
+        assertTrue(registry.has("googleapis.workflowexecutions.v1.projects.locations.workflows.executions.create"));
+    }
+
     @Test void testUnknownGoogleapisConnectorAttemptsFallback() {
         // googleapis.* unknown connectors attempt HTTP fallback instead of throwing
         assertDoesNotThrow(() ->

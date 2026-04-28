@@ -92,6 +92,9 @@ public class WorkflowExecutor {
                 i++;
             } catch (NextStepException e) {
                 context.recordStep(step.getName(), step.getType(), System.currentTimeMillis() - startTime);
+                if ("break".equals(e.getTargetStep()) || "continue".equals(e.getTargetStep())) {
+                    throw e;
+                }
                 // Find target step
                 int targetIdx = -1;
                 for (int j = 0; j < steps.size(); j++) {
@@ -106,6 +109,15 @@ public class WorkflowExecutor {
                 i = targetIdx;
             } catch (ReturnException e) {
                 context.recordStep(step.getName(), step.getType(), System.currentTimeMillis() - startTime);
+                throw e;
+            } catch (WorkflowException e) {
+                context.recordStep(step.getName(), step.getType(), System.currentTimeMillis() - startTime,
+                        "FAILED", e.toErrorMap());
+                throw e;
+            } catch (RuntimeException e) {
+                context.recordStep(step.getName(), step.getType(), System.currentTimeMillis() - startTime,
+                        "FAILED", Map.of("code", "RuntimeError", "message",
+                                e.getMessage() != null ? e.getMessage() : "Unknown error"));
                 throw e;
             }
         }

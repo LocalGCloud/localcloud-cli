@@ -83,7 +83,39 @@ public class WorkflowsServiceImpl {
             throw new IllegalArgumentException("Invalid workflow YAML: " + e.getMessage());
         }
 
+        validateJsonObject(labelsJson, "labels");
         store.createWorkflow(projectId, locationId, workflowId, sourceContents, labelsJson, serviceAccount);
+        Map<String, Object> workflow = store.getWorkflow(projectId, locationId, workflowId);
+
+        // Wrap in Operation response
+        Map<String, Object> operation = new LinkedHashMap<>();
+        operation.put("name", "projects/" + projectId + "/locations/" + locationId + "/operations/create-" + workflowId);
+        operation.put("done", true);
+        operation.put("response", formatWorkflow(workflow, projectId, locationId));
+        return operation;
+    }
+
+    public Map<String, Object> createWorkflow(String projectId, String locationId, String workflowId,
+                                               String sourceContents, String labelsJson, String serviceAccount,
+                                               String description, String callLogLevel, String executionHistoryLevel,
+                                               String cryptoKeyName, String userEnvVarsJson, String tagsJson) throws SQLException {
+        // Check source size limit
+        if (sourceContents.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > com.localcloud.emulators.workflows.engine.WorkflowLimits.MAX_WORKFLOW_SOURCE_BYTES) {
+            throw new IllegalArgumentException("Workflow source exceeds maximum size of 128 KB");
+        }
+
+        // Validate YAML parses
+        try {
+            WorkflowParser.parse(sourceContents);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Invalid workflow YAML: " + e.getMessage());
+        }
+
+        validateJsonObject(labelsJson, "labels");
+        validateJsonObject(userEnvVarsJson, "userEnvVars");
+        validateJsonObject(tagsJson, "tags");
+        store.createWorkflow(projectId, locationId, workflowId, sourceContents, labelsJson, serviceAccount,
+                description, callLogLevel, executionHistoryLevel, cryptoKeyName, userEnvVarsJson, tagsJson);
         Map<String, Object> workflow = store.getWorkflow(projectId, locationId, workflowId);
 
         // Wrap in Operation response
@@ -169,6 +201,77 @@ public class WorkflowsServiceImpl {
         return formatExecution(execution, projectId, locationId, workflowId);
     }
 
+    public Map<String, Object> createExecution(String projectId, String locationId, String workflowId,
+                                                String argument, String callLogLevel, String labelsJson) throws SQLException {
+        // Check argument size limit
+        if (argument != null && argument.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > com.localcloud.emulators.workflows.engine.WorkflowLimits.MAX_EXECUTION_ARGUMENT_BYTES) {
+            throw new IllegalArgumentException("Execution argument exceeds maximum size of 32 KB");
+        }
+        validateJsonObject(labelsJson, "labels");
+
+        Map<String, Object> workflow = store.getWorkflow(projectId, locationId, workflowId);
+        if (workflow == null) {
+            throw new IllegalArgumentException("Workflow not found: " + workflowId);
+        }
+
+        String revisionId = String.valueOf(workflow.get("revision_id"));
+        String inheritedCallLogLevel = callLogLevel != null && !"LOG_NONE".equals(callLogLevel)
+                ? callLogLevel
+                : String.valueOf(workflow.getOrDefault("call_log_level", "LOG_NONE"));
+        String executionId = store.createExecution(workflowId, projectId, locationId, argument, revisionId,
+                inheritedCallLogLevel, labelsJson);
+        String sourceContents = (String) workflow.get("source_contents");
+
+        // Run execution asynchronously
+        executionPool.submit(() -> runExecution(executionId, sourceContents, argument));
+
+        Map<String, Object> execution = store.getExecution(projectId, locationId, workflowId, executionId);
+        return formatExecution(execution, projectId, locationId, workflowId);
+    }
+
+    public List<Map<String, Object>> listStepEntries(String projectId, String locationId,
+                                                     String workflowId, String executionId,
+                                                     int pageSize) throws SQLException {
+        List<Map<String, Object>> rows = store.listStepEntries(projectId, locationId, workflowId, executionId, pageSize);
+        List<Map<String, Object>> formatted = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            formatted.add(formatStepEntry(row, projectId, locationId, workflowId, executionId));
+        }
+        return formatted;
+    }
+
+    public Map<String, Object> getStepEntry(String projectId, String locationId,
+                                            String workflowId, String executionId,
+                                            long stepEntryId) throws SQLException {
+        Map<String, Object> row = store.getStepEntry(projectId, locationId, workflowId, executionId, stepEntryId);
+        if (row == null) return null;
+        return formatStepEntry(row, projectId, locationId, workflowId, executionId);
+    }
+
+    public Map<String, Object> deleteExecutionHistory(String projectId, String locationId,
+                                                       String workflowId, String executionId) throws SQLException {
+        Map<String, Object> execution = store.getExecution(projectId, locationId, workflowId, executionId);
+        if (execution == null) throw new IllegalArgumentException("Execution not found: " + executionId);
+
+        int deleted = store.deleteExecutionHistory(projectId, locationId, workflowId, executionId);
+        Map<String, Object> operation = new LinkedHashMap<>();
+        operation.put("name", "projects/" + projectId + "/locations/" + locationId + "/operations/delete-history-" + executionId);
+        operation.put("done", true);
+        operation.put("deletedStepEntries", deleted);
+        return operation;
+    }
+
+    public Map<String, Object> exportExecutionData(String projectId, String locationId,
+                                                    String workflowId, String executionId) throws SQLException {
+        Map<String, Object> execution = getExecution(projectId, locationId, workflowId, executionId);
+        if (execution == null) return null;
+
+        Map<String, Object> export = new LinkedHashMap<>();
+        export.put("execution", execution);
+        export.put("stepEntries", listStepEntries(projectId, locationId, workflowId, executionId, 1000));
+        return export;
+    }
+
     public Map<String, Object> getExecution(String projectId, String locationId,
                                              String workflowId, String executionId) throws SQLException {
         Map<String, Object> execution = store.getExecution(projectId, locationId, workflowId, executionId);
@@ -213,6 +316,7 @@ public class WorkflowsServiceImpl {
     // --- Execution runner ---
 
     private void runExecution(String executionId, String sourceContents, String argument) {
+        ExecutionContext context = null;
         try {
             // Transition to ACTIVE
             store.updateExecutionState(executionId, "ACTIVE", null, null);
@@ -251,7 +355,7 @@ public class WorkflowsServiceImpl {
                 }
             }
 
-            ExecutionContext context = new ExecutionContext(initialVars);
+            context = new ExecutionContext(initialVars);
             context.setExecutingThread(Thread.currentThread());
             activeExecutions.put(executionId, context);
 
@@ -302,6 +406,13 @@ public class WorkflowsServiceImpl {
             }
             logger.error("Workflow execution {} crashed", executionId, e);
         } finally {
+            if (context != null) {
+                try {
+                    store.saveStepEntries(executionId, context.getStepHistory());
+                } catch (Exception e) {
+                    logger.warn("Failed to persist step history for execution {}: {}", executionId, e.getMessage());
+                }
+            }
             activeExecutions.remove(executionId);
             ConnectorRegistry.clearCurrentContext();
             EventsFunctions.clearCurrentExecutionId();
@@ -318,8 +429,14 @@ public class WorkflowsServiceImpl {
         result.put("state", row.getOrDefault("state", "ACTIVE"));
         result.put("revisionId", String.valueOf(row.getOrDefault("revision_id", 1)));
         result.put("sourceContents", row.get("source_contents"));
+        if (row.get("description") != null) result.put("description", row.get("description"));
         if (row.get("service_account") != null) result.put("serviceAccount", row.get("service_account"));
         if (row.get("labels") != null) result.put("labels", row.get("labels"));
+        if (row.get("call_log_level") != null) result.put("callLogLevel", row.get("call_log_level"));
+        if (row.get("execution_history_level") != null) result.put("executionHistoryLevel", row.get("execution_history_level"));
+        if (row.get("crypto_key_name") != null) result.put("cryptoKeyName", row.get("crypto_key_name"));
+        if (row.get("user_env_vars") != null) result.put("userEnvVars", row.get("user_env_vars"));
+        if (row.get("tags") != null) result.put("tags", row.get("tags"));
         if (row.get("created_at") != null) result.put("createTime", String.valueOf(row.get("created_at")));
         if (row.get("updated_at") != null) result.put("updateTime", String.valueOf(row.get("updated_at")));
         return result;
@@ -333,9 +450,55 @@ public class WorkflowsServiceImpl {
         if (row.get("argument") != null) result.put("argument", row.get("argument"));
         if (row.get("result") != null) result.put("result", row.get("result"));
         if (row.get("error") != null) result.put("error", row.get("error"));
+        if (row.get("call_log_level") != null) result.put("callLogLevel", row.get("call_log_level"));
+        if (row.get("labels") != null) result.put("labels", row.get("labels"));
+        if (row.get("duration_ms") != null) result.put("durationMs", row.get("duration_ms"));
+        if (row.get("state_error") != null) result.put("stateError", row.get("state_error"));
         if (row.get("start_time") != null) result.put("startTime", String.valueOf(row.get("start_time")));
         if (row.get("end_time") != null) result.put("endTime", String.valueOf(row.get("end_time")));
         if (row.get("workflow_revision_id") != null) result.put("workflowRevisionId", String.valueOf(row.get("workflow_revision_id")));
+        ExecutionContext activeContext = activeExecutions.get(execId);
+        if (activeContext != null) {
+            List<String> chain = activeContext.getStepChain();
+            if (!chain.isEmpty()) {
+                result.put("status", Map.of("currentSteps", List.of(Map.of(
+                        "routine", "main",
+                        "step", chain.get(chain.size() - 1)
+                ))));
+            }
+        }
         return result;
+    }
+
+    private Map<String, Object> formatStepEntry(Map<String, Object> row, String projectId, String locationId,
+                                                String workflowId, String executionId) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        String stepEntryId = String.valueOf(row.get("step_entry_id"));
+        result.put("name", "projects/" + projectId + "/locations/" + locationId + "/workflows/" + workflowId +
+                "/executions/" + executionId + "/stepEntries/" + stepEntryId);
+        result.put("stepEntryId", stepEntryId);
+        result.put("routine", "main");
+        result.put("step", row.get("step_name"));
+        result.put("stepType", row.get("step_type"));
+        result.put("state", row.getOrDefault("state", "SUCCEEDED"));
+        result.put("durationMs", row.getOrDefault("duration_ms", 0));
+        if (row.get("start_time") != null) result.put("createTime", String.valueOf(row.get("start_time")));
+        if (row.get("end_time") != null) result.put("updateTime", String.valueOf(row.get("end_time")));
+        if (row.get("entry_json") != null) result.put("entry", row.get("entry_json"));
+        return result;
+    }
+
+    private void validateJsonObject(String json, String fieldName) {
+        if (json == null || json.isBlank()) return;
+        try {
+            Object parsed = mapper.readValue(json, Object.class);
+            if (!(parsed instanceof Map<?, ?>)) {
+                throw new IllegalArgumentException(fieldName + " must be a JSON object");
+            }
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Invalid " + fieldName + " JSON: " + e.getMessage());
+        }
     }
 }
