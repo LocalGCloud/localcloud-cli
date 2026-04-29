@@ -621,8 +621,21 @@ public final class SqlParser {
             advance();
             String val = t.value();
             int dot = val.indexOf('.');
-            if (dot <= 0) throw error("Table reference must be 'instance.table', got: " + val);
-            return new TableRef(val.substring(0, dot), val.substring(dot + 1));
+            if (dot > 0) {
+                // "instance.table" — single quoted identifier with dot
+                return new TableRef(val.substring(0, dot), val.substring(dot + 1));
+            }
+            // "instance"."table" — two separate quoted identifiers with dot between
+            if (peek().type() == TokenType.DOT) {
+                advance(); // consume dot
+                SqlToken t2 = peek();
+                if (t2.type() == TokenType.QUOTED_IDENTIFIER || t2.type() == TokenType.IDENTIFIER) {
+                    advance();
+                    return new TableRef(val, t2.value());
+                }
+                throw error("Expected table name after '\"" + val + "\".'");
+            }
+            throw error("Table reference must be 'instance.table', got: " + val);
         }
         // Unquoted: instance.table
         String instance = expectIdentifier();

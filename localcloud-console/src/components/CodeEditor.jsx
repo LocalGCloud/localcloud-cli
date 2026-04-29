@@ -16,7 +16,7 @@ import { onMount, onCleanup, createEffect } from 'solid-js';
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightActiveLine, drawSelection, highlightSpecialChars, placeholder as placeholderExt } from '@codemirror/view';
 import { EditorState, Compartment } from '@codemirror/state';
 import { sql, PostgreSQL, StandardSQL } from '@codemirror/lang-sql';
-import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
+import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, acceptCompletion } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { syntaxHighlighting, indentOnInput, bracketMatching, foldGutter, foldKeymap, HighlightStyle } from '@codemirror/language';
@@ -260,6 +260,8 @@ export default function CodeEditor(props) {
 
             // Keymaps
             keymap.of([
+                // Tab accepts autocomplete; Enter inserts newline (not accept)
+                { key: 'Tab', run: acceptCompletion },
                 ...closeBracketsKeymap,
                 ...defaultKeymap,
                 ...searchKeymap,
