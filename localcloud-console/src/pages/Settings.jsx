@@ -850,7 +850,8 @@ export default function Settings(props) {
         { id: 'environment', label: 'Environment' },
         { id: 'cloud', label: 'Cloud & Routing' },
         { id: 'preferences', label: 'Preferences' },
-        { id: 'help', label: 'Help & About' },
+        { id: 'help', label: 'User Guide' },
+        { id: 'about', label: 'About' },
     ];
     // Guide sub-tabs (inline in Help tab)
     const [guideTab, setGuideTab] = createSignal('quickstart');
@@ -922,7 +923,7 @@ export default function Settings(props) {
     return (
         <div>
             <div class="page-header">
-                <h1>Settings</h1>
+                <h1>Setup Guide</h1>
             </div>
 
             {/* Top-level tab bar */}
@@ -1228,7 +1229,7 @@ environment:
             <div class="section">
                 <div class="section-title">Export</div>
                 <p style={{ "margin-bottom": "12px" }}>
-                    Download the current state of all emulated services as a YAML seed file.
+                    Download a lightweight state manifest (schema &amp; structure only, no row data). Actual data persists in the mounted volume.
                 </p>
                 <button class="btn btn-secondary" onClick={async () => {
                     try {
@@ -1415,21 +1416,146 @@ curl -X POST http://localhost:8080/_localcloud/reset \\
                     </GuideSection>
                 </Show>
             </div>
+            </Show>
 
-            {/* About */}
-            <div class="section">
-                <div class="section-title">About</div>
-                <div class="card">
-                    <div style={{ "margin-bottom": "8px", "font-weight": "600", "font-size": "14px" }}>LocalCloud Console v0.1.0</div>
-                    <p style={{ "margin-bottom": "8px" }}>
-                        A lightweight Google Cloud Console-style UI for managing LocalCloud emulated GCP services.
+            {/* ═══════ About Tab ═══════ */}
+            <Show when={settingsTab() === 'about'}>
+                <AboutPage />
+            </Show>
+        </div>
+    );
+}
+
+// --- About Page — Author Bio & Project Info ---
+function AboutPage() {
+    return (
+        <div style={{ "max-width": "780px" }}>
+            {/* Project Hero */}
+            <div style={{
+                position: "relative",
+                "border-radius": "16px",
+                overflow: "hidden",
+                "margin-bottom": "28px",
+                background: "linear-gradient(135deg, #1a73e8 0%, #0d47a1 40%, #01579b 100%)",
+                padding: "40px 36px 36px",
+                color: "#fff",
+            }}>
+                {/* Decorative grid */}
+                <div style={{
+                    position: "absolute", top: "0", right: "0", width: "200px", height: "200px",
+                    opacity: "0.06",
+                    "background-image": "linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)",
+                    "background-size": "20px 20px",
+                }} />
+                <div style={{ position: "relative", "z-index": "1" }}>
+                    <div style={{ display: "flex", "align-items": "center", gap: "14px", "margin-bottom": "16px" }}>
+                        <img src="/icons/localcloud-mark.svg" alt="LocalCloud" width="48" height="48" style={{ "border-radius": "12px" }} />
+                        <div>
+                            <div style={{ "font-size": "24px", "font-weight": "700", "letter-spacing": "-0.5px" }}>LocalCloud</div>
+                            <div style={{ "font-size": "12px", opacity: "0.7", "letter-spacing": "0.3px" }}>v0.1.0 &middot; Apache-2.0</div>
+                        </div>
+                    </div>
+                    <p style={{ "font-size": "15px", "line-height": "1.65", color: "#fff", "max-width": "560px" }}>
+                        A fully offline Google Cloud Platform emulator that runs 14+ GCP services in a single Docker container.
+                        Build and test cloud-native applications without cloud resorces, cost, internet or even access credentials.
                     </p>
-                    <p style={{ "font-size": "11px", color: "var(--text-tertiary)" }}>
-                        Author: Jay Sen &lt;jaysen@apache.org&gt; | License: Apache-2.0
-                    </p>
+                    <div style={{ display: "flex", gap: "10px", "margin-top": "20px", "flex-wrap": "wrap" }}>
+                        <a href="https://localstack-google.github.io/" target="_blank" rel="noopener noreferrer"
+                            style={{
+                                display: "inline-flex", "align-items": "center", gap: "6px",
+                                padding: "8px 18px", "border-radius": "8px",
+                                background: "rgba(255,255,255,0.18)", "backdrop-filter": "blur(4px)",
+                                color: "#fff", "text-decoration": "none", "font-size": "13px", "font-weight": "600",
+                                border: "1px solid rgba(255,255,255,0.2)", transition: "background 0.2s",
+                            }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+                            Website
+                        </a>
+                        <a href="https://github.com/LocalStack-Google/localstack-google.github.io" target="_blank" rel="noopener noreferrer"
+                            style={{
+                                display: "inline-flex", "align-items": "center", gap: "6px",
+                                padding: "8px 18px", "border-radius": "8px",
+                                background: "rgba(255,255,255,0.1)",
+                                color: "#fff", "text-decoration": "none", "font-size": "13px", "font-weight": "500",
+                                border: "1px solid rgba(255,255,255,0.12)", transition: "background 0.2s",
+                            }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+                            GitHub
+                        </a>
+                    </div>
                 </div>
             </div>
-            </Show>
+
+            {/* Author Card */}
+            <div style={{
+                "border-radius": "16px", overflow: "hidden",
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+            }}>
+                {/* Author header band */}
+                <div style={{
+                    padding: "32px 36px 28px",
+                    background: "linear-gradient(135deg, var(--surface) 0%, var(--bg-subtle, #f8f9fa) 100%)",
+                    "border-bottom": "1px solid var(--border)",
+                }}>
+                    <div style={{ display: "flex", gap: "20px", "align-items": "flex-start" }}>
+                        {/* Avatar */}
+                        <div style={{
+                            width: "72px", height: "72px", "border-radius": "50%", "flex-shrink": "0",
+                            background: "linear-gradient(135deg, #1a73e8, #0d47a1)",
+                            display: "flex", "align-items": "center", "justify-content": "center",
+                            color: "#fff", "font-size": "26px", "font-weight": "700", "letter-spacing": "-1px",
+                            "box-shadow": "0 4px 12px rgba(26,115,232,0.3)",
+                        }}>JS</div>
+                        <div style={{ flex: "1" }}>
+                            <div style={{ "font-size": "22px", "font-weight": "700", "letter-spacing": "-0.3px", "margin-bottom": "4px", color: "var(--text-primary)" }}>
+                                Jay Sen
+                            </div>
+                            <div style={{ "font-size": "13px", color: "var(--text-secondary)", "margin-bottom": "12px", "line-height": "1.5" }}>
+                                Engineer - Architect & Builder
+                            </div>
+                            <div style={{ display: "flex", gap: "8px", "flex-wrap": "wrap" }}>
+                                <a href="mailto:jaysen@apache.org"
+                                    style={{
+                                        display: "inline-flex", "align-items": "center", gap: "5px",
+                                        padding: "5px 14px", "border-radius": "6px",
+                                        "font-size": "12px", "font-weight": "500",
+                                        background: "var(--bg-subtle, #f1f3f4)", color: "var(--text-secondary)",
+                                        "text-decoration": "none", border: "1px solid var(--border)",
+                                        transition: "all 0.15s",
+                                    }}>
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
+                                    jaysen@apache.org
+                                </a>
+                                <a href="https://www.linkedin.com/in/jaysen2/" target="_blank" rel="noopener noreferrer"
+                                    style={{
+                                        display: "inline-flex", "align-items": "center", gap: "5px",
+                                        padding: "5px 14px", "border-radius": "6px",
+                                        "font-size": "12px", "font-weight": "500",
+                                        background: "#0077b5", color: "#fff",
+                                        "text-decoration": "none", border: "none",
+                                        transition: "opacity 0.15s",
+                                    }}>
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.32 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.79M6.88 8.56a1.68 1.68 0 0 0 1.68-1.68c0-.93-.75-1.69-1.68-1.69a1.69 1.69 0 0 0-1.69 1.69c0 .93.76 1.68 1.69 1.68m1.39 9.94v-8.37H5.5v8.37h2.77z"/></svg>
+                                    LinkedIn
+                                </a>
+                                <a href="https://github.com/jhsenjaliya" target="_blank" rel="noopener noreferrer"
+                                   style={{
+                                       display: "inline-flex", "align-items": "center", gap: "6px",
+                                       padding: "5px 14px", "border-radius": "6px",
+                                       "font-size": "12px", "font-weight": "500",
+                                       background: "#24292f", color: "#fff",
+                                       "text-decoration": "none", border: "none",
+                                       transition: "opacity 0.15s",
+                                   }}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+                                    GitHub
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     );
 }

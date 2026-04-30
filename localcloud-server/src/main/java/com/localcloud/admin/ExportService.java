@@ -416,7 +416,9 @@ public class ExportService {
                         Map<String, Object> database = new LinkedHashMap<>();
                         database.put("name", dbName);
 
-                        // Get DDL for this database
+                        // Reference DDL from the persisted Spanner data dir instead of inlining.
+                        // DDL can be large with generated columns, indexes, etc.
+                        // Include table count for quick reference.
                         try {
                             String ddlUrl = spannerBase + "/v1/projects/" + projectId
                                     + "/instances/" + instName + "/databases/" + dbName + "/ddl";
@@ -424,7 +426,13 @@ public class ExportService {
                             Map<String, Object> ddlData = mapper.readValue(ddlResponse, Map.class);
                             List<String> statements = (List<String>) ddlData.get("statements");
                             if (statements != null && !statements.isEmpty()) {
-                                database.put("ddl", statements);
+                                // Count tables only (not indexes)
+                                long tableCount = statements.stream()
+                                        .filter(s -> s.trim().toUpperCase().startsWith("CREATE TABLE"))
+                                        .count();
+                                database.put("tableCount", tableCount);
+                                database.put("ddlStatements", statements.size());
+                                database.put("ddlSource", "/var/lib/localcloud/spanner-data");
                             }
                         } catch (Exception e) {
                             logger.debug("Failed to get DDL for {}/{}: {}", instName, dbName, e.getMessage());
@@ -455,46 +463,27 @@ public class ExportService {
 
         Map<String, Object> result = new LinkedHashMap<>();
         List<Map<String, Object>> keys = new ArrayList<>();
-        List<Map<String, Object>> hashes = new ArrayList<>();
 
+        // Export key names and types only — no values.
+        // Actual data persists on the mounted data dir and can be restored from there.
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                 "SELECT key_name, data_type, value FROM redis_data " +
+                 "SELECT key_name, data_type FROM redis_data " +
                  "WHERE db_number = 0 AND (ttl_expires_at IS NULL OR ttl_expires_at > NOW()) " +
                  "ORDER BY key_name")) {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    String keyName = rs.getString("key_name");
-                    String dataType = rs.getString("data_type");
-                    String value = rs.getString("value");
-
-                    if ("hash".equalsIgnoreCase(dataType)) {
-                        Map<String, Object> hash = new LinkedHashMap<>();
-                        hash.put("key", keyName);
-                        // value is stored as JSONB
-                        try {
-                            @SuppressWarnings("unchecked")
-                            Map<String, Object> fields = mapper.readValue(value, Map.class);
-                            hash.put("fields", fields);
-                        } catch (Exception e) {
-                            hash.put("value", value);
-                        }
-                        hashes.add(hash);
-                    } else {
-                        Map<String, Object> key = new LinkedHashMap<>();
-                        key.put("key", keyName);
-                        key.put("value", value);
-                        keys.add(key);
-                    }
+                    Map<String, Object> key = new LinkedHashMap<>();
+                    key.put("key", rs.getString("key_name"));
+                    key.put("type", rs.getString("data_type"));
+                    keys.add(key);
                 }
             }
         }
 
         if (!keys.isEmpty()) {
             result.put("keys", keys);
-        }
-        if (!hashes.isEmpty()) {
-            result.put("hashes", hashes);
+            result.put("_note", "Values omitted — data persists in mounted volume at /var/lib/localcloud");
         }
 
         return result;

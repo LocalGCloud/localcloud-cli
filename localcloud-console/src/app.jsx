@@ -37,7 +37,7 @@ const NAV_ITEMS = [
     { id: 'logs',       label: 'Logs',              icon: 'logs' },
     { id: 'data',       label: 'Service Explorer',   icon: 'data', expandable: true },
     { id: 'usage',      label: 'Cost Analysis',     icon: 'usage' },
-    { id: 'settings',   label: 'User Guide',        icon: 'settings' },
+    { id: 'settings',   label: 'Setup Guide',        icon: 'settings' },
 ];
 
 const DATA_SERVICES = [
@@ -298,7 +298,7 @@ function App() {
             <header class="topbar">
                 <div class="topbar-left">
                     <div class="topbar-logo">
-                        <div class="topbar-logo-icon">LC</div>
+                        <img src="/icons/localcloud-mark.svg" alt="LC" class="topbar-logo-icon" style={{ width: "28px", height: "28px", "border-radius": "6px" }} />
                         <span>LocalCloud</span>
                     </div>
                 </div>

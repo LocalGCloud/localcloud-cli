@@ -118,6 +118,14 @@ chown -R "$RUN_UID:$RUN_GID" /var/log/localcloud \
                               /var/run/postgresql 2>/dev/null || true
 chown -R "$RUN_UID:$RUN_GID" /var/lib/localcloud 2>/dev/null || true
 
+# Clean up stale PostgreSQL files from unclean shutdown (container kill without stop).
+# postmaster.pid prevents startup; stale sockets block connections.
+if [ -f "/var/lib/localcloud/pgdata/postmaster.pid" ]; then
+    echo "Removing stale postmaster.pid (unclean shutdown)..."
+    rm -f /var/lib/localcloud/pgdata/postmaster.pid
+fi
+rm -f /var/run/postgresql/.s.PGSQL.* 2>/dev/null || true
+
 # Initialize PostgreSQL if pgdata is empty (bind mounts don't copy build-time data).
 # Named volumes auto-populate from the image; bind mounts start empty.
 if [ ! -f "/var/lib/localcloud/pgdata/postgresql.conf" ]; then

@@ -190,6 +190,8 @@ LABEL org.opencontainers.image.description="Local GCP Emulator Orchestrator"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # Install runtime dependencies (single layer, no gcloud SDK)
+# PostgreSQL 17: install full package then strip JIT + LLVM + Z3 (~144 MB savings).
+# We only need: postgres server, initdb, createdb, pg_isready, pg_ctl.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         postgresql-17 \
         supervisor \
@@ -197,8 +199,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         openssl \
         gosu \
+    && apt-get remove -y --purge postgresql-17-jit 2>/dev/null || true \
+    && apt-get autoremove -y --purge \
+    && rm -rf /usr/lib/postgresql/17/lib/bitcode \
+              /usr/lib/postgresql/17/lib/llvmjit*.so \
+              /usr/lib/postgresql/17/lib/llvmjit_types.bc \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
-        /usr/share/doc/* /usr/share/man/* /usr/share/locale/*
+        /usr/share/doc/* /usr/share/man/* /usr/share/locale/* \
+        /usr/share/postgresql/17/man/*
 
 # Custom JRE (jlink-built, ~72 MB instead of ~194 MB full JRE)
 COPY --from=jlink-build /opt/java-custom /opt/java
