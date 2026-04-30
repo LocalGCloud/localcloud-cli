@@ -4,12 +4,13 @@
 #
 # QUICK START
 # -----------
+#   mkdir -p ~/.localcloud/data
 #   docker run -d --name localcloud \
 #     -p 8080:8080 -p 4443:4443 -p 8085:8085 -p 8086:8086 \
 #     -p 8087:8087 -p 9010:9010 -p 9020:9020 -p 9050:9050 -p 9060:9060 \
 #     -p 6379:6379 \
 #     -m 4g \
-#     -v localcloud-data:/var/lib/localcloud \
+#     -v ~/.localcloud/data:/var/lib/localcloud \
 #     localcloud/localcloud:latest
 #
 #   Console: http://localhost:8080
@@ -50,9 +51,24 @@
 #     LOCALCLOUD_ENABLE_COMPUTE (default: false),
 #     LOCALCLOUD_ENABLE_CLOUDRUN (default: false)
 #
-# VOLUMES
-# -------
-#   /var/lib/localcloud       Persistent data (PostgreSQL, GCS blobs, Spanner, BigQuery)
+# DATA PERSISTENCE
+# ----------------
+#   Option A — Docker named volume (default, not accessible from host on macOS):
+#     -v localcloud-data:/var/lib/localcloud
+#
+#   Option B — Bind mount (data accessible on host filesystem):
+#     mkdir -p ~/.localcloud/data
+#     -v ~/.localcloud/data:/var/lib/localcloud
+#
+#     The data directory will contain:
+#       pgdata/          PostgreSQL database files
+#       gcs-data/        Cloud Storage blobs
+#       spanner-data/    Spanner persistence
+#       bigquery-data/   BigQuery DuckDB files
+#       logs/            All service logs (supervisord, emulators, gateway)
+#
+#     First run auto-creates subdirectories and sets ownership.
+#     Use bind mount when you need to inspect, backup, or share data.
 #
 # OPTIONAL MOUNTS
 # ---------------
@@ -77,6 +93,14 @@
 #     -p 8080:8080 -p 4443:4443 -p 8085:8085 -p 6379:6379 \
 #     -m 4g \
 #     -e LOCALCLOUD_SERVICES="gcs,pubsub,memorystore" \
+#     -v ~/.localcloud/data:/var/lib/localcloud \
+#     localcloud/localcloud:latest
+#
+#   # Using Docker named volume (data not accessible from host on macOS):
+#   docker run -d --name localcloud \
+#     -p 8080:8080 -p 4443:4443 -p 8085:8085 -p 8086:8086 \
+#     -p 8087:8087 -p 9010:9010 -p 9020:9020 -p 9050:9050 -p 9060:9060 \
+#     -m 4g \
 #     -v localcloud-data:/var/lib/localcloud \
 #     localcloud/localcloud:latest
 #
@@ -104,8 +128,8 @@
 # =============================================================================
 
 # Image repositories for dependencies (can be overridden for air-gapped or internal repos)
-ARG SPANNER_EMULATOR_IMAGE=jaysen2apache/spanner-emulator-extended:latest
-ARG BIGQUERY_EMULATOR_IMAGE=jaysen2apache/bigquery-emulator-on-duckdb
+ARG SPANNER_EMULATOR_IMAGE=jaysen2apache/spanner-emulator-extended@sha256:58702f59729905d3db97225480ad3f9c8496a59d697bcb750ab856450c65889a
+ARG BIGQUERY_EMULATOR_IMAGE=jaysen2apache/bigquery-emulator-on-duckdb@sha256:70254a43605dd6dd6125bf3b85ad31fdd25fe73047d5617f0936e0cdf92f2d57
 ARG GO_BASE_IMAGE=public.ecr.aws/docker/library/golang:1.25-alpine
 ARG GCLOUD_SDK_IMAGE=gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
 ARG GCS_EMULATOR_IMAGE=fsouza/fake-gcs-server:1.54.0
@@ -172,6 +196,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
         openssl \
+        gosu \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
         /usr/share/doc/* /usr/share/man/* /usr/share/locale/*
 
@@ -226,7 +251,11 @@ RUN rm -rf \
     && ldconfig \
     && ln -sf /usr/local/bin/python3.12 /opt/bqenv/bin/python3 \
     && ln -sf /usr/local/bin/python3.12 /opt/bqenv/bin/python \
-    && ln -sf /opt/bqenv/bin/bigquery-emulator /usr/local/bin/bigquery-emulator
+    && ln -sf /opt/bqenv/bin/bigquery-emulator /usr/local/bin/bigquery-emulator \
+    && find /opt/bqenv -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; \
+    find /opt/bqenv -name '*.pyc' -delete 2>/dev/null; \
+    find /opt/bqenv -name '*.dist-info' -type d -exec rm -rf {} + 2>/dev/null; \
+    true
 
 # Spanner emulator (extended fork with persistence + gateway)
 COPY --from=spanner-emulator /gateway_main /usr/local/bin/spanner-gateway
@@ -297,9 +326,8 @@ ENV LOCALCLOUD_PROJECT="local-project" \
     LOCALCLOUD_ENABLE_MEMORYSTORE="true" \
     LOCALCLOUD_ENABLE_WORKFLOWS="true"
 
-# Telemetry: sends anonymous usage stats
-ENV LOCALCLOUD_TELEMETRY="true" \
-    LOCALCLOUD_EVENT_API_KEY="phc_o9nQDAQjEgsPcamE8pCnhv7ekA8CmA2VQXechLju9LA9"
+# Telemetry: sends anonymous usage stats (API key set at runtime in entrypoint)
+ENV LOCALCLOUD_TELEMETRY="true"
 
 # Data persistence volume
 VOLUME /var/lib/localcloud

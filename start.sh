@@ -12,8 +12,19 @@ fi
 # Remove stopped container with same name
 docker rm localcloud >/dev/null 2>&1 || true
 
-# Ensure data volume exists
-docker volume create localcloud-data >/dev/null 2>&1 || true
+# Data directory: use LOCALCLOUD_DATA_DIR env var for host-accessible bind mount,
+# otherwise fall back to Docker named volume (not accessible on macOS host).
+LOCALCLOUD_DATA_DIR="${LOCALCLOUD_DATA_DIR:-}"
+
+if [ -n "$LOCALCLOUD_DATA_DIR" ]; then
+    mkdir -p "$LOCALCLOUD_DATA_DIR"
+    VOLUME_ARG="$LOCALCLOUD_DATA_DIR:/var/lib/localcloud"
+    echo "Data: $LOCALCLOUD_DATA_DIR (bind mount)"
+else
+    docker volume create localcloud-data >/dev/null 2>&1 || true
+    VOLUME_ARG="localcloud-data:/var/lib/localcloud"
+    echo "Data: localcloud-data (Docker volume)"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -30,7 +41,7 @@ docker run -d --name localcloud \
   -p 127.0.0.1:6379:6379 \
   -p 127.0.0.1:16443:6443 \
   -m 4g \
-  -v localcloud-data:/var/lib/localcloud \
+  -v "$VOLUME_ARG" \
   -v "${LOCALCLOUD_SEED_FILE:-$SCRIPT_DIR/seed.yaml}:/etc/localcloud/seed.yaml:ro" \
   -v "$SCRIPT_DIR/services.yaml:/etc/localcloud/services.yaml:ro" \
   -v /var/run/docker.sock:/var/run/docker.sock \

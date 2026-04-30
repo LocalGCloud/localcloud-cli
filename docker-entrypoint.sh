@@ -80,18 +80,54 @@ if [ "$ca_imported" -gt 0 ]; then
     echo "Imported $ca_imported CA certificate(s) into Java truststore and system bundle"
 fi
 
-# Ensure data directories exist and have correct ownership.
-# Docker volume mounts replace the build-time directory, so we must
-# re-create subdirectories and fix permissions on every startup.
+# Resolve runtime user. For bind mounts, the data dir UID may differ from the
+# container's localcloud user (e.g. macOS maps host UID 502 into the container).
+# Detect actual data dir owner and use that UID for PostgreSQL compatibility.
+DATA_DIR_UID=$(stat -c '%u' /var/lib/localcloud 2>/dev/null || echo "")
+LOCALCLOUD_UID=$(id -u localcloud 2>/dev/null || echo "999")
+
+if [ -n "$DATA_DIR_UID" ] && [ "$DATA_DIR_UID" != "0" ] && [ "$DATA_DIR_UID" != "$LOCALCLOUD_UID" ]; then
+    # Bind mount detected: data dir owned by host UID, not localcloud user.
+    # Re-map localcloud user to match the bind mount UID so PostgreSQL ownership check passes.
+    usermod -u "$DATA_DIR_UID" localcloud 2>/dev/null || true
+    echo "Remapped localcloud user to UID $DATA_DIR_UID (bind mount owner)"
+fi
+
+RUN_USER="${LOCALCLOUD_USER:-localcloud}"
+RUN_UID=$(id -u "$RUN_USER" 2>/dev/null) || RUN_UID="$RUN_USER"
+RUN_GID=$(id -g "$RUN_USER" 2>/dev/null) || RUN_GID="$RUN_USER"
+
+# Ensure data directories exist (volume mounts replace build-time dirs)
 mkdir -p /var/lib/localcloud/spanner-data \
          /var/lib/localcloud/gcs-data \
          /var/lib/localcloud/pgdata \
          /var/lib/localcloud/bigquery-data \
-         /var/log/localcloud \
+         /var/lib/localcloud/logs \
          /var/run/postgresql
-chown -R localcloud:localcloud /var/lib/localcloud \
-                                /var/log/localcloud \
-                                /var/run/postgresql 2>/dev/null || true
+
+# Symlink logs into data dir so bind mounts expose them on host
+if [ ! -L /var/log/localcloud ]; then
+    rm -rf /var/log/localcloud
+    ln -sf /var/lib/localcloud/logs /var/log/localcloud
+fi
+
+# Fix ownership: try chown but don't fail — macOS Docker bind mounts don't support chown.
+# On Linux with named volumes, chown works and ensures localcloud user can write.
+# On macOS with bind mounts, Docker Desktop maps host UID transparently — chown unnecessary.
+chown -R "$RUN_UID:$RUN_GID" /var/log/localcloud \
+                              /var/run/postgresql 2>/dev/null || true
+chown -R "$RUN_UID:$RUN_GID" /var/lib/localcloud 2>/dev/null || true
+
+# Initialize PostgreSQL if pgdata is empty (bind mounts don't copy build-time data).
+# Named volumes auto-populate from the image; bind mounts start empty.
+if [ ! -f "/var/lib/localcloud/pgdata/postgresql.conf" ]; then
+    echo "Initializing PostgreSQL (first run with bind mount)..."
+    gosu "$RUN_USER" /usr/lib/postgresql/17/bin/initdb -D /var/lib/localcloud/pgdata
+    gosu "$RUN_USER" /usr/lib/postgresql/17/bin/pg_ctl -D /var/lib/localcloud/pgdata start
+    gosu "$RUN_USER" /usr/lib/postgresql/17/bin/createdb -h /var/run/postgresql localcloud
+    gosu "$RUN_USER" /usr/lib/postgresql/17/bin/pg_ctl -D /var/lib/localcloud/pgdata stop
+    echo "PostgreSQL initialized."
+fi
 
 # Service names below must match keys in /etc/localcloud/services.yaml
 # If LOCALCLOUD_SERVICES is set, parse it and map to individual enable flags.
@@ -243,4 +279,8 @@ if [ -f "$SEED_FILE" ]; then
     ) &
 fi
 
-exec "$@"
+# Set default telemetry API key if not overridden (not baked into image layers)
+export LOCALCLOUD_EVENT_API_KEY="${LOCALCLOUD_EVENT_API_KEY:-phc_o9nQDAQjEgsPcamE8pCnhv7ekA8CmA2VQXechLju9LA9}"
+
+# Drop privileges: run CMD as the runtime user
+exec gosu "$RUN_USER" "$@"
