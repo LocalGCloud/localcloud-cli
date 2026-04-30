@@ -36,8 +36,8 @@ const NAV_ITEMS = [
     { id: 'services',   label: 'APIs & Services',  icon: 'services' },
     { id: 'logs',       label: 'Logs',              icon: 'logs' },
     { id: 'data',       label: 'Service Explorer',   icon: 'data', expandable: true },
-    { id: 'usage',      label: 'Usage',             icon: 'usage' },
-    { id: 'settings',   label: 'Settings',          icon: 'settings' },
+    { id: 'usage',      label: 'Cost Analysis',     icon: 'usage' },
+    { id: 'settings',   label: 'User Guide',        icon: 'settings' },
 ];
 
 const DATA_SERVICES = [

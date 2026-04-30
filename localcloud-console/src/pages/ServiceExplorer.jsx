@@ -309,17 +309,29 @@ function SQLEditor(props) {
         setSchemaLoading(true);
         let data = null;
         try {
-            const schemaParams = svc === 'spanner' ? { instance: selectedInstance(), database: selectedDatabase() } : undefined;
+            // Spanner: always fetch all instances for schema tree (no instance/database filter)
+            // Instance/database selection only affects query execution, not schema browsing
+            const schemaParams = undefined;
             data = await api.schema(svc, schemaParams);
             if (data && data.tables) setDynamicSchema(data);
             else setDynamicSchema(null);
+            // Populate Spanner instance/database signals from schema response
+            if (svc === 'spanner' && data) {
+                if (data.instances) setSpannerInstances(data.instances);
+                if (data.databases) setSpannerDatabases(data.databases);
+            }
         } catch { setDynamicSchema(null); }
         setSchemaLoading(false);
-        // Auto-expand the first database node
+        // Auto-expand nodes
         const info = SQL_SERVICES.find(s => s.id === svc);
-        if (svc === 'spanner' && data && data.databases) {
+        if (svc === 'spanner' && data && data.instances) {
             const exp = {};
-            for (const db of data.databases) exp['db:' + db] = true;
+            // Expand all instances and their databases
+            for (const inst of (data.instances || [])) exp['inst:' + inst] = true;
+            // Group tables by instance to find database names per instance
+            for (const t of (data.tables || [])) {
+                if (t.instance && t.database) exp['db:' + t.instance + '/' + t.database] = true;
+            }
             setExpanded(prev => ({ ...prev, ...exp }));
         } else {
             const dbName = info?.dialect === 'bigquery' ? null : 'public';
@@ -336,6 +348,7 @@ function SQLEditor(props) {
     const cmSchema = () => toCodeMirrorSchema(currentSchema()?.tables);
 
     // Build hierarchical tree: database → tables → columns
+    // For Spanner: instance → database → tables → columns
     const schemaTree = () => {
         const schema = currentSchema();
         const tables = schema?.tables || [];
@@ -367,10 +380,25 @@ function SQLEditor(props) {
                 const matchCols = (t.columns || []).some(c => (c.name || c).toLowerCase().includes(q));
                 if (!matchTable && !matchCols) continue;
             }
-            if (!groups[dbName]) groups[dbName] = [];
-            groups[dbName].push({ ...t, shortName: tableName });
+            // For Spanner: group key is "instance/database" to separate same-named dbs across instances
+            const groupKey = isSpanner && t.instance ? t.instance + '/' + dbName : dbName;
+            if (!groups[groupKey]) groups[groupKey] = [];
+            groups[groupKey].push({ ...t, shortName: tableName, _instance: t.instance, _database: dbName });
         }
         return groups;
+    };
+
+    // For Spanner: build instance → databases grouping from schemaTree
+    const spannerInstanceTree = () => {
+        const tree = schemaTree();
+        const instanceGroups = {};
+        for (const [groupKey, tables] of Object.entries(tree)) {
+            const inst = tables[0]?._instance || currentSchema()?.selectedInstance || 'default';
+            const dbName = tables[0]?._database || groupKey;
+            if (!instanceGroups[inst]) instanceGroups[inst] = {};
+            instanceGroups[inst][dbName] = tables;
+        }
+        return instanceGroups;
     };
 
     function toggle(key) { setExpanded(prev => ({ ...prev, [key]: !prev[key] })); }
@@ -608,85 +636,86 @@ function SQLEditor(props) {
                         </div>
                     </Show>
                     <Show when={!isGcsMode()}>
-                    {/* Spanner: wrap databases under instance node */}
-                    <Show when={service() === 'spanner' && currentSchema()?.selectedInstance}>
-                        {(_) => {
-                            const instName = currentSchema()?.selectedInstance;
-                            const instKey = 'inst:' + instName;
-                            const dbCount = Object.keys(schemaTree()).length;
-                            return (
-                                <div class="tree-group">
-                                    <div class="tree-row tree-row-db" onClick={() => toggle(instKey)} role="button" tabIndex={0}>
-                                        <IconChevron open={expanded()[instKey] !== false} />
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" style={{"flex-shrink":"0"}}><path d="M19 15v4H5v-4h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 18.5c-.82 0-1.5-.67-1.5-1.5s.68-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM19 3v4H5V3h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V2c0-.55-.45-1-1-1zM7 6.5c-.82 0-1.5-.67-1.5-1.5S6.19 3.5 7 3.5s1.5.67 1.5 1.5S7.83 6.5 7 6.5zM19 9v4H5V9h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 12.5c-.82 0-1.5-.67-1.5-1.5s.68-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
-                                        <span class="tree-name" style={{"font-weight":"600"}}>{instName}</span>
-                                        <span class="tree-badge tree-badge-db">{dbCount} db{dbCount !== 1 ? 's' : ''}</span>
-                                    </div>
-                                    <Show when={expanded()[instKey] !== false}>
-                                        <div class="tree-children">
-                                            <For each={Object.entries(schemaTree())}>
-                                                {([dbName, tables]) => {
-                                                    const dbKey = 'db:' + dbName;
-                                                    const tableCount = tables.length;
-                                                    return (
-                                                        <div class="tree-group">
-                                                            <div class="tree-row tree-row-db"
-                                                                onClick={() => { toggle(dbKey); setSelectedDatabase(dbName); }}
-                                                                role="button" tabIndex={0}>
-                                                                <IconChevron open={expanded()[dbKey]} />
-                                                                <IconDatabase />
-                                                                <span class="tree-name">{dbName}</span>
-                                                                <span class="tree-badge tree-badge-db">{tableCount} table{tableCount !== 1 ? 's' : ''}</span>
-                                                            </div>
-                                                            <Show when={expanded()[dbKey]}>
-                                                                <div class="tree-children">
-                                                                    <For each={tables}>
-                                                                        {(table) => {
-                                                                            const tblKey = 'tbl:' + table.name;
-                                                                            const colCount = (table.columns || []).length;
-                                                                            return (
-                                                                                <div class="tree-group">
-                                                                                    <div class="tree-row tree-row-tbl"
-                                                                                        onClick={() => { toggle(tblKey); setSelectedDatabase(dbName); }}
-                                                                                        role="button" tabIndex={0}>
-                                                                                        <IconChevron open={expanded()[tblKey]} />
-                                                                                        <IconTable />
-                                                                                        <span class="tree-name">{table.shortName}</span>
-                                                                                        <span class="tree-badge">{colCount}</span>
-                                                                                    </div>
-                                                                                    <Show when={expanded()[tblKey]}>
-                                                                                        <div class="tree-children">
-                                                                                            <For each={table.columns || []}>
-                                                                                                {(col) => (
-                                                                                                    <div class="tree-row tree-row-col" title={`${col.name || col} (${col.type || ''})`}>
-                                                                                                        <IconColumn />
-                                                                                                        <span class="tree-col-name">{col.name || col}</span>
-                                                                                                        <Show when={col.type}>
-                                                                                                            <span class="tree-col-type">{col.type}</span>
-                                                                                                        </Show>
-                                                                                                    </div>
-                                                                                                )}
-                                                                                            </For>
-                                                                                        </div>
-                                                                                    </Show>
-                                                                                </div>
-                                                                            );
-                                                                        }}
-                                                                    </For>
-                                                                </div>
-                                                            </Show>
-                                                        </div>
-                                                    );
-                                                }}
-                                            </For>
+                    {/* Spanner: instance → database → table hierarchy */}
+                    <Show when={service() === 'spanner' && currentSchema()?.instances?.length > 0}>
+                        <For each={Object.entries(spannerInstanceTree())}>
+                            {([instName, databases]) => {
+                                const instKey = 'inst:' + instName;
+                                const dbCount = Object.keys(databases).length;
+                                return (
+                                    <div class="tree-group">
+                                        <div class="tree-row tree-row-db" onClick={() => toggle(instKey)} role="button" tabIndex={0}>
+                                            <IconChevron open={expanded()[instKey] !== false} />
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" style={{"flex-shrink":"0"}}><path d="M19 15v4H5v-4h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 18.5c-.82 0-1.5-.67-1.5-1.5s.68-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM19 3v4H5V3h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V2c0-.55-.45-1-1-1zM7 6.5c-.82 0-1.5-.67-1.5-1.5S6.19 3.5 7 3.5s1.5.67 1.5 1.5S7.83 6.5 7 6.5zM19 9v4H5V9h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 12.5c-.82 0-1.5-.67-1.5-1.5s.68-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
+                                            <span class="tree-name" style={{"font-weight":"600"}}>{instName}</span>
+                                            <span class="tree-badge tree-badge-db">{dbCount} db{dbCount !== 1 ? 's' : ''}</span>
                                         </div>
-                                    </Show>
-                                </div>
-                            );
-                        }}
+                                        <Show when={expanded()[instKey] !== false}>
+                                            <div class="tree-children">
+                                                <For each={Object.entries(databases)}>
+                                                    {([dbName, tables]) => {
+                                                        const dbKey = 'db:' + instName + '/' + dbName;
+                                                        const tableCount = tables.length;
+                                                        return (
+                                                            <div class="tree-group">
+                                                                <div class="tree-row tree-row-db"
+                                                                    onClick={() => { toggle(dbKey); setSelectedInstance(instName); setSelectedDatabase(dbName); }}
+                                                                    role="button" tabIndex={0}>
+                                                                    <IconChevron open={expanded()[dbKey]} />
+                                                                    <IconDatabase />
+                                                                    <span class="tree-name">{dbName}</span>
+                                                                    <span class="tree-badge tree-badge-db">{tableCount} table{tableCount !== 1 ? 's' : ''}</span>
+                                                                </div>
+                                                                <Show when={expanded()[dbKey]}>
+                                                                    <div class="tree-children">
+                                                                        <For each={tables}>
+                                                                            {(table) => {
+                                                                                const tblKey = 'tbl:' + instName + '/' + table.name;
+                                                                                const colCount = (table.columns || []).length;
+                                                                                return (
+                                                                                    <div class="tree-group">
+                                                                                        <div class="tree-row tree-row-tbl"
+                                                                                            onClick={() => { toggle(tblKey); setSelectedInstance(instName); setSelectedDatabase(dbName); }}
+                                                                                            role="button" tabIndex={0}>
+                                                                                            <IconChevron open={expanded()[tblKey]} />
+                                                                                            <IconTable />
+                                                                                            <span class="tree-name">{table.shortName}</span>
+                                                                                            <span class="tree-badge">{colCount}</span>
+                                                                                        </div>
+                                                                                        <Show when={expanded()[tblKey]}>
+                                                                                            <div class="tree-children">
+                                                                                                <For each={table.columns || []}>
+                                                                                                    {(col) => (
+                                                                                                        <div class="tree-row tree-row-col" title={`${col.name || col} (${col.type || ''})`}>
+                                                                                                            <IconColumn />
+                                                                                                            <span class="tree-col-name">{col.name || col}</span>
+                                                                                                            <Show when={col.type}>
+                                                                                                                <span class="tree-col-type">{col.type}</span>
+                                                                                                            </Show>
+                                                                                                        </div>
+                                                                                                    )}
+                                                                                                </For>
+                                                                                            </div>
+                                                                                        </Show>
+                                                                                    </div>
+                                                                                );
+                                                                            }}
+                                                                        </For>
+                                                                    </div>
+                                                                </Show>
+                                                            </div>
+                                                        );
+                                                    }}
+                                                </For>
+                                            </div>
+                                        </Show>
+                                    </div>
+                                );
+                            }}
+                        </For>
                     </Show>
                     {/* Non-Spanner services: flat database grouping */}
-                    <Show when={service() !== 'spanner' || !currentSchema()?.selectedInstance}>
+                    <Show when={service() !== 'spanner'}>
                     <For each={Object.entries(schemaTree())}>
                         {([dbName, tables]) => {
                             const dbKey = 'db:' + dbName;

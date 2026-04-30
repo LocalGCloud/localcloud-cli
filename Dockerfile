@@ -254,7 +254,6 @@ RUN rm -rf \
     && ln -sf /opt/bqenv/bin/bigquery-emulator /usr/local/bin/bigquery-emulator \
     && find /opt/bqenv -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; \
     find /opt/bqenv -name '*.pyc' -delete 2>/dev/null; \
-    find /opt/bqenv -name '*.dist-info' -type d -exec rm -rf {} + 2>/dev/null; \
     true
 
 # Spanner emulator (extended fork with persistence + gateway)
@@ -301,7 +300,8 @@ COPY services.yaml /etc/localcloud/services.yaml
 COPY seed.yaml /etc/localcloud/seed.yaml
 COPY supervisord.conf /etc/supervisor/conf.d/localcloud.conf
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+COPY wait-for-pg.sh /usr/local/bin/wait-for-pg.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/wait-for-pg.sh
 
 # JVM tuning for container environment (Java 25 LTS)
 # ZGenerational is default in Java 25 LTS, no need to specify it

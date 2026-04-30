@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.linecorp.armeria.common.AggregatedHttpRequest;
@@ -284,7 +285,7 @@ public class QueryService {
 
     private HttpResponse executeSpannerQuery(String sql, String projectId,
                                               String instance, String database, long startTime) {
-        // Auto-resolve instance if not provided — use the first (usually only) instance
+        // Auto-resolve instance if not provided — pick instance with most databases
         if (instance == null || instance.isBlank()) {
             try {
                 String url = spannerBase + "/v1/projects/" + projectId + "/instances";
@@ -296,8 +297,29 @@ public class QueryService {
                 if (instances.isEmpty()) {
                     return errorResponse("No Spanner instances found. Create one first.");
                 }
-                String name = (String) instances.get(0).get("name");
-                instance = name.substring(name.lastIndexOf('/') + 1);
+                // Pick instance with the most databases (likely has actual data)
+                String bestInst = null;
+                int bestDbCount = -1;
+                for (Map<String, Object> inst : instances) {
+                    String instFullName = (String) inst.get("name");
+                    String instName = instFullName.substring(instFullName.lastIndexOf('/') + 1);
+                    try {
+                        String dbsUrl = spannerBase + "/v1/projects/" + projectId + "/instances/" + instName + "/databases";
+                        String dbsBody = proxyGet(dbsUrl);
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> dbsResp = mapper.readValue(dbsBody, Map.class);
+                        @SuppressWarnings("unchecked")
+                        List<?> dbs = (List<?>) dbsResp.getOrDefault("databases", List.of());
+                        if (dbs.size() > bestDbCount) {
+                            bestDbCount = dbs.size();
+                            bestInst = instName;
+                        }
+                    } catch (Exception e) {
+                        if (bestInst == null) bestInst = instName;
+                    }
+                }
+                instance = bestInst;
+                logger.info("Auto-resolved Spanner instance: {} ({} databases)", instance, bestDbCount);
             } catch (Exception e) {
                 return errorResponse("Failed to auto-resolve Spanner instance: " + e.getMessage());
             }
@@ -337,11 +359,21 @@ public class QueryService {
                 String dbFullName = (String) db.get("name");
                 String dbName = dbFullName.substring(dbFullName.lastIndexOf('/') + 1);
                 // Check if SQL references this database as a prefix (e.g., "orders_db.Products")
-                if (sql.contains(dbName + ".")) {
-                    database = dbName;
-                    sql = sql.replace(dbName + ".", "");
-                    logger.info("Spanner SQL rewrite: stripped '{}.' prefix, using database '{}'", dbName, database);
-                    break;
+                // Use word-boundary regex to avoid corrupting string literals or partial matches
+                String dbPattern = "\\b" + Pattern.quote(dbName) + "\\.";
+                if (sql.matches("(?s).*" + dbPattern + ".*")) {
+                    // Skip rewrite if the match is inside a quoted string
+                    int matchPos = sql.indexOf(dbName + ".");
+                    boolean insideQuote = false;
+                    for (int i = 0; i < matchPos && i < sql.length(); i++) {
+                        if (sql.charAt(i) == '\'') insideQuote = !insideQuote;
+                    }
+                    if (!insideQuote) {
+                        database = dbName;
+                        sql = sql.replaceAll(dbPattern, "");
+                        logger.info("Spanner SQL rewrite: stripped '{}.' prefix, using database '{}'", dbName, database);
+                        break;
+                    }
                 }
             }
         } catch (Exception e) {
@@ -444,21 +476,22 @@ public class QueryService {
     }
 
     /**
-     * Execute a Spanner DDL statement (CREATE TABLE, DROP TABLE, ALTER TABLE, CREATE INDEX, etc.)
+     * Execute one or more Spanner DDL statements (CREATE TABLE, DROP TABLE, ALTER TABLE, CREATE INDEX, etc.)
      * via the database DDL update API (PATCH).
+     * Supports multi-statement input separated by semicolons.
      */
     private HttpResponse executeSpannerDdl(String sql, String projectId,
                                             String instance, String database, long startTime) {
         try {
-            // Spanner DDL API does not accept trailing semicolons — strip them
-            String cleanSql = sql.trim();
-            while (cleanSql.endsWith(";")) {
-                cleanSql = cleanSql.substring(0, cleanSql.length() - 1).trim();
+            // Split multi-statement DDL by semicolons at top-level (respecting parens)
+            List<String> statements = splitDdlStatements(sql);
+            if (statements.isEmpty()) {
+                return errorResponse("No valid DDL statements found");
             }
 
             String url = spannerBase + "/v1/projects/" + projectId + "/instances/" + instance
                     + "/databases/" + database + "/ddl";
-            String payload = mapper.writeValueAsString(Map.of("statements", List.of(cleanSql)));
+            String payload = mapper.writeValueAsString(Map.of("statements", statements));
 
             var request = java.net.http.HttpRequest.newBuilder()
                     .uri(java.net.URI.create(url))
@@ -491,9 +524,12 @@ public class QueryService {
                 return errorResponse(errorBody);
             }
 
+            String msg = statements.size() == 1
+                    ? "DDL statement executed successfully"
+                    : statements.size() + " DDL statements executed successfully";
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("columns", List.of("result"));
-            result.put("rows", List.of(List.of("DDL statement executed successfully")));
+            result.put("rows", List.of(List.of(msg)));
             result.put("row_count", 1);
             result.put("execution_time_ms", elapsed);
 
@@ -504,6 +540,30 @@ public class QueryService {
             logger.warn("Spanner DDL failed: {}", e.getMessage());
             return errorResponse("Spanner DDL failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * Split DDL input by semicolons at paren depth 0.
+     * Strips trailing semicolons, skips empty statements.
+     */
+    private List<String> splitDdlStatements(String sql) {
+        List<String> statements = new ArrayList<>();
+        int depth = 0;
+        int start = 0;
+        for (int i = 0; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+            if (c == '(') depth++;
+            else if (c == ')') depth--;
+            else if (c == ';' && depth == 0) {
+                String stmt = sql.substring(start, i).trim();
+                if (!stmt.isEmpty()) statements.add(stmt);
+                start = i + 1;
+            }
+        }
+        // Last statement (no trailing semicolon)
+        String last = sql.substring(start).trim();
+        if (!last.isEmpty()) statements.add(last);
+        return statements;
     }
 
     // ─── Pub/Sub Query ─────────────────────────────────────────────────
@@ -1000,7 +1060,7 @@ public class QueryService {
 
     private HttpResponse schemaSpanner(String projectId, String instance, String database) {
         try {
-            // 1. List instances
+            // 1. List all instances
             String instancesUrl = spannerBase + "/v1/projects/" + projectId + "/instances";
             String instancesBody = proxyGet(instancesUrl);
             @SuppressWarnings("unchecked")
@@ -1019,62 +1079,80 @@ public class QueryService {
                     mapper.writeValueAsString(Map.of("tables", List.of(), "instances", List.of(), "databases", List.of())));
             }
 
-            // Use provided instance or first one
-            String selectedInstance = (instance != null && !instance.isBlank()) ? instance : instanceNames.get(0);
-
-            // 2. List databases
-            String dbsUrl = spannerBase + "/v1/projects/" + projectId + "/instances/" + selectedInstance + "/databases";
-            String dbsBody = proxyGet(dbsUrl);
-            @SuppressWarnings("unchecked")
-            Map<String, Object> dbsResp = mapper.readValue(dbsBody, Map.class);
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> databases = (List<Map<String, Object>>) dbsResp.getOrDefault("databases", List.of());
-
-            List<String> databaseNames = new ArrayList<>();
-            for (Map<String, Object> db : databases) {
-                String name = (String) db.get("name");
-                if (name != null) databaseNames.add(name.substring(name.lastIndexOf('/') + 1));
+            // If a specific instance is requested, scan only that one.
+            // Otherwise, scan ALL instances and aggregate all tables.
+            List<String> instancesToScan;
+            if (instance != null && !instance.isBlank()) {
+                instancesToScan = List.of(instance);
+            } else {
+                instancesToScan = instanceNames;
             }
 
-            if (databaseNames.isEmpty()) {
-                return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
-                    mapper.writeValueAsString(Map.of("tables", List.of(), "instances", instanceNames, "databases", List.of())));
-            }
+            // 2. Scan instances, aggregate ALL tables across all instances
+            List<Map<String, Object>> allTables = new ArrayList<>();
+            List<String> allDatabaseNames = new ArrayList<>();
+            // Track which instance has most tables for auto-selecting in query execution
+            String bestInstance = instancesToScan.get(0);
+            int bestTableCount = 0;
 
-            // 3. Get DDL for ALL databases — prefix table names with database name
-            List<Map<String, Object>> tables = new ArrayList<>();
-            for (String dbName : databaseNames) {
+            for (String instName : instancesToScan) {
                 try {
-                    String ddlUrl = spannerBase + "/v1/projects/" + projectId + "/instances/" + selectedInstance
-                            + "/databases/" + dbName + "/ddl";
-                    String ddlBody = proxyGet(ddlUrl);
+                    String dbsUrl = spannerBase + "/v1/projects/" + projectId + "/instances/" + instName + "/databases";
+                    String dbsBody = proxyGet(dbsUrl);
                     @SuppressWarnings("unchecked")
-                    Map<String, Object> ddlResp = mapper.readValue(ddlBody, Map.class);
+                    Map<String, Object> dbsResp = mapper.readValue(dbsBody, Map.class);
                     @SuppressWarnings("unchecked")
-                    List<String> statements = (List<String>) ddlResp.getOrDefault("statements", List.of());
+                    List<Map<String, Object>> dbs = (List<Map<String, Object>>) dbsResp.getOrDefault("databases", List.of());
 
-                    for (String stmt : statements) {
-                        if (stmt.trim().toUpperCase().startsWith("CREATE TABLE")) {
-                            Map<String, Object> table = parseCreateTable(stmt);
-                            if (table != null) {
-                                // Prefix with database name so frontend can group by database
-                                Map<String, Object> prefixed = new LinkedHashMap<>(table);
-                                prefixed.put("name", dbName + "." + table.get("name"));
-                                prefixed.put("database", dbName);
-                                tables.add(prefixed);
+                    int instanceTableCount = 0;
+                    for (Map<String, Object> db : dbs) {
+                        String fullDbName = (String) db.get("name");
+                        if (fullDbName == null) continue;
+                        String dbName = fullDbName.substring(fullDbName.lastIndexOf('/') + 1);
+                        allDatabaseNames.add(dbName);
+
+                        try {
+                            String ddlUrl = spannerBase + "/v1/projects/" + projectId + "/instances/" + instName
+                                    + "/databases/" + dbName + "/ddl";
+                            String ddlBody = proxyGet(ddlUrl);
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> ddlResp = mapper.readValue(ddlBody, Map.class);
+                            @SuppressWarnings("unchecked")
+                            List<String> statements = (List<String>) ddlResp.getOrDefault("statements", List.of());
+
+                            for (String stmt : statements) {
+                                if (stmt.trim().toUpperCase().startsWith("CREATE TABLE")) {
+                                    Map<String, Object> table = parseCreateTable(stmt);
+                                    if (table != null) {
+                                        Map<String, Object> prefixed = new LinkedHashMap<>(table);
+                                        // Include instance in the name: instance/database.TableName
+                                        prefixed.put("name", dbName + "." + table.get("name"));
+                                        prefixed.put("database", dbName);
+                                        prefixed.put("instance", instName);
+                                        allTables.add(prefixed);
+                                        instanceTableCount++;
+                                    }
+                                }
                             }
+                        } catch (Exception e) {
+                            logger.debug("Failed to fetch DDL for {}/{}: {}", instName, dbName, e.getMessage());
                         }
                     }
+
+                    if (instanceTableCount > bestTableCount) {
+                        bestTableCount = instanceTableCount;
+                        bestInstance = instName;
+                    }
                 } catch (Exception e) {
-                    logger.debug("Failed to fetch DDL for database {}: {}", dbName, e.getMessage());
+                    logger.debug("Failed to list databases for instance {}: {}", instName, e.getMessage());
                 }
             }
 
             Map<String, Object> result = new LinkedHashMap<>();
-            result.put("tables", tables);
+            result.put("tables", allTables);
             result.put("instances", instanceNames);
-            result.put("databases", databaseNames);
-            result.put("selectedInstance", selectedInstance);
+            result.put("databases", allDatabaseNames);
+            result.put("selectedInstance", bestInstance);
 
             return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
                 mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
@@ -1088,45 +1166,71 @@ public class QueryService {
 
     /**
      * Parse a Spanner CREATE TABLE statement into table name and columns.
-     * Example: CREATE TABLE Persons (Id STRING(36) NOT NULL, Name STRING(100)) PRIMARY KEY (Id)
+     * Uses paren-depth-aware splitting to handle generated columns, COALESCE,
+     * CASE expressions, TOKENIZE_* functions, and other nested constructs.
      */
     private Map<String, Object> parseCreateTable(String ddl) {
         try {
             // Extract table name
-            String upper = ddl.trim();
-            int tableIdx = upper.toUpperCase().indexOf("CREATE TABLE");
+            String trimmed = ddl.trim();
+            int tableIdx = trimmed.toUpperCase().indexOf("CREATE TABLE");
             if (tableIdx < 0) return null;
 
-            String afterCreate = upper.substring(tableIdx + 12).trim();
-            int parenIdx = afterCreate.indexOf('(');
-            if (parenIdx < 0) return null;
+            String afterCreate = trimmed.substring(tableIdx + 12).trim();
+            int firstParen = afterCreate.indexOf('(');
+            if (firstParen < 0) return null;
 
-            String tableName = afterCreate.substring(0, parenIdx).trim();
+            String tableName = afterCreate.substring(0, firstParen).trim();
 
-            // Extract columns — content between first ( and matching )
-            // Find the matching closing paren before PRIMARY KEY
-            String columnSection = afterCreate.substring(parenIdx + 1);
-            int pkIdx = columnSection.toUpperCase().indexOf(") PRIMARY KEY");
-            if (pkIdx < 0) {
-                // Try just finding the last )
-                pkIdx = columnSection.lastIndexOf(')');
-                if (pkIdx < 0) return null;
-            }
-            columnSection = columnSection.substring(0, pkIdx).trim();
-
-            // Split by comma, parse each column
-            List<Map<String, String>> columns = new ArrayList<>();
-            for (String col : columnSection.split(",")) {
-                String trimmed = col.trim();
-                if (trimmed.isEmpty()) continue;
-                // Skip INTERLEAVE and other non-column definitions
-                if (trimmed.toUpperCase().startsWith("INTERLEAVE")) continue;
-                if (trimmed.toUpperCase().startsWith("CONSTRAINT")) continue;
-
-                String[] parts = trimmed.split("\\s+", 3);
-                if (parts.length >= 2) {
-                    columns.add(Map.of("name", parts[0], "type", parts[1]));
+            // Find the matching closing paren at depth 0 — this is the end of the column list.
+            // Cannot use indexOf(") PRIMARY KEY") because nested parens produce false matches.
+            int depth = 0;
+            int columnEnd = -1;
+            for (int i = firstParen; i < afterCreate.length(); i++) {
+                char c = afterCreate.charAt(i);
+                if (c == '(') depth++;
+                else if (c == ')') {
+                    depth--;
+                    if (depth == 0) {
+                        columnEnd = i;
+                        break;
+                    }
                 }
+            }
+            if (columnEnd < 0) return null;
+
+            String columnSection = afterCreate.substring(firstParen + 1, columnEnd).trim();
+
+            // Split by commas at depth 0 only (top-level commas)
+            List<String> columnDefs = splitAtTopLevelCommas(columnSection);
+
+            List<Map<String, String>> columns = new ArrayList<>();
+            for (String colDef : columnDefs) {
+                String col = colDef.trim();
+                if (col.isEmpty()) continue;
+                String colUpper = col.toUpperCase();
+
+                // Skip non-column definitions
+                if (colUpper.startsWith("INTERLEAVE")) continue;
+                if (colUpper.startsWith("CONSTRAINT")) continue;
+
+                // Extract column name and type
+                String[] tokens = col.split("\\s+", 3);
+                if (tokens.length < 2) continue;
+
+                String colName = tokens[0];
+                String colType = tokens[1];
+
+                // Skip TOKENLIST columns (full-text search, not real data)
+                if (colType.equalsIgnoreCase("TOKENLIST")) continue;
+
+                // Skip HIDDEN columns (typically TOKENLIST-related)
+                if (colUpper.contains(" HIDDEN")) continue;
+
+                // For generated columns (AS ...), mark the type from the base type or STORED expression
+                // e.g. "Name STRING(MAX) AS (COALESCE(...)) STORED" → type is STRING(MAX)
+                // The type token may include a paren like STRING(MAX) — keep it as-is
+                columns.add(Map.of("name", colName, "type", colType));
             }
 
             return Map.of("name", tableName, "columns", columns);
@@ -1134,6 +1238,30 @@ public class QueryService {
             logger.debug("Failed to parse DDL: {}", ddl, e);
             return null;
         }
+    }
+
+    /**
+     * Split a string by commas, but only at parenthesis depth 0.
+     * Handles nested parens in generated columns, function calls, CASE expressions, etc.
+     */
+    private List<String> splitAtTopLevelCommas(String s) {
+        List<String> parts = new ArrayList<>();
+        int depth = 0;
+        int start = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '(') depth++;
+            else if (c == ')') depth--;
+            else if (c == ',' && depth == 0) {
+                parts.add(s.substring(start, i).trim());
+                start = i + 1;
+            }
+        }
+        if (start < s.length()) {
+            String last = s.substring(start).trim();
+            if (!last.isEmpty()) parts.add(last);
+        }
+        return parts;
     }
 
     // ─── Helpers ───────────────────────────────────────────────────────

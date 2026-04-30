@@ -971,7 +971,7 @@ function SpannerView(props) {
         try {
             await api.mutate('spanner', 'createInstance', { instance: name, displayName: name });
             setShowCreateInstance(false); setCreateName('');
-            if (props.onRefresh) props.onRefresh();
+            if (props.onRefresh) await props.onRefresh();
         } catch (e) { setCreateError(e.message); }
         finally { setCreating(false); }
     };
@@ -2018,7 +2018,7 @@ export default function DataBrowser(props) {
             case 'cloudtasks': return <CloudTasksView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
             case 'logging': return <LoggingView data={data} />;
             case 'monitoring': return <MonitoringView data={data} />;
-            case 'spanner': return <SpannerView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} />;
+            case 'spanner': return <SpannerView data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} />;
             case 'bigtable': return <BigtableView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
             case 'memorystore': return <MemorystoreView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} />;
             default: return null;

@@ -138,7 +138,7 @@ export default function Usage(props) {
     return (
         <div>
             <div class="page-header">
-                <h1>Usage & Cost Estimates</h1>
+                <h1>Cost Analysis</h1>
                 <p class="page-header-subtitle">
                     Cumulative API usage per service and estimated GCP costs saved by using LocalCloud.
                 </p>

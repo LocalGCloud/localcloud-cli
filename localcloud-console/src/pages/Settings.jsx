@@ -1,6 +1,6 @@
 import { createSignal, createEffect, Show, For } from 'solid-js';
 import { api } from '../api.js';
-import { SERVICE_META, SDK_ORDER, SAMPLE_CODE, CLI_COMMANDS, DOCKER_RUN_PORTS } from './settings-data.js';
+import { SERVICE_META, SDK_ORDER, SAMPLE_CODE, CLI_COMMANDS, DOCKER_RUN_PORTS, DATABASE_EXAMPLES } from './settings-data.js';
 
 // --- SVG Icons ---
 const CopyIcon = () => (
@@ -234,6 +234,9 @@ function EnvTabs(props) {
                 <button classList={{ "tab-item": true, "active": activeTab() === 'sdk' }} onClick={() => setActiveTab('sdk')}>
                     SDK
                 </button>
+                <button classList={{ "tab-item": true, "active": activeTab() === 'examples' }} onClick={() => setActiveTab('examples')}>
+                    Examples
+                </button>
             </div>
 
             {/* Shell Export Tab */}
@@ -417,6 +420,147 @@ function EnvTabs(props) {
                         }}
                     </For>
                 </div>
+            </Show>
+
+            {/* Examples Tab — Database DDL examples per emulator */}
+            <Show when={activeTab() === 'examples'}>
+                <div style={{ "margin-top": "4px" }}>
+                    <p style={{ "margin-bottom": "16px", "font-size": "13px", color: "var(--text-secondary)" }}>
+                        CREATE TABLE and schema examples for each database emulator. Covers supported operations and known emulator limitations.
+                    </p>
+                    <DatabaseExamples />
+                </div>
+            </Show>
+        </div>
+    );
+}
+
+// --- Database Examples Component ---
+function DatabaseExamples() {
+    const [activeDb, setActiveDb] = createSignal('spanner');
+    const [copiedIdx, setCopiedIdx] = createSignal(null);
+    const [expandedExamples, setExpandedExamples] = createSignal(new Set([0]));
+
+    const toggleExample = (idx) => {
+        const s = new Set(expandedExamples());
+        if (s.has(idx)) s.delete(idx); else s.add(idx);
+        setExpandedExamples(s);
+    };
+
+    const expandAll = () => {
+        const db = DATABASE_EXAMPLES[activeDb()];
+        if (!db) return;
+        const all = new Set(db.examples.map((_, i) => i));
+        setExpandedExamples(all);
+    };
+
+    const collapseAll = () => setExpandedExamples(new Set());
+
+    const handleCopy = async (idx, sql) => {
+        try {
+            await navigator.clipboard.writeText(sql);
+            setCopiedIdx(idx);
+            setTimeout(() => setCopiedIdx(null), 2000);
+        } catch {}
+    };
+
+    // Reset expanded state when switching databases
+    createEffect((prev) => {
+        const db = activeDb();
+        if (prev && prev !== db) setExpandedExamples(new Set([0]));
+        return db;
+    });
+
+    return (
+        <div>
+            {/* Database selector pills */}
+            <div style={{ display: "flex", gap: "6px", "flex-wrap": "wrap", "margin-bottom": "16px" }}>
+                <For each={Object.entries(DATABASE_EXAMPLES)}>
+                    {([id, db]) => (
+                        <button
+                            classList={{ "env-sample-tab": true, "active": activeDb() === id }}
+                            onClick={() => setActiveDb(id)}
+                            style={{ "border-radius": "6px", padding: "5px 14px", "font-size": "12px", "font-weight": "500", border: "1px solid var(--border)", cursor: "pointer", background: activeDb() === id ? "var(--primary)" : "var(--surface)", color: activeDb() === id ? "#fff" : "var(--text-primary)", transition: "all 0.15s" }}
+                        >
+                            {db.label}
+                        </button>
+                    )}
+                </For>
+            </div>
+
+            {/* Dialect badge + expand/collapse */}
+            <Show when={DATABASE_EXAMPLES[activeDb()]}>
+                {(_) => {
+                    const db = () => DATABASE_EXAMPLES[activeDb()];
+                    return (
+                        <div>
+                            <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", "margin-bottom": "12px" }}>
+                                <span style={{ "font-size": "11px", "font-weight": "600", "letter-spacing": "0.5px", padding: "3px 10px", "border-radius": "4px", background: "var(--surface-variant, var(--bg-subtle))", color: "var(--text-secondary)" }}>
+                                    {db().dialect}
+                                </span>
+                                <div style={{ display: "flex", gap: "6px" }}>
+                                    <button class="btn btn-secondary" style={{ height: "26px", "font-size": "11px", padding: "0 10px" }} onClick={expandAll}>Expand All</button>
+                                    <button class="btn btn-secondary" style={{ height: "26px", "font-size": "11px", padding: "0 10px" }} onClick={collapseAll}>Collapse All</button>
+                                </div>
+                            </div>
+
+                            {/* Example cards */}
+                            <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
+                                <For each={db().examples}>
+                                    {(example, idx) => (
+                                        <div style={{ border: "1px solid var(--border)", "border-radius": "8px", overflow: "hidden", background: "var(--surface)" }}>
+                                            {/* Header */}
+                                            <div
+                                                onClick={() => toggleExample(idx())}
+                                                style={{ display: "flex", "align-items": "center", gap: "8px", padding: "10px 14px", cursor: "pointer", "user-select": "none", background: !example.supported ? "rgba(234,67,53,0.04)" : "transparent" }}
+                                            >
+                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="var(--text-secondary)" style={{ transition: "transform 0.15s", transform: expandedExamples().has(idx()) ? "rotate(90deg)" : "rotate(0deg)", "flex-shrink": "0" }}>
+                                                    <path d="M8 5v14l11-7z"/>
+                                                </svg>
+                                                <span style={{ "font-size": "13px", "font-weight": "600", flex: "1" }}>{example.title}</span>
+                                                <span style={{
+                                                    "font-size": "10px",
+                                                    "font-weight": "700",
+                                                    "letter-spacing": "0.5px",
+                                                    padding: "2px 8px",
+                                                    "border-radius": "4px",
+                                                    background: example.supported ? "rgba(52,168,83,0.1)" : "rgba(234,67,53,0.1)",
+                                                    color: example.supported ? "#34a853" : "#ea4335",
+                                                }}>
+                                                    {example.supported ? 'SUPPORTED' : 'UNSUPPORTED'}
+                                                </span>
+                                            </div>
+
+                                            {/* Body */}
+                                            <Show when={expandedExamples().has(idx())}>
+                                                <div style={{ "border-top": "1px solid var(--border)" }}>
+                                                    <Show when={!example.supported && example.note}>
+                                                        <div style={{ padding: "8px 14px", "font-size": "12px", color: "#ea4335", background: "rgba(234,67,53,0.04)", "border-bottom": "1px solid var(--border)", display: "flex", gap: "6px", "align-items": "flex-start" }}>
+                                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="#ea4335" style={{ "flex-shrink": "0", "margin-top": "1px" }}><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+                                                            <span>{example.note}</span>
+                                                        </div>
+                                                    </Show>
+                                                    <div style={{ position: "relative" }}>
+                                                        <button
+                                                            class="btn btn-secondary"
+                                                            style={{ position: "absolute", top: "8px", right: "8px", height: "26px", "font-size": "10px", padding: "0 8px", "z-index": "1" }}
+                                                            onClick={(e) => { e.stopPropagation(); handleCopy(idx(), example.sql); }}
+                                                        >
+                                                            {copiedIdx() === idx() ? 'Copied!' : 'Copy'}
+                                                        </button>
+                                                        <pre style={{ margin: "0", padding: "12px 14px", "font-size": "12px", "line-height": "1.5", overflow: "auto", "max-height": "400px", background: "var(--code-bg, var(--bg-subtle))", "font-family": "'SF Mono', 'Fira Code', 'Cascadia Code', monospace", color: "var(--text-primary)", "white-space": "pre", "tab-size": "2" }}>
+                                                            {example.sql}
+                                                        </pre>
+                                                    </div>
+                                                </div>
+                                            </Show>
+                                        </div>
+                                    )}
+                                </For>
+                            </div>
+                        </div>
+                    );
+                }}
             </Show>
         </div>
     );
