@@ -5,26 +5,23 @@
 /* ---------- Status Dot ---------- */
 .status-dot {
   display: inline-block;
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
 .status-dot.healthy {
   background: var(--success);
-  box-shadow: 0 0 6px rgba(52,211,153,0.4);
   animation: pulse-dot 2s ease-in-out infinite;
 }
 
 .status-dot.unhealthy {
   background: var(--error);
-  box-shadow: 0 0 6px rgba(248,113,113,0.4);
 }
 
 .status-dot.warning {
   background: var(--warning);
-  box-shadow: 0 0 6px rgba(251,191,36,0.4);
 }
 
 /* ---------- Status Indicator (dot + text) ---------- */
@@ -44,18 +41,12 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 20px;
-  transition: transform var(--transition), box-shadow var(--transition), border-color var(--transition);
+  padding: 16px;
+  transition: border-color var(--transition);
 }
 
 .card:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-hover);
-  border-color: rgba(255,255,255,0.12);
-}
-
-[data-theme="light"] .card:hover {
-  border-color: rgba(0,0,0,0.12);
+  border-color: var(--text-tertiary);
 }
 
 .card-header {
@@ -78,26 +69,20 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 18px;
-  transition: transform var(--transition), box-shadow var(--transition), border-color var(--transition);
+  padding: 16px;
+  transition: border-color var(--transition);
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
 .service-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-hover);
-  border-color: rgba(255,255,255,0.12);
+  border-color: var(--primary);
 }
 
 .service-card:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
-}
-
-[data-theme="light"] .service-card:hover {
-  border-color: rgba(0,0,0,0.12);
 }
 
 .service-card-name {
@@ -125,13 +110,13 @@
 /* ---------- Service Grid ---------- */
 .service-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 320px));
   gap: 12px;
 }
 
 @media (min-width: 1200px) {
   .service-grid {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, minmax(240px, 320px));
   }
 }
 
@@ -229,11 +214,11 @@
 .btn-primary {
   background: var(--primary);
   color: #fff;
+  font-weight: 600;
 }
 
 .btn-primary:hover:not(:disabled) {
   background: var(--primary-hover);
-  box-shadow: var(--shadow);
 }
 
 .btn-secondary {
@@ -621,13 +606,12 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 18px;
-  transition: transform var(--transition), box-shadow var(--transition);
+  padding: 16px;
+  transition: border-color var(--transition);
 }
 
 .stat-card:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-card);
+  border-color: var(--text-tertiary);
 }
 
 .stat-card-label {
@@ -642,14 +626,14 @@
 .stat-card-value {
   font-family: var(--font-display);
   font-size: 28px;
-  font-weight: 400;
+  font-weight: 600;
   color: var(--text);
 }
 
 /* Hero stat card (for primary metric) */
 .stat-card-hero {
-  background: rgba(26,115,232,0.06);
-  border: 1px solid rgba(26,115,232,0.15);
+  background: var(--primary-softer);
+  border: 1px solid var(--primary-soft);
 }
 
 .stat-card-hero .stat-card-value {
@@ -2106,7 +2090,7 @@
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: var(--danger);
+  background: var(--error);
   color: #fff;
   font-size: 13px;
   font-weight: 500;

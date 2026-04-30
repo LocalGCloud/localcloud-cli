@@ -154,12 +154,10 @@ export default function Usage(props) {
                     </div>
                 }>
                     {/* Savings Banner */}
-                    <div class="card" style={{
+                    <div class="card savings-banner" style={{
                         "margin-bottom": "24px",
                         "text-align": "center",
                         "padding": "28px 20px",
-                        "background": "linear-gradient(135deg, rgba(99,102,241,0.08) 0%, rgba(52,211,153,0.06) 100%)",
-                        "border-color": "rgba(99,102,241,0.15)",
                     }}>
                         <div style={{ "font-size": "11px", "font-weight": "600", "text-transform": "uppercase", "letter-spacing": "0.06em", color: "var(--text-tertiary)", "margin-bottom": "8px" }}>
                             Estimated GCP Cost Saved (Lifetime)
