@@ -1420,14 +1420,18 @@ curl -X POST http://localhost:8080/_localcloud/reset \\
 
             {/* ═══════ About Tab ═══════ */}
             <Show when={settingsTab() === 'about'}>
-                <AboutPage />
+                <AboutPage healthData={props.healthData} />
             </Show>
         </div>
     );
 }
 
 // --- About Page — Author Bio & Project Info ---
-function AboutPage() {
+function AboutPage(props) {
+    const versionDisplay = () => {
+        const h = props.healthData?.();
+        return h?.version_display || 'v0.1.0';
+    };
     return (
         <div style={{ "max-width": "780px" }}>
             {/* Project Hero */}
@@ -1452,7 +1456,7 @@ function AboutPage() {
                         <img src="/icons/localcloud-mark.svg" alt="LocalCloud" width="48" height="48" style={{ "border-radius": "12px" }} />
                         <div>
                             <div style={{ "font-size": "24px", "font-weight": "700", "letter-spacing": "-0.5px" }}>LocalCloud</div>
-                            <div style={{ "font-size": "12px", opacity: "0.7", "letter-spacing": "0.3px" }}>v0.1.0 &middot; Apache-2.0</div>
+                            <div style={{ "font-size": "12px", opacity: "0.7", "letter-spacing": "0.3px" }}>{versionDisplay()} &middot; Apache-2.0</div>
                         </div>
                     </div>
                     <p style={{ "font-size": "15px", "line-height": "1.65", color: "#fff", "max-width": "560px" }}>

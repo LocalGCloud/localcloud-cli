@@ -69,18 +69,27 @@ fi
 echo "[4/4] Building Docker image..."
 docker volume create localcloud-data >/dev/null 2>&1 || true
 
-# Configurable emulator images — Dockerfile defaults used when unset
-BUILD_ARGS=""
-[ -n "$SPANNER_EMULATOR_IMAGE" ]  && BUILD_ARGS="$BUILD_ARGS --build-arg SPANNER_EMULATOR_IMAGE=$SPANNER_EMULATOR_IMAGE"
-[ -n "$BIGQUERY_EMULATOR_IMAGE" ] && BUILD_ARGS="$BUILD_ARGS --build-arg BIGQUERY_EMULATOR_IMAGE=$BIGQUERY_EMULATOR_IMAGE"
-[ -n "$GO_BASE_IMAGE" ]              && BUILD_ARGS="$BUILD_ARGS --build-arg GO_BASE_IMAGE=$GO_BASE_IMAGE"
-[ -n "$LITTLE_BIGTABLE_VERSION" ]    && BUILD_ARGS="$BUILD_ARGS --build-arg LITTLE_BIGTABLE_VERSION=$LITTLE_BIGTABLE_VERSION"
-[ -n "$GCS_EMULATOR_IMAGE" ]      && BUILD_ARGS="$BUILD_ARGS --build-arg GCS_EMULATOR_IMAGE=$GCS_EMULATOR_IMAGE"
-[ -n "$GCLOUD_SDK_IMAGE" ]        && BUILD_ARGS="$BUILD_ARGS --build-arg GCLOUD_SDK_IMAGE=$GCLOUD_SDK_IMAGE"
-[ -n "$DOCKER_CLI_IMAGE" ]        && BUILD_ARGS="$BUILD_ARGS --build-arg DOCKER_CLI_IMAGE=$DOCKER_CLI_IMAGE"
-[ -n "$JDK_IMAGE" ]               && BUILD_ARGS="$BUILD_ARGS --build-arg JDK_IMAGE=$JDK_IMAGE"
+# Version metadata
+BUILD_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "dev")
+BUILD_DATE=$(date -u +%Y%m%d)
 
-if ! docker build --progress=plain $BUILD_ARGS -t localcloud/localcloud:latest .; then
+# Build args array (handles spaces in BUILD_DATE correctly)
+DOCKER_BUILD_ARGS=(
+    --build-arg "BUILD_HASH=$BUILD_HASH"
+    --build-arg "BUILD_DATE=$BUILD_DATE"
+)
+
+# Configurable emulator images — Dockerfile defaults used when unset
+[ -n "$SPANNER_EMULATOR_IMAGE" ]  && DOCKER_BUILD_ARGS+=(--build-arg "SPANNER_EMULATOR_IMAGE=$SPANNER_EMULATOR_IMAGE")
+[ -n "$BIGQUERY_EMULATOR_IMAGE" ] && DOCKER_BUILD_ARGS+=(--build-arg "BIGQUERY_EMULATOR_IMAGE=$BIGQUERY_EMULATOR_IMAGE")
+[ -n "$GO_BASE_IMAGE" ]           && DOCKER_BUILD_ARGS+=(--build-arg "GO_BASE_IMAGE=$GO_BASE_IMAGE")
+[ -n "$LITTLE_BIGTABLE_VERSION" ] && DOCKER_BUILD_ARGS+=(--build-arg "LITTLE_BIGTABLE_VERSION=$LITTLE_BIGTABLE_VERSION")
+[ -n "$GCS_EMULATOR_IMAGE" ]      && DOCKER_BUILD_ARGS+=(--build-arg "GCS_EMULATOR_IMAGE=$GCS_EMULATOR_IMAGE")
+[ -n "$GCLOUD_SDK_IMAGE" ]        && DOCKER_BUILD_ARGS+=(--build-arg "GCLOUD_SDK_IMAGE=$GCLOUD_SDK_IMAGE")
+[ -n "$DOCKER_CLI_IMAGE" ]        && DOCKER_BUILD_ARGS+=(--build-arg "DOCKER_CLI_IMAGE=$DOCKER_CLI_IMAGE")
+[ -n "$JDK_IMAGE" ]               && DOCKER_BUILD_ARGS+=(--build-arg "JDK_IMAGE=$JDK_IMAGE")
+
+if ! docker build --progress=plain "${DOCKER_BUILD_ARGS[@]}" -t localcloud/localcloud:latest .; then
     echo "ERROR: Docker image build failed."
     echo "  Check that Docker daemon is running and has enough resources."
     exit 1

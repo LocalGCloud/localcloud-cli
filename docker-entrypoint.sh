@@ -290,5 +290,47 @@ fi
 # Set default telemetry API key if not overridden (not baked into image layers)
 export LOCALCLOUD_EVENT_API_KEY="${LOCALCLOUD_EVENT_API_KEY:-phc_o9nQDAQjEgsPcamE8pCnhv7ekA8CmA2VQXechLju9LA9}"
 
+# Version update check (non-blocking background)
+# Compares build-time image digest with Docker Hub latest tag.
+# No external version file needed — uses Docker Hub API directly.
+# Set LOCALCLOUD_SKIP_UPDATE_CHECK=true to disable.
+DOCKERHUB_IMAGE="${LOCALCLOUD_DOCKERHUB_IMAGE:-localcloud/localcloud}"
+if [ "${LOCALCLOUD_SKIP_UPDATE_CHECK}" != "true" ]; then
+    (
+        CURRENT_VERSION=$(cat /opt/localcloud/VERSION 2>/dev/null | tr -d '[:space:]')
+        CURRENT_DIGEST=$(cat /opt/localcloud/DIGEST 2>/dev/null | tr -d '[:space:]')
+
+        # Query Docker Hub for latest tag digest + last_updated
+        HUB_JSON=$(curl -sf --max-time 5 \
+            "https://hub.docker.com/v2/repositories/${DOCKERHUB_IMAGE}/tags/latest" 2>/dev/null) || exit 0
+
+        REMOTE_DIGEST=$(echo "$HUB_JSON" | grep -o '"digest"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | grep -o '"sha256:[^"]*"' | tr -d '"')
+        REMOTE_UPDATED=$(echo "$HUB_JSON" | grep -o '"last_updated"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+
+        [ -z "$REMOTE_DIGEST" ] && exit 0
+
+        # Compare: if no local digest baked in, or digests differ → update available
+        if [ -n "$CURRENT_DIGEST" ] && [ "$CURRENT_DIGEST" = "$REMOTE_DIGEST" ]; then
+            exit 0  # up to date
+        fi
+        # If no local digest, fall back to date comparison
+        if [ -z "$CURRENT_DIGEST" ] && [ -z "$REMOTE_UPDATED" ]; then
+            exit 0
+        fi
+
+        REMOTE_SHORT=$(echo "$REMOTE_UPDATED" | cut -c1-10)
+        echo ""
+        echo "╔══════════════════════════════════════════════════════════════╗"
+        echo "║  New LocalCloud image available (updated: ${REMOTE_SHORT})"
+        echo "║  Current: ${CURRENT_VERSION}"
+        echo "║  Run: docker pull ${DOCKERHUB_IMAGE}:latest"
+        echo "╚══════════════════════════════════════════════════════════════╝"
+        echo ""
+        # Write update info for the gateway to serve via health API
+        echo "{\"current\":\"${CURRENT_VERSION}\",\"remote_updated\":\"${REMOTE_SHORT}\",\"pull\":\"docker pull ${DOCKERHUB_IMAGE}:latest\"}" \
+            > /tmp/localcloud-update-available.json 2>/dev/null || true
+    ) &
+fi
+
 # Drop privileges: run CMD as the runtime user
 exec gosu "$RUN_USER" "$@"

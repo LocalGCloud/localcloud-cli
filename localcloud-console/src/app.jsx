@@ -284,6 +284,7 @@ function App() {
                         setRefreshInterval={setRefreshInterval}
                         routingData={routingData}
                         credentialData={credentialData}
+                        healthData={healthData}
                     />
                 );
             default:
@@ -291,9 +292,39 @@ function App() {
         }
     };
 
+    // Update availability from health API
+    const [updateDismissed, setUpdateDismissed] = createSignal(false);
+    const updateAvailable = () => {
+        const h = healthData();
+        return h?.update_available && !updateDismissed() ? h.update_available : null;
+    };
+
     return (
         <>
             <a class="skip-link" href="#main-content">Skip to content</a>
+            {/* Update Banner */}
+            <Show when={updateAvailable()}>
+                {(_) => {
+                    const info = updateAvailable();
+                    return (
+                        <div style={{
+                            display: "flex", "align-items": "center", "justify-content": "center", gap: "12px",
+                            padding: "6px 16px",
+                            background: "linear-gradient(90deg, #1a73e8, #0d47a1)",
+                            color: "#fff", "font-size": "12px", "font-weight": "500",
+                        }}>
+                            <span>New image available{info.remote_updated ? ` (${info.remote_updated})` : ''} — current: {info.current}</span>
+                            <code style={{ background: "rgba(255,255,255,0.15)", padding: "2px 8px", "border-radius": "4px", "font-size": "11px" }}>
+                                {info.pull || 'docker pull localcloud/localcloud:latest'}
+                            </code>
+                            <button onClick={() => setUpdateDismissed(true)} style={{
+                                background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer",
+                                "font-size": "16px", padding: "0 4px", "line-height": "1",
+                            }}>&times;</button>
+                        </div>
+                    );
+                }}
+            </Show>
             {/* Top Bar */}
             <header class="topbar">
                 <div class="topbar-left">

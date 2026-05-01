@@ -137,6 +137,29 @@ public class HealthCheckService {
                 response.put("persistence", config.isPersistenceEnabled());
                 response.put("data_dir", config.getDataDir().toString());
 
+                // Version info
+                try {
+                    String versionFile = System.getenv("LOCALCLOUD_VERSION_FILE");
+                    if (versionFile != null) {
+                        String version = java.nio.file.Files.readString(java.nio.file.Path.of(versionFile)).trim();
+                        response.put("version", version);
+                    }
+                    java.nio.file.Path displayFile = java.nio.file.Path.of("/opt/localcloud/VERSION_DISPLAY");
+                    if (java.nio.file.Files.exists(displayFile)) {
+                        response.put("version_display", java.nio.file.Files.readString(displayFile).trim());
+                    }
+                } catch (Exception ignored) {}
+
+                // Update availability (written by entrypoint background check)
+                try {
+                    java.nio.file.Path updateFile = java.nio.file.Path.of("/tmp/localcloud-update-available.json");
+                    if (java.nio.file.Files.exists(updateFile)) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> updateInfo = mapper.readValue(java.nio.file.Files.readString(updateFile), Map.class);
+                        response.put("update_available", updateInfo);
+                    }
+                } catch (Exception ignored) {}
+
                 String json = mapper.writeValueAsString(response);
                 return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
             } catch (Exception e) {

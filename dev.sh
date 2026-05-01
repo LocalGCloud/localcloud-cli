@@ -12,7 +12,12 @@ echo "=== Building console ==="
 cd localcloud-console && npm run build && cd ..
 
 echo "=== Building Docker image ==="
-docker build -t localcloud/localcloud:latest .
+BUILD_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "dev")
+BUILD_DATE=$(date -u +%Y%m%d)
+docker build \
+  --build-arg BUILD_HASH="$BUILD_HASH" \
+  --build-arg BUILD_DATE="$BUILD_DATE" \
+  -t localcloud/localcloud:latest .
 
 echo "=== Removing existing container ==="
 docker rm -f $(docker ps -a -q --filter "name=localcloud") 2>/dev/null || true

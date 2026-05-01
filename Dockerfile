@@ -297,6 +297,21 @@ RUN su - localcloud -s /bin/bash -c " \
     /usr/lib/postgresql/17/bin/createdb -h /var/run/postgresql localcloud && \
     /usr/lib/postgresql/17/bin/pg_ctl -D /var/lib/localcloud/pgdata stop"
 
+# Version file for update checks — includes version, short git hash, and build date
+COPY VERSION /opt/localcloud/VERSION
+ARG BUILD_HASH=unknown
+ARG BUILD_DATE=unknown
+RUN VERSION=$(cat /opt/localcloud/VERSION | tr -d '[:space:]') && \
+    echo "${VERSION}+${BUILD_HASH}.${BUILD_DATE}" > /opt/localcloud/VERSION && \
+    PRETTY_DATE=$(date -d "${BUILD_DATE}" +"%B %d, %Y" 2>/dev/null || echo "${BUILD_DATE}") && \
+    echo "${VERSION} (${PRETTY_DATE})" > /opt/localcloud/VERSION_DISPLAY
+ENV LOCALCLOUD_VERSION_FILE=/opt/localcloud/VERSION
+
+# Digest placeholder — overwritten by CI/CD after push with actual image digest.
+# For local builds, left as "local" so update check falls back to date comparison.
+ARG IMAGE_DIGEST=local
+RUN echo "${IMAGE_DIGEST}" > /opt/localcloud/DIGEST
+
 # Copy pre-built server JAR (run `cd localcloud-server && ./gradlew shadowJar` before docker build)
 COPY localcloud-server/build/libs/localcloud-server-*-all.jar /opt/localcloud/server.jar
 
