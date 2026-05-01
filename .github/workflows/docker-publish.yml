@@ -62,6 +62,7 @@ jobs:
             type=sha,prefix=
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -70,5 +71,8 @@ jobs:
           pull: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_HASH=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp || github.run_id }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
