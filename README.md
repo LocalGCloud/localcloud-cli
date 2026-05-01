@@ -308,7 +308,7 @@ steps:
   - run: terraform init && terraform apply -auto-approve
 ```
 
-See `terraform/examples/` for complete configs and pipeline examples.
+See [Terraform Compatibility Matrix](terraform/COMPATIBILITY.md) for Phase 2/3 resources and full details. See `terraform/examples/` for complete configs and pipeline examples.
 
 ## Docker Compose (for contributors)
 
@@ -345,11 +345,14 @@ See the [Developer Guide](DEVELOPER_GUIDE.md) for complete documentation includi
 
 - All service details and limitations
 - SDK code examples (Python, Java)
+- Terraform integration guide
 - Environment variable reference
 - Docker Compose integration patterns
 - IAM modes (permissive, strict, gcp-live)
 - Seed file format
 - Troubleshooting
+
+Also see: [Terraform Compatibility Matrix](terraform/COMPATIBILITY.md) | [Console Quickstart](CONSOLE_QUICKSTART.md)
 
 ## License
 

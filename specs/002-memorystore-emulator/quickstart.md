@@ -79,7 +79,13 @@ services:
           role: "admin"
 ```
 
-## 6. Switch to Production
+## 6. Terraform Support
+
+Memorystore (`google_redis_instance`) is **not yet supported** via Terraform (planned for Phase 3). The SDK-based workflow above is the recommended approach for local development.
+
+For services that do support Terraform (GCS, Pub/Sub, BigQuery, Spanner), see the [Terraform Compatibility Matrix](../../terraform/COMPATIBILITY.md).
+
+## 7. Switch to Production
 
 ```bash
 # Remove the local override — your code now hits Google Memorystore

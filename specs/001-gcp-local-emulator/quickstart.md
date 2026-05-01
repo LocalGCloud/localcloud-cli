@@ -197,6 +197,24 @@ localcloud reset --seed ./seed.yaml
 localcloud stop
 ```
 
+## Using with Terraform
+
+LocalCloud works as a drop-in replacement for Google Cloud in Terraform workflows. No changes to `.tf` files needed.
+
+```bash
+# Point Terraform at LocalCloud
+eval $(curl -s 'http://localhost:8080/_localcloud/env?format=terraform')
+
+# Run Terraform normally
+terraform init && terraform apply
+```
+
+Supported resources (Phase 1): `google_storage_bucket`, `google_pubsub_topic`, `google_pubsub_subscription`, `google_bigquery_dataset`, `google_bigquery_table`, `google_spanner_instance`, `google_spanner_database`.
+
+See [Terraform Compatibility Matrix](../../terraform/COMPATIBILITY.md) for the full list including Phase 2/3 resources.
+
+---
+
 ## Moving to Production
 
-When deploying to GCP, simply remove the `*_EMULATOR_HOST` environment variables. Your application code requires zero changes - only configuration differs between local and production.
+When deploying to GCP, simply remove the `*_EMULATOR_HOST` environment variables (or unset the `GOOGLE_*_CUSTOM_ENDPOINT` vars if using Terraform). Your application code requires zero changes - only configuration differs between local and production.

@@ -66,6 +66,7 @@ localcloud console
 ## Next Steps
 
 - Read the full [Developer Guide](DEVELOPER_GUIDE.md) for complete documentation
+- See the [Terraform Compatibility Matrix](terraform/COMPATIBILITY.md) for using Terraform with LocalCloud
 - Check `CLAUDE.md` in project root for development guidelines
 - See `examples/python-sdk-demo/` for SDK usage with LocalCloud
 

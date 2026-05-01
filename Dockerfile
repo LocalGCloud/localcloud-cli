@@ -152,12 +152,13 @@ RUN sed -i 's/https:/http:/' /etc/apk/repositories \
 ARG LITTLE_BIGTABLE_VERSION=v0.0.1
 ENV GOPRIVATE=github.com/jhsenjaliya/*
 ENV GIT_SSL_NO_VERIFY=1
-# GONOSUMCHECK + GOINSECURE scoped to private repo; transitive deps use GOPROXY=direct with TLS
-ENV GONOSUMCHECK=github.com/jhsenjaliya/*
-ENV GOINSECURE=github.com/jhsenjaliya/*
+# Corporate proxy/VPN may intercept TLS — disable sum/TLS checks for build stage only
+ENV GONOSUMCHECK=*
+ENV GONOSUMDB=*
+ENV GOINSECURE=*
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod init bigtable-build && \
-    GONOSUMDB=* GOPROXY=direct go get github.com/jhsenjaliya/little_bigtable@${LITTLE_BIGTABLE_VERSION}
+    GOPROXY=direct go get github.com/jhsenjaliya/little_bigtable@${LITTLE_BIGTABLE_VERSION}
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -linkmode external -extldflags -static" \

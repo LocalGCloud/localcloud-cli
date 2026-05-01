@@ -87,6 +87,79 @@ Or set manually:
 
 ---
 
+## Terraform Integration
+
+LocalCloud works as a drop-in replacement for Google Cloud in Terraform workflows. No changes to `.tf` files — just set environment variables.
+
+### Quick Start
+
+```bash
+# Point Terraform at LocalCloud (one command)
+eval $(curl -s 'http://localhost:8080/_localcloud/env?format=terraform')
+
+# Run Terraform normally
+terraform init
+terraform plan
+terraform apply
+```
+
+This sets `GOOGLE_*_CUSTOM_ENDPOINT` env vars that the Google Terraform provider reads automatically. Authentication is skipped (permissive IAM mode).
+
+### Supported Resources (Phase 1)
+
+| Terraform Resource | LocalCloud Emulator |
+|---|---|
+| `google_storage_bucket` / `google_storage_bucket_object` | GCS (fake-gcs-server) |
+| `google_pubsub_topic` / `google_pubsub_subscription` | Pub/Sub emulator |
+| `google_bigquery_dataset` / `google_bigquery_table` | BigQuery (DuckDB) |
+| `google_spanner_instance` / `google_spanner_database` | Spanner emulator |
+
+Phase 2 (Secret Manager, Cloud Tasks) and Phase 3 (Compute, Cloud Run, GKE, Memorystore) are planned — see [Terraform Compatibility Matrix](terraform/COMPATIBILITY.md) for full details.
+
+### Docker Compose with Terraform
+
+```yaml
+services:
+  localcloud:
+    image: localcloud/localcloud:latest
+    ports:
+      - "8080:8080"
+      - "4443:4443"
+      - "8085:8085"
+      - "9050:9050"
+      - "9010:9010"
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/_localcloud/health"]
+      interval: 10s
+      retries: 5
+```
+
+```bash
+# After container is healthy
+eval $(curl -s 'http://localhost:8080/_localcloud/env?format=terraform')
+terraform apply
+```
+
+### CI/CD (GitHub Actions)
+
+```yaml
+services:
+  localcloud:
+    image: localcloud/localcloud:latest
+    ports: ["8080:8080", "4443:4443", "8085:8085", "9050:9050", "9010:9010"]
+    options: --memory 4g
+
+steps:
+  - run: eval $(curl -s http://localhost:8080/_localcloud/env?format=terraform)
+  - run: terraform init && terraform apply -auto-approve
+  - run: terraform destroy -auto-approve
+```
+
+See `terraform/examples/` for complete configs and pipeline examples.
+
+---
+
 ## Emulated Services
 
 ### Port Map
