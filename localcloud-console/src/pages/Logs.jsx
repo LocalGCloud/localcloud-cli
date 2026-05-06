@@ -45,14 +45,20 @@ function matchesStatusFilter(status, filter) {
 
 export default function Logs(props) {
     const [requests, setRequests] = createSignal([]);
-    const [loading, setLoading] = createSignal(false);
+    const [loading, setLoading] = createSignal(true);
     const [error, setError] = createSignal(null);
     const [methodFilter, setMethodFilter] = createSignal('ALL');
     const [statusFilter, setStatusFilter] = createSignal('ALL');
-    const [autoRefresh, setAutoRefresh] = createSignal(true);
+    const [autoRefresh, setAutoRefresh] = createSignal((() => {
+        try { return localStorage.getItem('localcloud-logs-autorefresh') !== 'false'; } catch { return true; }
+    })());
+    const [refreshInterval, setRefreshInterval] = createSignal((() => {
+        try { return parseInt(localStorage.getItem('localcloud-logs-interval') || '3', 10); } catch { return 3; }
+    })());
+    let isInitialLoad = true;
 
     const fetchRequests = async () => {
-        setLoading(true);
+        if (isInitialLoad) setLoading(true);
         setError(null);
         try {
             const data = await api.requests();
@@ -61,7 +67,10 @@ export default function Logs(props) {
         } catch (err) {
             setError('Failed to load requests: ' + err.message);
         } finally {
-            setLoading(false);
+            if (isInitialLoad) {
+                isInitialLoad = false;
+                setLoading(false);
+            }
         }
     };
 
@@ -73,9 +82,21 @@ export default function Logs(props) {
 
     createEffect(() => {
         if (!autoRefresh()) return;
-        const timer = setInterval(fetchRequests, 3000);
+        const interval = refreshInterval() * 1000;
+        const timer = setInterval(fetchRequests, interval);
         onCleanup(() => clearInterval(timer));
     });
+
+    const toggleAutoRefresh = (checked) => {
+        setAutoRefresh(checked);
+        try { localStorage.setItem('localcloud-logs-autorefresh', String(checked)); } catch {}
+    };
+
+    const applyInterval = (seconds) => {
+        if (seconds < 1 || seconds > 60) return;
+        setRefreshInterval(seconds);
+        try { localStorage.setItem('localcloud-logs-interval', String(seconds)); } catch {}
+    };
 
     const filteredRequests = () => {
         return requests().filter(r =>
@@ -124,9 +145,23 @@ export default function Logs(props) {
                     <input
                         type="checkbox"
                         checked={autoRefresh()}
-                        onChange={e => setAutoRefresh(e.currentTarget.checked)}
+                        onChange={e => toggleAutoRefresh(e.currentTarget.checked)}
                     />
                     Auto-refresh
+                </label>
+
+                <label class="refresh-interval-label">
+                    Every
+                    <input
+                        type="number"
+                        min="1"
+                        max="60"
+                        value={refreshInterval()}
+                        onChange={e => applyInterval(parseInt(e.currentTarget.value) || 3)}
+                        disabled={!autoRefresh()}
+                        style="width:50px"
+                    />
+                    sec
                 </label>
 
                 <button class="btn btn-secondary" onClick={fetchRequests} disabled={loading()}>

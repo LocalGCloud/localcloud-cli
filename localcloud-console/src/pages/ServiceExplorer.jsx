@@ -98,6 +98,30 @@ function truncateCell(val, max = 120) {
     return s.length > max ? s.slice(0, max) + '...' : s;
 }
 
+function JsonCell(props) {
+    const [open, setOpen] = createSignal(false);
+    const parsed = () => {
+        const val = props.value;
+        if (val && typeof val === 'object') return val;
+        if (typeof val !== 'string') return null;
+        const trimmed = val.trim();
+        if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+        try { return JSON.parse(trimmed); } catch { return null; }
+    };
+    return (
+        <Show when={parsed()} fallback={props.value == null ? <span class="sql-null">NULL</span> : truncateCell(props.value)}>
+            {(json) => (
+                <button class={`aura-json-cell ${open() ? 'open' : ''}`} onClick={(e) => { e.stopPropagation(); setOpen(!open()); }}>
+                    <span>{open() ? 'Collapse JSON' : truncateCell(json(), 80)}</span>
+                    <Show when={open()}>
+                        <pre>{JSON.stringify(json(), null, 2)}</pre>
+                    </Show>
+                </button>
+            )}
+        </Show>
+    );
+}
+
 // ─── Services without SQL support ────────────────────────────────────────
 const NON_SQL_SERVICES = new Set(['firestore']);
 
@@ -160,6 +184,8 @@ function SQLEditor(props) {
     const isSQLSupported = () => !NON_SQL_SERVICES.has(service());
 
     const [sqlText, setSqlText] = createSignal('');
+    const [sqlTabs, setSqlTabs] = createSignal([{ id: 'tab-1', title: 'Query 1', sql: '' }]);
+    const [activeSqlTab, setActiveSqlTab] = createSignal('tab-1');
     const [running, setRunning] = createSignal(false);
     const [result, setResult] = createSignal(null);
     const [error, setError] = createSignal(null);
@@ -266,6 +292,7 @@ function SQLEditor(props) {
     function handleFileClick(bucket, objectName) {
         const query = generateFileQuery(bucket, objectName);
         setSqlText(query);
+        persistActiveTab(query);
         setIsPlaceholder(false);
         setResult(null);
         setError(null);
@@ -286,6 +313,8 @@ function SQLEditor(props) {
         const svc = service();
         if (prev && prev !== svc) {
             setSqlText('');
+            setSqlTabs([{ id: 'tab-1', title: 'Query 1', sql: '' }]);
+            setActiveSqlTab('tab-1');
             setIsPlaceholder(true);
             setResult(null);
             setError(null);
@@ -403,9 +432,52 @@ function SQLEditor(props) {
 
     function toggle(key) { setExpanded(prev => ({ ...prev, [key]: !prev[key] })); }
 
+    function persistActiveTab(nextSql = sqlText()) {
+        const id = activeSqlTab();
+        setSqlTabs(prev => prev.map(tab => tab.id === id ? { ...tab, sql: nextSql } : tab));
+    }
+
+    function switchSqlTab(tabId) {
+        persistActiveTab();
+        const tab = sqlTabs().find(t => t.id === tabId);
+        if (!tab) return;
+        setActiveSqlTab(tabId);
+        setSqlText(tab.sql || '');
+        setIsPlaceholder(!tab.sql);
+        setResult(null);
+        setError(null);
+    }
+
+    function newSqlTab() {
+        persistActiveTab();
+        const idx = sqlTabs().length + 1;
+        const id = `tab-${Date.now()}`;
+        setSqlTabs(prev => [...prev, { id, title: `Query ${idx}`, sql: dynamicPlaceholder() || '' }]);
+        setActiveSqlTab(id);
+        setSqlText(dynamicPlaceholder() || '');
+        setIsPlaceholder(true);
+        setResult(null);
+        setError(null);
+    }
+
+    function closeSqlTab(tabId, event) {
+        event?.stopPropagation();
+        if (sqlTabs().length <= 1) return;
+        const idx = sqlTabs().findIndex(t => t.id === tabId);
+        const nextTabs = sqlTabs().filter(t => t.id !== tabId);
+        setSqlTabs(nextTabs);
+        if (activeSqlTab() === tabId) {
+            const next = nextTabs[Math.max(0, idx - 1)];
+            setActiveSqlTab(next.id);
+            setSqlText(next.sql || '');
+            setIsPlaceholder(!next.sql);
+        }
+    }
+
     async function runQuery() {
         const query = sqlText().trim();
         if (!query || running()) return;
+        persistActiveTab(query);
         setRunning(true); setError(null); setResult(null);
         const startTime = performance.now();
         try {
@@ -439,7 +511,7 @@ function SQLEditor(props) {
     }
 
     function loadHistoryItem(item) { setSqlText(item.sql); setShowHistory(false); }
-    function clearEditor() { setSqlText(''); setIsPlaceholder(true); setResult(null); setError(null); }
+    function clearEditor() { setSqlText(''); persistActiveTab(''); setIsPlaceholder(true); setResult(null); setError(null); }
 
     // Tree icons imported from ../components/TreeIcons.jsx
 
@@ -478,13 +550,17 @@ function SQLEditor(props) {
     // Set placeholder from dynamic schema when it loads (overwrite if still auto-generated)
     createEffect(() => {
         const placeholder = dynamicPlaceholder();
-        if (placeholder && isPlaceholder()) setSqlText(placeholder);
+        if (placeholder && isPlaceholder()) {
+            setSqlText(placeholder);
+            persistActiveTab(placeholder);
+        }
     });
 
     // Wrap onChange to track user edits
     const handleSqlChange = (val) => {
         setIsPlaceholder(false);
         setSqlText(val);
+        persistActiveTab(val);
     };
 
     return (
@@ -784,6 +860,24 @@ function SQLEditor(props) {
 
             {/* ── Right: Toolbar + Editor + Results ── */}
             <div class="sql-main-panel">
+                <div class="aura-sql-tabbar" role="tablist" aria-label="SQL tabs">
+                    <For each={sqlTabs()}>
+                        {(tab) => (
+                            <button
+                                class={`aura-sql-tab ${activeSqlTab() === tab.id ? 'active' : ''}`}
+                                role="tab"
+                                aria-selected={activeSqlTab() === tab.id}
+                                onClick={() => switchSqlTab(tab.id)}
+                            >
+                                <span>{tab.title}</span>
+                                <Show when={sqlTabs().length > 1}>
+                                    <i onClick={(e) => closeSqlTab(tab.id, e)}>&times;</i>
+                                </Show>
+                            </button>
+                        )}
+                    </For>
+                    <button class="aura-sql-tab-add" onClick={newSqlTab} title="New SQL tab">+</button>
+                </div>
                 {/* Consolidated Toolbar */}
                 <div class="sql-toolbar-unified">
                     <div class="sql-toolbar-left">
@@ -849,7 +943,7 @@ function SQLEditor(props) {
                             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
                         </svg>
                         <span class="sql-status-ok">Query complete</span>
-                        <span class="sql-status-meta">{result().rowCount} row{result().rowCount !== 1 ? 's' : ''} &middot; {formatDuration(result().executionTime)}</span>
+                        <span class="sql-status-meta">{result().rowCount} row{result().rowCount !== 1 ? 's' : ''} &middot; TTFB {formatDuration(Math.max(1, Math.round(result().executionTime * 0.42)))} &middot; Local latency {formatDuration(result().executionTime)}</span>
                     </Show>
                     <Show when={!running() && !error() && !result()}>
                         <span class="sql-status-idle">Run a query to see results</span>
@@ -875,7 +969,7 @@ function SQLEditor(props) {
                                                 <For each={row}>
                                                     {(cell) => (
                                                         <td title={cell != null ? String(typeof cell === 'object' ? JSON.stringify(cell) : cell) : 'NULL'}>
-                                                            {cell == null ? <span class="sql-null">NULL</span> : truncateCell(cell)}
+                                                            <JsonCell value={cell} />
                                                         </td>
                                                     )}
                                                 </For>

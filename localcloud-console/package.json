@@ -1,7 +1,7 @@
 {
   "name": "localcloud-console",
   "version": "0.1.0",
-  "description": "Web console for LocalCloud GCP emulator",
+  "description": "Aura/Gemini web console for LocalCloud GCP emulator",
   "author": "Jay Sen <jaysen@apache.org>",
   "license": "Apache-2.0",
   "type": "module",

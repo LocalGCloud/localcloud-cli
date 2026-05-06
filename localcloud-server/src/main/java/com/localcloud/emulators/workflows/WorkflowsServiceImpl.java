@@ -36,8 +36,13 @@ public class WorkflowsServiceImpl {
         this.connectorRegistry = new ConnectorRegistry();
         this.connectorRegistry.setChildWorkflowRunner((workflowId, childArgs) -> {
             try {
-                // Look up workflow — try multiple project/location combos
-                Map<String, Object> workflow = store.getWorkflow("local-project", "us-central1", workflowId);
+                // TODO: Pass project/location from parent ExecutionContext — currently hardcoded
+                // childArgs should contain project and location from parent workflow
+                String projectId = childArgs != null && childArgs.containsKey("project")
+                    ? (String) childArgs.get("project") : "local-project";
+                String locationId = childArgs != null && childArgs.containsKey("location")
+                    ? (String) childArgs.get("location") : "us-central1";
+                Map<String, Object> workflow = store.getWorkflow(projectId, locationId, workflowId);
                 if (workflow == null) throw new RuntimeException("Child workflow not found: " + workflowId);
                 String source = (String) workflow.get("source_contents");
                 WorkflowDefinition def = WorkflowParser.parse(source);

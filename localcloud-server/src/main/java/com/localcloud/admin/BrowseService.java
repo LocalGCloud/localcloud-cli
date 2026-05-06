@@ -309,45 +309,91 @@ public class BrowseService {
         }
         if ("messages".equals(resourceType) && resourceId != null) {
             // Pull messages from subscription without acknowledging
-            String pullUrl = pubsubBase + "/v1/projects/" + projectId + "/subscriptions/" + resourceId + ":pull";
-            String pullBody = "{\"maxMessages\": 100, \"returnImmediately\": true}";
-            try {
-                String response = proxyPost(pullUrl, pullBody);
-                @SuppressWarnings("unchecked")
-                Map<String, Object> pullResp = mapper.readValue(response, Map.class);
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> receivedMessages = (List<Map<String, Object>>) pullResp.get("receivedMessages");
-
-                List<Map<String, Object>> messages = new ArrayList<>();
-                if (receivedMessages != null) {
-                    for (Map<String, Object> rm : receivedMessages) {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> msg = (Map<String, Object>) rm.get("message");
-                        if (msg != null) {
-                            Map<String, Object> decoded = new LinkedHashMap<>();
-                            decoded.put("messageId", msg.get("messageId"));
-                            decoded.put("publishTime", msg.get("publishTime"));
-                            // Decode base64 data
-                            String data = (String) msg.get("data");
-                            if (data != null) {
-                                try {
-                                    decoded.put("data", new String(java.util.Base64.getDecoder().decode(data), java.nio.charset.StandardCharsets.UTF_8));
-                                } catch (Exception e) {
-                                    decoded.put("data", data);
-                                }
-                            }
-                            decoded.put("attributes", msg.get("attributes"));
-                            messages.add(decoded);
-                        }
-                    }
-                }
-                return mapper.writeValueAsString(Map.of("messages", messages, "subscription", resourceId));
-            } catch (Exception e) {
-                logger.warn("Failed to pull Pub/Sub messages: {}", e.getMessage());
-                return mapper.writeValueAsString(Map.of("messages", List.of(), "subscription", resourceId));
-            }
+            return pullPubSubMessages(resourceId, projectId);
+        }
+        if ("topics".equals(resourceType) && resourceId != null && resourceId.endsWith("/messages")) {
+            // Browse messages in a topic by creating a temporary subscription, pulling, then deleting
+            String topicName = resourceId.replace("/messages", "");
+            return browseTopicMessages(topicName, projectId);
         }
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Pub/Sub browse path"));
+    }
+
+    /**
+     * Pull messages from a subscription without acknowledging them.
+     */
+    private String pullPubSubMessages(String subscriptionId, String projectId) throws Exception {
+        String pullUrl = pubsubBase + "/v1/projects/" + projectId + "/subscriptions/" + subscriptionId + ":pull";
+        String pullBody = "{\"maxMessages\": 100, \"returnImmediately\": true}";
+        try {
+            String response = proxyPost(pullUrl, pullBody);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> pullResp = mapper.readValue(response, Map.class);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> receivedMessages = (List<Map<String, Object>>) pullResp.get("receivedMessages");
+
+            List<Map<String, Object>> messages = new ArrayList<>();
+            if (receivedMessages != null) {
+                for (Map<String, Object> rm : receivedMessages) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> msg = (Map<String, Object>) rm.get("message");
+                    if (msg != null) {
+                        Map<String, Object> decoded = new LinkedHashMap<>();
+                        decoded.put("messageId", msg.get("messageId"));
+                        decoded.put("publishTime", msg.get("publishTime"));
+                        // Decode base64 data
+                        String data = (String) msg.get("data");
+                        if (data != null) {
+                            try {
+                                decoded.put("data", new String(java.util.Base64.getDecoder().decode(data), java.nio.charset.StandardCharsets.UTF_8));
+                            } catch (Exception e) {
+                                decoded.put("data", data);
+                            }
+                        }
+                        decoded.put("attributes", msg.get("attributes"));
+                        messages.add(decoded);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("messages", messages, "subscription", subscriptionId));
+        } catch (Exception e) {
+            logger.warn("Failed to pull Pub/Sub messages: {}", e.getMessage());
+            return mapper.writeValueAsString(Map.of("messages", List.of(), "subscription", subscriptionId));
+        }
+    }
+
+    /**
+     * Browse messages in a topic by creating a temporary subscription, pulling messages, then cleaning up.
+     * This allows browsing messages without requiring a pre-existing subscription.
+     */
+    private String browseTopicMessages(String topicName, String projectId) throws Exception {
+        String tempSubId = "_temp_browse_" + System.currentTimeMillis();
+        String topicPath = "projects/" + projectId + "/topics/" + topicName;
+        String subPath = pubsubBase + "/v1/projects/" + projectId + "/subscriptions/" + tempSubId;
+
+        try {
+            // 1. Create temporary subscription
+            String subBody = mapper.writeValueAsString(Map.of(
+                "topic", topicPath,
+                "ackDeadlineSeconds", 10
+            ));
+            try {
+                proxyPut(subPath, subBody);
+            } catch (Exception e) {
+                // Subscription may already exist — continue anyway
+                logger.debug("Temporary subscription may already exist: {}", e.getMessage());
+            }
+
+            // 2. Pull messages
+            return pullPubSubMessages(tempSubId, projectId);
+        } finally {
+            // 3. Clean up temporary subscription
+            try {
+                proxyDelete(subPath);
+            } catch (Exception e) {
+                logger.debug("Failed to clean up temporary subscription: {}", e.getMessage());
+            }
+        }
     }
 
     // ========== BigQuery ==========
@@ -1056,6 +1102,20 @@ public class BrowseService {
 
         java.net.http.HttpResponse<String> response = httpClient.send(request, BodyHandlers.ofString());
         return response.body();
+    }
+
+    private void proxyPut(String url, String body) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(Duration.ofSeconds(10))
+                .header("Content-Type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+
+        java.net.http.HttpResponse<String> response = httpClient.send(request, BodyHandlers.ofString());
+        if (response.statusCode() >= 400) {
+            throw new RuntimeException("HTTP PUT " + url + " failed with status " + response.statusCode());
+        }
     }
 
     private void proxyDelete(String url) throws Exception {

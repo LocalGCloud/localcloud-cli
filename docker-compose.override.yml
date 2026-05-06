@@ -1,11 +1,10 @@
-# Example: Configure your application to use LocalCloud
+# Example: Override LocalCloud services with custom configuration
 # Usage: docker compose -f docker-compose.yml -f docker-compose.override.yml up
 #
-# Uncomment and modify the 'app' service below for your application:
+# This file is optional. Uncomment and modify the services below to override defaults:
 #
 # services:
-#   app:
-#     build: ./my-app
+#   localcloud:
 #     environment:
 #       STORAGE_EMULATOR_HOST: "http://localcloud:4443"
 #       PUBSUB_EMULATOR_HOST: "localcloud:8085"

@@ -4,26 +4,28 @@
  * Project-aware: passes ?project= on browse/env/reset calls.
  */
 
+import { createSignal } from 'solid-js';
+
 const BASE = '';
 
-let _activeProject = null;
+const [_activeProject, _setActiveProject] = createSignal(null);
 
 export function setActiveProject(projectId) {
-    _activeProject = projectId;
+    _setActiveProject(projectId);
 }
 
 export function getActiveProject() {
-    return _activeProject;
+    return _activeProject();
 }
 
 function projectParam() {
-    return _activeProject ? `?project=${encodeURIComponent(_activeProject)}` : '';
+    return _activeProject() ? `?project=${encodeURIComponent(_activeProject())}` : '';
 }
 
 function appendProject(path) {
-    if (!_activeProject) return path;
+    if (!_activeProject()) return path;
     const sep = path.includes('?') ? '&' : '?';
-    return `${path}${sep}project=${encodeURIComponent(_activeProject)}`;
+    return `${path}${sep}project=${encodeURIComponent(_activeProject())}`;
 }
 
 async function handleResponse(r) {

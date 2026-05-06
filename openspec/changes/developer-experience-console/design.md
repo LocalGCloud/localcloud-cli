@@ -1,6 +1,6 @@
 ## Context
 
-The LocalCloud console (Solid.js + Flask) currently has 6 pages: Dashboard, Services, Logs, Data Browser, Usage, and Settings. The Logs page shows a flat table of requests with method/path/status/latency, polled every 3 seconds. The Data Browser supports browsing and basic CRUD. There is no request detail inspection, no cross-service tracing, no interactive query editors, no chaos testing, and no event replay.
+The LocalCloud console (Solid.js + Armeria Java gateway) currently has 6 pages: Dashboard, Services, Logs, Data Browser, Usage, and Settings. The Logs page shows a flat table of requests with method/path/status/latency, polled every 3 seconds. The Data Browser supports browsing and basic CRUD. There is no request detail inspection, no cross-service tracing, no interactive query editors, no chaos testing, and no event replay.
 
 The Java gateway already has `RequestLogger` (captures method, path, status, duration, service), `EventBus` (cross-service event propagation), and `IamMiddleware`. These provide the server-side foundation for most proposed features.
 
@@ -37,7 +37,7 @@ Store the traceId in `RequestLogEntry`. The frontend groups entries by traceId t
 
 ### D3: WebSocket for real-time log streaming
 
-Add a WebSocket endpoint at `/_localcloud/ws/logs` that pushes new request log entries as they arrive. The Flask backend proxies this or implements its own SSE endpoint at `/api/stream/logs`. This replaces 3-second polling.
+Add a WebSocket endpoint at `/_localcloud/ws/logs` that pushes new request log entries as they arrive. The Armeria gateway implements this directly. This replaces 3-second polling.
 
 Fall back to polling if WebSocket is unavailable (e.g., behind certain proxies).
 
@@ -91,7 +91,7 @@ Rendered using a simple force-directed or hierarchical layout (no heavy graph li
 
 **Request body capture increases memory usage** → Bounded ring buffer with configurable max entries (default 1000) and max body size (default 1MB). Worst case: 1000 * 2MB = 2GB. Mitigate by defaulting to metadata-only for bodies > 100KB.
 
-**WebSocket adds complexity** → Fall back to SSE (simpler, one-directional) if WebSocket proves complex with Flask. SSE is sufficient for log streaming.
+**WebSocket adds complexity** → Fall back to SSE (simpler, one-directional) if WebSocket proves complex with Armeria. SSE is sufficient for log streaming.
 
 **Fault injection could confuse developers** → Show a prominent banner in the console when any faults are active: "Fault injection active: GCS returning 503". Clear all faults on emulator restart.
 

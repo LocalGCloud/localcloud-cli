@@ -4,14 +4,19 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import org.apache.datasketches.hll.HllSketch;
+import org.apache.datasketches.hll.Union;
+import org.apache.datasketches.hll.TgtHllType;
+import org.roaringbitmap.RoaringBitmap;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -85,21 +90,54 @@ public class MemorystoreStore {
 
     /**
      * SET with NX (only if not exists) or XX (only if exists).
+     * Uses atomic operations to avoid race conditions.
      * @return true if the key was set, false otherwise.
      */
     public boolean setStringConditional(int db, String key, String value, long ttlSeconds, boolean nx, boolean xx) {
         if (nx) {
-            // Only set if key does not exist
-            boolean exists = exists(db, key);
-            if (exists) return false;
-            setString(db, key, value, ttlSeconds);
-            return true;
+            // NX: Only set if key does NOT exist - use atomic INSERT with ON CONFLICT DO NOTHING
+            // If a row is inserted, the key didn't exist. If 0 rows affected, it existed.
+            String jsonValue = toJsonString(value);
+            String sql = "INSERT INTO redis_data (project_id, db_number, key_name, data_type, value, ttl_expires_at) " +
+                         "VALUES (?, ?, ?, 'string', ?::jsonb, " + ttlExpr(ttlSeconds) + ") " +
+                         "ON CONFLICT (project_id, db_number, key_name) DO NOTHING";
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, projectId);
+                ps.setInt(2, db);
+                ps.setString(3, key);
+                ps.setObject(4, jsonValue, Types.OTHER);
+                if (ttlSeconds > 0) {
+                    ps.setLong(5, ttlSeconds);
+                }
+                int rows = ps.executeUpdate();
+                return rows > 0;
+            } catch (SQLException e) {
+                logger.error("Failed to set NX string key={}: {}", key, e.getMessage());
+                return false;
+            }
         }
         if (xx) {
-            boolean exists = exists(db, key);
-            if (!exists) return false;
-            setString(db, key, value, ttlSeconds);
-            return true;
+            // XX: Only set if key EXISTS - use atomic UPDATE and check affected rows
+            String jsonValue = toJsonString(value);
+            String sql = "UPDATE redis_data SET data_type = 'string', value = ?::jsonb, ttl_expires_at = " + ttlExpr(ttlSeconds) +
+                         "WHERE project_id = ? AND db_number = ? AND key_name = ? AND data_type = 'string'" +
+                         (ttlSeconds > 0 ? "" : " OR ttl_expires_at IS NOT NULL AND ttl_expires_at <= now()");
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setObject(1, jsonValue, Types.OTHER);
+                ps.setString(2, projectId);
+                ps.setInt(3, db);
+                ps.setString(4, key);
+                if (ttlSeconds > 0) {
+                    ps.setLong(5, ttlSeconds);
+                }
+                int rows = ps.executeUpdate();
+                return rows > 0;
+            } catch (SQLException e) {
+                logger.error("Failed to set XX string key={}: {}", key, e.getMessage());
+                return false;
+            }
         }
         setString(db, key, value, ttlSeconds);
         return true;
@@ -263,7 +301,34 @@ public class MemorystoreStore {
         }
     }
 
-    // ---- Set operations ----
+    // ---- Set operations (using RoaringBitmap for efficient storage) ----
+
+    private static RoaringBitmap deserializeSet(String json) throws JsonProcessingException {
+        if (json == null || json.isEmpty()) return new RoaringBitmap();
+        List<String> list = mapper.readValue(json, new TypeReference<List<String>>() {});
+        RoaringBitmap rb = new RoaringBitmap();
+        for (String item : list) {
+            rb.add((int) hashStringToInt64(item));
+        }
+        return rb;
+    }
+
+    private static String serializeSet(RoaringBitmap rb) throws JsonProcessingException {
+        if (rb == null || rb.isEmpty()) return "[]";
+        List<String> list = new ArrayList<>();
+        for (int i : rb) {
+            list.add(hashInt64ToString(i));
+        }
+        return mapper.writeValueAsString(list);
+    }
+
+    private static long hashStringToInt64(String s) {
+        return s.hashCode() & 0xFFFFFFFFL;
+    }
+
+    private static String hashInt64ToString(long hash) {
+        return String.valueOf(hash);
+    }
 
     public Set<String> getSetMembers(int db, String key) {
         String sql = "SELECT value FROM redis_data WHERE project_id = ? AND db_number = ? AND key_name = ? AND data_type = 'set'" + TTL_FILTER;
@@ -274,8 +339,7 @@ public class MemorystoreStore {
             ps.setString(3, key);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    List<String> list = mapper.readValue(rs.getString("value"), new TypeReference<List<String>>() {});
-                    return new HashSet<>(list);
+                    return deserializeSetToSet(rs.getString("value"));
                 }
                 return null;
             }
@@ -285,30 +349,307 @@ public class MemorystoreStore {
         }
     }
 
+    private java.util.HashSet<String> deserializeSetToSet(String json) throws JsonProcessingException {
+        RoaringBitmap rb = deserializeSet(json);
+        java.util.HashSet<String> result = new java.util.HashSet<>();
+        for (int i : rb) {
+            result.add(hashInt64ToString(i));
+        }
+        return result;
+    }
+
     public int addSetMembers(int db, String key, List<String> members) {
-        Set<String> existing = getSetMembers(db, key);
-        if (existing == null) existing = new HashSet<>();
+        RoaringBitmap existing = getSetMembersRoaring(db, key);
+        if (existing == null) existing = new RoaringBitmap();
         int added = 0;
         for (String m : members) {
-            if (existing.add(m)) added++;
+            long h = hashStringToInt64(m);
+            if (!existing.contains((int) h)) added++;
+            existing.add((int) h);
         }
-        upsertRaw(db, key, "set", toJson(new ArrayList<>(existing)), 0);
+        try {
+            upsertRaw(db, key, "set", serializeSet(existing), 0);
+        } catch (JsonProcessingException e) {
+            logger.error("Failed to serialize set key={}: {}", key, e.getMessage());
+        }
         return added;
     }
 
     public int removeSetMembers(int db, String key, List<String> members) {
-        Set<String> existing = getSetMembers(db, key);
+        RoaringBitmap existing = getSetMembersRoaring(db, key);
         if (existing == null) return 0;
         int removed = 0;
         for (String m : members) {
-            if (existing.remove(m)) removed++;
+            long h = hashStringToInt64(m);
+            if (existing.contains((int) h)) removed++;
+            existing.remove((int) h);
         }
         if (existing.isEmpty()) {
             deleteKeys(db, List.of(key));
         } else {
-            upsertRaw(db, key, "set", toJson(new ArrayList<>(existing)), 0);
+            try {
+                upsertRaw(db, key, "set", serializeSet(existing), 0);
+            } catch (JsonProcessingException e) {
+                logger.error("Failed to serialize set key={}: {}", key, e.getMessage());
+            }
         }
         return removed;
+    }
+
+    private RoaringBitmap getSetMembersRoaring(int db, String key) {
+        String sql = "SELECT value FROM redis_data WHERE project_id = ? AND db_number = ? AND key_name = ? AND data_type = 'set'" + TTL_FILTER;
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, projectId);
+            ps.setInt(2, db);
+            ps.setString(3, key);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return deserializeSet(rs.getString("value"));
+                }
+                return null;
+            }
+        } catch (SQLException | JsonProcessingException e) {
+            logger.error("Failed to get set key={}: {}", key, e.getMessage());
+            return null;
+        }
+    }
+
+    // Set operations as List (for compatibility)
+    public java.util.HashSet<String> getSetMembersList(int db, String key) {
+        String sql = "SELECT value FROM redis_data WHERE project_id = ? AND db_number = ? AND key_name = ? AND data_type = 'set'" + TTL_FILTER;
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, projectId);
+            ps.setInt(2, db);
+            ps.setString(3, key);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    RoaringBitmap rb = deserializeSet(rs.getString("value"));
+                    java.util.HashSet<String> result = new java.util.HashSet<>();
+                    for (int i : rb) {
+                        result.add(hashInt64ToString(i));
+                    }
+                    return result;
+                }
+                return null;
+            }
+        } catch (SQLException | JsonProcessingException e) {
+            logger.error("Failed to get set key={}: {}", key, e.getMessage());
+            return null;
+        }
+    }
+
+    public int addSetMembersList(int db, String key, List<String> members) {
+        return addSetMembers(db, key, members);
+    }
+
+    public int removeSetMembersList(int db, String key, List<String> members) {
+        return removeSetMembers(db, key, members);
+    }
+
+    // ---- HyperLogLog operations (using Apache DataSketches) ----
+
+    public long pfAdd(int db, String key, List<String> values) {
+        HllSketch sketch = getHllSketch(db, key);
+        if (sketch == null) {
+            sketch = new HllSketch(12, TgtHllType.HLL_4);
+        }
+        for (String v : values) {
+            sketch.update(v.hashCode());
+        }
+        upsertRaw(db, key, "hll", java.util.Base64.getEncoder().encodeToString(sketch.toCompactByteArray()), 0);
+        return (long) sketch.getEstimate();
+    }
+
+    public long pfCount(int db, String key) {
+        HllSketch sketch = getHllSketch(db, key);
+        return sketch != null ? (long) sketch.getEstimate() : 0;
+    }
+
+    public long pfCountMultiple(int db, List<String> keys) {
+        Union union = new Union(12);
+        for (String key : keys) {
+            HllSketch sketch = getHllSketch(db, key);
+            if (sketch != null) {
+                union.update(sketch);
+            }
+        }
+        HllSketch result = union.getResult(TgtHllType.HLL_4);
+        return (long) result.getEstimate();
+    }
+
+    public long pfMerge(int db, String destKey, List<String> sourceKeys) {
+        Union union = new Union(12);
+        for (String key : sourceKeys) {
+            HllSketch sketch = getHllSketch(db, key);
+            if (sketch != null) {
+                union.update(sketch);
+            }
+        }
+        HllSketch merged = union.getResult(TgtHllType.HLL_4);
+        upsertRaw(db, destKey, "hll", java.util.Base64.getEncoder().encodeToString(merged.toCompactByteArray()), 0);
+        return (long) merged.getEstimate();
+    }
+
+    private HllSketch getHllSketch(int db, String key) {
+        String sql = "SELECT value FROM redis_data WHERE project_id = ? AND db_number = ? AND key_name = ? AND data_type = 'hll'" + TTL_FILTER;
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, projectId);
+            ps.setInt(2, db);
+            ps.setString(3, key);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    String encoded = rs.getString("value");
+                    if (encoded != null && !encoded.isEmpty()) {
+                        byte[] bytes = java.util.Base64.getDecoder().decode(encoded);
+                        return HllSketch.heapify(
+                            org.apache.datasketches.memory.Memory.wrap(bytes));
+                    }
+                }
+                return null;
+            }
+        } catch (Exception e) {
+            logger.error("Failed to get HLL key={}: {}", key, e.getMessage());
+            return null;
+        }
+    }
+
+    // ---- Geospatial operations (GEO) ----
+
+    private static final double EARTH_RADIUS_KM = 6371.0;
+
+    public int geoAdd(int db, String key, List<GeoPoint> points) {
+        List<GeoPoint> existing = geoGet(key);
+        if (existing == null) existing = new ArrayList<>();
+        for (GeoPoint p : points) {
+            if (!existing.contains(p)) {
+                existing.add(p);
+            }
+        }
+        upsertData("geo", key, existing);
+        return points.size();
+    }
+
+    public Double geoDist(int db, String key, String member1, String member2) {
+        GeoPoint p1 = geoMember(key, member1);
+        GeoPoint p2 = geoMember(key, member2);
+        if (p1 == null || p2 == null) return null;
+        return haversineDistance(p1.lng, p1.lat, p2.lng, p2.lat);
+    }
+
+    public String geoHash(int db, String key, String member) {
+        GeoPoint p = geoMember(key, member);
+        if (p == null) return null;
+        return encodeGeohash(p.lat, p.lng);
+    }
+
+    public List<GeoPoint> geoSearch(int db, String key, double lng, double lat, double radius, String unit) {
+        double radiusKm = "km".equalsIgnoreCase(unit) ? radius : radius * 1.60934;
+        List<GeoPoint> existing = geoGet(key);
+        if (existing == null) return List.of();
+        
+        List<GeoPoint> result = new ArrayList<>();
+        for (GeoPoint p : existing) {
+            double dist = haversineDistance(lng, lat, p.lng, p.lat);
+            if (dist <= radiusKm) {
+                result.add(p);
+            }
+        }
+        return result;
+    }
+
+    public List<Double> geoPos(int db, String key, String... members) {
+        List<Double> result = new ArrayList<>();
+        for (String member : members) {
+            GeoPoint p = geoMember(key, member);
+            if (p != null) {
+                result.add(p.lng);
+                result.add(p.lat);
+            }
+        }
+        return result;
+    }
+
+    private record GeoPoint(String member, double lng, double lat) {}
+
+    private List<GeoPoint> geoGet(String key) {
+        String sql = "SELECT value FROM redis_data WHERE project_id = ? AND db_number = ? AND key_name = ? AND data_type = 'geo'" + TTL_FILTER;
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, projectId);
+            ps.setInt(2, 0);
+            ps.setString(3, key);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return mapper.readValue(rs.getString("value"), new TypeReference<List<GeoPoint>>() {});
+                }
+                return null;
+            }
+        } catch (SQLException | JsonProcessingException e) {
+            logger.error("Failed to get geo key={}: {}", key, e.getMessage());
+            return null;
+        }
+    }
+
+    private void upsertData(String dataType, String key, Object data) {
+        try {
+            upsertRaw(0, key, dataType, toJson(data), 0);
+        } catch (Exception e) {
+            logger.error("Failed to upsert data key={}: {}", key, e.getMessage());
+        }
+    }
+
+    private GeoPoint geoMember(String key, String member) {
+        List<GeoPoint> points = geoGet(key);
+        if (points == null) return null;
+        for (GeoPoint p : points) {
+            if (p.member().equals(member)) return p;
+        }
+        return null;
+    }
+
+    private static double haversineDistance(double lng1, double lat1, double lng2, double lat2) {
+        double dLng = Math.toRadians(lng2 - lng1);
+        double dLat = Math.toRadians(lat2 - lat1);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                  Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                  Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return EARTH_RADIUS_KM * c;
+    }
+
+    private static String encodeGeohash(double lat, double lng) {
+        // Simple geohash encoding (base32)
+        StringBuilder sb = new StringBuilder();
+        double latMin = -90, latMax = 90;
+        double lngMin = -180, lngMax = 180;
+        boolean even = true;
+        int bits = 0;
+        int ch = 0;
+        
+        for (int i = 0; i < 12; i++) {
+            if (even) {
+                double mid = (lngMin + lngMax) / 2;
+                ch = (ch << 1) | (lng >= mid ? 1 : 0);
+                if (lng >= mid) lngMin = mid;
+                else lngMax = mid;
+            } else {
+                double mid = (latMin + latMax) / 2;
+                ch = (ch << 1) | (lat >= mid ? 1 : 0);
+                if (lat >= mid) latMin = mid;
+                else latMax = mid;
+            }
+            even = !even;
+            bits++;
+            if (bits == 5) {
+                sb.append("0123456789bcdefghjkmnpqrstuvwxyz".charAt(ch));
+                bits = 0;
+                ch = 0;
+            }
+        }
+        return sb.toString();
     }
 
     // ---- Sorted Set operations ----
@@ -368,7 +709,7 @@ public class MemorystoreStore {
     public int removeSortedSetMembers(int db, String key, List<String> members) {
         List<SortedSetEntry> existing = getSortedSet(db, key);
         if (existing == null) return 0;
-        Set<String> toRemove = new HashSet<>(members);
+        Set<String> toRemove = new java.util.LinkedHashSet<>(members);
         int removed = 0;
         List<SortedSetEntry> remaining = new ArrayList<>();
         for (var e : existing) {

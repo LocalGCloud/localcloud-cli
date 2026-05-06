@@ -128,8 +128,9 @@
 # =============================================================================
 
 # Image repositories for dependencies (can be overridden for air-gapped or internal repos)
-ARG SPANNER_EMULATOR_IMAGE=jaysen2apache/spanner-emulator-extended@sha256:58702f59729905d3db97225480ad3f9c8496a59d697bcb750ab856450c65889a
-ARG BIGQUERY_EMULATOR_IMAGE=jaysen2apache/bigquery-emulator-on-duckdb@sha256:70254a43605dd6dd6125bf3b85ad31fdd25fe73047d5617f0936e0cdf92f2d57
+ARG SPANNER_EMULATOR_IMAGE=spanner-emulator-build:latest
+#ARG SPANNER_EMULATOR_IMAGE=jaysen2apache/spanner-emulator-extended@sha256:58702f59729905d3db97225480ad3f9c8496a59d697bcb750ab856450c65889a
+ARG BIGQUERY_EMULATOR_IMAGE=jaysen2apache/bigquery-emulator-on-duckdb:latest
 ARG GO_BASE_IMAGE=public.ecr.aws/docker/library/golang:1.25-alpine
 ARG GCLOUD_SDK_IMAGE=gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
 ARG GCS_EMULATOR_IMAGE=fsouza/fake-gcs-server:1.54.0

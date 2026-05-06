@@ -87,9 +87,16 @@ export default function Usage(props) {
     const [loading, setLoading] = createSignal(true);
     const [error, setError] = createSignal(null);
     const [lastUpdated, setLastUpdated] = createSignal(null);
+    const [autoRefresh, setAutoRefresh] = createSignal(() => {
+        try { return localStorage.getItem('localcloud-usage-autorefresh') !== 'false'; } catch { return true; }
+    });
+    const [refreshInterval, setRefreshInterval] = createSignal(() => {
+        try { return parseInt(localStorage.getItem('localcloud-usage-interval') || '30', 10); } catch { return 30; }
+    });
+    let isInitialLoad = true;
 
     const fetchUsage = async () => {
-        setLoading(true);
+        if (isInitialLoad) setLoading(true);
         setError(null);
         try {
             const result = await api.usage();
@@ -98,16 +105,35 @@ export default function Usage(props) {
         } catch (err) {
             setError('Could not load usage data: ' + err.message);
         } finally {
-            setLoading(false);
+            if (isInitialLoad) {
+                isInitialLoad = false;
+                setLoading(false);
+            }
         }
     };
 
     createEffect(() => {
         const _proj = typeof props.activeProject === 'function' ? props.activeProject() : props.activeProject;
         fetchUsage();
-        const timer = setInterval(fetchUsage, 30000); // refresh every 30s
+    });
+
+    createEffect(() => {
+        if (!autoRefresh()) return;
+        const interval = refreshInterval() * 1000;
+        const timer = setInterval(fetchUsage, interval);
         onCleanup(() => clearInterval(timer));
     });
+
+    const toggleAutoRefresh = (checked) => {
+        setAutoRefresh(checked);
+        try { localStorage.setItem('localcloud-usage-autorefresh', String(checked)); } catch {}
+    };
+
+    const applyInterval = (seconds) => {
+        if (seconds < 1 || seconds > 120) return;
+        setRefreshInterval(seconds);
+        try { localStorage.setItem('localcloud-usage-interval', String(seconds)); } catch {}
+    };
 
     const serviceUsage = () => {
         return usageData().map(svc => {
@@ -142,6 +168,42 @@ export default function Usage(props) {
                 <p class="page-header-subtitle">
                     Cumulative API usage per service and estimated GCP costs saved by using LocalCloud.
                 </p>
+            </div>
+
+            {/* Refresh Controls */}
+            <div class="filter-bar" style="margin-bottom:16px">
+                <label>
+                    <input
+                        type="checkbox"
+                        checked={autoRefresh()}
+                        onChange={e => toggleAutoRefresh(e.currentTarget.checked)}
+                    />
+                    Auto-refresh
+                </label>
+
+                <label class="refresh-interval-label">
+                    Every
+                    <input
+                        type="number"
+                        min="1"
+                        max="120"
+                        value={refreshInterval()}
+                        onChange={e => applyInterval(parseInt(e.currentTarget.value) || 30)}
+                        disabled={!autoRefresh()}
+                        style="width:50px"
+                    />
+                    sec
+                </label>
+
+                <button class="btn btn-secondary" onClick={fetchUsage} disabled={loading()}>
+                    Refresh
+                </button>
+
+                <Show when={lastUpdated()}>
+                    <span style="font-size:12px;color:var(--text-secondary)">
+                        Last updated: {lastUpdated().toLocaleTimeString()}
+                    </span>
+                </Show>
             </div>
 
             <Show when={!loading()} fallback={

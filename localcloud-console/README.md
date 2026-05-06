@@ -1,12 +1,13 @@
-# LocalCloud Console
+# LocalCloud Console Gemini
 
-A lightweight web-based console for managing LocalCloud services, viewing logs, and browsing datastore contents.
+An Aura/Gemini redesign of the LocalCloud Console with the same admin API functionality and a higher-fidelity platform UI.
 
 ## Overview
 
-The LocalCloud Console is a production-ready web UI for the LocalCloud GCP emulator. It provides:
+LocalCloud Console Gemini is a production-ready web UI for the LocalCloud GCP emulator. It provides:
 
-- **Service Management**: Monitor all 14 emulated GCP services
+- **Aura Shell**: Icon-first navigation, command palette, project status center, health rail, and intelligence widget
+- **Service Management**: Monitor all emulated GCP services
 - **Service Explorer**: Deep-dive into service data with SQL queries, file browsing, and schema views
 - **Log Viewer**: Real-time request log viewing with filtering and auto-tail
 - **Data Browser**: Read-only preview of data across all services
@@ -36,7 +37,7 @@ The console is served directly by the Armeria gateway — no separate backend pr
 - **Frontend**: Solid.js (fine-grained reactivity), vanilla CSS
 - **Server**: Armeria (Java) — serves static files + API
 - **Build**: esbuild (bundler), npm
-- **Design**: GCP Console-inspired dark theme
+- **Design**: Aura/Gemini console theme with layered modules and local/remote visual modes
 
 ## Installation
 
@@ -49,7 +50,7 @@ The console is served directly by the Armeria gateway — no separate backend pr
 
 1. **Install Node dependencies** (frontend build):
 ```bash
-cd localcloud-console
+cd localcloud-console-gemini
 npm install
 ```
 
@@ -60,12 +61,12 @@ npm run build
 
 This creates:
 - `dist/app.js` — minified Solid.js app
-- `dist/styles.css` — GCP theme
+- `dist/styles.css` — Aura/Gemini theme
 - `dist/index.html` — SPA entry point
 
 ## Usage
 
-The console is available at **http://localhost:8080** when LocalCloud is running.
+For local development, run `npm run dev` and open **http://localhost:3001**. The dev server proxies `/_localcloud/*` to **http://localhost:8080**.
 
 ```bash
 # Start LocalCloud
@@ -206,4 +207,4 @@ localcloud-console/
 
 ## License
 
-Same as LocalCloud (Apache-2.0).
+See ../localcloud-site/LICENSE - Proprietary. Free for individual developers for personal use, learning, and evaluation. No production or commercial use permitted.

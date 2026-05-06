@@ -1,15 +1,13 @@
 import { render } from 'solid-js/web';
-import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
-import { api, setActiveProject, getActiveProject } from './api.js';
+import { createSignal, createEffect, createMemo, onCleanup, Show, For } from 'solid-js';
+import { api, setActiveProject } from './api.js';
 import Dashboard from './pages/Dashboard.jsx';
-import Services from './pages/Services.jsx';
 import Logs from './pages/Logs.jsx';
 import ServiceExplorer from './pages/ServiceExplorer.jsx';
 import Settings from './pages/Settings.jsx';
 import Usage from './pages/Usage.jsx';
+import { normalizeLocalSchema, normalizeRemoteBrowse } from './components/SchemaExplorer.jsx';
 
-
-// --- SVG Icon component ---
 const ICON_PATHS = {
     dashboard: 'M4 13h6a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1zm-1 7h6a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1zm10 0h6a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1zM13 4v4a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1z',
     services: 'M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97s-.03-.66-.07-1l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.31-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65A.49.49 0 0 0 14 2h-4c-.25 0-.46.18-.5.42l-.38 2.65c-.61.25-1.17.58-1.69.98l-2.49-1c-.22-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64L4.57 11c-.04.34-.07.67-.07 1s.03.65.07.97l-2.11 1.66c-.19.15-.25.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.08.73 1.69.98l.38 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.38-2.65c.61-.25 1.17-.58 1.69-.98l2.49 1.01c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64z',
@@ -17,67 +15,49 @@ const ICON_PATHS = {
     data: 'M20 6H12L10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z',
     usage: 'M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z',
     settings: 'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z',
+    docs: 'M5 3h11a3 3 0 0 1 3 3v15H8a3 3 0 0 1-3-3V3zm3 14h9V6a1 1 0 0 0-1-1H7v13a1 1 0 0 0 1 1v-2zm1-9h6v2H9V8zm0 4h6v2H9v-2z',
+    chevron: 'M8.59 16.59 13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z',
+    home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8h5z',
+    search: 'M9.5 3a6.5 6.5 0 0 1 5.15 10.46l4.44 4.45-1.41 1.41-4.45-4.44A6.5 6.5 0 1 1 9.5 3m0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z',
+    spark: 'M3 17h3.6l3.1-8.2 3.2 5.1 2.2-3.2H21v2h-4.8l-3.4 5-2.7-4.4L8 19H3v-2z',
     sun: 'M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58a.996.996 0 0 0-1.41 0 .996.996 0 0 0 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41zm12.37 12.37a.996.996 0 0 0-1.41 0 .996.996 0 0 0 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0a.996.996 0 0 0 0-1.41zm1.06-10.96a.996.996 0 0 0 0-1.41.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0zM7.05 18.36a.996.996 0 0 0 0-1.41.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0z',
     moon: 'M9.37 5.51A7.35 7.35 0 0 0 9.1 7.5c0 4.08 3.32 7.4 7.4 7.4.68 0 1.35-.09 1.99-.27A7.014 7.014 0 0 1 12 19c-3.86 0-7-3.14-7-7 0-2.93 1.81-5.45 4.37-6.49zM12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26 5.403 5.403 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z',
+    pin: 'M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v6H18v-6h1.6v-2H14l2-2z',
 };
 
-function Icon({ name, size = 18 }) {
-    const path = ICON_PATHS[name];
+function Icon(props) {
+    const path = ICON_PATHS[props.name];
     if (!path) return null;
-    return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-            <path d={path} />
-        </svg>
-    );
+    return <svg width={props.size || 18} height={props.size || 18} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={path} /></svg>;
 }
 
 const NAV_ITEMS = [
-    { id: 'dashboard',  label: 'Dashboard',        icon: 'dashboard' },
-    { id: 'services',   label: 'APIs & Services',  icon: 'services' },
-    { id: 'logs',       label: 'Logs',              icon: 'logs' },
-    { id: 'data',       label: 'Service Explorer',   icon: 'data', expandable: true },
-    { id: 'usage',      label: 'Cost Analysis',     icon: 'usage' },
-    { id: 'settings',   label: 'Setup Guide',        icon: 'settings' },
+    { id: 'dashboard', label: 'Nerve Center', icon: 'dashboard' },
+    { id: 'logs', label: 'Logs', icon: 'logs' },
+    { id: 'usage', label: 'Cost Analysis', icon: 'usage' },
+    { id: 'settings', label: 'User Docs', icon: 'docs' },
 ];
 
-const DATA_SERVICES = [
-    { id: 'gcs', label: 'Cloud Storage' },
-    { id: 'pubsub', label: 'Pub/Sub' },
-    { id: 'firestore', label: 'Firestore', beta: true },
-    { id: 'bigquery', label: 'BigQuery' },
-    { id: 'secretmanager', label: 'Secret Manager' },
-    { id: 'cloudtasks', label: 'Cloud Tasks' },
-    { id: 'spanner', label: 'Spanner' },
-    { id: 'bigtable', label: 'Bigtable' },
-    { id: 'logging', label: 'Logging' },
-    { id: 'monitoring', label: 'Monitoring' },
-    { id: 'gke', label: 'GKE', beta: true },
-    { id: 'compute', label: 'Compute', beta: true },
-    { id: 'cloudrun', label: 'Cloud Run' },
-    { id: 'memorystore', label: 'Memorystore' },
-    { id: 'workflows', label: 'Workflows' },
+const SERVICE_GROUPS = [
+    { name: 'Storage', tone: 'green', services: [{ id: 'gcs', label: 'Cloud Storage' }, { id: 'secretmanager', label: 'Secret Manager' }] },
+    { name: 'Databases', tone: 'blue', services: [{ id: 'firestore', label: 'Firestore' }, { id: 'spanner', label: 'Spanner' }, { id: 'bigtable', label: 'Bigtable' }, { id: 'memorystore', label: 'Memorystore' }] },
+    { name: 'Analytics', tone: 'amber', services: [{ id: 'bigquery', label: 'BigQuery' }, { id: 'pubsub', label: 'Pub/Sub' }] },
+    { name: 'Compute', tone: 'red', services: [{ id: 'cloudrun', label: 'Cloud Run' }, { id: 'gke', label: 'GKE' }, { id: 'compute', label: 'Compute Engine' }, { id: 'cloudtasks', label: 'Cloud Tasks' }, { id: 'workflows', label: 'Workflows' }] },
+    { name: 'Operations', tone: 'violet', services: [{ id: 'logging', label: 'Logging' }, { id: 'monitoring', label: 'Monitoring' }] },
 ];
-
-// --- Hash-based routing ---
+const FLAT_SERVICES = SERVICE_GROUPS.flatMap(group => group.services.map(svc => ({ ...svc, group: group.name, tone: group.tone })));
 
 function parseHash() {
     const hash = window.location.hash.replace(/^#\/?/, '');
     if (!hash) return { page: 'dashboard', service: null };
     const parts = hash.split('/');
-    const page = parts[0] || 'dashboard';
-    const service = parts[1] || null;
-    return { page, service };
+    return { page: parts[0] || 'dashboard', service: parts[1] || null };
 }
 
 function setHash(page, service) {
-    const path = service ? `${page}/${service}` : page;
-    const newHash = `#/${path}`;
-    if (window.location.hash !== newHash) {
-        window.location.hash = newHash;
-    }
+    const next = `#/${service ? `${page}/${service}` : page}`;
+    if (window.location.hash !== next) window.location.hash = next;
 }
-
-// ---
 
 function App() {
     const initial = parseHash();
@@ -88,10 +68,17 @@ function App() {
     const [routingData, setRoutingData] = createSignal(null);
     const [credentialData, setCredentialData] = createSignal(null);
     const [refreshInterval, setRefreshInterval] = createSignal(5000);
-    const [connectionStatus, setConnectionStatus] = createSignal('connecting'); // 'connected' | 'connecting' | 'offline'
+    const [connectionStatus, setConnectionStatus] = createSignal('connecting');
+    const [sidebarPinned, setSidebarPinned] = createSignal(true);
+    const [mobileSidebarOpen, setMobileSidebarOpen] = createSignal(false);
+    const [searchOpen, setSearchOpen] = createSignal(false);
+    const [searchQuery, setSearchQuery] = createSignal('');
+    const [globalSearchIndex, setGlobalSearchIndex] = createSignal([]);
+    const [updateDismissed, setUpdateDismissed] = createSignal(false);
+    const [settingsMenuOpen, setSettingsMenuOpen] = createSignal(false);
+    const [collapsedGroups, setCollapsedGroups] = createSignal({});
     let healthFailCount = 0;
 
-    // Project management
     const [projects, setProjects] = createSignal([]);
     const [activeProject, setActiveProjectState] = createSignal(null);
     const [projectDropdownOpen, setProjectDropdownOpen] = createSignal(false);
@@ -100,33 +87,24 @@ function App() {
     const [newProjectName, setNewProjectName] = createSignal('');
     const [projectError, setProjectError] = createSignal(null);
 
-    // Initialize active project from localStorage
-    const initProject = (() => {
-        try {
-            return localStorage.getItem('localcloud-active-project') || null;
-        } catch { return null; }
+    const storedProject = (() => {
+        try { return localStorage.getItem('localcloud-active-project') || null; } catch { return null; }
     })();
 
     const switchProject = (projectId) => {
-        // IMPORTANT: Set the api.js module variable BEFORE the Solid.js signal.
-        // Solid.js may synchronously flush effects when the signal is set,
-        // and those effects call api.browse() which reads _activeProject.
         setActiveProject(projectId);
         setActiveProjectState(projectId);
         setProjectDropdownOpen(false);
         try { localStorage.setItem('localcloud-active-project', projectId); } catch {}
     };
 
-    // Fetch projects list
     const fetchProjects = async () => {
         try {
             const data = await api.projects();
-            const list = data.projects || data || [];
-            setProjects(Array.isArray(list) ? list : []);
-            // Set initial project if not set
+            const list = Array.isArray(data?.projects) ? data.projects : (Array.isArray(data) ? data : []);
+            setProjects(list);
             if (!activeProject() && list.length > 0) {
-                const stored = initProject;
-                const match = list.find(p => p.project_id === stored);
+                const match = list.find(p => p.project_id === storedProject);
                 switchProject(match ? match.project_id : list[0].project_id);
             }
         } catch (err) {
@@ -152,43 +130,31 @@ function App() {
         }
     };
 
-    // Initialize dark mode from localStorage
     const initDark = (() => {
         try {
             const stored = localStorage.getItem('localcloud-dark-mode');
-            if (stored !== null) return stored === 'true';
-            return false; // default to light (GCP Console default)
-        } catch {
-            return false;
-        }
+            return stored === null ? false : stored === 'true';
+        } catch { return false; }
     })();
     setDarkMode(initDark);
 
-    // Apply theme to body
     createEffect(() => {
         document.body.dataset.theme = darkMode() ? 'dark' : 'light';
+        document.body.dataset.syncMode = Object.values(routingData() || {}).some(route => route?.mode === 'remote') ? 'remote' : 'local';
     });
 
     const toggleDarkMode = () => {
         const next = !darkMode();
         setDarkMode(next);
-        try {
-            localStorage.setItem('localcloud-dark-mode', String(next));
-        } catch { /* ignore */ }
+        try { localStorage.setItem('localcloud-dark-mode', String(next)); } catch {}
     };
 
-    // Sync URL hash when page or service changes
     createEffect(() => {
         const page = currentPage();
         const svc = selectedService();
-        if (page === 'data' && svc) {
-            setHash(page, svc);
-        } else {
-            setHash(page);
-        }
+        setHash(page, page === 'data' && svc ? svc : null);
     });
 
-    // Listen for browser back/forward
     const onHashChange = () => {
         const { page, service } = parseHash();
         setCurrentPage(page);
@@ -198,11 +164,33 @@ function App() {
     window.addEventListener('hashchange', onHashChange);
     onCleanup(() => window.removeEventListener('hashchange', onHashChange));
 
-    // Auto-refresh health data
+    const onKeyDown = (e) => {
+        const isCommandK = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k';
+        if (isCommandK) {
+            e.preventDefault();
+            setSearchOpen(true);
+            setSearchQuery('');
+            if (globalSearchIndex().length === 0) buildGlobalSearchIndex();
+        }
+        if (e.key === 'Escape') setSearchOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    onCleanup(() => window.removeEventListener('keydown', onKeyDown));
+
+    const onGlobalClick = (e) => {
+        if (projectDropdownOpen() && !e.target.closest('.aura-project-wrap')) {
+            setProjectDropdownOpen(false);
+        }
+        if (settingsMenuOpen() && !e.target.closest('.aura-settings-wrap')) {
+            setSettingsMenuOpen(false);
+        }
+    };
+    window.addEventListener('click', onGlobalClick);
+    onCleanup(() => window.removeEventListener('click', onGlobalClick));
+
     createEffect(() => {
         const interval = refreshInterval();
         let timer;
-
         const fetchHealth = async () => {
             try {
                 const [health, routing, creds] = await Promise.all([
@@ -223,281 +211,280 @@ function App() {
                 }
             }
         };
-
         fetchHealth();
         timer = setInterval(fetchHealth, interval);
-
         onCleanup(() => clearInterval(timer));
     });
 
-    const projectId = () => {
-        const h = healthData();
-        return h && h.project_id ? h.project_id : 'local-project';
-    };
-
-    // Navigate to page (updates URL)
     const navigateTo = (page) => {
         if (page !== 'data') setSelectedService(null);
         setCurrentPage(page);
+        setSearchOpen(false);
+        setSettingsMenuOpen(false);
+        setMobileSidebarOpen(false);
     };
 
-    // Navigate to Data Browser with a pre-selected service
     const handleServiceClick = (serviceId) => {
         setSelectedService(serviceId);
         setCurrentPage('data');
+        setSearchOpen(false);
+        setSettingsMenuOpen(false);
+        setMobileSidebarOpen(false);
     };
 
-    // Called by DataBrowser when user switches tabs
-    const handleTabChange = (tabId) => {
-        setSelectedService(tabId);
+    const toggleGroup = (name) => {
+        setCollapsedGroups(prev => ({ ...prev, [name]: !prev[name] }));
     };
 
-    // Derived signal: true once a project has loaded (prevents null-project API calls)
-    const projectReady = () => !!activeProject();
+    const healthStatus = (serviceId) => connectionStatus() === 'offline' ? 'offline' : (healthData()?.services?.[serviceId]?.status || 'unknown');
+    const routingMode = (serviceId) => routingData()?.[serviceId]?.mode || 'local';
+    const projectId = () => activeProject() || healthData()?.project_id || 'local-project';
+    const projectRegion = () => routingData()?.__default_region || credentialData()?.region || 'us-central1';
+    const persistenceMode = () => healthData()?.persistence || 'PostgreSQL';
 
-    const renderPage = () => {
-        const page = currentPage();
-        // Don't render data-dependent pages until project is resolved
-        if (!projectReady()) {
-            return <div class="loading-state"><div class="loading-spinner" /> Loading project...</div>;
-        }
-        // Pass activeProject as a signal accessor so children can track changes reactively
-        // NOTE: renderPage must NOT read activeProject() here — only pass the accessor.
-        // Reading it would cause full component tree re-creation on every project switch.
-        switch (page) {
-            case 'dashboard':
-                return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={activeProject} />;
-            case 'services':
-                return <Services healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={activeProject} />;
-            case 'logs':
-                return <Logs activeProject={activeProject} />;
-            case 'data':
-                return <ServiceExplorer selectedService={selectedService} onTabChange={handleTabChange} activeProject={activeProject} />;
-            case 'usage':
-                return <Usage activeProject={activeProject} />;
-            case 'settings':
-                return (
-                    <Settings
-                        darkMode={darkMode}
-                        toggleDarkMode={toggleDarkMode}
-                        refreshInterval={refreshInterval}
-                        setRefreshInterval={setRefreshInterval}
-                        routingData={routingData}
-                        credentialData={credentialData}
-                        healthData={healthData}
-                    />
-                );
-            default:
-                return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={activeProject} />;
-        }
-    };
-
-    // Update availability from health API
-    const [updateDismissed, setUpdateDismissed] = createSignal(false);
     const updateAvailable = () => {
         const h = healthData();
         return h?.update_available && !updateDismissed() ? h.update_available : null;
     };
 
+    const buildGlobalSearchIndex = async () => {
+        const dataServices = ['firestore', 'spanner', 'bigtable', 'bigquery', 'gcs', 'memorystore'];
+        const index = [];
+        for (const svc of dataServices) {
+            try {
+                const mode = routingData()?.[svc]?.mode || 'local';
+                let nodes = [];
+                if (mode === 'remote') {
+                    const data = await api.syncBrowse(svc);
+                    const rawNodes = data.nodes || data || [];
+                    nodes = normalizeRemoteBrowse(rawNodes, svc);
+                } else {
+                    const data = await api.schema(svc);
+                    nodes = normalizeLocalSchema(data, svc);
+                }
+                const svcName = FLAT_SERVICES.find(s => s.id === svc)?.label || svc;
+                
+                const extract = (nodeList, parentName = '') => {
+                    for (const n of nodeList) {
+                        index.push({
+                            type: n.type,
+                            label: parentName ? `${parentName}.${n.name}` : n.name,
+                            id: n.id,
+                            icon: svc,
+                            datastore: svcName,
+                            action: () => {
+                                setSearchOpen(false);
+                                setHash('data', svc);
+                            }
+                        });
+                        if (n.children && n.children.length > 0) {
+                            extract(n.children, parentName ? `${parentName}.${n.name}` : n.name);
+                        }
+                    }
+                };
+                extract(nodes);
+            } catch (e) { }
+        }
+        setGlobalSearchIndex(index);
+    };
+
+    const searchResults = createMemo(() => {
+        const q = searchQuery().toLowerCase().trim();
+        const pages = NAV_ITEMS.map(item => ({ type: 'Page', label: item.label, id: item.id, icon: item.icon, action: () => navigateTo(item.id) }));
+        const services = FLAT_SERVICES.map(svc => ({ type: svc.group, label: svc.label, id: svc.id, icon: svc.id, action: () => handleServiceClick(svc.id) }));
+        const combined = [...pages, ...services, ...globalSearchIndex()];
+        return combined.filter(item => !q || item.label.toLowerCase().includes(q) || item.id.toLowerCase().includes(q)).slice(0, 12);
+    });
+
+    const renderPage = () => {
+        if (!activeProject()) return <div class="loading-state"><div class="loading-spinner" /> Loading project...</div>;
+        switch (currentPage()) {
+            case 'dashboard':
+                return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={activeProject} />;
+            case 'logs':
+                return <Logs activeProject={activeProject} />;
+            case 'data':
+                return <ServiceExplorer selectedService={selectedService} onTabChange={setSelectedService} activeProject={activeProject} />;
+            case 'usage':
+                return <Usage activeProject={activeProject} />;
+            case 'settings':
+                return <Settings darkMode={darkMode} toggleDarkMode={toggleDarkMode} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} routingData={routingData} credentialData={credentialData} healthData={healthData} />;
+            default:
+                return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={activeProject} />;
+        }
+    };
+
     return (
         <>
             <a class="skip-link" href="#main-content">Skip to content</a>
-            {/* Update Banner */}
             <Show when={updateAvailable()}>
-                {(_) => {
+                {() => {
                     const info = updateAvailable();
-                    return (
-                        <div style={{
-                            display: "flex", "align-items": "center", "justify-content": "center", gap: "12px",
-                            padding: "6px 16px",
-                            background: "linear-gradient(90deg, #1a73e8, #0d47a1)",
-                            color: "#fff", "font-size": "12px", "font-weight": "500",
-                        }}>
-                            <span>New image available{info.remote_updated ? ` (${info.remote_updated})` : ''} — current: {info.current}</span>
-                            <code style={{ background: "rgba(255,255,255,0.15)", padding: "2px 8px", "border-radius": "4px", "font-size": "11px" }}>
-                                {info.pull || 'docker pull localcloud/localcloud:latest'}
-                            </code>
-                            <button onClick={() => setUpdateDismissed(true)} style={{
-                                background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer",
-                                "font-size": "16px", padding: "0 4px", "line-height": "1",
-                            }}>&times;</button>
-                        </div>
-                    );
+                    return <div class="aura-update-banner">
+                        <span>New LocalCloud image available{info.remote_updated ? ` (${info.remote_updated})` : ''}</span>
+                        <code>{info.pull || 'docker pull localcloud/localcloud:latest'}</code>
+                        <button onClick={() => setUpdateDismissed(true)} aria-label="Dismiss update">&times;</button>
+                    </div>;
                 }}
             </Show>
-            {/* Top Bar */}
-            <header class="topbar">
+
+            <header class="topbar aura-topbar">
                 <div class="topbar-left">
-                    <div class="topbar-logo">
-                        <img src="/icons/localcloud-mark.svg" alt="LC" class="topbar-logo-icon" style={{ width: "28px", height: "28px", "border-radius": "6px" }} />
-                        <span>LocalCloud</span>
+                    <button class="aura-sidebar-toggle" onClick={() => {
+                        if (window.innerWidth <= 900) setMobileSidebarOpen(!mobileSidebarOpen());
+                        else setSidebarPinned(!sidebarPinned());
+                    }} title={sidebarPinned() ? 'Collapse services' : 'Pin services'}>
+                        <img src="/icons/localcloud-mark.svg" alt="" />
+                    </button>
+                    <button class="aura-brand-lockup aura-brand-button" onClick={() => navigateTo('dashboard')} title="Nerve Center">
+                        <span class="aura-brand-name">LocalCloud</span>
+                        <span class="aura-brand-mark">Aura</span>
+                    </button>
+                    <div class="aura-project-wrap">
+                        <button class="topbar-project-chip aura-project-chip" onClick={() => setProjectDropdownOpen(!projectDropdownOpen())}>
+                            <span class={`aura-connection-led ${connectionStatus()}`} />
+                            <span class="aura-project-main">{projectId()} ({projectRegion()})</span>
+                            <span class="aura-project-sub">{persistenceMode()} backend</span>
+                        </button>
+                        <Show when={projectDropdownOpen()}>
+                            <div class="project-dropdown aura-project-dropdown">
+                                <div class="project-dropdown-label">Projects</div>
+                                <For each={projects()}>
+                                    {(p) => <button class={`project-dropdown-item ${activeProject() === p.project_id ? 'active' : ''}`} onClick={() => switchProject(p.project_id)}>
+                                        <span>{p.project_id}</span>
+                                        <Show when={p.display_name && p.display_name !== p.project_id}><span>{p.display_name}</span></Show>
+                                    </button>}
+                                </For>
+                                <button class="project-dropdown-item aura-new-project" onClick={() => { setProjectDropdownOpen(false); setShowNewProjectDialog(true); }}>New Project</button>
+                            </div>
+                        </Show>
                     </div>
                 </div>
-                <div class="topbar-center" style={{ position: 'relative' }}>
-                    <button
-                        class="topbar-project-chip"
-                        onClick={() => setProjectDropdownOpen(!projectDropdownOpen())}
-                        style={{ cursor: 'pointer' }}
-                    >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--primary)', "flex-shrink": '0' }}>
-                            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                        <span>{activeProject() || projectId()}</span>
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.5 }}>
-                            <path d="M7 10l5 5 5-5z"/>
-                        </svg>
+                <div class="topbar-center aura-search-center">
+                    <button class="aura-global-search" onClick={() => { setSearchOpen(true); setSearchQuery(''); if (globalSearchIndex().length === 0) buildGlobalSearchIndex(); }}>
+                        <Icon name="search" size={16} />
+                        <span>Search services, tables, logs...</span>
+                        <kbd>{navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}</kbd><kbd>K</kbd>
                     </button>
-                    <Show when={projectDropdownOpen()}>
-                        <div class="project-dropdown">
-                            <div class="project-dropdown-label">Projects</div>
-                            <For each={projects()}>
-                                {(p) => (
-                                    <button
-                                        class={`project-dropdown-item ${activeProject() === p.project_id ? 'active' : ''}`}
-                                        onClick={() => switchProject(p.project_id)}
-                                    >
-                                        <span>{p.project_id}</span>
-                                        <Show when={p.display_name && p.display_name !== p.project_id}>
-                                            <span style={{ "font-size": "10px", color: "var(--text-tertiary)" }}>{p.display_name}</span>
-                                        </Show>
-                                    </button>
-                                )}
-                            </For>
-                            <div style={{ "border-top": "1px solid var(--border)", "margin-top": "4px", "padding-top": "4px" }}>
-                                <button
-                                    class="project-dropdown-item"
-                                    onClick={() => { setProjectDropdownOpen(false); setShowNewProjectDialog(true); }}
-                                    style={{ color: "var(--primary)" }}
-                                >
-                                    + New Project
-                                </button>
-                            </div>
-                        </div>
-                    </Show>
-                    {/* New Project Dialog */}
-                    <Show when={showNewProjectDialog()}>
-                        <div
-                            class="modal-overlay"
-                            role="dialog"
-                            aria-modal="true"
-                            aria-labelledby="new-project-title"
-                            onClick={(e) => { if (e.target === e.currentTarget) { setShowNewProjectDialog(false); setProjectError(null); } }}
-                            onKeyDown={(e) => { if (e.key === 'Escape') { setShowNewProjectDialog(false); setProjectError(null); } }}
-                        >
-                            <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
-                                <h2 id="new-project-title" style={{ "margin-bottom": "16px" }}>New Project</h2>
-                                <Show when={projectError()}>
-                                    <div class="alert alert-error" style={{ "margin-bottom": "12px" }}>{projectError()}</div>
-                                </Show>
-                                <div style={{ "margin-bottom": "12px" }}>
-                                    <label for="project-id-input" class="form-label">Project ID</label>
-                                    <input id="project-id-input" type="text" class="form-input form-input-mono" value={newProjectId()} onInput={(e) => setNewProjectId(e.currentTarget.value)}
-                                        placeholder="my-project" />
-                                </div>
-                                <div style={{ "margin-bottom": "16px" }}>
-                                    <label for="project-name-input" class="form-label">Display Name</label>
-                                    <input id="project-name-input" type="text" class="form-input" value={newProjectName()} onInput={(e) => setNewProjectName(e.currentTarget.value)}
-                                        placeholder="My Project" />
-                                </div>
-                                <div style={{ display: "flex", gap: "8px", "justify-content": "flex-end" }}>
-                                    <button class="btn btn-secondary" onClick={() => { setShowNewProjectDialog(false); setProjectError(null); }}>Cancel</button>
-                                    <button class="btn btn-primary" onClick={handleCreateProject} disabled={!newProjectId().trim()}>Create</button>
-                                </div>
-                            </div>
-                        </div>
-                    </Show>
                 </div>
                 <div class="topbar-right">
-                    <button
-                        class="topbar-toggle"
-                        onClick={toggleDarkMode}
-                        title={darkMode() ? 'Switch to light mode' : 'Switch to dark mode'}
-                    >
+                    <button class="aura-top-icon" onClick={() => navigateTo('settings')} title="User docs">
+                        <Icon name="docs" size={22} />
+                    </button>
+                    <div class="aura-settings-wrap">
+                        <button class="aura-top-icon" onClick={() => setSettingsMenuOpen(!settingsMenuOpen())} title="Settings">
+                            <Icon name="settings" size={22} />
+                        </button>
+                        <Show when={settingsMenuOpen()}>
+                            <div class="project-dropdown aura-settings-menu">
+                                <div class="project-dropdown-label">Settings</div>
+                                <button class="project-dropdown-item" onClick={() => navigateTo('logs')}><span>Logs</span></button>
+                                <button class="project-dropdown-item" onClick={() => navigateTo('usage')}><span>Cost Analysis</span></button>
+                                <button class="project-dropdown-item" onClick={toggleDarkMode}><span>{darkMode() ? 'Light Mode' : 'Dark Mode'}</span></button>
+                            </div>
+                        </Show>
+                    </div>
+                    <button class="topbar-toggle" onClick={toggleDarkMode} title={darkMode() ? 'Switch to light mode' : 'Switch to dark mode'}>
                         <Icon name={darkMode() ? 'sun' : 'moon'} size={18} />
                     </button>
                 </div>
             </header>
 
-            {/* Offline Banner */}
             <Show when={connectionStatus() === 'offline'}>
-                <div class="offline-banner" role="alert">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ "flex-shrink": "0" }}>
-                        <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
-                    </svg>
-                    <span>Cannot reach LocalCloud backend. Is the container running?</span>
-                </div>
+                <div class="offline-banner" role="alert">Cannot reach LocalCloud backend. Is the container running?</div>
             </Show>
             <Show when={connectionStatus() === 'connecting'}>
-                <div class="offline-banner connecting" role="status">
-                    <div class="loading-spinner" style={{ width: "14px", height: "14px" }} />
-                    <span>Connecting to LocalCloud...</span>
+                <div class="offline-banner connecting" role="status"><div class="loading-spinner" /> Connecting to LocalCloud...</div>
+            </Show>
+
+            <Show when={mobileSidebarOpen()}>
+                <div class="mobile-overlay" onClick={() => setMobileSidebarOpen(false)} />
+            </Show>
+
+            <nav class={`sidebar aura-sidebar ${sidebarPinned() ? 'pinned' : ''} ${mobileSidebarOpen() ? 'mobile-open' : ''}`} aria-label="Service navigation">
+                <div class="aura-sidebar-header">
+                    <button class={`aura-sidebar-nav-item ${currentPage() === 'dashboard' ? 'active' : ''}`} onClick={() => navigateTo('dashboard')}>
+                        <Icon name="dashboard" size={18} />
+                        <span class="aura-sidebar-nav-label">Nerve Center</span>
+                        <div class="aura-tooltip">Nerve Center</div>
+                    </button>
+                    <button class="aura-sidebar-pin-btn" onClick={() => setSidebarPinned(!sidebarPinned())}>
+                        <Icon name="pin" size={16} />
+                        <div class="aura-tooltip">{sidebarPinned() ? 'Unpin sidebar' : 'Pin sidebar'}</div>
+                    </button>
+                </div>
+                <div class="aura-service-groups">
+                    <For each={SERVICE_GROUPS}>
+                        {(group) => <div class={`aura-service-group tone-${group.tone}`}>
+                            <button class={`aura-group-label ${collapsedGroups()[group.name] ? 'collapsed' : ''}`} onClick={() => toggleGroup(group.name)} title={`${group.name} services`}>
+                                <Icon name="chevron" size={16} />
+                                <span>{group.name}</span>
+                                <small>{group.services.length}</small>
+                            </button>
+                            <Show when={!collapsedGroups()[group.name]}>
+                                <div class="aura-group-services">
+                                    <For each={group.services}>
+                                        {(svc) => <button class={`sidebar-sub-item ${selectedService() === svc.id && currentPage() === 'data' ? 'active' : ''}`} onClick={() => handleServiceClick(svc.id)}>
+                                            <img src={`/icons/${svc.id}.svg`} alt="" class="sidebar-sub-item-icon" />
+                                            <span class="sidebar-sub-item-label">{svc.label}</span>
+                                            <Show when={routingMode(svc.id) === 'remote'}><span class="badge badge-cloud">Cloud</span></Show>
+                                            <span class={`sidebar-sub-item-dot ${healthStatus(svc.id)}`} title={healthStatus(svc.id)} />
+                                            <div class="aura-tooltip">{svc.label}</div>
+                                        </button>}
+                                    </For>
+                                </div>
+                            </Show>
+                        </div>}
+                    </For>
+                </div>
+            </nav>
+
+            <main id="main-content" class="main-content aura-main">
+                {renderPage()}
+            </main>
+
+            <Show when={searchOpen()}>
+                <div class="aura-command-overlay" onClick={() => setSearchOpen(false)}>
+                    <div class="aura-command-menu" onClick={(e) => e.stopPropagation()}>
+                        <div class="aura-command-input">
+                            <Icon name="search" size={18} />
+                            <input autofocus value={searchQuery()} onInput={(e) => setSearchQuery(e.currentTarget.value)} placeholder="Jump to a service, page, table, or log surface" />
+                        </div>
+                        <div class="aura-command-list">
+                            <For each={searchResults()}>
+                                {(item) => <button class="aura-command-item" onClick={item.action}>
+                                    <span class="aura-command-icon">
+                                        <Show when={item.type === 'Page'} fallback={<img src={`/icons/${item.icon}.svg`} alt="" />}>
+                                            <Icon name={item.icon} size={16} />
+                                        </Show>
+                                    </span>
+                                    <span>{item.label}</span>
+                                    <small style={{ "text-transform": "capitalize" }}>
+                                        {item.type}{item.datastore ? ` in ${item.datastore}` : ''}
+                                    </small>
+                                </button>}
+                            </For>
+                        </div>
+                    </div>
                 </div>
             </Show>
 
-            {/* Sidebar */}
-            <nav class="sidebar" aria-label="Main navigation">
-                <div class="sidebar-section-label">Navigation</div>
-                <For each={NAV_ITEMS}>
-                    {(item) => (
-                        <>
-                            <button
-                                class={`sidebar-item ${currentPage() === item.id ? 'active' : ''}`}
-                                onClick={() => {
-                                    if (item.id === 'data') {
-                                        navigateTo('data');
-                                        if (!selectedService()) setSelectedService('gcs');
-                                    } else {
-                                        navigateTo(item.id);
-                                    }
-                                }}
-                            >
-                                <span class="sidebar-item-icon">
-                                    <Icon name={item.icon} size={18} />
-                                </span>
-                                <span class="sidebar-item-label">{item.label}</span>
-                                {item.expandable && (
-                                    <svg class={`sidebar-item-chevron ${currentPage() === 'data' ? 'expanded' : ''}`} width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                                        <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
-                                    </svg>
-                                )}
-                            </button>
-                            {item.expandable && (
-                                <div class={`sidebar-sub-items ${currentPage() === 'data' ? 'expanded' : ''}`}>
-                                    <For each={DATA_SERVICES}>
-                                        {(svc) => {
-                                            const healthStatus = () => connectionStatus() === 'offline' ? 'offline' : healthData()?.services?.[svc.id]?.status;
-                                            const routingMode = () => routingData()?.[svc.id]?.mode || 'local';
-                                            const isDisabled = () => healthStatus() === 'disabled' || healthStatus() === 'offline';
-                                            return (
-                                                <button
-                                                    class={`sidebar-sub-item ${selectedService() === svc.id && currentPage() === 'data' ? 'active' : ''}`}
-                                                    onClick={() => handleServiceClick(svc.id)}
-                                                    style={isDisabled() ? { opacity: "0.5" } : {}}
-                                                >
-                                                    <img src={`/icons/${svc.id}.svg`} alt="" class="sidebar-sub-item-icon" />
-                                                    <span class="sidebar-sub-item-label">{svc.label}</span>
-                                                    {svc.beta && <span class="badge badge-beta">Beta</span>}
-                                                    {routingMode() === 'remote' && <span class="badge badge-cloud" title="Routed to Google Cloud">Cloud</span>}
-                                                    <span classList={{
-                                                        "sidebar-sub-item-dot": true,
-                                                        "healthy": healthStatus() === 'healthy',
-                                                        "unhealthy": healthStatus() === 'unhealthy' || isDisabled(),
-                                                    }} />
-                                                </button>
-                                            );
-                                        }}
-                                    </For>
-                                </div>
-                            )}
-                        </>
-                    )}
-                </For>
-            </nav>
-
-            {/* Content */}
-            <main id="main-content" class="main-content">
-                {renderPage()}
-            </main>
+            <Show when={showNewProjectDialog()}>
+                <div class="modal-overlay" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) { setShowNewProjectDialog(false); setProjectError(null); } }}>
+                    <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
+                        <h2>New Project</h2>
+                        <Show when={projectError()}><div class="alert alert-error">{projectError()}</div></Show>
+                        <label class="form-label" for="project-id-input">Project ID</label>
+                        <input id="project-id-input" class="form-input form-input-mono" value={newProjectId()} onInput={(e) => setNewProjectId(e.currentTarget.value)} placeholder="my-project" />
+                        <label class="form-label" for="project-name-input">Display Name</label>
+                        <input id="project-name-input" class="form-input" value={newProjectName()} onInput={(e) => setNewProjectName(e.currentTarget.value)} placeholder="My Project" />
+                        <div class="modal-actions">
+                            <button class="btn btn-secondary" onClick={() => { setShowNewProjectDialog(false); setProjectError(null); }}>Cancel</button>
+                            <button class="btn btn-primary" onClick={handleCreateProject} disabled={!newProjectId().trim()}>Create</button>
+                        </div>
+                    </div>
+                </div>
+            </Show>
         </>
     );
 }

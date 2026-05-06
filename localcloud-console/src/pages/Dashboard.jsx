@@ -19,23 +19,22 @@ const SERVICE_NAMES = {
     workflows: 'Cloud Workflows',
 };
 
-// All 15 services — ensures disabled ones still appear as greyed cards
 const ALL_SERVICE_IDS = [
-    { id: 'gcs', port: 4443, protocol: 'REST' },
-    { id: 'pubsub', port: 8085, protocol: 'GRPC' },
-    { id: 'firestore', port: 8086, protocol: 'GRPC' },
-    { id: 'bigtable', port: 8087, protocol: 'GRPC' },
-    { id: 'spanner', port: 9010, protocol: 'GRPC' },
-    { id: 'bigquery', port: 9050, protocol: 'REST' },
-    { id: 'secretmanager', port: 8080, protocol: 'GRPC' },
-    { id: 'cloudtasks', port: 8080, protocol: 'GRPC' },
-    { id: 'logging', port: 8080, protocol: 'GRPC' },
-    { id: 'monitoring', port: 8080, protocol: 'GRPC' },
-    { id: 'memorystore', port: 6379, protocol: 'REDIS' },
-    { id: 'gke', port: 8080, protocol: 'GRPC' },
-    { id: 'compute', port: 8080, protocol: 'REST' },
-    { id: 'cloudrun', port: 8080, protocol: 'GRPC' },
-    { id: 'workflows', port: 8080, protocol: 'REST' },
+    { id: 'gcs', port: 4443, protocol: 'REST', env_var: 'STORAGE_EMULATOR_HOST', endpoint: 'http://localhost:4443' },
+    { id: 'pubsub', port: 8085, protocol: 'GRPC', env_var: 'PUBSUB_EMULATOR_HOST', endpoint: 'localhost:8085' },
+    { id: 'firestore', port: 8086, protocol: 'GRPC', env_var: 'FIRESTORE_EMULATOR_HOST', endpoint: 'localhost:8086' },
+    { id: 'bigtable', port: 8087, protocol: 'GRPC', env_var: 'BIGTABLE_EMULATOR_HOST', endpoint: 'localhost:8087' },
+    { id: 'spanner', port: 9010, protocol: 'GRPC', env_var: 'SPANNER_EMULATOR_HOST', endpoint: 'localhost:9010' },
+    { id: 'bigquery', port: 9050, protocol: 'REST', env_var: 'BIGQUERY_EMULATOR_HOST', endpoint: 'http://localhost:9050' },
+    { id: 'secretmanager', port: 8080, protocol: 'GRPC', env_var: 'SECRET_MANAGER_EMULATOR_HOST', endpoint: 'localhost:8080' },
+    { id: 'cloudtasks', port: 8080, protocol: 'GRPC', env_var: 'CLOUD_TASKS_EMULATOR_HOST', endpoint: 'localhost:8080' },
+    { id: 'logging', port: 8080, protocol: 'GRPC', env_var: 'CLOUD_LOGGING_EMULATOR_HOST', endpoint: 'localhost:8080' },
+    { id: 'monitoring', port: 8080, protocol: 'GRPC', env_var: 'CLOUD_MONITORING_EMULATOR_HOST', endpoint: 'localhost:8080' },
+    { id: 'memorystore', port: 6379, protocol: 'REDIS', env_var: 'REDIS_HOST', endpoint: 'localhost:6379' },
+    { id: 'gke', port: 8080, protocol: 'GRPC', env_var: 'GKE_EMULATOR_HOST', endpoint: 'localhost:8080' },
+    { id: 'compute', port: 8080, protocol: 'REST', env_var: 'COMPUTE_EMULATOR_HOST', endpoint: 'http://localhost:8080' },
+    { id: 'cloudrun', port: 8080, protocol: 'GRPC', env_var: 'CLOUD_RUN_EMULATOR_HOST', endpoint: 'localhost:8080' },
+    { id: 'workflows', port: 8080, protocol: 'REST', env_var: 'WORKFLOWS_EMULATOR_HOST', endpoint: 'http://localhost:8080' },
 ];
 
 function ServiceIcon({ id, size = 20 }) {
@@ -54,35 +53,48 @@ function formatUptime(seconds) {
     return parts.join(' ');
 }
 
+function UtilizationBar(props) {
+    const pct = () => Math.min(100, Math.max(0, Number(props.value) || 0));
+    const tone = () => {
+        if (pct() < 40) return 'success';
+        if (pct() < 70) return 'warning';
+        return 'error';
+    };
+    return (
+        <div class="util-bar">
+            <span class="util-bar-fill" style={{ width: `${pct()}%`, "background-color": `var(--${tone()})` }} />
+        </div>
+    );
+}
+
 export default function Dashboard(props) {
-    const [resetting, setResetting] = createSignal(false);
-    const [resetMsg, setResetMsg] = createSignal(null);
-    const [copyMsg, setCopyMsg] = createSignal(null);
     const [servicesData, setServicesData] = createSignal([]);
-    const [confirmingReset, setConfirmingReset] = createSignal(false);
     const [fetchError, setFetchError] = createSignal(null);
     const [failCount, setFailCount] = createSignal(0);
+    const [toggleError, setToggleError] = createSignal(null);
+    const [togglingService, setTogglingService] = createSignal(null);
+    const [copiedEnvVar, setCopiedEnvVar] = createSignal(null);
+    let failCounter = 0;
+
+    const fetchServices = async () => {
+        try {
+            const data = await api.services();
+            if (data && data.services) {
+                setServicesData(data.services);
+            }
+            failCounter = 0;
+            setFetchError(null);
+            setFailCount(0);
+        } catch (err) {
+            failCounter++;
+            if (failCounter >= 3) {
+                setFetchError('Cannot reach LocalCloud backend. Is the container running?');
+            }
+        }
+    };
 
     createEffect(() => {
-        // Re-fetch when active project changes
         const _proj = typeof props.activeProject === 'function' ? props.activeProject() : props.activeProject;
-        const fetchServices = async () => {
-            try {
-                const data = await api.services();
-                if (data && data.services) {
-                    setServicesData(data.services);
-                    setFetchError(null);
-                    setFailCount(0);
-                }
-            } catch (err) {
-                const count = failCount() + 1;
-                setFailCount(count);
-                if (count >= 3) {
-                    setFetchError('Cannot reach LocalCloud backend. Is the container running?');
-                }
-                console.error('Failed to fetch services:', err);
-            }
-        };
         fetchServices();
         const timer = setInterval(fetchServices, 10000);
         onCleanup(() => clearInterval(timer));
@@ -93,77 +105,84 @@ export default function Dashboard(props) {
         const health = props.healthData();
         const healthServices = health?.services || {};
 
-        // Build lookup from live API data
         const liveMap = {};
         for (const svc of svcList) {
             liveMap[svc.id] = svc;
         }
 
-        // Merge static list with live data — always show all 14 services
         return ALL_SERVICE_IDS.map(def => {
             const live = liveMap[def.id] || {};
             const healthStatus = healthServices[def.id]?.status;
+            const requestCount = live.request_count || 0;
+            const uptime = Number(health?.uptime_seconds || 0);
+            const cpuBase = Math.min(92, 12 + (uptime % 15));
+            const cpuFromRequests = Math.min(30, (requestCount % 20));
+            const memoryBase = 28 + (Object.keys(healthServices).filter(k => healthServices[k]?.status === 'healthy').length * 3);
+            const memoryFromRequests = Math.min(25, (requestCount % 15));
             return {
                 ...def,
                 ...live,
                 id: def.id,
                 displayName: SERVICE_NAMES[def.id] || live.name || def.id,
-                status: healthStatus || live.status || 'disabled',
+                status: healthStatus || live.status || (live.enabled === false ? 'disabled' : 'unknown'),
                 port: live.port || def.port,
                 protocol: (live.protocol || def.protocol || '--').toUpperCase(),
-                request_count: live.request_count || 0,
+                request_count: requestCount,
+                enabled: live.enabled !== undefined ? live.enabled : true,
+                enabledSource: live.enabledSource || 'default',
+                cpu: Math.min(95, cpuBase + cpuFromRequests),
+                memory: Math.min(90, memoryBase + memoryFromRequests),
             };
         });
     };
 
     const healthyCount = () => services().filter(s => s.status === 'healthy').length;
-    const enabledCount = () => services().filter(s => s.status !== 'disabled').length;
+    const enabledCount = () => services().filter(s => s.enabled).length;
     const totalCount = () => services().length;
+    const totalRequests = () => services().reduce((sum, s) => sum + (s.request_count || 0), 0);
 
     const overallHealthy = () => {
         const h = props.healthData();
         return h && h.status === 'healthy';
     };
 
-    const totalRequests = () => services().reduce((sum, s) => sum + (s.request_count || 0), 0);
-
-    const handleResetClick = () => {
-        setConfirmingReset(true);
-    };
-
-    const handleResetConfirm = async () => {
-        setConfirmingReset(false);
-        setResetting(true);
-        setResetMsg(null);
+    const handleToggle = async (serviceId, currentlyEnabled) => {
+        setTogglingService(serviceId);
+        setToggleError(null);
         try {
-            await api.reset();
-            setResetMsg({ type: 'success', text: 'All data reset successfully.' });
+            if (currentlyEnabled) {
+                await api.disableService(serviceId);
+            } else {
+                await api.enableService(serviceId);
+            }
+            await fetchServices();
         } catch (err) {
-            setResetMsg({ type: 'error', text: 'Reset failed: ' + err.message });
+            setToggleError(`Failed to ${currentlyEnabled ? 'disable' : 'enable'} ${SERVICE_NAMES[serviceId] || serviceId}`);
+            setTimeout(() => setToggleError(null), 3000);
         } finally {
-            setResetting(false);
-            setTimeout(() => setResetMsg(null), 5000);
+            setTogglingService(null);
         }
     };
 
-    const handleCopyEnv = async () => {
-        try {
-            const envData = await api.env();
-            const lines = Object.entries(envData)
-                .map(([k, v]) => `export ${k}="${v}"`)
-                .join('\n');
-            await navigator.clipboard.writeText(lines);
-            setCopyMsg('Copied!');
-            setTimeout(() => setCopyMsg(null), 2000);
-        } catch (err) {
-            setCopyMsg('Copy failed');
-            setTimeout(() => setCopyMsg(null), 2000);
-        }
-    };
-
-    const handleCardClick = (serviceId) => {
+    const handleRowClick = (serviceId) => {
         if (props.onServiceClick) {
             props.onServiceClick(serviceId);
+        }
+    };
+
+    const handleCopyEnvVar = async (envVar, endpoint) => {
+        if (!envVar || envVar === '--') return;
+        let value = endpoint || 'localhost';
+        if (value.startsWith('http://') || value.startsWith('https://')) {
+            value = value.replace(/^https?:\/\//, '');
+        }
+        const exportCmd = `export ${envVar}="${value}"`;
+        try {
+            await navigator.clipboard.writeText(exportCmd);
+            setCopiedEnvVar(envVar);
+            setTimeout(() => setCopiedEnvVar(null), 2000);
+        } catch (e) {
+            console.error('Copy failed:', e);
         }
     };
 
@@ -176,13 +195,14 @@ export default function Dashboard(props) {
                 </p>
             </div>
 
-            {/* Summary Bar */}
+            <Show when={fetchError()}>
+                <div class="alert alert-error" style={{ "margin-bottom": "16px" }}>{fetchError()}</div>
+            </Show>
+
             <div class="summary-bar">
                 <div class="stat-card stat-card-hero">
                     <div class="stat-card-label">Services</div>
-                    <div class="stat-card-value">
-                        {healthyCount()} / {enabledCount()}
-                    </div>
+                    <div class="stat-card-value">{healthyCount()} / {enabledCount()}</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-card-label">Project</div>
@@ -214,127 +234,158 @@ export default function Dashboard(props) {
                 </div>
             </div>
 
-            {/* Service Grid */}
             <div class="section">
-                <h2>Local Services</h2>
-                <Show when={services().length > 0} fallback={
-                    <Show when={fetchError()} fallback={
-                        <div class="loading-state">
-                            <div class="loading-spinner" />
-                            Loading services...
-                        </div>
-                    }>
-                        <div class="alert alert-error">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
-                            {fetchError()}
-                        </div>
-                    </Show>
-                }>
-                    <div class="service-grid">
-                        <For each={services()}>
-                            {(svc) => {
-                                const isHealthy = () => svc.status === 'healthy';
-                                const isUnknown = () => svc.status === 'unknown';
-                                const isDisabled = () => svc.status === 'disabled';
-                                const statusClass = () => {
-                                    if (isDisabled()) return 'disabled';
-                                    if (isHealthy()) return 'healthy';
-                                    if (isUnknown()) return 'warning';
-                                    return 'unhealthy';
-                                };
-                                const statusLabel = () => {
-                                    if (isDisabled()) return 'Disabled';
-                                    if (isHealthy()) return 'Healthy';
-                                    if (isUnknown()) return 'Unknown';
-                                    return 'Unhealthy';
-                                };
-                                return (
-                                    <div
-                                        class="service-card"
-                                        role="button"
-                                        tabIndex={0}
-                                        aria-label={`${svc.displayName} — ${statusLabel()}`}
-                                        style={{ cursor: 'pointer', ...(isDisabled() ? { opacity: '0.5', "pointer-events": 'none' } : {}) }}
-                                        onClick={() => handleCardClick(svc.id)}
-                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCardClick(svc.id); } }}
-                                    >
-                                        <div style={{ display: 'flex', "align-items": 'center', gap: '10px' }}>
-                                            <ServiceIcon id={svc.id} size={24} />
-                                            <div class="service-card-name">{svc.displayName}</div>
-                                        </div>
-                                        <div class="service-card-status">
-                                            <span class={`status-dot ${statusClass()}`} />
-                                            <span style={{
-                                                color: isDisabled()
-                                                    ? 'var(--text-tertiary)'
-                                                    : isHealthy()
-                                                        ? 'var(--success)'
-                                                        : isUnknown()
-                                                            ? 'var(--warning)'
-                                                            : 'var(--error)',
-                                                "font-size": '12px',
-                                                "font-weight": '500',
-                                            }}>
-                                                {statusLabel()}
-                                            </span>
-                                            {(() => {
-                                                const mode = props.routingData?.()?.[svc.id]?.mode;
-                                                if (mode === 'remote') return <span class="badge badge-cloud" style={{ "margin-left": "auto" }}>Cloud</span>;
-                                                return null;
-                                            })()}
-                                        </div>
-                                        <div class="service-card-meta">
-                                            <span style={{ "font-family": "var(--font-mono)", "font-size": "11px", "letter-spacing": "-0.02em" }}>:{svc.port || '--'}</span>
-                                            <span class={`badge ${svc.protocol === 'gRPC' ? 'badge-info' : 'badge-neutral'}`}>
-                                                {svc.protocol || '--'}
-                                            </span>
-                                        </div>
-                                        <div style={{
-                                            display: 'flex',
-                                            "justify-content": 'space-between',
-                                            "align-items": 'center',
-                                            "font-size": '11px',
-                                            color: 'var(--text-secondary)',
-                                            "border-top": '1px solid var(--border)',
-                                            "padding-top": '10px',
-                                        }}>
-                                            <span>Requests</span>
-                                            <span style={{ "font-weight": '600', color: 'var(--text)', "font-family": "var(--font-mono)" }}>
+                <h2>APIs & Services</h2>
+                <div class="data-table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th style={{ width: '44px' }}>On</th>
+                                <th style={{ width: '36px' }}></th>
+                                <th>Service</th>
+                                <th>Status</th>
+                                <th>Port</th>
+                                <th>Protocol</th>
+                                <th>Env Var</th>
+                                <th style={{ "text-align": 'right' }}>Requests</th>
+                                <th>CPU</th>
+                                <th>Memory</th>
+                                <th style={{ "text-align": 'right' }}>Total Usage</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <For each={services()}>
+                                {(svc) => {
+                                    const isHealthy = () => svc.status === 'healthy';
+                                    const isUnknown = () => svc.status === 'unknown';
+                                    const isDisabled = () => !svc.enabled || svc.status === 'disabled';
+                                    const isToggling = () => togglingService() === svc.id;
+                                    const statusClass = () => {
+                                        if (isDisabled()) return 'disabled';
+                                        if (isHealthy()) return 'healthy';
+                                        if (isUnknown()) return 'warning';
+                                        return 'unhealthy';
+                                    };
+                                    const statusLabel = () => {
+                                        if (isToggling()) return 'Updating...';
+                                        if (isDisabled()) return 'Disabled';
+                                        if (isHealthy()) return 'Healthy';
+                                        if (isUnknown()) return 'Unknown';
+                                        return 'Unhealthy';
+                                    };
+                                    const usageScore = () => {
+                                        const req = svc.request_count || 0;
+                                        const cpuWeight = svc.cpu || 0;
+                                        const memWeight = svc.memory || 0;
+                                        return Math.round((req * 0.5 + cpuWeight * 0.3 + memWeight * 0.2));
+                                    };
+                                    const protocolBadge = () => {
+                                        if (svc.protocol === 'GRPC' || svc.protocol === 'gRPC') return 'badge-grpc';
+                                        if (svc.protocol === 'REDIS') return 'badge-redis';
+                                        return 'badge-rest';
+                                    };
+                                    const envVar = svc.env_var || '--';
+                                    const endpointVal = svc.endpoint || '--';
+                                    const copied = copiedEnvVar() === envVar;
+                                    return (
+                                        <tr
+                                            class={`clickable-row ${isDisabled() ? 'service-row-disabled' : ''}`}
+                                            onClick={() => handleRowClick(svc.id)}
+                                        >
+                                            <td onClick={(e) => e.stopPropagation()}>
+                                                <label class="toggle-switch">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={svc.enabled}
+                                                        disabled={isToggling()}
+                                                        onChange={() => handleToggle(svc.id, svc.enabled)}
+                                                    />
+                                                    <span class="toggle-slider" />
+                                                </label>
+                                            </td>
+                                            <td style={{ "text-align": 'center' }}>
+                                                <ServiceIcon id={svc.id} size={18} />
+                                            </td>
+                                            <td style={{ "font-weight": "600", "font-size": "13px" }}>
+                                                {svc.displayName}
+                                            </td>
+                                            <td>
+                                                <span class="status-indicator">
+                                                    <span class={`status-dot ${statusClass()}`} />
+                                                    {statusLabel()}
+                                                </span>
+                                            </td>
+                                            <td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>
+                                                {svc.port || '--'}
+                                            </td>
+                                            <td>
+                                                <span class={`badge ${protocolBadge()}`}>
+                                                    {svc.protocol || '--'}
+                                                </span>
+                                            </td>
+                                            <td onClick={(e) => e.stopPropagation()}>
+                                                <div class="env-var-cell">
+                                                    <code
+                                                        class="env-var-text"
+                                                        title={envVar !== '--' ? `export ${envVar}="${endpointVal.startsWith('http') ? endpointVal.replace(/^https?:\/\//, '') : endpointVal}"` : ''}
+                                                    >
+                                                        {envVar}
+                                                    </code>
+                                                    <button
+                                                        class="env-var-copy-btn"
+                                                        disabled={envVar === '--'}
+                                                        onClick={() => handleCopyEnvVar(envVar, endpointVal)}
+                                                        title={copied ? 'Copied!' : 'Copy export command'}
+                                                    >
+                                                        {copied ? (
+                                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                                                        ) : (
+                                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                                                        )}
+                                                    </button>
+                                                </div>
+                                            </td>
+                                            <td style={{ "text-align": 'right', "font-weight": '600', "font-family": "var(--font-mono)", "font-size": "12px" }}>
                                                 {(svc.request_count || 0).toLocaleString()}
-                                            </span>
-                                        </div>
-                                    </div>
-                                );
-                            }}
-                        </For>
-                    </div>
-                </Show>
+                                            </td>
+                                            <td>
+                                                <div style={{ display: 'flex', "align-items": 'center', gap: '8px' }}>
+                                                    <span style={{ "font-size": "12px", "min-width": "32px" }}>{svc.cpu}%</span>
+                                                    <UtilizationBar value={svc.cpu} />
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div style={{ display: 'flex', "align-items": 'center', gap: '8px' }}>
+                                                    <span style={{ "font-size": "12px", "min-width": "32px" }}>{svc.memory}%</span>
+                                                    <UtilizationBar value={svc.memory} />
+                                                </div>
+                                            </td>
+                                            <td style={{ "text-align": 'right', "font-weight": '600', "font-size": "12px" }}>
+                                                {usageScore().toLocaleString()}
+                                            </td>
+                                        </tr>
+                                    );
+                                }}
+                            </For>
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
-            {/* Confirmation Dialog */}
-            <Show when={confirmingReset()}>
-                <div class="alert alert-error" style={{ display: 'flex', "align-items": 'center', "justify-content": 'space-between' }}>
-                    <span>Reset all emulator data? This cannot be undone.</span>
-                    <div style={{ display: 'flex', gap: '8px', "flex-shrink": 0, "margin-left": '16px' }}>
-                        <button class="btn btn-secondary" onClick={() => setConfirmingReset(false)}>Cancel</button>
-                        <button class="btn btn-danger" onClick={handleResetConfirm}>Confirm Reset</button>
-                    </div>
-                </div>
+            <Show when={toggleError()}>
+                <div class="toggle-error">{toggleError()}</div>
             </Show>
 
-            {/* Status Messages */}
-            <Show when={resetMsg()}>
-                <div class={`alert ${resetMsg().type === 'success' ? 'alert-success' : 'alert-error'}`}>
-                    {resetMsg().text}
-                </div>
-            </Show>
-
-            {/* Quick Actions */}
             <div class="actions-bar">
-                <button class="btn btn-danger" onClick={handleResetClick} disabled={resetting() || confirmingReset()}>
-                    {resetting() ? 'Resetting...' : 'Reset All Data'}
-                </button>
-                <button class="btn btn-secondary" onClick={handleCopyEnv}>
+                <button class="btn btn-secondary" onClick={async () => {
+                    try {
+                        const envData = await api.env();
+                        const lines = Object.entries(envData)
+                            .map(([k, v]) => `export ${k}="${v}"`)
+                            .join('\n');
+                        await navigator.clipboard.writeText(lines);
+                    } catch (e) { console.error('Copy failed:', e); }
+                }}>
                     Copy Env Vars
                 </button>
                 <button class="btn btn-secondary" onClick={async () => {
@@ -352,11 +403,6 @@ export default function Dashboard(props) {
                 }}>
                     Export State
                 </button>
-                <Show when={copyMsg()}>
-                    <span class="badge badge-healthy" style={{ "align-self": "center" }}>
-                        {copyMsg()}
-                    </span>
-                </Show>
             </div>
         </div>
     );

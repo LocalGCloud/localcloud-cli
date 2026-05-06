@@ -1,6 +1,15 @@
 /* ============================================================
-   LocalCloud Console — Components
-   ============================================================ */
+    LocalCloud Console — Components
+    ============================================================ */
+
+/* ---------- Interactive Base ---------- */
+button,
+[role="button"],
+.card,
+.service-card,
+.clickable {
+  cursor: pointer;
+}
 
 /* ---------- Status Dot ---------- */
 .status-dot {
@@ -43,6 +52,7 @@
   border-radius: var(--radius);
   padding: 16px;
   transition: border-color var(--transition);
+  cursor: pointer;
 }
 
 .card:hover {
@@ -520,6 +530,39 @@
   height: 14px;
   accent-color: var(--primary);
   cursor: pointer;
+}
+
+.filter-bar .refresh-interval-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.filter-bar .refresh-interval-label input[type="number"] {
+  height: 34px;
+  width: 50px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-family: var(--font-body);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  transition: border-color var(--transition);
+  -moz-appearance: textfield;
+}
+
+.filter-bar .refresh-interval-label input[type="number"]::-webkit-outer-spin-button,
+.filter-bar .refresh-interval-label input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.filter-bar .refresh-interval-label input[type="number"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ---------- Tab Bar ---------- */
@@ -1924,6 +1967,316 @@
 
 .sql-results-table tbody tr:nth-child(even) { background: var(--surface-variant); }
 .sql-results-table tbody tr:hover { background: var(--surface-hover); }
+
+/* ============================================================
+   Aura Components
+   ============================================================ */
+
+.card,
+.stat-card,
+.service-card,
+.data-table-wrapper,
+.sql-workspace,
+.sql-main-panel,
+.sql-explorer,
+.remote-sync-panel {
+  box-shadow: var(--shadow);
+}
+
+.stat-card {
+  position: relative;
+  overflow: hidden;
+  min-height: 132px;
+}
+
+.aura-metric-row {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.aura-metric-module .stat-card-value {
+  position: relative;
+  z-index: 1;
+}
+
+.aura-sparkline {
+  width: 100%;
+  height: 44px;
+  margin-top: 12px;
+  display: block;
+}
+
+.aura-sparkline-line {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.aura-sparkline-fill {
+  fill: var(--primary-soft);
+}
+
+.aura-util-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.aura-util-lines {
+  display: grid;
+  gap: 12px;
+}
+
+.aura-util-lines div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.aura-util-lines i {
+  grid-column: 1 / 3;
+  height: 7px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--success), var(--primary));
+  box-shadow: 0 0 18px var(--primary-soft);
+}
+
+.aura-category-stack {
+  display: grid;
+  gap: 22px;
+}
+
+.aura-category-section {
+  padding: 2px 0 4px;
+}
+
+.aura-category-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.aura-category-heading h3 {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.aura-category-heading span {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.aura-service-grid {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.aura-service-card {
+  min-height: 178px;
+  border-color: var(--border);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 96%, white 4%), var(--surface));
+}
+
+.aura-service-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-hover);
+}
+
+.aura-service-card-top {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.aura-service-card-top .badge {
+  align-self: start;
+}
+
+.aura-service-card-meta {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 10px;
+  gap: 8px;
+}
+
+.aura-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  opacity: 0;
+  max-height: 0;
+  overflow: hidden;
+  transition: opacity var(--transition), max-height var(--transition);
+}
+
+.aura-service-card:hover .aura-card-actions,
+.aura-service-card:focus-within .aura-card-actions {
+  opacity: 1;
+  max-height: 64px;
+}
+
+.aura-card-actions span {
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.aura-sql-tabbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 42px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-variant);
+}
+
+.aura-sql-tab,
+.aura-sql-tab-add {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  padding: 0 12px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.aura-sql-tab.active {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.aura-sql-tab i {
+  font-style: normal;
+  opacity: 0.6;
+}
+
+.aura-sql-tab-add {
+  width: 34px;
+  justify-content: center;
+  padding: 0;
+  border-radius: 8px;
+}
+
+.aura-json-cell {
+  max-width: 520px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.aura-json-cell span {
+  color: var(--primary);
+  font-family: var(--font-mono);
+}
+
+.aura-json-cell pre {
+  margin-top: 8px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.sql-results-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+}
+
+.aura-sync-wizard-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 48px;
+}
+
+.aura-sync-wizard {
+  max-width: 560px;
+  width: 100%;
+}
+
+.aura-wizard-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.aura-wizard-steps span {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--surface-variant);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.aura-wizard-steps span.active {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.aura-mapping-preview {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-variant);
+}
+
+.aura-mapping-preview div {
+  min-width: 0;
+}
+
+.aura-mapping-preview span {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-transform: uppercase;
+  font-weight: 800;
+}
+
+.aura-mapping-preview strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 12px;
+  margin-top: 4px;
+}
 
 .sql-results-rownum {
   color: var(--text-tertiary) !important;

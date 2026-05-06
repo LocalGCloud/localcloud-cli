@@ -256,12 +256,18 @@ public class MutateService {
             if (instanceId == null || databaseId == null)
                 return mapper.writeValueAsString(Map.of("error", true, "message", "instance and database are required"));
 
+            logger.info("Creating Spanner database: instance={}, database={}, project={}", instanceId, databaseId, projectId);
+
             List<String> ddlStatements = json.containsKey("ddl") ? (List<String>) json.get("ddl") : List.of();
 
             String url = spannerBase + "/v1/projects/" + projectId + "/instances/" + instanceId + "/databases";
+            logger.debug("Spanner createDatabase URL: {}", url);
+            
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("createStatement", "CREATE DATABASE `" + databaseId + "`");
             if (!ddlStatements.isEmpty()) payload.put("extraStatements", ddlStatements);
+            
+            logger.debug("Spanner createDatabase payload: {}", payload);
 
             String result = httpPostAndReturn(url, mapper.writeValueAsString(payload), "application/json");
             return mapper.writeValueAsString(Map.of("status", "created", "database", databaseId, "response", mapper.readValue(result, Object.class)));
@@ -469,6 +475,11 @@ public class MutateService {
             String dataset = (String) json.get("dataset");
             String table = (String) json.get("table");
             String whereClause = (String) json.get("whereClause");
+
+            // Validate whereClause - only allow simple comparisons to prevent SQL injection
+            if (whereClause != null && !whereClause.matches("^[\\w\\s=<>'].+$")) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid whereClause format"));
+            }
 
             String dml = "DELETE FROM `" + dataset + "." + table + "` WHERE " + whereClause;
             Map<String, Object> queryBody = new LinkedHashMap<>();
@@ -921,8 +932,8 @@ public class MutateService {
         if (response.statusCode() >= 400) {
             String errorBody = response.body();
             logger.warn("HTTP POST {} failed ({}): {}", url, response.statusCode(), errorBody);
-            throw new RuntimeException(String.format("HTTP POST %s failed with status %d: %s",
-                    url, response.statusCode(), errorBody));
+            throw new RuntimeException(String.format("Spanner API error (%d): %s",
+                    response.statusCode(), errorBody));
         }
         return response.body();
     }

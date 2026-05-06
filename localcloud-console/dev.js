@@ -4,7 +4,7 @@ import { createServer, request as httpRequest } from 'http';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, readdirSync, rmSync, watch } from 'fs';
 import { join, extname } from 'path';
 
-const PREFERRED_PORT = 3000;
+const PREFERRED_PORT = 3001;
 const API_TARGET = 'http://localhost:8080';
 const DIST = 'dist';
 

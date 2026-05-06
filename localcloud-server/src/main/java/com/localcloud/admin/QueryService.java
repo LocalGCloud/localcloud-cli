@@ -1122,7 +1122,10 @@ public class QueryService {
 
                             for (String stmt : statements) {
                                 if (stmt.trim().toUpperCase().startsWith("CREATE TABLE")) {
-                                    Map<String, Object> table = parseCreateTable(stmt);
+                                    Map<String, Object> table = SpannerDdlParser.parse(stmt);
+                                    if (table == null) {
+                                        table = parseCreateTable(stmt);
+                                    }
                                     if (table != null) {
                                         Map<String, Object> prefixed = new LinkedHashMap<>(table);
                                         // Include instance in the name: instance/database.TableName

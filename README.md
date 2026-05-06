@@ -356,4 +356,4 @@ Also see: [Terraform Compatibility Matrix](terraform/COMPATIBILITY.md) | [Consol
 
 ## License
 
-Apache-2.0
+See [../localcloud-site/LICENSE](../localcloud-site/LICENSE) - Proprietary. Free for individual developers for personal use, learning, and evaluation. No production or commercial use permitted.

@@ -1515,6 +1515,24 @@ public class SeedService {
         String projectId = config.getProjectId();
         String firestoreBase = "http://localhost:" + firestorePort;
 
+        // Wait for Firestore emulator to be ready (it starts slower than the gateway)
+        boolean firestoreReady = false;
+        for (int attempt = 0; attempt < 10; attempt++) {
+            try {
+                String checkUrl = firestoreBase + "/v1/projects/" + projectId + "/databases/(default)/documents";
+                httpGet(checkUrl);
+                firestoreReady = true;
+                break;
+            } catch (Exception e) {
+                logger.info("Waiting for Firestore emulator to be ready (attempt {}/10)...", attempt + 1);
+                try { Thread.sleep(1000L * (attempt + 1)); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); return 0; }
+            }
+        }
+        if (!firestoreReady) {
+            logger.warn("Firestore emulator not ready after retries, skipping seed");
+            return 0;
+        }
+
         List<Map<String, Object>> collections = (List<Map<String, Object>>) fs.get("collections");
         if (collections != null) {
             for (Map<String, Object> coll : collections) {

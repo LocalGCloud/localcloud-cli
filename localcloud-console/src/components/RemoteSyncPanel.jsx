@@ -293,8 +293,13 @@ export function RemoteSyncPanel(props) {
 
     return (
     <Show when={connected()} fallback={
-        <div style="display: flex; align-items: center; justify-content: center; flex: 1; padding: 48px">
-            <div class="card" style="max-width: 480px; width: 100%">
+        <div class="aura-sync-wizard-shell">
+            <div class="card aura-sync-wizard">
+                <div class="aura-wizard-steps" aria-label="Sync setup steps">
+                    <span class="active">1 Connect</span>
+                    <span>2 Preview Mapping</span>
+                    <span>3 Sync Local</span>
+                </div>
                 <div class="card-header" style="display: flex; align-items: center; gap: 10px">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="var(--primary)">
                         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
@@ -333,6 +338,11 @@ export function RemoteSyncPanel(props) {
                     <Show when={syncError()}>
                         <div class="alert alert-error" style="margin: 0">{syncError()}</div>
                     </Show>
+                    <div class="aura-mapping-preview">
+                        <div><span>Remote dataset</span><strong>{connectProject() || 'source-project'}</strong></div>
+                        <div><span>Local target</span><strong>{props.serviceId}</strong></div>
+                        <div><span>Transfer mode</span><strong>read-only mirror</strong></div>
+                    </div>
                     <button class="btn btn-primary" onClick={handleConnect}
                             disabled={!connectProject() || !connectToken()}
                             style="width: 100%">

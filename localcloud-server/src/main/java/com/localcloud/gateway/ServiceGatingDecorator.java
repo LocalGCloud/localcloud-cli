@@ -88,6 +88,37 @@ public class ServiceGatingDecorator implements DecoratingHttpServiceFunction {
         if (path.startsWith("/compute/v1")) {
             return "compute";
         }
+        if (path.startsWith("/spanner/")) {
+            return "spanner";
+        }
+        if (path.startsWith("/bigquery/")) {
+            return "bigquery";
+        }
+        if (path.startsWith("/datastore/")) {
+            return "firestore";
+        }
+        if (path.startsWith("/v1/") && path.contains("/projects/") && path.contains("/locations/") 
+                && path.contains("/instances/")) {
+            return "memorystore";
+        }
+        if (path.startsWith("/pubsub/")) {
+            return "pubsub";
+        }
+        if (path.startsWith("/storage/")) {
+            return "gcs";
+        }
+        if (path.startsWith("/bigtable/")) {
+            return "bigtable";
+        }
+        if (path.startsWith("/v1/") && path.contains("/logs")) {
+            return "logging";
+        }
+        if (path.startsWith("/v1/") && (path.contains("/metricDescriptors") || path.contains("/timeSeries"))) {
+            return "monitoring";
+        }
+        if (path.startsWith("/v1/") && (path.contains("/workflows") || path.contains("/executions"))) {
+            return "workflows";
+        }
         return null;
     }
 }

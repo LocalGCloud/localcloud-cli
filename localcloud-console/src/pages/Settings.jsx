@@ -812,6 +812,13 @@ export default function Settings(props) {
     const [envError, setEnvError] = createSignal(null);
     const [intervalInput, setIntervalInput] = createSignal(Math.floor(props.refreshInterval() / 1000));
     const [intervalMsg, setIntervalMsg] = createSignal(null);
+    const [logsInterval, setLogsInterval] = createSignal(() => {
+        try { return parseInt(localStorage.getItem('localcloud-logs-interval') || '3', 10); } catch { return 3; }
+    });
+    const [usageInterval, setUsageInterval] = createSignal(() => {
+        try { return parseInt(localStorage.getItem('localcloud-usage-interval') || '30', 10); } catch { return 30; }
+    });
+    const [prefsMsg, setPrefsMsg] = createSignal(null);
     const [quickCopied, setQuickCopied] = createSignal(false);
 
     // Remote connection state (Data Mirror)
@@ -907,6 +914,20 @@ export default function Settings(props) {
         props.setRefreshInterval(val * 1000);
         setIntervalMsg('Applied.');
         setTimeout(() => setIntervalMsg(null), 2000);
+    };
+
+    const applyLogsInterval = () => {
+        const val = logsInterval();
+        if (val < 1 || val > 60) { setPrefsMsg('Logs interval must be 1-60 seconds.'); setTimeout(() => setPrefsMsg(null), 3000); return; }
+        try { localStorage.setItem('localcloud-logs-interval', String(val)); } catch {}
+        setPrefsMsg('Applied.'); setTimeout(() => setPrefsMsg(null), 2000);
+    };
+
+    const applyUsageInterval = () => {
+        const val = usageInterval();
+        if (val < 1 || val > 120) { setPrefsMsg('Usage interval must be 1-120 seconds.'); setTimeout(() => setPrefsMsg(null), 3000); return; }
+        try { localStorage.setItem('localcloud-usage-interval', String(val)); } catch {}
+        setPrefsMsg('Applied.'); setTimeout(() => setPrefsMsg(null), 2000);
     };
 
     // Reusable helpers for guide content (shared with inline help tab)
@@ -1200,7 +1221,7 @@ environment:
                 <div class="card" style={{ padding: "0" }}>
                     <div class="settings-row" style={{ padding: "16px 20px" }}>
                         <div class="settings-row-info">
-                            <div class="settings-row-label">Refresh Interval</div>
+                            <div class="settings-row-label">Health Refresh</div>
                             <div class="settings-row-desc">How often to poll for health data (1-60 seconds).</div>
                         </div>
                         <div class="settings-row-action">
@@ -1217,9 +1238,47 @@ environment:
                             </div>
                         </div>
                     </div>
-                    <Show when={intervalMsg()}>
+                    <div class="settings-row" style={{ padding: "16px 20px", "border-top": "1px solid var(--border)" }}>
+                        <div class="settings-row-info">
+                            <div class="settings-row-label">Logs Auto-Refresh</div>
+                            <div class="settings-row-desc">Polling interval for the Logs page (1-60 seconds). Toggle on/off in the Logs page.</div>
+                        </div>
+                        <div class="settings-row-action">
+                            <div class="input-group">
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="60"
+                                    value={logsInterval()}
+                                    onInput={e => setLogsInterval(parseInt(e.currentTarget.value) || 3)}
+                                />
+                                <span class="input-group-suffix">sec</span>
+                                <button class="btn btn-primary" onClick={applyLogsInterval}>Apply</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-row" style={{ padding: "16px 20px", "border-top": "1px solid var(--border)" }}>
+                        <div class="settings-row-info">
+                            <div class="settings-row-label">Usage Auto-Refresh</div>
+                            <div class="settings-row-desc">Polling interval for the Cost Analysis page (1-120 seconds). Toggle on/off in the Usage page.</div>
+                        </div>
+                        <div class="settings-row-action">
+                            <div class="input-group">
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="120"
+                                    value={usageInterval()}
+                                    onInput={e => setUsageInterval(parseInt(e.currentTarget.value) || 30)}
+                                />
+                                <span class="input-group-suffix">sec</span>
+                                <button class="btn btn-primary" onClick={applyUsageInterval}>Apply</button>
+                            </div>
+                        </div>
+                    </div>
+                    <Show when={intervalMsg() || prefsMsg()}>
                         <div style={{ padding: "0 20px 12px", "font-size": "12px", color: "var(--success)" }}>
-                            {intervalMsg()}
+                            {intervalMsg() || prefsMsg()}
                         </div>
                     </Show>
                 </div>
@@ -1456,7 +1515,7 @@ function AboutPage(props) {
                         <img src="/icons/localcloud-mark.svg" alt="LocalCloud" width="48" height="48" style={{ "border-radius": "12px" }} />
                         <div>
                             <div style={{ "font-size": "24px", "font-weight": "700", "letter-spacing": "-0.5px" }}>LocalCloud</div>
-                            <div style={{ "font-size": "12px", opacity: "0.7", "letter-spacing": "0.3px" }}>{versionDisplay()} &middot; Apache-2.0</div>
+                            <div style={{ "font-size": "12px", opacity: "0.7", "letter-spacing": "0.3px" }}>{versionDisplay()} &middot; <a href="/LICENSE" target="_blank" style={{ color: "inherit", "text-decoration": "underline" }}>Proprietary</a></div>
                         </div>
                     </div>
                     <p style={{ "font-size": "15px", "line-height": "1.65", color: "#fff", "max-width": "560px" }}>

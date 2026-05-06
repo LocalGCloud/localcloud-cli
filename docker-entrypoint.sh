@@ -126,6 +126,32 @@ if [ -f "/var/lib/localcloud/pgdata/postmaster.pid" ]; then
 fi
 rm -f /var/run/postgresql/.s.PGSQL.* 2>/dev/null || true
 
+# Spanner LevelDB: validate data directory and restore from backup if corrupted.
+# LevelDB uses a MANIFEST file to track SST files. If MANIFEST is missing but the
+# directory has content, the data was likely corrupted by an unclean shutdown.
+SPANNER_DATA_DIR="/var/lib/localcloud/spanner-data"
+SPANNER_BACKUP_DIR="/var/lib/localcloud/spanner-data-backup"
+if [ "${LOCALCLOUD_ENABLE_SPANNER:-true}" = "true" ]; then
+    if [ -d "$SPANNER_DATA_DIR" ]; then
+        HAS_SST_FILES=$(find "$SPANNER_DATA_DIR" -maxdepth 1 -name '*.sst' -o -name '*.ldb' 2>/dev/null | head -1)
+        HAS_MANIFEST=$(find "$SPANNER_DATA_DIR" -maxdepth 1 -name 'MANIFEST*' 2>/dev/null | head -1)
+        HAS_CURRENT=$(test -f "$SPANNER_DATA_DIR/CURRENT" && echo "yes" || echo "no")
+
+        if [ -n "$HAS_SST_FILES" ] && { [ -z "$HAS_MANIFEST" ] || [ "$HAS_CURRENT" = "no" ]; }; then
+            echo "WARNING: Spanner LevelDB data appears corrupted (has SST files but missing MANIFEST/CURRENT)."
+            if [ -d "$SPANNER_BACKUP_DIR" ] && [ -f "$SPANNER_BACKUP_DIR/CURRENT" ]; then
+                echo "Restoring Spanner data from last known-good backup..."
+                rm -rf "$SPANNER_DATA_DIR"
+                cp -a "$SPANNER_BACKUP_DIR" "$SPANNER_DATA_DIR"
+                echo "Spanner data restored from backup."
+            else
+                echo "No backup available. Spanner will start with empty data."
+                rm -rf "$SPANNER_DATA_DIR"/*
+            fi
+        fi
+    fi
+fi
+
 # Initialize PostgreSQL if pgdata is empty (bind mounts don't copy build-time data).
 # Named volumes auto-populate from the image; bind mounts start empty.
 if [ ! -f "/var/lib/localcloud/pgdata/postgresql.conf" ]; then
@@ -289,6 +315,37 @@ fi
 
 # Set default telemetry API key if not overridden (not baked into image layers)
 export LOCALCLOUD_EVENT_API_KEY="${LOCALCLOUD_EVENT_API_KEY:-phc_o9nQDAQjEgsPcamE8pCnhv7ekA8CmA2VQXechLju9LA9}"
+
+# Spanner LevelDB periodic backup: snapshot data directory every 60 seconds.
+# This provides a safety net against LevelDB corruption from unclean shutdowns.
+# Only runs when Spanner is enabled and data directory exists.
+if [ "${LOCALCLOUD_ENABLE_SPANNER:-true}" = "true" ]; then
+    (
+        SPANNER_DATA_DIR="/var/lib/localcloud/spanner-data"
+        SPANNER_BACKUP_DIR="/var/lib/localcloud/spanner-data-backup"
+        BACKUP_INTERVAL=60
+        LAST_BACKUP=""
+        sleep 30  # wait for emulator to start
+
+        while true; do
+            if [ -d "$SPANNER_DATA_DIR" ] && [ -f "$SPANNER_DATA_DIR/CURRENT" ]; then
+                # Only backup if data has changed (compare file count)
+                CUR_COUNT=$(find "$SPANNER_DATA_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l)
+                if [ "$CUR_COUNT" != "$LAST_BACKUP" ] && [ "$CUR_COUNT" -gt 0 ]; then
+                    # Atomic backup: write to temp dir, then swap
+                    TMP_BACKUP="${SPANNER_BACKUP_DIR}.tmp"
+                    rm -rf "$TMP_BACKUP" 2>/dev/null
+                    if cp -a "$SPANNER_DATA_DIR" "$TMP_BACKUP" 2>/dev/null; then
+                        rm -rf "$SPANNER_BACKUP_DIR" 2>/dev/null
+                        mv "$TMP_BACKUP" "$SPANNER_BACKUP_DIR"
+                        LAST_BACKUP="$CUR_COUNT"
+                    fi
+                fi
+            fi
+            sleep $BACKUP_INTERVAL
+        done
+    ) &
+fi
 
 # Version update check (non-blocking background)
 # Compares build-time image digest with Docker Hub latest tag.

@@ -361,7 +361,7 @@ public class WorkflowExecutor {
                         : context.createChildContext(Map.of(valueVar, item));
                     WorkflowExecutor childExecutor = new WorkflowExecutor(definition, childCtx, stdlib);
                     futures.add(executor.submit(() -> {
-                        ConnectorRegistry.setCurrentContext(context);
+                        ConnectorRegistry.setCurrentContext(childCtx);
                         try {
                             if (finalSharedLock != null) {
                                 // Serialize execution of steps that access shared variables
@@ -416,7 +416,7 @@ public class WorkflowExecutor {
                                 : context.createChildContext(Map.of());
                             WorkflowExecutor childExecutor = new WorkflowExecutor(definition, childCtx, stdlib);
                             futures.add(executor.submit(() -> {
-                                ConnectorRegistry.setCurrentContext(context);
+                                ConnectorRegistry.setCurrentContext(childCtx);
                                 try {
                                     if (finalSharedLock2 != null) {
                                         finalSharedLock2.lock();

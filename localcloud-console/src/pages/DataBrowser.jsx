@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
+import { createSignal, createEffect, Show, For } from 'solid-js';
 import { api } from '../api.js';
 
 
@@ -1861,7 +1861,8 @@ export default function DataBrowser(props) {
     // Tab sync is handled by the parent (app.jsx) via props.selectedService.
     // No duplicate hash listener needed here — app.jsx already listens to hashchange.
 
-    // Fetch service health for tab indicators
+    // Fetch service health once on mount for tab indicators.
+    // Health polling is handled globally by app.jsx — no need for redundant polling here.
     const loadHealth = async () => {
         try {
             const data = await api.health();
@@ -1869,10 +1870,6 @@ export default function DataBrowser(props) {
         } catch (e) {}
     };
     loadHealth();
-    // Note: health polling continues when Data Explorer is hidden (SQL Editor shown).
-    // This is intentional — keeps status dots updated in the sidebar.
-    const healthTimer = setInterval(loadHealth, 30000);
-    onCleanup(() => clearInterval(healthTimer));
 
     // Also sync from parent prop (for dashboard click navigation)
     createEffect(() => {

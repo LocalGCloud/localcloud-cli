@@ -154,7 +154,7 @@ function typeLabel(type) {
 /**
  * Normalize the local schema API response into tree nodes.
  */
-function normalizeLocalSchema(data, serviceId) {
+export function normalizeLocalSchema(data, serviceId) {
     const tables = data?.tables || [];
     const groups = {};
     for (const t of tables) {
@@ -187,7 +187,7 @@ function normalizeLocalSchema(data, serviceId) {
 /**
  * Normalize the remote browse API response into tree nodes.
  */
-function normalizeRemoteBrowse(rawNodes, serviceId) {
+export function normalizeRemoteBrowse(rawNodes, serviceId) {
     if (!rawNodes || rawNodes.length === 0) return [];
 
     const first = rawNodes[0];

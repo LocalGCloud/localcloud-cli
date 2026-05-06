@@ -36,11 +36,13 @@ public class RedisCommandHandler extends ChannelInboundHandlerAdapter {
 
     private final MemorystoreStore store;
     private final AbstractEmulator emulator;
+    private final LuaScriptEngine luaEngine;
     private int currentDb = 0;
 
     public RedisCommandHandler(MemorystoreStore store, AbstractEmulator emulator) {
         this.store = store;
         this.emulator = emulator;
+        this.luaEngine = new LuaScriptEngine(store);
     }
 
     @Override
@@ -126,6 +128,11 @@ public class RedisCommandHandler extends ChannelInboundHandlerAdapter {
             case "RENAME" -> handleRename(args);
             case "KEYS" -> handleKeys(args);
 
+            // Lua scripting commands
+            case "EVAL" -> handleEval(args);
+            case "EVALSHA" -> handleEvalSha(args);
+            case "SCRIPT" -> handleScript(args);
+
             // Hash commands (T015)
             case "HGET" -> handleHget(args);
             case "HSET" -> handleHset(args);
@@ -148,6 +155,14 @@ public class RedisCommandHandler extends ChannelInboundHandlerAdapter {
             case "LINDEX" -> handleLindex(args);
             case "LSET" -> handleLset(args);
             case "LTRIM" -> handleLtrim(args);
+
+            // Pub/Sub commands
+            case "SUBSCRIBE" -> handleSubscribe(args);
+            case "PSUBSCRIBE" -> handlePSubscribe(args);
+            case "UNSUBSCRIBE" -> handleUnsubscribe(args);
+            case "PUNSUBSCRIBE" -> handlePUnsubscribe(args);
+            case "PUBLISH" -> handlePublish(args);
+            case "PUBSUB" -> handlePubSub(args);
 
             // Set commands (T017)
             case "SADD" -> handleSadd(args);
@@ -233,6 +248,72 @@ public class RedisCommandHandler extends ChannelInboundHandlerAdapter {
     private RedisMessage handleCommand(List<String> args) {
         // Minimal COMMAND support for client compatibility
         return array(List.of());
+    }
+
+    // =========================================================================
+    // Lua scripting commands
+    // =========================================================================
+
+    private RedisMessage handleEval(List<String> args) {
+        if (args.size() < 3) return error("wrong number of arguments for 'eval' command");
+        String script = args.get(1);
+        int numKeys;
+        try {
+            numKeys = Integer.parseInt(args.get(2));
+        } catch (NumberFormatException e) {
+            return error("numkeys must be an integer");
+        }
+        List<String> keys = new ArrayList<>();
+        List<String> argv = new ArrayList<>();
+        for (int i = 0; i < numKeys && i + 3 < args.size(); i++) {
+            keys.add(args.get(3 + i));
+        }
+        for (int i = 3 + numKeys; i < args.size(); i++) {
+            argv.add(args.get(i));
+        }
+        String result = luaEngine.eval(script, numKeys, keys, argv);
+        return bulkString(result);
+    }
+
+    private RedisMessage handleEvalSha(List<String> args) {
+        if (args.size() < 3) return error("wrong number of arguments for 'evalsha' command");
+        String sha = args.get(1);
+        int numKeys;
+        try {
+            numKeys = Integer.parseInt(args.get(2));
+        } catch (NumberFormatException e) {
+            return error("numkeys must be an integer");
+        }
+        List<String> keys = new ArrayList<>();
+        List<String> argv = new ArrayList<>();
+        for (int i = 0; i < numKeys && i + 3 < args.size(); i++) {
+            keys.add(args.get(3 + i));
+        }
+        for (int i = 3 + numKeys; i < args.size(); i++) {
+            argv.add(args.get(i));
+        }
+        String result = luaEngine.evalsha(sha, numKeys, keys, argv);
+        if (result.startsWith("-NOSCRIPT")) {
+            return error(result.substring(1));
+        }
+        return bulkString(result);
+    }
+
+    private RedisMessage handleScript(List<String> args) {
+        if (args.size() < 2) return error("wrong number of arguments for 'script' command");
+        String subCmd = args.get(1).toUpperCase();
+        if (subCmd.equals("LOAD")) {
+            if (args.size() < 3) return error("wrong number of arguments for 'script load' command");
+            String sha = luaEngine.scriptLoad(args.get(2));
+            return bulkString(sha);
+        } else if (subCmd.equals("FLUSH")) {
+            luaEngine.scriptFlush();
+            return ok();
+        } else if (subCmd.equals("EXISTS")) {
+            return array(List.of());
+        } else {
+            return error("SCRIPT subcommand must be LOAD, FLUSH, or EXISTS");
+        }
     }
 
     // =========================================================================
@@ -1039,5 +1120,50 @@ public class RedisCommandHandler extends ChannelInboundHandlerAdapter {
 
     private static long parseLongSafe(String s) {
         try { return Long.parseLong(s); } catch (NumberFormatException e) { return 0; }
+    }
+
+    // =========================================================================
+    // Pub/Sub commands
+    // =========================================================================
+
+    private RedisMessage handleSubscribe(List<String> args) {
+        // SUBSCRIBE - return success but don't track (simplified for compatibility)
+        if (args.size() < 2) return error("wrong number of arguments for 'subscribe' command");
+        return array(List.of(simpleString("subscribed"), simpleString(args.get(1)), integer(1)));
+    }
+
+    private RedisMessage handlePSubscribe(List<String> args) {
+        // PSUBSCRIBE - return success but don't track (simplified)
+        if (args.size() < 2) return error("wrong number of arguments for 'psubscribe' command");
+        return array(List.of(simpleString("psubscribed"), simpleString(args.get(1)), integer(1)));
+    }
+
+    private RedisMessage handleUnsubscribe(List<String> args) {
+        return array(List.of());
+    }
+
+    private RedisMessage handlePUnsubscribe(List<String> args) {
+        return array(List.of());
+    }
+
+    private RedisMessage handlePublish(List<String> args) {
+        if (args.size() < 3) return error("wrong number of arguments for 'publish' command");
+        // PUBLISH - simply return 0 subs for now (pub/sub routing needs connection tracking)
+        return integer(0);
+    }
+
+    private RedisMessage handlePubSub(List<String> args) {
+        if (args.size() < 2) return error("wrong number of arguments for 'pubsub' command");
+        String subCmd = args.get(1).toUpperCase();
+        if (subCmd.equals("NUMSUB")) {
+            return array(List.of());
+        } else if (subCmd.equals("CHANNELS")) {
+            return array(List.of());
+        }
+        return error("PUBSUB subcommand must be NUMSUB or CHANNELS");
+    }
+
+    private RedisMessage simpleString(String s) {
+        return new SimpleStringRedisMessage(s);
     }
 }
