@@ -387,6 +387,18 @@ public class QueryService {
             return executeSpannerDdl(sql, projectId, instance, database, startTime);
         }
 
+        // Rewrite TRUNCATE TABLE → DELETE FROM ... WHERE TRUE (Spanner doesn't support TRUNCATE)
+        if (trimmedUpper.startsWith("TRUNCATE ")) {
+            java.util.regex.Matcher truncMatch = java.util.regex.Pattern.compile(
+                    "(?i)TRUNCATE\\s+TABLE\\s+([\\w.`]+)", java.util.regex.Pattern.CASE_INSENSITIVE)
+                    .matcher(sql.trim());
+            if (truncMatch.find()) {
+                sql = "DELETE FROM " + truncMatch.group(1) + " WHERE TRUE";
+                trimmedUpper = sql.trim().toUpperCase();
+                logger.info("Rewrote TRUNCATE to: {}", sql);
+            }
+        }
+
         String sessionName = null;
         try {
             // 1. Create session
