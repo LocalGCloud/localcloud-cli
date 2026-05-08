@@ -1113,6 +1113,7 @@ environment:
                                                 await api.setRouting(serviceId, newMode,
                                                     newMode === 'remote' ? info.remote_project : null,
                                                     newMode === 'remote' ? info.remote_region : null);
+                                                if (props.onRoutingChanged) props.onRoutingChanged();
                                             } catch (e) {
                                                 console.error('Failed to set routing:', e);
                                             } finally {

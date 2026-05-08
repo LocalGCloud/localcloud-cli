@@ -308,14 +308,28 @@ function SQLEditor(props) {
         }
     }
 
-    // Reset editor state when service changes
+    // Cache SQL text per service so switching back restores it
+    const sqlCache = {};
+
+    // Reset editor state when service changes (preserve SQL in cache)
     createEffect((prev) => {
         const svc = service();
         if (prev && prev !== svc) {
-            setSqlText('');
-            setSqlTabs([{ id: 'tab-1', title: 'Query 1', sql: '' }]);
-            setActiveSqlTab('tab-1');
-            setIsPlaceholder(true);
+            // Save current SQL to cache before switching
+            sqlCache[prev] = { text: sqlText(), tabs: sqlTabs(), activeTab: activeSqlTab(), placeholder: isPlaceholder() };
+            // Restore from cache or reset
+            const cached = sqlCache[svc];
+            if (cached && cached.text) {
+                setSqlText(cached.text);
+                setSqlTabs(cached.tabs);
+                setActiveSqlTab(cached.activeTab);
+                setIsPlaceholder(cached.placeholder);
+            } else {
+                setSqlText('');
+                setSqlTabs([{ id: 'tab-1', title: 'Query 1', sql: '' }]);
+                setActiveSqlTab('tab-1');
+                setIsPlaceholder(true);
+            }
             setResult(null);
             setError(null);
             setExpanded({});
@@ -542,7 +556,9 @@ function SQLEditor(props) {
         const ds = dynamicSchema();
         if (ds && ds.tables && ds.tables.length > 0) {
             const tbl = ds.tables[0];
-            return `SELECT * FROM ${svc.dialect === 'bigquery' ? '`' + tbl.name + '`' : tbl.name} LIMIT 10`;
+            // Strip database prefix for Spanner (e.g., "my-database.Users" → "Users")
+            const tableName = svc.id === 'spanner' && tbl.name.includes('.') ? tbl.name.split('.').pop() : tbl.name;
+            return `SELECT * FROM ${svc.dialect === 'bigquery' ? '`' + tableName + '`' : tableName} LIMIT 10`;
         }
         return svc.placeholder;
     };
@@ -1141,6 +1157,8 @@ export default function ServiceExplorer(props) {
                         activeProject={props.activeProject}
                         refreshTrigger={refreshTrigger}
                         resetTrigger={resetTrigger}
+                        subpath={props.subpath}
+                        onSubpathChange={props.onSubpathChange}
                     />
                 </div>
 

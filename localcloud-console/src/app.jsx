@@ -49,20 +49,24 @@ const FLAT_SERVICES = SERVICE_GROUPS.flatMap(group => group.services.map(svc => 
 
 function parseHash() {
     const hash = window.location.hash.replace(/^#\/?/, '');
-    if (!hash) return { page: 'dashboard', service: null };
+    if (!hash) return { page: 'dashboard', service: null, subpath: [] };
     const parts = hash.split('/');
-    return { page: parts[0] || 'dashboard', service: parts[1] || null };
+    return { page: parts[0] || 'dashboard', service: parts[1] || null, subpath: parts.slice(2) };
 }
 
-function setHash(page, service) {
-    const next = `#/${service ? `${page}/${service}` : page}`;
-    if (window.location.hash !== next) window.location.hash = next;
+function setHash(page, service, subpath) {
+    const segments = [page];
+    if (service) segments.push(service);
+    if (subpath && subpath.length > 0) segments.push(...subpath);
+    const next = `#/${segments.join('/')}`;
+    if (decodeURIComponent(window.location.hash) !== decodeURIComponent(next)) window.location.hash = next;
 }
 
 function App() {
     const initial = parseHash();
     const [currentPage, setCurrentPage] = createSignal(initial.page);
     const [selectedService, setSelectedService] = createSignal(initial.service);
+    const [subpath, setSubpath] = createSignal(initial.subpath || []);
     const [darkMode, setDarkMode] = createSignal(false);
     const [healthData, setHealthData] = createSignal(null);
     const [routingData, setRoutingData] = createSignal(null);
@@ -152,14 +156,16 @@ function App() {
     createEffect(() => {
         const page = currentPage();
         const svc = selectedService();
-        setHash(page, page === 'data' && svc ? svc : null);
+        const sp = subpath();
+        setHash(page, page === 'data' && svc ? svc : null, page === 'data' && svc ? sp : undefined);
     });
 
     const onHashChange = () => {
-        const { page, service } = parseHash();
+        const { page, service, subpath: sp } = parseHash();
         setCurrentPage(page);
         if (service) setSelectedService(service);
         else if (page !== 'data') setSelectedService(null);
+        setSubpath(sp || []);
     };
     window.addEventListener('hashchange', onHashChange);
     onCleanup(() => window.removeEventListener('hashchange', onHashChange));
@@ -188,19 +194,26 @@ function App() {
     window.addEventListener('click', onGlobalClick);
     onCleanup(() => window.removeEventListener('click', onGlobalClick));
 
+    // Fetch routing + credentials once on load (they rarely change)
+    const fetchRoutingAndCreds = async () => {
+        try {
+            const [routing, creds] = await Promise.all([
+                api.routing().catch(() => null),
+                api.credentials().catch(() => null),
+            ]);
+            if (routing) setRoutingData(routing);
+            if (creds) setCredentialData(creds);
+        } catch {}
+    };
+    fetchRoutingAndCreds();
+
     createEffect(() => {
         const interval = refreshInterval();
         let timer;
         const fetchHealth = async () => {
             try {
-                const [health, routing, creds] = await Promise.all([
-                    api.health(),
-                    api.routing().catch(() => null),
-                    api.credentials().catch(() => null),
-                ]);
+                const health = await api.health();
                 setHealthData(health);
-                if (routing) setRoutingData(routing);
-                if (creds) setCredentialData(creds);
                 healthFailCount = 0;
                 setConnectionStatus('connected');
             } catch (err) {
@@ -304,11 +317,11 @@ function App() {
             case 'logs':
                 return <Logs activeProject={activeProject} />;
             case 'data':
-                return <ServiceExplorer selectedService={selectedService} onTabChange={setSelectedService} activeProject={activeProject} />;
+                return <ServiceExplorer selectedService={selectedService} onTabChange={setSelectedService} activeProject={activeProject} subpath={subpath} onSubpathChange={setSubpath} />;
             case 'usage':
                 return <Usage activeProject={activeProject} />;
             case 'settings':
-                return <Settings darkMode={darkMode} toggleDarkMode={toggleDarkMode} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} routingData={routingData} credentialData={credentialData} healthData={healthData} />;
+                return <Settings darkMode={darkMode} toggleDarkMode={toggleDarkMode} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} routingData={routingData} credentialData={credentialData} healthData={healthData} onRoutingChanged={fetchRoutingAndCreds} />;
             default:
                 return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={activeProject} />;
         }

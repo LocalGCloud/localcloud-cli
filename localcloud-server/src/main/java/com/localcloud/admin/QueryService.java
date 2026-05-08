@@ -397,9 +397,19 @@ public class QueryService {
             Map<String, Object> sessionResp = mapper.readValue(sessionBody, Map.class);
             sessionName = (String) sessionResp.get("name");
 
-            // 2. Execute SQL (DML only — SELECT, INSERT, UPDATE, DELETE)
+            // 2. Execute SQL — use read-write transaction for DML (INSERT, UPDATE, DELETE)
+            boolean isDml = trimmedUpper.startsWith("INSERT ") || trimmedUpper.startsWith("UPDATE ") || trimmedUpper.startsWith("DELETE ");
             String sqlUrl = spannerBase + "/v1/" + sessionName + ":executeSql";
-            String sqlPayload = mapper.writeValueAsString(Map.of("sql", sql));
+            Map<String, Object> sqlPayloadMap = new LinkedHashMap<>();
+            sqlPayloadMap.put("sql", sql);
+            if (isDml) {
+                Map<String, Object> txn = new LinkedHashMap<>();
+                txn.put("readWrite", Map.of());
+                Map<String, Object> txnSelector = new LinkedHashMap<>();
+                txnSelector.put("begin", txn);
+                sqlPayloadMap.put("transaction", txnSelector);
+            }
+            String sqlPayload = mapper.writeValueAsString(sqlPayloadMap);
             String sqlBody = proxyPost(sqlUrl, sqlPayload);
             @SuppressWarnings("unchecked")
             Map<String, Object> sqlResp = mapper.readValue(sqlBody, Map.class);
@@ -410,18 +420,46 @@ public class QueryService {
                 String message = sqlResp.containsKey("message") ? String.valueOf(sqlResp.get("message")) : "Unknown error";
                 if (code != 0) {
                     // Extract table name from SQL for a helpful error message
-                    String tableName = sql.replaceAll("(?i).*?FROM\\s+(\\S+).*", "$1").trim();
+                    String tableName = sql.replaceAll("(?i).*?(?:FROM|INTO)\\s+(\\S+).*", "$1").trim();
+                    // Clean up table name (remove trailing parens, backticks, etc.)
+                    tableName = tableName.replaceAll("[(`\\s].*", "");
                     String errorMsg;
                     if (code == 5 || message.contains("Not Found") || message.contains("not found")) {
                         errorMsg = "Table '" + tableName + "' not found in database '" + database + "'";
-                    } else if (code == 13 || message.contains("marshal")) {
-                        // Spanner emulator wraps NOT_FOUND as INTERNAL with "failed to marshal"
+                    } else if (code == 13 && message.contains("marshal") && message.contains("not found")) {
+                        // Spanner emulator wraps NOT_FOUND as INTERNAL with "failed to marshal...not found"
                         errorMsg = "Table '" + tableName + "' does not exist in database '" + database + "'. "
                                 + "Check that the table name and database are correct.";
                     } else {
-                        errorMsg = "Spanner error: " + message;
+                        // Pass through the actual Spanner error (code 13 = INTERNAL, code 3 = INVALID_ARGUMENT, etc.)
+                        errorMsg = message;
                     }
                     return errorResponse(errorMsg);
+                }
+            }
+
+            // Commit DML transaction if applicable
+            if (isDml) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> txnMeta = (Map<String, Object>) sqlResp.get("metadata");
+                String transactionId = null;
+                if (txnMeta != null) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> txnObj = (Map<String, Object>) txnMeta.get("transaction");
+                    if (txnObj != null) transactionId = (String) txnObj.get("id");
+                }
+                // Also check top-level transaction field
+                if (transactionId == null) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> txnTop = (Map<String, Object>) sqlResp.get("transaction");
+                    if (txnTop != null) transactionId = (String) txnTop.get("id");
+                }
+                if (transactionId != null) {
+                    String commitUrl = spannerBase + "/v1/" + sessionName + ":commit";
+                    proxyPost(commitUrl, mapper.writeValueAsString(Map.of("transactionId", transactionId, "mutations", List.of())));
+                } else {
+                    logger.warn("No transaction ID returned for DML statement — data may not be committed. SQL: {}",
+                            sql.length() > 100 ? sql.substring(0, 100) + "..." : sql);
                 }
             }
 

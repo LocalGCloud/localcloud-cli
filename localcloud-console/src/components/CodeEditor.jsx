@@ -14,8 +14,8 @@
  */
 import { onMount, onCleanup, createEffect } from 'solid-js';
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightActiveLine, drawSelection, highlightSpecialChars, placeholder as placeholderExt } from '@codemirror/view';
-import { EditorState, Compartment } from '@codemirror/state';
-import { sql, PostgreSQL, StandardSQL } from '@codemirror/lang-sql';
+import { EditorState, Compartment, Prec } from '@codemirror/state';
+import { sql, PostgreSQL, StandardSQL, SQLDialect } from '@codemirror/lang-sql';
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, acceptCompletion } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
@@ -25,11 +25,25 @@ import { linter, lintGutter } from '@codemirror/lint';
 import { getUnsupportedKeywords, getWarningMessage } from '../data/compatibility.js';
 
 // ─── SQL Dialect Map ───────────────────────────────────────────────────
+// GoogleSQL (Spanner) uses backticks for identifiers, not double quotes
+const GoogleSQL = SQLDialect.define({
+    identifierQuotes: '`',
+    operatorChars: '*+-%<>!=&|~^/',
+    specialVar: '?',
+    keywords: 'abort accept access add all alter and any array as asc assert at begin between bool by call case cast check close cluster collate column commit compute constraint contains continue create cross current cursor database date declare default delete desc distinct do double drop else end enum escape except exception exclusive exists explain export external extract false fetch first float for forall force foreign from full function get global goto grant group hash having if ignore immediate import in index inner insert int64 integer intersect interval into is join key left like limit loop merge modify natural new next no not null numeric of on open option or order out outer over partition plan pragma primary procedure public raise read record ref release rename replace resource return returning revoke right rollback row run schema select sequence session set size source space start stored struct string subtype table tablesample temp then to trailing true type union unique unnest update use using validate values variable view when where while window with',
+    types: 'int64 float64 float32 numeric bool string bytes date timestamp array struct json',
+});
+
+// NoQuote dialect for services where we don't want identifier quoting in autocomplete
+const NoQuoteSQL = SQLDialect.define({
+    identifierQuotes: '',
+});
+
 const DIALECTS = {
     postgresql: PostgreSQL,
     bigquery: StandardSQL,
-    googlesql: StandardSQL,
-    standard: StandardSQL,
+    googlesql: GoogleSQL,
+    standard: NoQuoteSQL,
 };
 
 function getDialect(name) {
@@ -258,6 +272,17 @@ export default function CodeEditor(props) {
             // History (undo/redo)
             history(),
 
+            // Cmd/Ctrl+Enter → run query (highest priority, before any other keymap)
+            Prec.highest(keymap.of([
+                {
+                    key: 'Mod-Enter',
+                    run: () => {
+                        if (props.onRun) { props.onRun(); return true; }
+                        return false;
+                    },
+                },
+            ])),
+
             // Keymaps
             keymap.of([
                 // Tab accepts autocomplete; Enter inserts newline (not accept)
@@ -269,14 +294,6 @@ export default function CodeEditor(props) {
                 ...completionKeymap,
                 ...foldKeymap,
                 indentWithTab,
-                // Cmd/Ctrl+Enter → run
-                {
-                    key: 'Mod-Enter',
-                    run: () => {
-                        if (props.onRun) { props.onRun(); return true; }
-                        return false;
-                    },
-                },
             ]),
 
             // SQL language (in compartment for dynamic reconfiguration)

@@ -1,4 +1,4 @@
-import { createSignal, createEffect, Show, For } from 'solid-js';
+import { createSignal, createEffect, createMemo, Show, For } from 'solid-js';
 import { api } from '../api.js';
 
 
@@ -1023,11 +1023,21 @@ function SpannerView(props) {
 
     const instanceName = (inst) => inst.displayName || inst.name?.split('/').pop() || '--';
 
+    // Sync URL subpath when navigation state changes
+    const updateSubpath = (inst, db, tbl) => {
+        if (props.onSubpathChange) {
+            const parts = [];
+            if (inst) { parts.push(inst); if (db) { parts.push(db); if (tbl) parts.push(tbl); } }
+            props.onSubpathChange(parts);
+        }
+    };
+
     const selectInstance = async (inst) => {
         const name = inst.name?.split('/').pop() || inst.displayName;
         setSelectedInstance(name);
         setSelectedDatabase(null);
         setSelectedTable(null);
+        updateSubpath(name, null, null);
         setDatabases([]);
         setSubLoading(true);
         try {
@@ -1041,6 +1051,7 @@ function SpannerView(props) {
         const dbName = db.name?.split('/').pop() || db;
         setSelectedDatabase(dbName);
         setSelectedTable(null);
+        updateSubpath(selectedInstance(), dbName, null);
         setDdlData(null);
         setSubLoading(true);
         try {
@@ -1052,6 +1063,7 @@ function SpannerView(props) {
 
     const selectTable = async (tableName) => {
         setSelectedTable(tableName);
+        updateSubpath(selectedInstance(), selectedDatabase(), tableName);
         setTableData(null);
         setSubLoading(true);
         try {
@@ -1065,72 +1077,433 @@ function SpannerView(props) {
         setSelectedInstance(null);
         setSelectedDatabase(null);
         setSelectedTable(null);
+        updateSubpath(null, null, null);
     };
 
     const goBackToDatabases = () => {
         setSelectedDatabase(null);
         setSelectedTable(null);
+        updateSubpath(selectedInstance(), null, null);
     };
 
     const goBackToTables = () => {
         setSelectedTable(null);
+        updateSubpath(selectedInstance(), selectedDatabase(), null);
     };
+
+    // Restore navigation from URL subpath on mount
+    createEffect(() => {
+        const sp = typeof props.subpath === 'function' ? props.subpath() : props.subpath;
+        if (!sp || sp.length === 0) return;
+        const instances = d()?.instances;
+        if (!instances || instances.length === 0) return;
+        const [instName, dbName, tblName] = sp;
+        // Only restore if not already navigated
+        if (instName && !selectedInstance()) {
+            const inst = instances.find(i => (i.name?.split('/').pop() || i.displayName) === instName);
+            if (inst) {
+                selectInstance(inst).then(() => {
+                    if (dbName) {
+                        // Wait for databases to load, then select
+                        const checkDb = setInterval(() => {
+                            const dbs = databases();
+                            if (dbs.length > 0) {
+                                clearInterval(checkDb);
+                                const db = dbs.find(d => (d.name?.split('/').pop() || d) === dbName);
+                                if (db) {
+                                    selectDatabase(db).then(() => {
+                                        if (tblName) {
+                                            // Wait for DDL to load, then select table
+                                            const checkTbl = setInterval(() => {
+                                                const ddl = ddlData();
+                                                if (ddl) {
+                                                    clearInterval(checkTbl);
+                                                    selectTable(tblName);
+                                                }
+                                            }, 100);
+                                            setTimeout(() => clearInterval(checkTbl), 5000);
+                                        }
+                                    });
+                                }
+                            }
+                        }, 100);
+                        setTimeout(() => clearInterval(checkDb), 5000);
+                    }
+                });
+            }
+        }
+    });
+
+    // Identify generated/stored columns from DDL (can't INSERT into these)
+    const generatedColumns = createMemo(() => {
+        const ddl = ddlData();
+        if (!ddl || !ddl.statements) return new Set();
+        const generated = new Set();
+        for (const stmt of ddl.statements) {
+            // Match: column_name TYPE AS (...) STORED
+            const matches = stmt.matchAll(/^\s+(\w+)\s+\S+(?:\([^)]*\))?\s+AS\s*\(/gm);
+            for (const m of matches) generated.add(m[1]);
+            // Match: TOKENLIST AS (...)
+            const tkn = stmt.matchAll(/^\s+(\w+)\s+TOKENLIST\s+AS/gm);
+            for (const m of tkn) generated.add(m[1]);
+        }
+        return generated;
+    });
+
+    // Columns safe for INSERT (exclude generated/stored)
+    const insertableColumns = createMemo(() => {
+        const cols = tableData()?.columns || [];
+        const gen = generatedColumns();
+        return cols.filter(c => !gen.has(c));
+    });
+
+    // Parse column types from DDL for display
+    const columnTypes = createMemo(() => {
+        const ddl = ddlData();
+        if (!ddl || !ddl.statements) return {};
+        const types = {};
+        for (const stmt of ddl.statements) {
+            const lines = stmt.split('\n');
+            for (const line of lines) {
+                const trimmed = line.trim().replace(/,$/, '');
+                if (!trimmed || trimmed.startsWith(')') || trimmed.startsWith('--')) continue;
+                if (/\bAS\s*\(/.test(trimmed) || /TOKENLIST\s+AS/.test(trimmed)) continue;
+                const m = trimmed.match(/^(\w+)\s+(INT64|FLOAT64|BOOL|STRING\(\w+\)|STRING\(MAX\)|TIMESTAMP|DATE|BYTES\(\w+\))/i);
+                if (m) types[m[1]] = m[2];
+            }
+        }
+        return types;
+    });
+
+    // Parse NOT NULL columns from DDL for validation
+    const notNullColumns = createMemo(() => {
+        const ddl = ddlData();
+        if (!ddl || !ddl.statements) return new Set();
+        const cols = new Set();
+        for (const stmt of ddl.statements) {
+            const lines = stmt.split('\n');
+            let parenDepth = 0;
+            for (const line of lines) {
+                const trimmed = line.trim().replace(/,$/, '');
+                // Track paren depth to skip generated column bodies
+                for (const ch of trimmed) { if (ch === '(') parenDepth++; if (ch === ')') parenDepth--; }
+                // Only parse top-level column definitions (depth 1 = inside CREATE TABLE parens)
+                if (parenDepth > 1) continue;
+                if (/\bAS\s*\(/.test(trimmed) || /TOKENLIST\s+AS/.test(trimmed)) continue;
+                const m = trimmed.match(/^(\w+)\s+(INT64|FLOAT64|BOOL|STRING|TIMESTAMP|DATE|BYTES)\b.*\bNOT\s+NULL\b/i);
+                if (m) cols.add(m[1]);
+            }
+        }
+        return cols;
+    });
+
+    // CSV Import state
+    const [showCsvImport, setShowCsvImport] = createSignal(false);
+    const [csvFile, setCsvFile] = createSignal(null);
+    const [csvParsed, setCsvParsed] = createSignal(null); // {headers, rows, delimiter, encoding}
+    const [csvMapping, setCsvMapping] = createSignal({}); // csvHeader -> tableColumn
+    const [csvErrors, setCsvErrors] = createSignal([]); // [{row, col, message}]
+    const [csvImporting, setCsvImporting] = createSignal(false);
+    const [csvImportResult, setCsvImportResult] = createSignal(null);
+    const [csvSelectedRows, setCsvSelectedRows] = createSignal(new Set());
+    const [csvWarnings, setCsvWarnings] = createSignal([]); // [{row, col, message}] — yellow, don't block
+    const [csvStep, setCsvStep] = createSignal('upload'); // upload | mapping | preview | importing | done
+
+    // CSV reactive derived values (after signal declarations)
+    const csvMappedTargets = createMemo(() => new Set(Object.values(csvMapping()).filter(v => v)));
+    const csvMappedCount = createMemo(() => Object.values(csvMapping()).filter(v => v).length);
+
+    const parseCSV = (text) => {
+        // Strip UTF-8 BOM if present
+        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+        // Auto-detect delimiter
+        const firstLine = text.split('\n')[0];
+        const delimiters = [',', '\t', ';', '|'];
+        let bestDelim = ',', bestCount = 0;
+        for (const d of delimiters) {
+            const count = (firstLine.match(new RegExp(d === '|' ? '\\|' : (d === '\t' ? '\t' : d), 'g')) || []).length;
+            if (count > bestCount) { bestCount = count; bestDelim = d; }
+        }
+        const lines = [];
+        let current = '', inQuote = false, row = [];
+        for (let i = 0; i < text.length; i++) {
+            const ch = text[i];
+            if (ch === '"') {
+                if (inQuote && text[i + 1] === '"') { current += '"'; i++; }
+                else inQuote = !inQuote;
+            } else if (ch === bestDelim && !inQuote) {
+                row.push(current.trim()); current = '';
+            } else if ((ch === '\n' || ch === '\r') && !inQuote) {
+                if (ch === '\r' && text[i + 1] === '\n') i++;
+                row.push(current.trim()); current = '';
+                if (row.some(c => c !== '')) lines.push(row);
+                row = [];
+            } else { current += ch; }
+        }
+        row.push(current.trim());
+        if (row.some(c => c !== '')) lines.push(row);
+        if (lines.length < 2) return null;
+        return { headers: lines[0], rows: lines.slice(1), delimiter: bestDelim === '\t' ? 'TAB' : bestDelim, rowCount: lines.length - 1 };
+    };
+
+    const handleCsvFile = (file) => {
+        if (!file) return;
+        setCsvFile(file);
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const parsed = parseCSV(e.target.result);
+            if (!parsed) { setCsvErrors([{row: -1, col: '', message: 'Could not parse CSV. Check format.'}]); return; }
+            setCsvParsed(parsed);
+            // Auto-map: match CSV headers to insertable table columns (exclude generated)
+            const cols = insertableColumns();
+            const mapping = {};
+            for (const h of parsed.headers) {
+                const exact = cols.find(c => c === h);
+                const ci = cols.find(c => c.toLowerCase() === h.toLowerCase());
+                const snake = cols.find(c => c.toLowerCase() === h.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, ''));
+                if (exact) mapping[h] = exact;
+                else if (ci) mapping[h] = ci;
+                else if (snake) mapping[h] = snake;
+                else mapping[h] = '';
+            }
+            setCsvMapping(mapping);
+            setCsvStep('mapping');
+            setCsvErrors([]);
+        };
+        reader.readAsText(file);
+    };
+
+    const validateCsvRows = () => {
+        const parsed = csvParsed();
+        const mapping = csvMapping();
+        if (!parsed) return;
+        const cols = tableData()?.columns || [];
+        const errors = [];
+        const mappedCols = Object.values(mapping).filter(v => v);
+        if (mappedCols.length === 0) {
+            errors.push({row: -1, col: '', message: 'No columns mapped. Map at least one CSV column to a table column.'});
+            setCsvErrors(errors);
+            return;
+        }
+        // Check NOT NULL constraints and field counts
+        const nnCols = notNullColumns();
+        const types = columnTypes();
+        const warnings = []; // {row, col, message} — yellow indicators, don't block import
+        parsed.rows.forEach((row, rowIdx) => {
+            // Check row has correct number of fields — hard error
+            if (row.length !== parsed.headers.length) {
+                errors.push({row: rowIdx, col: '', message: `Row ${rowIdx + 1}: expected ${parsed.headers.length} fields, got ${row.length}`});
+                return;
+            }
+            // Check NOT NULL violations — warning (will fail on insert but let user decide)
+            parsed.headers.forEach((h, colIdx) => {
+                const targetCol = mapping[h];
+                if (!targetCol) return;
+                const val = (colIdx < row.length ? row[colIdx] : '').trim();
+                const isEmpty = !val || val.toLowerCase() === 'null';
+                if (isEmpty && nnCols.has(targetCol)) {
+                    warnings.push({row: rowIdx, col: targetCol, message: `Row ${rowIdx + 1}: ${targetCol} is NOT NULL but value is empty`});
+                }
+            });
+        });
+        // Check unmapped NOT NULL columns — warning (global)
+        for (const nn of nnCols) {
+            if (!mappedCols.includes(nn)) {
+                warnings.push({row: -1, col: nn, message: `Required column ${nn} (NOT NULL) has no CSV mapping — will insert NULL`});
+            }
+        }
+        setCsvWarnings(warnings);
+        setCsvErrors(errors);
+        // Select all valid rows by default
+        const errorRows = new Set(errors.map(e => e.row));
+        const selected = new Set();
+        parsed.rows.forEach((_, i) => { if (!errorRows.has(i)) selected.add(i); });
+        setCsvSelectedRows(selected);
+        setCsvStep('preview');
+    };
+
+    // Escape a value for Spanner SQL INSERT — type-aware
+    const spannerEscape = (val, colType) => {
+        if (val === '' || val === null || val === undefined) return 'NULL';
+        const trimmed = val.trim();
+        const lower = trimmed.toLowerCase();
+        if (lower === 'null') return 'NULL';
+        const upperType = (colType || '').toUpperCase();
+        // BOOL columns
+        if (upperType === 'BOOL') {
+            if (lower === 'true' || lower === '1' || lower === 'yes') return 'TRUE';
+            if (lower === 'false' || lower === '0' || lower === 'no') return 'FALSE';
+            return 'NULL';
+        }
+        // INT64 columns — bare number
+        if (upperType === 'INT64') {
+            if (/^-?\d+$/.test(trimmed)) return trimmed;
+            return 'NULL';
+        }
+        // FLOAT64 columns — bare number
+        if (upperType === 'FLOAT64' || upperType === 'FLOAT32' || upperType === 'NUMERIC') {
+            if (/^-?\d+(\.\d+)?$/.test(trimmed)) return trimmed;
+            return 'NULL';
+        }
+        // TIMESTAMP / DATE — quoted string
+        if (upperType === 'TIMESTAMP' || upperType === 'DATE') {
+            return "'" + trimmed.replace(/'/g, "''") + "'";
+        }
+        // STRING, BYTES, JSON, or unknown — always quote
+        return "'" + trimmed.replace(/'/g, "''") + "'";
+    };
+
+    const executeCsvImport = async () => {
+        const parsed = csvParsed();
+        const mapping = csvMapping();
+        const selected = csvSelectedRows();
+        if (!parsed || selected.size === 0) return;
+        setCsvImporting(true);
+        setCsvStep('importing');
+        const mappedHeaders = parsed.headers.filter(h => mapping[h]);
+        const targetCols = mappedHeaders.map(h => mapping[h]);
+        let imported = 0, failed = 0;
+        const failedRows = [];
+        for (const rowIdx of [...selected].sort((a, b) => a - b)) {
+            const row = parsed.rows[rowIdx];
+            const values = mappedHeaders.map((h) => {
+                const colIdx = parsed.headers.indexOf(h);
+                return colIdx < row.length ? row[colIdx] : '';
+            });
+            // Build INSERT SQL — type-aware escaping using column types from DDL
+            const types = columnTypes();
+            const valueLiterals = values.map((v, vi) => spannerEscape(v, types[targetCols[vi]]));
+            const sql = `INSERT OR UPDATE INTO ${selectedTable()} (${targetCols.join(', ')}) VALUES (${valueLiterals.join(', ')})`;
+            try {
+                const result = await api.query('spanner', sql, {
+                    instance: selectedInstance(),
+                    database: selectedDatabase()
+                });
+                if (result.error) {
+                    failed++;
+                    let errMsg = result.error;
+                    if (errMsg.includes('failed to marshal')) errMsg = 'Constraint violation (likely NOT NULL, duplicate key, or type mismatch)';
+                    failedRows.push({row: rowIdx + 1, error: errMsg});
+                } else {
+                    imported++;
+                }
+            } catch (e) {
+                failed++;
+                failedRows.push({row: rowIdx + 1, error: e.message || 'Insert failed'});
+            }
+        }
+        setCsvImportResult({imported, failed, failedRows, total: selected.size});
+        setCsvImporting(false);
+        setCsvStep('done');
+        if (imported > 0) selectTable(selectedTable()); // refresh table data
+    };
+
+    const resetCsvImport = () => {
+        setCsvFile(null); setCsvParsed(null); setCsvMapping({});
+        setCsvErrors([]); setCsvWarnings([]); setCsvImporting(false); setCsvImportResult(null);
+        setCsvSelectedRows(new Set()); setCsvStep('upload');
+    };
+
+    // Breadcrumb — reactive memo tracks signal changes
+    const breadcrumbs = createMemo(() => {
+        const crumbs = [];
+        crumbs.push({label: 'Instances', onClick: goBackToInstances, active: !selectedInstance()});
+        if (selectedInstance()) {
+            crumbs.push({label: selectedInstance(), onClick: goBackToDatabases, active: !selectedDatabase()});
+            if (selectedDatabase()) {
+                crumbs.push({label: selectedDatabase(), onClick: goBackToTables, active: !selectedTable()});
+                if (selectedTable()) {
+                    crumbs.push({label: selectedTable(), onClick: null, active: true});
+                }
+            }
+        }
+        return crumbs;
+    });
+
+    const Breadcrumb = () => (
+        <nav class="spanner-breadcrumb" style="display:flex;align-items:center;gap:0;margin-bottom:12px;font-size:13px;flex-wrap:wrap">
+            <For each={breadcrumbs()}>
+                {(crumb, i) => (
+                    <>
+                        <Show when={i() > 0}>
+                            <span style="color:var(--text-tertiary);margin:0 6px;font-size:10px;user-select:none">{'\u203A'}</span>
+                        </Show>
+                        <Show when={crumb.onClick && !crumb.active} fallback={
+                            <span style="font-weight:600;color:var(--text)">{crumb.label}</span>
+                        }>
+                            <button onClick={crumb.onClick} style="background:none;border:none;padding:2px 6px;border-radius:4px;color:var(--text-secondary);cursor:pointer;font-size:13px;transition:all 0.15s" onMouseEnter={e => {e.currentTarget.style.background='var(--surface-hover)';e.currentTarget.style.color='var(--primary)'}} onMouseLeave={e => {e.currentTarget.style.background='none';e.currentTarget.style.color='var(--text-secondary)'}}>
+                                {crumb.label}
+                            </button>
+                        </Show>
+                    </>
+                )}
+            </For>
+        </nav>
+    );
 
     return (
         <div>
+            {/* Breadcrumb — always visible when drilled in */}
+            <Show when={selectedInstance()}>
+                <Breadcrumb />
+            </Show>
+
             <Show when={subLoading()}>
                 <div class="loading-state"><div class="loading-spinner" /> Loading...</div>
             </Show>
             <Show when={!subLoading()}>
                 {/* Level 4: Table data */}
                 <Show when={selectedTable()}>
-                    <button class="back-link" onClick={goBackToTables}>
-                        {'\u2190'} Back to tables
-                    </button>
-                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                        <h2 style="margin:0">Table: {selectedTable()}</h2>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                        <h2 style="margin:0;font-size:16px">{selectedTable()}</h2>
                         <Show when={props.onAdd && tableData() && tableData().columns}>
-                            <button onClick={() => props.onAdd('Add Spanner Row',
-                                tableData().columns.map(c => ({name: c, type: 'text'})),
-                                async (formData) => {
-                                    await api.mutate('spanner', 'rows', {
-                                        instance: selectedInstance(),
-                                        database: selectedDatabase(),
-                                        table: selectedTable(),
-                                        columns: Object.keys(formData),
-                                        values: [Object.values(formData)]
-                                    });
-                                }
-                            )} style="padding:6px 12px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:12px">
-                                + Add Row
-                            </button>
+                            <div style="display:flex;gap:6px">
+                                <button onClick={() => { resetCsvImport(); setShowCsvImport(true); }}
+                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:all 0.15s"
+                                    onMouseEnter={e => e.currentTarget.style.borderColor='var(--primary)'}
+                                    onMouseLeave={e => e.currentTarget.style.borderColor='var(--border)'}>
+                                    {'\u2191'} Import CSV
+                                </button>
+                                <button onClick={() => props.onAdd('Add Spanner Row',
+                                    tableData().columns.map(c => ({name: c, type: 'text'})),
+                                    async (formData) => {
+                                        await api.mutate('spanner', 'rows', {
+                                            instance: selectedInstance(),
+                                            database: selectedDatabase(),
+                                            table: selectedTable(),
+                                            columns: Object.keys(formData),
+                                            values: [Object.values(formData)]
+                                        });
+                                    }
+                                )} style="padding:6px 12px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:12px">
+                                    + Add Row
+                                </button>
+                            </div>
                         </Show>
                     </div>
-                    <Show when={tableData() && tableData().columns && tableData().rows} fallback={
+                    <Show when={tableData() && tableData().columns} fallback={
                         <div class="empty-state">
                             <div class="empty-state-icon">{'\u2205'}</div>
                             <div class="empty-state-title">No data found</div>
-                            <div class="empty-state-text">This table is empty.</div>
+                            <div class="empty-state-text">Could not load table schema.</div>
                         </div>
                     }>
-                        <Show when={tableData().rows.length > 0} fallback={
-                            <div class="empty-state">
-                                <div class="empty-state-icon">{'\u2205'}</div>
-                                <div class="empty-state-title">No rows found</div>
-                                <div class="empty-state-text">This table is empty.</div>
-                            </div>
-                        }>
-                            <div class="data-table-wrapper">
-                                <table class="data-table">
-                                    <thead><tr><For each={tableData().columns}>{(col) => <th>{col}</th>}</For><th>Actions</th></tr></thead>
-                                    <tbody>
+                        <div class="data-table-wrapper" style="overflow-x:auto">
+                            <table class="data-table" style="min-width:max-content">
+                                <thead><tr><For each={tableData().columns}>{(col) => <th>{col}</th>}</For><th style="position:sticky;right:0;background:var(--surface);z-index:2;border-left:1px solid var(--border)">Actions</th></tr></thead>
+                                <tbody>
+                                    <Show when={tableData().rows && tableData().rows.length > 0} fallback={
+                                        <tr><td colspan={tableData().columns.length + 1} style="text-align:center;padding:24px;color:var(--text-secondary);font-style:italic">
+                                            No rows yet. Use "+ Add Row" or "Import CSV" to insert data.
+                                        </td></tr>
+                                    }>
                                         <For each={tableData().rows}>
                                             {(row) => (
                                                 <tr>
                                                     <For each={tableData().columns}>
-                                                        {(col) => <td>{row[col] != null ? String(row[col]) : '--'}</td>}
+                                                        {(col) => <td style="white-space:nowrap;max-width:300px;overflow:hidden;text-overflow:ellipsis" title={row[col] != null ? String(row[col]) : ''}>{row[col] != null ? String(row[col]) : '--'}</td>}
                                                     </For>
-                                                    <td>
+                                                    <td style="position:sticky;right:0;background:var(--surface);z-index:1;border-left:1px solid var(--border)">
                                                         <div style="display:flex;gap:4px;align-items:center">
                                                             <Show when={props.onEdit}>
                                                                 {(() => {
@@ -1172,20 +1545,17 @@ function SpannerView(props) {
                                                 </tr>
                                             )}
                                         </For>
-                                    </tbody>
-                                </table>
-                            </div>
-                        </Show>
+                                    </Show>
+                                </tbody>
+                            </table>
+                        </div>
                     </Show>
                 </Show>
 
                 {/* Level 3: Tables from DDL */}
                 <Show when={selectedDatabase() && !selectedTable()}>
-                    <button class="back-link" onClick={goBackToDatabases}>
-                        {'\u2190'} Back to databases
-                    </button>
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-                        <h2 style="margin:0">Database: {selectedDatabase()}</h2>
+                        <div />
                         <button class="btn btn-primary" style="height:30px;font-size:11px;padding:0 12px" onClick={() => { setCreateDdl(''); setCreateError(null); setShowCreateTable(true); }}>+ Create Table</button>
                     </div>
                     {(() => {
@@ -1219,11 +1589,8 @@ function SpannerView(props) {
 
                 {/* Level 2: Databases */}
                 <Show when={selectedInstance() && !selectedDatabase()}>
-                    <button class="back-link" onClick={goBackToInstances}>
-                        {'\u2190'} Back to instances
-                    </button>
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-                        <h2 style="margin:0">Instance: {selectedInstance()}</h2>
+                        <div />
                         <button class="btn btn-primary" style="height:30px;font-size:11px;padding:0 12px" onClick={() => { setCreateName(''); setCreateError(null); setShowCreateDatabase(true); }}>+ Create Database</button>
                     </div>
                     <Show when={databases().length > 0} fallback={
@@ -1336,6 +1703,471 @@ function SpannerView(props) {
                             <div style="display:flex;gap:8px;justify-content:flex-end">
                                 <button class="btn btn-secondary" onClick={() => setShowCreateTable(false)}>Cancel</button>
                                 <button class="btn btn-primary" onClick={handleCreateTable} disabled={creating() || !createDdl().trim()}>{creating() ? 'Executing...' : 'Execute DDL'}</button>
+                            </div>
+                        </div>
+                    </div>
+                </Show>
+
+                {/* CSV Import Modal */}
+                <Show when={showCsvImport()}>
+                    <div class="modal-overlay" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) { setShowCsvImport(false); resetCsvImport(); }}}>
+                        <div class="card modal-card" onClick={(e) => e.stopPropagation()} style="max-width:900px;width:90vw;max-height:85vh;display:flex;flex-direction:column">
+                            {/* Header with steps */}
+                            <div style="margin-bottom:16px">
+                                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                                    <h2 style="margin:0;font-size:16px">Import CSV to {selectedTable()}</h2>
+                                    <button onClick={() => { setShowCsvImport(false); resetCsvImport(); }} style="background:none;border:none;color:var(--text-tertiary);cursor:pointer;font-size:18px;padding:4px">{'\u00D7'}</button>
+                                </div>
+                                {/* Step indicator */}
+                                <div style="display:flex;gap:4px;align-items:center">
+                                    <For each={[{id:'upload',label:'Upload'},{id:'mapping',label:'Map Columns'},{id:'preview',label:'Preview'},{id:'importing',label:'Import'},{id:'done',label:'Done'}]}>
+                                        {(step, i) => (
+                                            <>
+                                                <Show when={i() > 0}><div style={`width:20px;height:1px;background:${['upload','mapping','preview','importing','done'].indexOf(csvStep()) >= i() ? 'var(--primary)' : 'var(--border)'}`} /></Show>
+                                                <div style={`font-size:11px;padding:3px 8px;border-radius:10px;font-weight:${csvStep() === step.id ? '600' : '400'};background:${csvStep() === step.id ? 'var(--primary)' : (['upload','mapping','preview','importing','done'].indexOf(csvStep()) > ['upload','mapping','preview','importing','done'].indexOf(step.id) ? 'var(--surface-hover)' : 'transparent')};color:${csvStep() === step.id ? 'white' : 'var(--text-tertiary)'};transition:all 0.2s`}>
+                                                    {step.label}
+                                                </div>
+                                            </>
+                                        )}
+                                    </For>
+                                </div>
+                            </div>
+
+                            {/* Step content */}
+                            <div style="flex:1;overflow-y:auto;min-height:0">
+                                {/* Step 1: Upload */}
+                                <Show when={csvStep() === 'upload'}>
+                                    <div
+                                        onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'var(--surface-hover)'; }}
+                                        onDragLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'transparent'; }}
+                                        onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'transparent'; handleCsvFile(e.dataTransfer.files[0]); }}
+                                        style="border:2px dashed var(--border);border-radius:8px;padding:40px 24px;text-align:center;cursor:pointer;transition:all 0.2s"
+                                        onClick={() => { const input = document.createElement('input'); input.type = 'file'; input.accept = '.csv,.tsv,.txt'; input.onchange = (e) => handleCsvFile(e.target.files[0]); input.click(); }}
+                                    >
+                                        <div style="font-size:32px;margin-bottom:8px;opacity:0.4">{'\u2191'}</div>
+                                        <div style="font-size:14px;font-weight:500;margin-bottom:4px;color:var(--text)">Drop CSV file here or click to browse</div>
+                                        <div style="font-size:12px;color:var(--text-tertiary)">Supports .csv, .tsv, .txt with comma, tab, semicolon, or pipe delimiters</div>
+                                    </div>
+                                    <Show when={csvErrors().length > 0}>
+                                        <div class="alert alert-error" style="margin-top:12px">{csvErrors()[0].message}</div>
+                                    </Show>
+                                </Show>
+
+                                {/* Step 2: Column Mapping — interactive drag-to-connect mapper */}
+                                <Show when={csvStep() === 'mapping'}>
+                                    {(() => {
+                                        const ROW_H = 40;
+                                        const HDR_H = 30;
+                                        const COL_W = 240;
+                                        const GAP = 200;
+                                        const TOTAL_W = COL_W + GAP + COL_W;
+                                        const [connecting, setConnecting] = createSignal(null); // source header being dragged
+                                        const [mousePos, setMousePos] = createSignal({x: 0, y: 0});
+                                        let containerRef;
+
+                                        const onMouseMove = (e) => {
+                                            if (!connecting() || !containerRef) return;
+                                            const inner = containerRef.firstElementChild;
+                                            if (!inner) return;
+                                            const innerRect = inner.getBoundingClientRect();
+                                            // Map pixel position in the inner div to SVG viewBox coordinates
+                                            const px = e.clientX - innerRect.left;
+                                            const py = e.clientY - innerRect.top;
+                                            const svgX = (px / innerRect.width) * TOTAL_W;
+                                            const svgY = (py / innerRect.height) * inner.offsetHeight;
+                                            setMousePos({x: svgX, y: svgY});
+                                        };
+
+                                        const startConnect = (header) => {
+                                            // If already mapped, unmap first
+                                            const current = csvMapping()[header];
+                                            if (current) {
+                                                setCsvMapping(prev => ({...prev, [header]: ''}));
+                                            }
+                                            setConnecting(header);
+                                        };
+
+                                        const finishConnect = (targetCol) => {
+                                            const src = connecting();
+                                            if (!src) return;
+                                            // Remove any existing mapping TO this target
+                                            const newMapping = {...csvMapping()};
+                                            for (const [k, v] of Object.entries(newMapping)) {
+                                                if (v === targetCol) newMapping[k] = '';
+                                            }
+                                            newMapping[src] = targetCol;
+                                            setCsvMapping(newMapping);
+                                            setConnecting(null);
+                                        };
+
+                                        const cancelConnect = () => setConnecting(null);
+
+                                        const deleteMapping = (header) => {
+                                            setCsvMapping(prev => ({...prev, [header]: ''}));
+                                        };
+
+                                        return (
+                                            <div>
+                                                {/* Stats bar */}
+                                                <div style="display:flex;gap:16px;font-size:12px;color:var(--text-secondary);margin-bottom:8px;flex-wrap:wrap;align-items:center">
+                                                    <span>{'\u2713'} {csvParsed()?.rowCount} rows</span>
+                                                    <span>Delimiter: <strong>{csvParsed()?.delimiter}</strong></span>
+                                                    <span>File: <strong>{csvFile()?.name}</strong></span>
+                                                    <span style="margin-left:auto">
+                                                        <strong style={`color:${csvMappedCount() === (csvParsed()?.headers || []).length ? '#34a853' : 'var(--text)'}`}>{csvMappedCount()}/{(csvParsed()?.headers || []).length}</strong> mapped
+                                                    </span>
+                                                </div>
+                                                <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:12px">
+                                                    Click source column, then click target to connect. Click a mapped source to disconnect.
+                                                </div>
+
+                                                {/* Interactive mapping diagram */}
+                                                <div
+                                                    ref={el => containerRef = el}
+                                                    onMouseMove={onMouseMove}
+                                                    onClick={(e) => { if (e.target === e.currentTarget || e.target.tagName === 'svg') cancelConnect(); }}
+                                                    style={`position:relative;width:100%;overflow-x:auto;overflow-y:auto;max-height:420px;margin-bottom:12px;cursor:${connecting() ? 'crosshair' : 'default'}`}
+                                                >
+                                                    {(() => {
+                                                        const csvHeaders = csvParsed()?.headers || [];
+                                                        const tableCols = insertableColumns();
+                                                        const mapping = csvMapping();
+                                                        const mappedTargets = csvMappedTargets();
+                                                        const types = columnTypes();
+                                                        const nnCols = notNullColumns();
+                                                        const targetIdx = {};
+                                                        tableCols.forEach((c, i) => { targetIdx[c] = i; });
+                                                        const leftH = HDR_H + csvHeaders.length * ROW_H;
+                                                        const rightH = HDR_H + tableCols.length * ROW_H;
+                                                        const svgH = Math.max(leftH, rightH);
+                                                        const conn = connecting();
+                                                        const mp = mousePos();
+                                                        const connIdx = conn ? csvHeaders.indexOf(conn) : -1;
+
+                                                        return (
+                                                            <div style={`position:relative;min-width:${TOTAL_W}px;height:${svgH}px`}>
+                                                                {/* SVG — lines + drag preview */}
+                                                                <svg style={`position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1`} viewBox={`0 0 ${TOTAL_W} ${svgH}`} preserveAspectRatio="none">
+                                                                    {/* Existing connections */}
+                                                                    <For each={csvHeaders}>
+                                                                        {(header, i) => {
+                                                                            const target = mapping[header];
+                                                                            if (!target) return null;
+                                                                            const tIdx = targetIdx[target];
+                                                                            if (tIdx === undefined) return null;
+                                                                            const y1 = HDR_H + i() * ROW_H + ROW_H / 2;
+                                                                            const y2 = HDR_H + tIdx * ROW_H + ROW_H / 2;
+                                                                            const x1 = COL_W;
+                                                                            const x2 = COL_W + GAP;
+                                                                            const midX = (x1 + x2) / 2;
+                                                                            const midY = (y1 + y2) / 2;
+                                                                            const sampleVal = csvParsed()?.rows[0]?.[i()] || '';
+                                                                            const displayVal = sampleVal.length > 16 ? sampleVal.slice(0, 14) + '..' : sampleVal;
+                                                                            return (
+                                                                                <>
+                                                                                    <path d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`}
+                                                                                        fill="none" stroke="#34a853" stroke-width="1.5" opacity="0.5" />
+                                                                                    <circle cx={x1} cy={y1} r="4" fill="#34a853" />
+                                                                                    <circle cx={x2} cy={y2} r="4" fill="#34a853" />
+                                                                                    <rect x={midX - 48} y={midY - 9} width="96" height="18" rx="9" fill="var(--surface, #1e1e2e)" stroke="#34a853" stroke-width="0.5" opacity="0.9" />
+                                                                                    <text x={midX} y={midY + 3} text-anchor="middle" fill="#34a853" font-size="9" font-family="var(--font-mono, monospace)">{displayVal}</text>
+                                                                                </>
+                                                                            );
+                                                                        }}
+                                                                    </For>
+                                                                    {/* Drag preview line */}
+                                                                    <Show when={conn && connIdx >= 0}>
+                                                                        {(() => {
+                                                                            const y1 = HDR_H + connIdx * ROW_H + ROW_H / 2;
+                                                                            return (
+                                                                                <path d={`M ${COL_W} ${y1} C ${COL_W + GAP/2} ${y1}, ${mp.x - GAP/4} ${mp.y}, ${mp.x} ${mp.y}`}
+                                                                                    fill="none" stroke="#4285f4" stroke-width="2" stroke-dasharray="6,3" opacity="0.7" />
+                                                                            );
+                                                                        })()}
+                                                                    </Show>
+                                                                </svg>
+
+                                                                {/* Left: CSV Source Columns */}
+                                                                <div style={`position:absolute;top:0;left:0;width:${COL_W}px`}>
+                                                                    <div style={`height:${HDR_H}px;display:flex;align-items:center;padding:0 12px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-tertiary)`}>Source (CSV)</div>
+                                                                    <For each={csvHeaders}>
+                                                                        {(header) => {
+                                                                            const isMapped = () => !!csvMapping()[header];
+                                                                            const isActive = () => connecting() === header;
+                                                                            return (
+                                                                                <div
+                                                                                    onClick={() => isMapped() ? deleteMapping(header) : startConnect(header)}
+                                                                                    style={`height:${ROW_H}px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--border-subtle);cursor:pointer;transition:all 0.15s;user-select:none;background:${isActive() ? 'rgba(66,133,244,0.1)' : isMapped() ? 'transparent' : 'rgba(251,188,4,0.06)'};border-right:${isActive() ? '2px solid #4285f4' : '2px solid transparent'}`}
+                                                                                    onMouseEnter={e => { if (!connecting()) e.currentTarget.style.background = isMapped() ? 'rgba(234,67,53,0.06)' : 'rgba(66,133,244,0.08)'; }}
+                                                                                    onMouseLeave={e => { if (!connecting()) e.currentTarget.style.background = isMapped() ? 'transparent' : 'rgba(251,188,4,0.06)'; }}
+                                                                                    title={isMapped() ? 'Click to disconnect' : 'Click to start connecting'}
+                                                                                >
+                                                                                    <div style={`width:8px;height:8px;border-radius:50%;flex-shrink:0;border:2px solid ${isActive() ? '#4285f4' : isMapped() ? '#34a853' : '#fbbc04'};background:${isActive() ? '#4285f4' : isMapped() ? '#34a853' : 'transparent'};transition:all 0.15s`} />
+                                                                                    <div style="flex:1;min-width:0">
+                                                                                        <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{header}</div>
+                                                                                    </div>
+                                                                                    <Show when={isMapped()}>
+                                                                                        <span style="font-size:9px;color:#ea4335;opacity:0.6">{'\u00D7'}</span>
+                                                                                    </Show>
+                                                                                </div>
+                                                                            );
+                                                                        }}
+                                                                    </For>
+                                                                </div>
+
+                                                                {/* Right: Table Target Columns */}
+                                                                <div style={`position:absolute;top:0;right:0;width:${COL_W}px`}>
+                                                                    <div style={`height:${HDR_H}px;display:flex;align-items:center;padding:0 12px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-tertiary)`}>Target (Table)</div>
+                                                                    <For each={tableCols}>
+                                                                        {(col) => {
+                                                                            const isMapped = () => csvMappedTargets().has(col);
+                                                                            const isNN = nnCols.has(col);
+                                                                            const colType = types[col] || '';
+                                                                            const canReceive = () => !!connecting() && !isMapped();
+                                                                            return (
+                                                                                <div
+                                                                                    onClick={() => { if (connecting()) finishConnect(col); }}
+                                                                                    style={`height:${ROW_H}px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--border-subtle);transition:all 0.15s;user-select:none;cursor:${connecting() ? 'pointer' : 'default'};background:${canReceive() ? 'rgba(66,133,244,0.06)' : isMapped() ? 'transparent' : (isNN ? 'rgba(234,67,53,0.04)' : 'rgba(100,100,100,0.03)')};border-left:${canReceive() ? '2px solid #4285f4' : '2px solid transparent'}`}
+                                                                                    onMouseEnter={e => { if (connecting() && !isMapped()) e.currentTarget.style.background = 'rgba(66,133,244,0.12)'; }}
+                                                                                    onMouseLeave={e => { if (connecting()) e.currentTarget.style.background = canReceive() ? 'rgba(66,133,244,0.06)' : 'transparent'; }}
+                                                                                >
+                                                                                    <div style={`width:8px;height:8px;border-radius:50%;flex-shrink:0;border:2px solid ${isMapped() ? '#34a853' : (isNN && !isMapped() ? '#ea4335' : 'var(--border)')};background:${isMapped() ? '#34a853' : 'transparent'};transition:all 0.15s`} />
+                                                                                    <div style="flex:1;min-width:0">
+                                                                                        <div style={`font-size:12px;font-weight:500;color:${isMapped() ? 'var(--text)' : 'var(--text-tertiary)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`}>{col}</div>
+                                                                                    </div>
+                                                                                    <Show when={isNN}>
+                                                                                        <span style={`font-size:8px;padding:1px 5px;border-radius:3px;font-weight:600;white-space:nowrap;background:${isMapped() ? 'rgba(52,168,83,0.1)' : 'rgba(234,67,53,0.12)'};color:${isMapped() ? '#34a853' : '#ea4335'}`}>{isMapped() ? 'REQ \u2713' : 'REQUIRED'}</span>
+                                                                                    </Show>
+                                                                                    <span style={`font-size:9px;padding:1px 5px;border-radius:3px;font-family:var(--font-mono, monospace);white-space:nowrap;background:${isMapped() ? 'rgba(52,168,83,0.1)' : 'var(--surface-hover)'};color:${isMapped() ? '#34a853' : 'var(--text-tertiary)'}`}>{colType || '?'}</span>
+                                                                                </div>
+                                                                            );
+                                                                        }}
+                                                                    </For>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })()}
+                                                </div>
+
+                                                {/* Legend */}
+                                                <div style="display:flex;gap:12px;font-size:11px;color:var(--text-tertiary);margin-bottom:12px;flex-wrap:wrap">
+                                                    <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:#34a853;display:inline-block" /> Mapped</span>
+                                                    <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;border:2px solid #fbbc04;display:inline-block;box-sizing:border-box" /> Unmapped source</span>
+                                                    <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;border:2px solid #ea4335;display:inline-block;box-sizing:border-box" /> Required (NOT NULL)</span>
+                                                    <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;border:2px solid var(--border);display:inline-block;box-sizing:border-box" /> Optional</span>
+                                                </div>
+
+                                                <Show when={csvErrors().length > 0}>
+                                                    <div class="alert alert-error" style="margin-bottom:12px">{csvErrors()[0].message}</div>
+                                                </Show>
+                                                <div style="display:flex;gap:8px;justify-content:flex-end">
+                                                    <button class="btn btn-secondary" onClick={() => { resetCsvImport(); }}>Back</button>
+                                                    <button class="btn btn-primary" onClick={validateCsvRows}>Validate & Preview</button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                </Show>
+
+                                {/* Step 3: Preview + Validation */}
+                                <Show when={csvStep() === 'preview'}>
+                                    {(() => {
+                                        const parsed = csvParsed();
+                                        const mapping = csvMapping();
+                                        const errors = csvErrors();
+                                        const warnings = csvWarnings();
+                                        const selected = csvSelectedRows();
+                                        const errorRows = new Set(errors.map(e => e.row));
+                                        const mappedHeaders = (parsed?.headers || []).filter(h => mapping[h]);
+                                        const validCount = [...selected].length;
+                                        const errorCount = errors.length;
+                                        const warnCount = warnings.filter(w => w.row >= 0).length;
+                                        // Build per-row-col warning lookup: "rowIdx:colName" -> message
+                                        const warnCells = {};
+                                        const warnRows = new Set();
+                                        for (const w of warnings) {
+                                            if (w.row >= 0 && w.col) {
+                                                warnCells[w.row + ':' + w.col] = w.message;
+                                                warnRows.add(w.row);
+                                            }
+                                        }
+                                        const globalWarnings = warnings.filter(w => w.row < 0);
+                                        return (
+                                            <div>
+                                                <div style="display:flex;gap:16px;align-items:center;margin-bottom:12px;font-size:12px;flex-wrap:wrap">
+                                                    <span style="color:var(--text-secondary)">{parsed?.rowCount} total rows</span>
+                                                    <span style="color:#34a853;font-weight:500">{'\u2713'} {validCount} selected for import</span>
+                                                    <Show when={errorCount > 0}>
+                                                        <span style="color:#ea4335;font-weight:500">{'\u2717'} {errorCount} errors</span>
+                                                    </Show>
+                                                    <Show when={warnCount > 0}>
+                                                        <span style="color:#fbbc04;font-weight:500">{'\u26A0'} {warnCount} warnings</span>
+                                                    </Show>
+                                                    <div style="flex:1" />
+                                                    <button onClick={() => {
+                                                        const all = new Set();
+                                                        (parsed?.rows || []).forEach((_, i) => { if (!errorRows.has(i)) all.add(i); });
+                                                        setCsvSelectedRows(all);
+                                                    }} style="font-size:11px;background:none;border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text-secondary);cursor:pointer">Select All Valid</button>
+                                                    <button onClick={() => setCsvSelectedRows(new Set())} style="font-size:11px;background:none;border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text-secondary);cursor:pointer">Deselect All</button>
+                                                </div>
+
+                                                {/* Global warnings (unmapped NOT NULL columns) */}
+                                                <Show when={globalWarnings.length > 0}>
+                                                    <div style="background:rgba(251,188,4,0.08);border:1px solid rgba(251,188,4,0.3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:12px">
+                                                        <div style="font-weight:600;color:#fbbc04;margin-bottom:4px">{'\u26A0'} Warnings</div>
+                                                        <For each={globalWarnings}>
+                                                            {(w) => <div style="color:var(--text-secondary);margin-bottom:2px">{w.message}</div>}
+                                                        </For>
+                                                    </div>
+                                                </Show>
+
+                                                <Show when={errorCount > 0}>
+                                                    <div style="background:var(--surface-hover);border:1px solid #ea433530;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:12px">
+                                                        <div style="font-weight:600;color:#ea4335;margin-bottom:4px">Errors</div>
+                                                        <For each={errors.slice(0, 5)}>
+                                                            {(err) => <div style="color:var(--text-secondary);margin-bottom:2px">{err.message}</div>}
+                                                        </For>
+                                                        <Show when={errors.length > 5}>
+                                                            <div style="color:var(--text-tertiary);margin-top:4px">...and {errors.length - 5} more</div>
+                                                        </Show>
+                                                    </div>
+                                                </Show>
+
+                                                <div class="data-table-wrapper" style="max-height:300px;overflow:auto">
+                                                    <table class="data-table" style="min-width:max-content">
+                                                        <thead>
+                                                            <tr>
+                                                                <th style="width:32px;position:sticky;left:0;z-index:3;background:var(--surface)"></th>
+                                                                <th style="width:40px">Row</th>
+                                                                <For each={mappedHeaders}>{(h) => {
+                                                                    const col = mapping[h];
+                                                                    const types = columnTypes();
+                                                                    const nnCols = notNullColumns();
+                                                                    const colType = types[col] || '';
+                                                                    const isNN = nnCols.has(col);
+                                                                    return (
+                                                                        <th>
+                                                                            <div style="display:flex;flex-direction:column;gap:2px">
+                                                                                <span>{col}</span>
+                                                                                <div style="display:flex;gap:4px;align-items:center">
+                                                                                    <span style="font-size:8px;font-weight:400;font-family:var(--font-mono,monospace);opacity:0.7">{colType}</span>
+                                                                                    <Show when={isNN}>
+                                                                                        <span style="font-size:7px;padding:0 3px;border-radius:2px;background:rgba(234,67,53,0.15);color:#ea4335;font-weight:600">REQ</span>
+                                                                                    </Show>
+                                                                                </div>
+                                                                            </div>
+                                                                        </th>
+                                                                    );
+                                                                }}</For>
+                                                                <th>Status</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            <For each={(parsed?.rows || []).slice(0, 100)}>
+                                                                {(row, rowIdx) => {
+                                                                    const hasError = errorRows.has(rowIdx());
+                                                                    const hasWarn = warnRows.has(rowIdx());
+                                                                    const isSelected = selected.has(rowIdx());
+                                                                    const bgColor = hasError ? 'rgba(234,67,53,0.05)' : hasWarn ? 'rgba(251,188,4,0.05)' : '';
+                                                                    return (
+                                                                        <tr style={`background:${bgColor}`}>
+                                                                            <td style="position:sticky;left:0;z-index:2;background:var(--surface)">
+                                                                                <input type="checkbox" checked={isSelected} disabled={hasError}
+                                                                                    onChange={(e) => {
+                                                                                        const next = new Set(csvSelectedRows());
+                                                                                        if (e.target.checked) next.add(rowIdx()); else next.delete(rowIdx());
+                                                                                        setCsvSelectedRows(next);
+                                                                                    }} />
+                                                                            </td>
+                                                                            <td style="font-size:10px;color:var(--text-tertiary)">{rowIdx() + 1}</td>
+                                                                            <For each={mappedHeaders}>
+                                                                                {(h) => {
+                                                                                    const ci = (parsed?.headers || []).indexOf(h);
+                                                                                    const cellVal = ci >= 0 && ci < row.length ? row[ci] : '';
+                                                                                    const targetCol = mapping[h];
+                                                                                    const cellWarn = warnCells[rowIdx() + ':' + targetCol];
+                                                                                    return (
+                                                                                        <td style={`max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;${cellWarn ? 'border-bottom:2px solid #fbbc04;' : ''}`} title={cellWarn || ''}>
+                                                                                            {cellWarn ? <span style="color:#fbbc04;margin-right:3px" title={cellWarn}>{'\u26A0'}</span> : null}
+                                                                                            {cellVal || <span style="color:var(--text-tertiary);font-style:italic">null</span>}
+                                                                                        </td>
+                                                                                    );
+                                                                                }}
+                                                                            </For>
+                                                                            <td>
+                                                                                <Show when={hasError} fallback={
+                                                                                    <Show when={hasWarn} fallback={<span style="color:#34a853;font-size:11px">{'\u2713'}</span>}>
+                                                                                        <span style="color:#fbbc04;font-size:11px">{'\u26A0'}</span>
+                                                                                    </Show>
+                                                                                }>
+                                                                                    <span style="color:#ea4335;font-size:11px">{'\u2717'}</span>
+                                                                                </Show>
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                }}
+                                                            </For>
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                                <Show when={(parsed?.rows || []).length > 100}>
+                                                    <div style="text-align:center;font-size:11px;color:var(--text-tertiary);margin-top:6px">Showing first 100 of {parsed?.rowCount} rows</div>
+                                                </Show>
+
+                                                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+                                                    <button class="btn btn-secondary" onClick={() => setCsvStep('mapping')}>Back</button>
+                                                    <button class="btn btn-primary" onClick={executeCsvImport} disabled={validCount === 0}>
+                                                        Import {validCount} Row{validCount !== 1 ? 's' : ''}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                </Show>
+
+                                {/* Step 4: Importing */}
+                                <Show when={csvStep() === 'importing'}>
+                                    <div style="text-align:center;padding:40px">
+                                        <div class="loading-spinner" style="margin:0 auto 16px" />
+                                        <div style="font-size:14px;font-weight:500">Importing rows...</div>
+                                        <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">Inserting into {selectedTable()}</div>
+                                    </div>
+                                </Show>
+
+                                {/* Step 5: Done */}
+                                <Show when={csvStep() === 'done'}>
+                                    {(() => {
+                                        const r = csvImportResult();
+                                        return (
+                                            <div style="padding:16px 0">
+                                                <div style="text-align:center;margin-bottom:20px">
+                                                    <div style={`font-size:36px;margin-bottom:8px;${r?.failed === 0 ? 'color:#34a853' : 'color:#fbbc04'}`}>{r?.failed === 0 ? '\u2713' : '\u26A0'}</div>
+                                                    <div style="font-size:16px;font-weight:600;margin-bottom:4px">Import Complete</div>
+                                                    <div style="font-size:13px;color:var(--text-secondary)">
+                                                        <span style="color:#34a853;font-weight:500">{r?.imported}</span> imported
+                                                        <Show when={r?.failed > 0}> &middot; <span style="color:#ea4335;font-weight:500">{r?.failed}</span> failed</Show>
+                                                        &nbsp;of {r?.total} rows
+                                                    </div>
+                                                </div>
+                                                <Show when={r?.failedRows?.length > 0}>
+                                                    <div style="background:var(--surface-hover);border:1px solid #ea433530;border-radius:6px;padding:10px 12px;margin-bottom:16px;max-height:160px;overflow-y:auto">
+                                                        <div style="font-size:11px;font-weight:600;color:#ea4335;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.04em">Failed Rows</div>
+                                                        <For each={r.failedRows}>
+                                                            {(fr) => <div style="font-size:12px;color:var(--text-secondary);margin-bottom:3px;font-family:var(--font-mono)">Row {fr.row}: {fr.error}</div>}
+                                                        </For>
+                                                    </div>
+                                                </Show>
+                                                <div style="display:flex;gap:8px;justify-content:flex-end">
+                                                    <button class="btn btn-secondary" onClick={() => { setShowCsvImport(false); resetCsvImport(); }}>Close</button>
+                                                    <Show when={r?.failed > 0}>
+                                                        <button class="btn btn-primary" onClick={() => { resetCsvImport(); }}>Import Another</button>
+                                                    </Show>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                </Show>
                             </div>
                         </div>
                     </div>
@@ -1968,6 +2800,7 @@ export default function DataBrowser(props) {
         const tab = selectedTab();
         const proj = typeof props.activeProject === 'function' ? props.activeProject() : props.activeProject;
         setError(null);
+        setData(null); // Clear stale data immediately to prevent showing wrong service content
         if (FETCH_SERVICES.has(tab)) {
             fetchData(tab);
         }
@@ -2015,7 +2848,7 @@ export default function DataBrowser(props) {
             case 'cloudtasks': return <CloudTasksView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
             case 'logging': return <LoggingView data={data} />;
             case 'monitoring': return <MonitoringView data={data} />;
-            case 'spanner': return <SpannerView data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} />;
+            case 'spanner': return <SpannerView data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
             case 'bigtable': return <BigtableView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
             case 'memorystore': return <MemorystoreView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} />;
             default: return null;
