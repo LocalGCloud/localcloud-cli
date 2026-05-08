@@ -1651,6 +1651,30 @@ button,
   background: var(--primary-soft);
 }
 
+.tree-run-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: var(--primary);
+  color: white;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  margin-left: auto;
+  transition: background 0.15s, transform 0.1s;
+}
+.tree-run-btn:hover {
+  background: var(--primary-hover, #3b78e7);
+  transform: scale(1.1);
+}
+.tree-row:hover .tree-run-btn {
+  display: flex;
+}
+
 /* Column name + type */
 .tree-col-name {
   flex: 1;

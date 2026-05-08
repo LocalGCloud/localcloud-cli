@@ -527,6 +527,21 @@ function SQLEditor(props) {
     function loadHistoryItem(item) { setSqlText(item.sql); setShowHistory(false); }
     function clearEditor() { setSqlText(''); persistActiveTab(''); setIsPlaceholder(true); setResult(null); setError(null); }
 
+    // Quick-select: write SELECT * FROM table LIMIT 10 and execute immediately
+    function quickSelect(tableName, e) {
+        if (e) e.stopPropagation();
+        // Strip database prefix for Spanner (e.g., "my-database.Users" → "Users")
+        const cleanName = service() === 'spanner' && tableName.includes('.') ? tableName.split('.').pop() : tableName;
+        const svc = SQL_SERVICES.find(s => s.id === service());
+        const quoted = svc?.dialect === 'bigquery' ? '`' + cleanName + '`' : cleanName;
+        const sql = `SELECT * FROM ${quoted} LIMIT 10`;
+        setSqlText(sql);
+        setIsPlaceholder(false);
+        persistActiveTab(sql);
+        // Small delay to let CodeMirror update, then run
+        setTimeout(() => runQuery(), 50);
+    }
+
     // Tree icons imported from ../components/TreeIcons.jsx
 
     // Track whether current sqlText is still auto-generated placeholder
@@ -773,6 +788,9 @@ function SQLEditor(props) {
                                                                                             <IconTable />
                                                                                             <span class="tree-name">{table.shortName}</span>
                                                                                             <span class="tree-badge">{colCount}</span>
+                                                                                            <button class="tree-run-btn" title="SELECT * LIMIT 10" onClick={(e) => quickSelect(table.shortName, e)}>
+                                                                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                                                                                            </button>
                                                                                         </div>
                                                                                         <Show when={expanded()[tblKey]}>
                                                                                             <div class="tree-children">
@@ -843,6 +861,9 @@ function SQLEditor(props) {
                                                                 <IconTable />
                                                                 <span class="tree-name">{table.shortName}</span>
                                                                 <span class="tree-badge">{colCount}</span>
+                                                                <button class="tree-run-btn" title="SELECT * LIMIT 10" onClick={(e) => quickSelect(table.name, e)}>
+                                                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                                                                </button>
                                                             </div>
                                                             <Show when={expanded()[tblKey]}>
                                                                 <div class="tree-children">
