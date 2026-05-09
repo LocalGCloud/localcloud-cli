@@ -102,6 +102,7 @@ mkdir -p /var/lib/localcloud/spanner-data \
          /var/lib/localcloud/gcs-data \
          /var/lib/localcloud/pgdata \
          /var/lib/localcloud/bigquery-data \
+         /var/lib/localcloud/redis-data \
          /var/lib/localcloud/logs \
          /var/run/postgresql
 

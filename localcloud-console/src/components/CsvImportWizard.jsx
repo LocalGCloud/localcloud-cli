@@ -30,7 +30,8 @@ export default function CsvImportWizard(props) {
     const csvMappedTargets = createMemo(() => new Set(Object.values(csvMapping()).filter(v => v)));
     const csvMappedCount = createMemo(() => Object.values(csvMapping()).filter(v => v).length);
 
-    const columns = () => props.columns || [];
+    // If no columns provided, use CSV headers as target columns (schema-less services like Firestore)
+    const columns = () => props.columns || (csvParsed()?.headers || []);
     const colTypes = () => props.columnTypes || {};
     const nnCols = () => props.notNullColumns || new Set();
 

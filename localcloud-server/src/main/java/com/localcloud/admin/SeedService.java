@@ -27,6 +27,9 @@ import com.localcloud.config.ServiceRegistry.ServiceDefinition;
 import com.localcloud.emulators.workflows.WorkflowsStore;
 import com.localcloud.persistence.PostgresDataSource;
 
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.Pipeline;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -770,16 +773,17 @@ public class SeedService {
     }
 
     private int resetMemorystore(String projectId) {
-        int count = 0;
-        try (var conn = dataSource.getConnection();
-             var ps = conn.prepareStatement("DELETE FROM redis_data WHERE project_id = ?")) {
-            ps.setString(1, projectId);
-            count = ps.executeUpdate();
+        int redisPort = config.getServiceRegistry().getService("memorystore") != null
+                ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+        try (Jedis jedis = new Jedis("localhost", redisPort)) {
+            jedis.select(0); // project-scoped database
+            jedis.flushDB(); // only flush current db, not all 16
+            logger.info("Reset Memorystore: flushed database 0");
+            return 1;
         } catch (Exception e) {
             logger.warn("Failed to reset Memorystore: {}", e.getMessage());
+            return 0;
         }
-        logger.info("Reset Memorystore: deleted {} rows", count);
-        return count;
     }
 
     private int resetBigtable(String projectId) {
@@ -1254,60 +1258,92 @@ public class SeedService {
         if (!(msData instanceof Map)) return 0;
         Map<String, Object> ms = (Map<String, Object>) msData;
         int count = 0;
+        int redisPort = config.getServiceRegistry().getService("memorystore") != null
+                ? config.getServiceRegistry().getService("memorystore").port() : 6379;
 
-        // Seed string keys
-        List<Map<String, Object>> keys = (List<Map<String, Object>>) ms.get("keys");
-        if (keys != null) {
-            for (Map<String, Object> entry : keys) {
-                try {
+        try (Jedis jedis = new Jedis("localhost", redisPort)) {
+            jedis.select(0); // project-scoped database
+            Pipeline pipe = jedis.pipelined();
+
+            // Seed string keys
+            List<Map<String, Object>> keys = (List<Map<String, Object>>) ms.get("keys");
+            if (keys != null) {
+                for (Map<String, Object> entry : keys) {
                     String key = (String) entry.get("key");
-                    String value = (String) entry.get("value");
+                    String value = String.valueOf(entry.get("value"));
                     if (key != null && value != null) {
-                        try (var conn = dataSource.getConnection();
-                             var ps = conn.prepareStatement(
-                                     "INSERT INTO redis_data (project_id, db_number, key_name, data_type, value) " +
-                                     "VALUES (?, 0, ?, 'string', to_jsonb(?::text)) " +
-                                     "ON CONFLICT (project_id, db_number, key_name) DO UPDATE SET value = to_jsonb(?::text), data_type = 'string'")) {
-                            ps.setString(1, config.getProjectId());
-                            ps.setString(2, key);
-                            ps.setString(3, value);
-                            ps.setString(4, value);
-                            ps.executeUpdate();
+                        pipe.set(key, value);
+                        if (entry.containsKey("ttl")) {
+                            pipe.expire(key, ((Number) entry.get("ttl")).longValue());
                         }
                         count++;
                     }
-                } catch (Exception e) {
-                    logger.warn("Failed to seed memorystore key: {}", e.getMessage());
                 }
             }
-        }
 
-        // Seed hashes
-        List<Map<String, Object>> hashes = (List<Map<String, Object>>) ms.get("hashes");
-        if (hashes != null) {
-            for (Map<String, Object> entry : hashes) {
-                try {
+            // Seed hashes
+            List<Map<String, Object>> hashes = (List<Map<String, Object>>) ms.get("hashes");
+            if (hashes != null) {
+                for (Map<String, Object> entry : hashes) {
                     String key = (String) entry.get("key");
                     Map<String, Object> fields = (Map<String, Object>) entry.get("fields");
                     if (key != null && fields != null) {
-                        String json = jsonMapper.writeValueAsString(fields);
-                        try (var conn = dataSource.getConnection();
-                             var ps = conn.prepareStatement(
-                                     "INSERT INTO redis_data (project_id, db_number, key_name, data_type, value) " +
-                                     "VALUES (?, 0, ?, 'hash', ?::jsonb) " +
-                                     "ON CONFLICT (project_id, db_number, key_name) DO UPDATE SET value = ?::jsonb, data_type = 'hash'")) {
-                            ps.setString(1, config.getProjectId());
-                            ps.setString(2, key);
-                            ps.setString(3, json);
-                            ps.setString(4, json);
-                            ps.executeUpdate();
+                        Map<String, String> stringFields = new LinkedHashMap<>();
+                        fields.forEach((k, v) -> stringFields.put(k, String.valueOf(v)));
+                        pipe.hset(key, stringFields);
+                        count++;
+                    }
+                }
+            }
+
+            // Seed lists
+            List<Map<String, Object>> lists = (List<Map<String, Object>>) ms.get("lists");
+            if (lists != null) {
+                for (Map<String, Object> entry : lists) {
+                    String key = (String) entry.get("key");
+                    List<String> values = (List<String>) entry.get("values");
+                    if (values == null) values = (List<String>) entry.get("items"); // seed.yaml compat
+                    if (key != null && values != null && !values.isEmpty()) {
+                        pipe.rpush(key, values.toArray(new String[0]));
+                        count++;
+                    }
+                }
+            }
+
+            // Seed sets
+            List<Map<String, Object>> sets = (List<Map<String, Object>>) ms.get("sets");
+            if (sets != null) {
+                for (Map<String, Object> entry : sets) {
+                    String key = (String) entry.get("key");
+                    List<String> members = (List<String>) entry.get("members");
+                    if (key != null && members != null && !members.isEmpty()) {
+                        pipe.sadd(key, members.toArray(new String[0]));
+                        count++;
+                    }
+                }
+            }
+
+            // Seed sorted sets
+            List<Map<String, Object>> sortedSets = (List<Map<String, Object>>) ms.get("sorted_sets");
+            if (sortedSets == null) sortedSets = (List<Map<String, Object>>) ms.get("zsets");
+            if (sortedSets != null) {
+                for (Map<String, Object> entry : sortedSets) {
+                    String key = (String) entry.get("key");
+                    List<Map<String, Object>> members = (List<Map<String, Object>>) entry.get("members");
+                    if (key != null && members != null && !members.isEmpty()) {
+                        for (Map<String, Object> m : members) {
+                            String member = String.valueOf(m.get("member"));
+                            double score = ((Number) m.get("score")).doubleValue();
+                            pipe.zadd(key, score, member);
                         }
                         count++;
                     }
-                } catch (Exception e) {
-                    logger.warn("Failed to seed memorystore hash: {}", e.getMessage());
                 }
             }
+
+            pipe.sync();
+        } catch (Exception e) {
+            logger.warn("Failed to seed Memorystore via Valkey: {}", e.getMessage());
         }
         return count;
     }

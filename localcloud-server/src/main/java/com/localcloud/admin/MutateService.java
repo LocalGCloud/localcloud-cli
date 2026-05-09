@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import redis.clients.jedis.Jedis;
 import com.linecorp.armeria.common.AggregatedHttpRequest;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
@@ -582,14 +583,14 @@ public class MutateService {
             return memorystoreUpsert(json);
         }
         if ("keys".equals(operation) && "delete".equals(subOp)) {
-            // Delete key
+            // Delete key via Jedis
             String key = (String) json.get("key");
 
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(
-                         "DELETE FROM redis_data WHERE db_number = 0 AND key_name = ?")) {
-                ps.setString(1, key);
-                ps.executeUpdate();
+            int redisPort = config.getServiceRegistry().getService("memorystore") != null
+                    ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+            try (Jedis jedis = new Jedis("localhost", redisPort)) {
+                jedis.select(0); // project-scoped database
+                jedis.del(key);
             }
 
             logger.debug("Deleted memorystore key: {}", key);
@@ -604,37 +605,64 @@ public class MutateService {
         Object value = json.get("value");
         String type = (String) json.getOrDefault("type", "string");
 
-        String jsonValue;
-        switch (type) {
-            case "string":
-                // Value is a plain string, wrap as JSON text
-                jsonValue = mapper.writeValueAsString(value);
-                break;
-            case "hash":
-                // Value is a JSON object
-                jsonValue = mapper.writeValueAsString(value);
-                break;
-            case "list":
-            case "set":
-            case "sorted_set":
-                // Value is a JSON array
-                jsonValue = mapper.writeValueAsString(value);
-                break;
-            default:
-                return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown type: " + type));
-        }
+        int redisPort = config.getServiceRegistry().getService("memorystore") != null
+                ? config.getServiceRegistry().getService("memorystore").port() : 6379;
 
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO redis_data (db_number, key_name, data_type, value) " +
-                     "VALUES (0, ?, ?, ?::jsonb) " +
-                     "ON CONFLICT (db_number, key_name) DO UPDATE SET value = ?::jsonb, data_type = ?")) {
-            ps.setString(1, key);
-            ps.setString(2, type);
-            ps.setString(3, jsonValue);
-            ps.setString(4, jsonValue);
-            ps.setString(5, type);
-            ps.executeUpdate();
+        try (Jedis jedis = new Jedis("localhost", redisPort)) {
+            jedis.select(0); // project-scoped database
+            switch (type) {
+                case "string":
+                    // Value is a plain string
+                    jedis.set(key, value != null ? value.toString() : "");
+                    break;
+                case "hash":
+                    // Value is a JSON object — parse into Map<String,String>
+                    Map<String, Object> hashObj = (Map<String, Object>) value;
+                    Map<String, String> hashMap = new LinkedHashMap<>();
+                    if (hashObj != null) {
+                        for (Map.Entry<String, Object> entry : hashObj.entrySet()) {
+                            hashMap.put(entry.getKey(), entry.getValue() != null ? entry.getValue().toString() : "");
+                        }
+                    }
+                    jedis.del(key);
+                    if (!hashMap.isEmpty()) {
+                        jedis.hset(key, hashMap);
+                    }
+                    break;
+                case "list":
+                    // Value is a JSON array
+                    List<Object> listItems = (List<Object>) value;
+                    jedis.del(key);
+                    if (listItems != null && !listItems.isEmpty()) {
+                        String[] listArr = listItems.stream()
+                                .map(o -> o != null ? o.toString() : "")
+                                .toArray(String[]::new);
+                        jedis.rpush(key, listArr);
+                    }
+                    break;
+                case "set":
+                    // Value is a JSON array
+                    List<Object> setItems = (List<Object>) value;
+                    jedis.del(key);
+                    if (setItems != null && !setItems.isEmpty()) {
+                        String[] setArr = setItems.stream()
+                                .map(o -> o != null ? o.toString() : "")
+                                .toArray(String[]::new);
+                        jedis.sadd(key, setArr);
+                    }
+                    break;
+                default:
+                    return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown type: " + type));
+            }
+
+            // Apply TTL if provided
+            Object ttlObj = json.get("ttl");
+            if (ttlObj != null) {
+                long ttl = Long.parseLong(ttlObj.toString());
+                if (ttl > 0) {
+                    jedis.expire(key, ttl);
+                }
+            }
         }
 
         logger.debug("Upserted memorystore key: {} (type={})", key, type);

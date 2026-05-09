@@ -14,6 +14,9 @@ import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.params.ScanParams;
+import redis.clients.jedis.resps.ScanResult;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
@@ -457,29 +460,34 @@ public class ExportService {
     // ========== Memorystore ==========
 
     private Map<String, Object> exportMemorystore() throws Exception {
-        if (!config.isPersistenceEnabled()) {
-            return Map.of();
-        }
-
         Map<String, Object> result = new LinkedHashMap<>();
         List<Map<String, Object>> keys = new ArrayList<>();
 
-        // Export key names and types only — no values.
-        // Actual data persists on the mounted data dir and can be restored from there.
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                 "SELECT key_name, data_type FROM redis_data " +
-                 "WHERE db_number = 0 AND (ttl_expires_at IS NULL OR ttl_expires_at > NOW()) " +
-                 "ORDER BY key_name")) {
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
+        // Export key names and types by scanning Valkey directly
+        int redisPort = config.getServiceRegistry().getService("memorystore") != null
+                ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+
+        try (Jedis jedis = new Jedis("localhost", redisPort)) {
+            jedis.select(0); // project-scoped database
+            ScanParams scanParams = new ScanParams().count(100);
+            String cursor = ScanParams.SCAN_POINTER_START;
+            do {
+                ScanResult<String> scanResult = jedis.scan(cursor, scanParams);
+                for (String keyName : scanResult.getResult()) {
                     Map<String, Object> key = new LinkedHashMap<>();
-                    key.put("key", rs.getString("key_name"));
-                    key.put("type", rs.getString("data_type"));
+                    key.put("key", keyName);
+                    key.put("type", jedis.type(keyName));
                     keys.add(key);
                 }
-            }
+                cursor = scanResult.getCursor();
+            } while (!"0".equals(cursor));
+        } catch (Exception e) {
+            logger.warn("Failed to scan Memorystore keys: {}", e.getMessage());
+            return Map.of();
         }
+
+        // Sort by key name for stable output
+        keys.sort((a, b) -> ((String) a.get("key")).compareTo((String) b.get("key")));
 
         if (!keys.isEmpty()) {
             result.put("keys", keys);

@@ -771,6 +771,141 @@ button,
   outline-offset: 2px;
 }
 
+/* ---------- Data Breadcrumb ---------- */
+.data-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding-top: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.data-breadcrumb-sep {
+  color: var(--text-tertiary);
+  margin: 0 6px;
+  font-size: 10px;
+  user-select: none;
+}
+
+.data-breadcrumb-active {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.data-breadcrumb-link {
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: var(--font-body);
+  transition: all 0.15s;
+}
+
+.data-breadcrumb-link:hover {
+  background: var(--surface-hover);
+  color: var(--primary);
+}
+
+/* ---------- Data Tree Sidebar ---------- */
+.data-tree-layout {
+  display: flex;
+  gap: 0;
+  min-height: 200px;
+}
+
+.data-tree {
+  width: 220px;
+  min-width: 220px;
+  border-right: 1px solid var(--border);
+  padding: 8px 0;
+  overflow-y: auto;
+  max-height: calc(100vh - 220px);
+  flex-shrink: 0;
+}
+
+.data-tree-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: color 0.15s;
+}
+
+.data-tree-toggle:hover {
+  color: var(--text);
+}
+
+.data-tree-toggle svg {
+  transition: transform 0.15s;
+}
+
+.data-tree-toggle.collapsed svg {
+  transform: rotate(-90deg);
+}
+
+.data-tree-group {
+  padding-left: 0;
+}
+
+.data-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 12px 4px 20px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: var(--font-body);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.data-tree-item:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.data-tree-item.active {
+  background: var(--primary-softer, rgba(66, 133, 244, 0.08));
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.data-tree-item-icon {
+  width: 14px;
+  height: 14px;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.data-tree-content {
+  flex: 1;
+  min-width: 0;
+  padding: 0 16px;
+  overflow-y: auto;
+}
+
 /* ---------- Clickable Row ---------- */
 .clickable-row {
   cursor: pointer;

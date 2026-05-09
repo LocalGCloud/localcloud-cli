@@ -219,20 +219,6 @@ public class SchemaManager {
                 ")"
             );
 
-            // Memorystore (Redis): redis_data
-            stmt.execute(
-                "CREATE TABLE IF NOT EXISTS redis_data (" +
-                "    project_id VARCHAR(255) NOT NULL DEFAULT 'local-project'," +
-                "    db_number INT NOT NULL DEFAULT 0," +
-                "    key_name TEXT NOT NULL," +
-                "    data_type VARCHAR(10) NOT NULL," +
-                "    value JSONB NOT NULL DEFAULT '\"\"'," +
-                "    ttl_expires_at TIMESTAMPTZ," +
-                "    PRIMARY KEY (project_id, db_number, key_name)" +
-                ")"
-            );
-            stmt.execute("CREATE INDEX IF NOT EXISTS idx_redis_ttl ON redis_data (ttl_expires_at) WHERE ttl_expires_at IS NOT NULL");
-
             // Bigtable: legacy compatibility table only. The Bigtable emulator is
             // now the source of truth through gRPC admin/data APIs.
             stmt.execute(

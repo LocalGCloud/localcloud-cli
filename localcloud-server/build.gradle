@@ -87,14 +87,8 @@ dependencies {
     implementation "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${jacksonVersion}"
     implementation "com.fasterxml.jackson.datatype:jackson-datatype-jsr310:${jacksonVersion}"
 
-    // Netty Redis codec (aligned with Netty version from Armeria)
-    implementation 'io.netty:netty-codec-redis:4.1.115.Final'
-
-    // RoaringBitmap for efficient set operations (replaces HashSet for large cardinalities)
-    implementation 'org.roaringbitmap:RoaringBitmap:1.3.0'
-
-    // Apache DataSketches for HyperLogLog (better accuracy than vanilla)
-    implementation 'org.apache.datasketches:datasketches-java:6.2.0'
+    // Jedis — Redis/Valkey client for browse + seed operations
+    implementation 'redis.clients:jedis:5.2.0'
 
     // SLF4J + Logback
     implementation 'org.slf4j:slf4j-api:2.0.12'

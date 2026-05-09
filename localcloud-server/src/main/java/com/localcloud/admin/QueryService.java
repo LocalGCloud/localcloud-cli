@@ -325,7 +325,8 @@ public class QueryService {
             }
         }
 
-        // Auto-resolve database if not provided — use the first database in the instance
+        // Auto-resolve database if not provided — find the database that contains the queried table
+        boolean databaseAutoResolved = false;
         if (database == null || database.isBlank()) {
             try {
                 String url = spannerBase + "/v1/projects/" + projectId + "/instances/" + instance + "/databases";
@@ -337,9 +338,90 @@ public class QueryService {
                 if (databases.isEmpty()) {
                     return errorResponse("No databases in Spanner instance '" + instance + "'. Create one first.");
                 }
-                String name = (String) databases.get(0).get("name");
-                database = name.substring(name.lastIndexOf('/') + 1);
-                logger.info("Auto-resolved Spanner database: {}/{}", instance, database);
+
+                // Extract table names from SQL (FROM/INTO/UPDATE/JOIN clauses)
+                // Strip comments and hints first for cleaner parsing
+                String sqlForParsing = sql.replaceAll("/\\*.*?\\*/", " ").replaceAll("--[^\n]*", " ");
+                Set<String> referencedTables = new java.util.LinkedHashSet<>();
+                java.util.regex.Matcher tableMatcher = java.util.regex.Pattern.compile(
+                        "(?i)(?:FROM|INTO|UPDATE|JOIN)\\s+([A-Za-z_][A-Za-z0-9_]*)").matcher(sqlForParsing);
+                while (tableMatcher.find()) {
+                    referencedTables.add(tableMatcher.group(1).toUpperCase());
+                }
+
+                // Try to find the database that contains the referenced tables
+                if (!referencedTables.isEmpty()) {
+                    String bestDb = null;
+                    int bestMatchCount = 0;
+                    for (Map<String, Object> db : databases) {
+                        String dbFullName = (String) db.get("name");
+                        String dbName = dbFullName.substring(dbFullName.lastIndexOf('/') + 1);
+                        try {
+                            String ddlUrl = spannerBase + "/v1/projects/" + projectId + "/instances/" + instance
+                                    + "/databases/" + dbName + "/ddl";
+                            String ddlBody = proxyGet(ddlUrl);
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> ddlResp = mapper.readValue(ddlBody, Map.class);
+                            @SuppressWarnings("unchecked")
+                            List<String> statements = (List<String>) ddlResp.getOrDefault("statements", List.of());
+                            // Extract table names from DDL
+                            Set<String> dbTables = new java.util.HashSet<>();
+                            for (String stmt : statements) {
+                                java.util.regex.Matcher createMatcher = java.util.regex.Pattern.compile(
+                                        "(?i)CREATE\\s+TABLE\\s+([A-Za-z_][A-Za-z0-9_]*)").matcher(stmt);
+                                if (createMatcher.find()) {
+                                    dbTables.add(createMatcher.group(1).toUpperCase());
+                                }
+                            }
+                            // Count how many referenced tables exist in this database
+                            int matchCount = 0;
+                            for (String refTable : referencedTables) {
+                                if (dbTables.contains(refTable)) matchCount++;
+                            }
+                            if (matchCount > bestMatchCount) {
+                                bestMatchCount = matchCount;
+                                bestDb = dbName;
+                            }
+                        } catch (Exception e) {
+                            logger.debug("Failed to fetch DDL for database {}: {}", dbName, e.getMessage());
+                        }
+                    }
+
+                    if (bestDb != null && bestMatchCount > 0) {
+                        database = bestDb;
+                        databaseAutoResolved = true;
+                        logger.info("Auto-resolved Spanner database by table match: {}/{} ({}/{} tables matched)",
+                                instance, database, bestMatchCount, referencedTables.size());
+                    }
+                }
+
+                // Fallback: pick database with most tables if no table match found
+                if (database == null || database.isBlank()) {
+                    String fallbackDb = null;
+                    int mostTables = -1;
+                    for (Map<String, Object> db : databases) {
+                        String dbFullName = (String) db.get("name");
+                        String dbName = dbFullName.substring(dbFullName.lastIndexOf('/') + 1);
+                        try {
+                            String ddlUrl = spannerBase + "/v1/projects/" + projectId + "/instances/" + instance
+                                    + "/databases/" + dbName + "/ddl";
+                            String ddlBody = proxyGet(ddlUrl);
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> ddlResp = mapper.readValue(ddlBody, Map.class);
+                            int tableCount = ((List<?>) ddlResp.getOrDefault("statements", List.of())).size();
+                            if (tableCount > mostTables) {
+                                mostTables = tableCount;
+                                fallbackDb = dbName;
+                            }
+                        } catch (Exception e) {
+                            if (fallbackDb == null) fallbackDb = dbName;
+                        }
+                    }
+                    database = fallbackDb != null ? fallbackDb : ((String) databases.get(0).get("name"))
+                            .substring(((String) databases.get(0).get("name")).lastIndexOf('/') + 1);
+                    databaseAutoResolved = true;
+                    logger.info("Auto-resolved Spanner database (fallback, most tables): {}/{}", instance, database);
+                }
             } catch (Exception e) {
                 return errorResponse("Failed to auto-resolve Spanner database: " + e.getMessage());
             }
@@ -378,6 +460,17 @@ public class QueryService {
             }
         } catch (Exception e) {
             logger.debug("Failed to check database prefixes in SQL: {}", e.getMessage());
+        }
+
+        // Strip statement-level optimizer hints (@{OPTIMIZER_VERSION=...}, @{USE_ADDITIONAL_PARALLELISM=...}, etc.)
+        // The emulator doesn't support these and crashes with ZETASQL_RET_CHECK failure.
+        // Table-level hints like Table@{FORCE_INDEX=idx} are supported and left intact.
+        java.util.regex.Matcher hintMatcher = java.util.regex.Pattern.compile(
+                "^\\s*@\\{[^}]+\\}\\s*", java.util.regex.Pattern.DOTALL).matcher(sql);
+        if (hintMatcher.find()) {
+            String stripped = hintMatcher.group().trim();
+            sql = sql.substring(hintMatcher.end());
+            logger.info("Stripped Spanner statement-level hint: {}", stripped);
         }
 
         // DDL statements (CREATE TABLE, DROP TABLE, ALTER TABLE, CREATE INDEX, DROP INDEX)
@@ -431,21 +524,56 @@ public class QueryService {
                 int code = ((Number) sqlResp.get("code")).intValue();
                 String message = sqlResp.containsKey("message") ? String.valueOf(sqlResp.get("message")) : "Unknown error";
                 if (code != 0) {
-                    // Extract table name from SQL for a helpful error message
-                    String tableName = sql.replaceAll("(?i).*?(?:FROM|INTO)\\s+(\\S+).*", "$1").trim();
-                    // Clean up table name (remove trailing parens, backticks, etc.)
-                    tableName = tableName.replaceAll("[(`\\s].*", "");
+                    String codeName = switch (code) {
+                        case 1 -> "CANCELLED";
+                        case 2 -> "UNKNOWN";
+                        case 3 -> "INVALID_ARGUMENT";
+                        case 4 -> "DEADLINE_EXCEEDED";
+                        case 5 -> "NOT_FOUND";
+                        case 6 -> "ALREADY_EXISTS";
+                        case 7 -> "PERMISSION_DENIED";
+                        case 9 -> "FAILED_PRECONDITION";
+                        case 10 -> "ABORTED";
+                        case 13 -> "INTERNAL";
+                        case 14 -> "UNAVAILABLE";
+                        default -> "ERROR_" + code;
+                    };
+
                     String errorMsg;
                     if (code == 5 || message.contains("Not Found") || message.contains("not found")) {
+                        // Extract table name from SQL for a helpful error message
+                        String tableName = sql.replaceAll("(?i).*?(?:FROM|INTO)\\s+(\\S+).*", "$1").trim();
+                        tableName = tableName.replaceAll("[(`@\\{\\s].*", "");  // Also strip @{hint} syntax
                         errorMsg = "Table '" + tableName + "' not found in database '" + database + "'";
                     } else if (code == 13 && message.contains("marshal") && message.contains("not found")) {
-                        // Spanner emulator wraps NOT_FOUND as INTERNAL with "failed to marshal...not found"
+                        String tableName = sql.replaceAll("(?i).*?(?:FROM|INTO)\\s+(\\S+).*", "$1").trim();
+                        tableName = tableName.replaceAll("[(`@\\{\\s].*", "");
                         errorMsg = "Table '" + tableName + "' does not exist in database '" + database + "'. "
                                 + "Check that the table name and database are correct.";
                     } else {
-                        // Pass through the actual Spanner error (code 13 = INTERNAL, code 3 = INVALID_ARGUMENT, etc.)
-                        errorMsg = message;
+                        // Enrich the error message with code name and pass through enrichErrorMessage
+                        errorMsg = enrichErrorMessage("spanner", message);
+                        // Prepend code name if enrichment didn't already add context
+                        if (errorMsg.equals(message)) {
+                            errorMsg = "Spanner " + codeName + ": " + message;
+                        }
                     }
+
+                    // Also include details array if present (often contains root cause)
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> details = (List<Map<String, Object>>) sqlResp.get("details");
+                    if (details != null && !details.isEmpty()) {
+                        StringBuilder detailStr = new StringBuilder();
+                        for (Map<String, Object> detail : details) {
+                            if (detail.containsKey("message")) {
+                                detailStr.append("\n  - ").append(detail.get("message"));
+                            }
+                        }
+                        if (!detailStr.isEmpty()) {
+                            errorMsg += detailStr;
+                        }
+                    }
+
                     return errorResponse(errorMsg);
                 }
             }
@@ -507,6 +635,10 @@ public class QueryService {
             result.put("rows", rows);
             result.put("row_count", rows.size());
             result.put("execution_time_ms", elapsed);
+            if (databaseAutoResolved) {
+                result.put("note", "Query executed on auto-selected database: " + database
+                        + " (instance: " + instance + ")");
+            }
 
             return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
                     mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
@@ -1422,8 +1554,110 @@ public class QueryService {
         }
 
         if ("spanner".equals(service)) {
-            if (rawError.toUpperCase().contains("MERGE")) {
+            String upper = rawError.toUpperCase();
+
+            if (upper.contains("MERGE") && !upper.contains("MARSHAL")) {
                 return "MERGE is not supported by the Spanner emulator. Use separate INSERT/UPDATE/DELETE statements.";
+            }
+
+            // "failed to marshal error message" — emulator's cryptic wrapper for table/index not found
+            if (upper.contains("FAILED TO MARSHAL")) {
+                return "Spanner: Table or index not found in the selected database. "
+                        + "Verify that the correct database is selected and that all referenced tables and indexes exist. "
+                        + "Detail: " + rawError;
+            }
+
+            // Function not found — extract function name and suggest alternatives
+            java.util.regex.Matcher fnNotFound = java.util.regex.Pattern.compile(
+                    "(?i)Function not found:\\s*([\\w.]+)").matcher(rawError);
+            if (fnNotFound.find()) {
+                String fn = fnNotFound.group(1).toUpperCase();
+                String hint = switch (fn) {
+                    case "SOUNDEX" -> "SOUNDEX requires the search index feature flag to be enabled, or the emulator may need to be rebuilt with the latest upstream.";
+                    case "NORMALIZE" -> "NORMALIZE(string, NFC|NFD|NFKC|NFKD) is a ZetaSQL built-in. Ensure the emulator is built from the latest source.";
+                    case "SAFE_DIVIDE" -> "SAFE_DIVIDE is a ZetaSQL built-in. Try: CASE WHEN y = 0 THEN NULL ELSE x / y END as a workaround.";
+                    case "SEARCH_NGRAMS" -> "SEARCH_NGRAMS requires the search index feature flag. Ensure enable_search_index=true in emulator config.";
+                    case "SCORE_NGRAMS" -> "SCORE_NGRAMS requires the search index feature flag. Ensure enable_search_index=true in emulator config.";
+                    case "TOKENIZE_NGRAMS" -> "TOKENIZE_NGRAMS requires the search index feature flag. Ensure enable_search_index=true in emulator config.";
+                    case "TOKENIZE_FULLTEXT" -> "TOKENIZE_FULLTEXT requires the search index feature flag. Ensure enable_search_index=true in emulator config.";
+                    default -> "This function may not be supported by the Spanner emulator.";
+                };
+                return "Spanner: Function '" + fn + "' not found. " + hint;
+            }
+
+            // No matching signature — wrong argument types or count
+            java.util.regex.Matcher sigMatch = java.util.regex.Pattern.compile(
+                    "(?i)No matching signature for (?:function )?([\\w.]+)").matcher(rawError);
+            if (sigMatch.find()) {
+                String fn = sigMatch.group(1).toUpperCase();
+                // Extract the "Supported signature" lines if present
+                java.util.regex.Matcher supported = java.util.regex.Pattern.compile(
+                        "(?i)Supported signature[s]?:\\s*(.+?)(?:\\]|$)", java.util.regex.Pattern.DOTALL).matcher(rawError);
+                String supportedSigs = supported.find() ? "\nSupported signatures: " + supported.group(1).trim() : "";
+                return "Spanner: No matching signature for function '" + fn + "'. "
+                        + "Check argument types and count." + supportedSigs;
+            }
+
+            // Syntax errors — make location clearer
+            java.util.regex.Matcher syntaxMatch = java.util.regex.Pattern.compile(
+                    "(?i)Syntax error:\\s*(.+?)(?:\\[at (\\d+):(\\d+)\\])?\\s*$").matcher(rawError);
+            if (syntaxMatch.find()) {
+                String detail = syntaxMatch.group(1).trim();
+                String line = syntaxMatch.group(2);
+                String col = syntaxMatch.group(3);
+                String location = (line != null && col != null) ? " (line " + line + ", column " + col + ")" : "";
+                return "Spanner SQL syntax error" + location + ": " + detail;
+            }
+
+            // Hint parsing errors — often from @{OPTIMIZER_VERSION=...} or @{FORCE_INDEX=...}
+            if (upper.contains("HINT") || (upper.contains("UNEXPECTED") && upper.contains("@"))) {
+                return "Spanner: Query hint parsing error. "
+                        + "Statement-level hints like @{OPTIMIZER_VERSION=latest} go before SELECT. "
+                        + "Table-level hints like @{FORCE_INDEX=idx} go after the table name (e.g., MyTable@{FORCE_INDEX=idx}). "
+                        + "Detail: " + rawError;
+            }
+
+            // Column/table not found in schema
+            if (upper.contains("COLUMN NOT FOUND") || upper.contains("NAME") && upper.contains("NOT FOUND IN")) {
+                return "Spanner: " + rawError + "\nCheck that the column exists in the table schema. "
+                        + "Columns in generated/HIDDEN columns (e.g., TOKENLIST) are not directly selectable.";
+            }
+
+            // TOKENLIST type errors
+            if (upper.contains("TOKENLIST")) {
+                return "Spanner: TOKENLIST type error. " + rawError
+                        + "\nTOKENLIST columns are generated/HIDDEN and cannot be directly inserted or selected. "
+                        + "Use SEARCH_NGRAMS/SCORE_NGRAMS to query them.";
+            }
+
+            // Unrecognized name (e.g., variable, CTE, table alias)
+            java.util.regex.Matcher unrecognized = java.util.regex.Pattern.compile(
+                    "(?i)Unrecognized name:\\s*(\\S+)").matcher(rawError);
+            if (unrecognized.find()) {
+                return "Spanner: Unrecognized name '" + unrecognized.group(1) + "'. "
+                        + "Check table aliases, CTE names, and column references. Detail: " + rawError;
+            }
+
+            // gRPC status code enrichment — prepend human-readable code name
+            java.util.regex.Matcher codeMatch = java.util.regex.Pattern.compile(
+                    "^(\\d+):\\s*").matcher(rawError);
+            if (codeMatch.find()) {
+                int code = Integer.parseInt(codeMatch.group(1));
+                String codeName = switch (code) {
+                    case 1 -> "CANCELLED";
+                    case 2 -> "UNKNOWN";
+                    case 3 -> "INVALID_ARGUMENT";
+                    case 4 -> "DEADLINE_EXCEEDED";
+                    case 5 -> "NOT_FOUND";
+                    case 6 -> "ALREADY_EXISTS";
+                    case 7 -> "PERMISSION_DENIED";
+                    case 9 -> "FAILED_PRECONDITION";
+                    case 10 -> "ABORTED";
+                    case 13 -> "INTERNAL";
+                    case 14 -> "UNAVAILABLE";
+                    default -> "ERROR_" + code;
+                };
+                return "Spanner " + codeName + ": " + rawError.substring(codeMatch.end());
             }
         }
 

@@ -128,7 +128,7 @@
 # =============================================================================
 
 # Image repositories for dependencies (can be overridden for air-gapped or internal repos)
-ARG SPANNER_EMULATOR_IMAGE=spanner-emulator-build:latest
+ARG SPANNER_EMULATOR_IMAGE=jaysen2apache/spanner-emulator-extended:latest
 #ARG SPANNER_EMULATOR_IMAGE=jaysen2apache/spanner-emulator-extended@sha256:58702f59729905d3db97225480ad3f9c8496a59d697bcb750ab856450c65889a
 ARG BIGQUERY_EMULATOR_IMAGE=jaysen2apache/bigquery-emulator-on-duckdb:latest
 ARG GO_BASE_IMAGE=public.ecr.aws/docker/library/golang:1.25-alpine
@@ -136,6 +136,9 @@ ARG GCLOUD_SDK_IMAGE=gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
 ARG GCS_EMULATOR_IMAGE=fsouza/fake-gcs-server:1.54.0
 ARG DOCKER_CLI_IMAGE=docker:27.1-cli
 ARG JDK_IMAGE=eclipse-temurin:25-jdk
+
+# ── Valkey (Redis-compatible) ──────────────────────────────────────────
+FROM valkey/valkey:8.1-bookworm AS valkey-build
 
 # --- Named build stages for COPY --from references ---
 FROM ${SPANNER_EMULATOR_IMAGE} AS spanner-emulator
@@ -270,11 +273,17 @@ RUN rm -rf \
 COPY --from=spanner-emulator /gateway_main /usr/local/bin/spanner-gateway
 COPY --from=spanner-emulator /emulator_main /usr/local/bin/spanner-emulator-main
 
+# Valkey (Memorystore emulator)
+COPY --from=valkey-build /usr/local/bin/valkey-server /usr/local/bin/valkey-server
+COPY --from=valkey-build /usr/local/bin/valkey-cli /usr/local/bin/valkey-cli
+COPY valkey.conf /etc/valkey.conf
+
 # Create localcloud user, group, and directories
 RUN groupadd -r localcloud && useradd -r -g localcloud -m localcloud \
     && mkdir -p /var/lib/localcloud/pgdata \
                 /var/lib/localcloud/gcs-data \
                 /var/lib/localcloud/spanner-data \
+                /var/lib/localcloud/redis-data \
                 /var/lib/localcloud/bigquery-data \
                 /var/log/localcloud \
                 /opt/localcloud \

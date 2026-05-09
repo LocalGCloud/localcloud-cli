@@ -31,7 +31,6 @@ import com.localcloud.emulators.compute.ComputeEmulator;
 import com.localcloud.emulators.cloudrun.CloudRunEmulator;
 import com.localcloud.emulators.gke.GkeEmulator;
 import com.localcloud.emulators.gke.K3dManager;
-import com.localcloud.emulators.memorystore.MemorystoreEmulator;
 import com.localcloud.emulators.workflows.WorkflowsCallbackService;
 import com.localcloud.emulators.workflows.WorkflowsEmulator;
 import com.localcloud.emulators.workflows.WorkflowEnvVarsRepository;
@@ -326,10 +325,7 @@ public class LocalCloudApplication {
 
         if (config.isServiceEnabled("memorystore")) {
             int redisPort = config.getServiceRegistry().getService("memorystore").port();
-            MemorystoreEmulator memorystoreEmulator = new MemorystoreEmulator(dataSource, redisPort, config.getProjectId());
-            memorystoreEmulator.start();
-            gateway.registerRestEmulator("/redis", memorystoreEmulator, null);
-            logger.info("Memorystore (Redis) emulator started on port {}", redisPort);
+            logger.info("Memorystore (Valkey) running as external process on port {}", redisPort);
         }
 
         if (config.isServiceEnabled("workflows")) {

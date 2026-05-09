@@ -1,6 +1,7 @@
 import { createSignal, createEffect, createMemo, Show, For } from 'solid-js';
 import { api } from '../api.js';
 import CsvImportWizard from '../components/CsvImportWizard.jsx';
+import DataBreadcrumb from '../components/DataBreadcrumb.jsx';
 
 
 const TABS = [
@@ -503,21 +504,30 @@ function BigQueryView(props) {
     const datasets = () => {
         const raw = d();
         if (!raw) return [];
-        // Handle both {items: [...]} and {datasets: [...]} shapes
         if (raw.items && Array.isArray(raw.items)) return raw.items;
         if (raw.datasets && Array.isArray(raw.datasets)) return raw.datasets;
         return [];
     };
 
+    const dsName = (ds) => ds.datasetReference ? ds.datasetReference.datasetId : (ds.id || ds.name || '--');
+
+    const updateSubpath = (dataset, table) => {
+        if (props.onSubpathChange) {
+            const parts = [];
+            if (dataset) { parts.push(dataset); if (table) parts.push(table); }
+            props.onSubpathChange(parts);
+        }
+    };
+
     const selectDataset = async (ds) => {
-        const dsId = ds.datasetReference ? ds.datasetReference.datasetId : (ds.id || ds.name);
+        const dsId = dsName(ds);
         setSelectedDataset(dsId);
         setSelectedTable(null);
         setTables([]);
+        updateSubpath(dsId, null);
         setSubLoading(true);
         try {
             const result = await api.browse('bigquery', 'datasets/' + dsId);
-            // BigQuery tables list returns {tables: [...]} or {items: [...]}
             const tblList = result.tables || result.items || [];
             setTables(tblList);
         } catch { setTables([]); }
@@ -527,6 +537,7 @@ function BigQueryView(props) {
     const selectTable = async (tbl) => {
         const tblId = tbl.tableReference ? tbl.tableReference.tableId : (tbl.name || tbl.id);
         setSelectedTable(tblId);
+        updateSubpath(selectedDataset(), tblId);
         setTableData(null);
         setSubLoading(true);
         try {
@@ -536,14 +547,43 @@ function BigQueryView(props) {
         finally { setSubLoading(false); }
     };
 
-    const goBackToDatasets = () => {
-        setSelectedDataset(null);
-        setSelectedTable(null);
-    };
+    const goBackToDatasets = () => { setSelectedDataset(null); setSelectedTable(null); updateSubpath(null, null); };
+    const goBackToTables = () => { setSelectedTable(null); updateSubpath(selectedDataset(), null); };
 
-    const goBackToTables = () => {
-        setSelectedTable(null);
-    };
+    // Restore dataset from URL subpath
+    createEffect(() => {
+        const sp = typeof props.subpath === 'function' ? props.subpath() : props.subpath;
+        if (!sp || sp.length === 0) return;
+        const dsList = datasets();
+        if (!dsList || dsList.length === 0) return;
+        const [dsId] = sp;
+        if (dsId && !selectedDataset()) {
+            const ds = dsList.find(d => dsName(d) === dsId);
+            if (ds) selectDataset(ds);
+        }
+    });
+
+    // Restore table from URL subpath once tables load
+    createEffect(() => {
+        const sp = typeof props.subpath === 'function' ? props.subpath() : props.subpath;
+        if (!sp || sp.length < 2) return;
+        const tblId = sp[1];
+        const tbls = tables();
+        if (tbls.length > 0 && !selectedTable()) {
+            const tbl = tbls.find(t => (t.tableReference ? t.tableReference.tableId : (t.name || t.id)) === tblId);
+            if (tbl) selectTable(tbl);
+        }
+    });
+
+    // Breadcrumb
+    const breadcrumbs = createMemo(() => {
+        const crumbs = [{ label: 'Datasets', onClick: goBackToDatasets, active: !selectedDataset() }];
+        if (selectedDataset()) {
+            crumbs.push({ label: selectedDataset(), onClick: goBackToTables, active: !selectedTable() });
+            if (selectedTable()) crumbs.push({ label: selectedTable(), onClick: null, active: true });
+        }
+        return crumbs;
+    });
 
     // CSV Import
     const [showCsvImport, setShowCsvImport] = createSignal(false);
@@ -553,19 +593,54 @@ function BigQueryView(props) {
         return await api.mutate('bigquery', 'rows', { dataset: selectedDataset(), table: selectedTable(), row });
     };
 
-    return (
-        <div>
+    // Tree sidebar content
+    const TreeSidebar = () => (
+        <Show when={datasets().length > 0}>
+            <div class="data-tree">
+                <For each={datasets()}>
+                    {(ds) => {
+                        const id = dsName(ds);
+                        const isOpen = () => selectedDataset() === id;
+                        return (
+                            <div>
+                                <button class={`data-tree-toggle ${!isOpen() ? 'collapsed' : ''}`} onClick={() => { if (isOpen()) goBackToDatasets(); else selectDataset(ds); }}>
+                                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M3 2l4 3-4 3z"/></svg>
+                                    {id}
+                                </button>
+                                <Show when={isOpen()}>
+                                    <div class="data-tree-group">
+                                        <For each={tables()}>
+                                            {(tbl) => {
+                                                const tblId = tbl.tableReference ? tbl.tableReference.tableId : (tbl.name || tbl.id);
+                                                return (
+                                                    <button class={`data-tree-item ${selectedTable() === tblId ? 'active' : ''}`} onClick={() => selectTable(tbl)}>
+                                                        <svg class="data-tree-item-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h12v2H2zm0 4h12v2H2zm0 4h12v2H2z"/></svg>
+                                                        {tblId}
+                                                    </button>
+                                                );
+                                            }}
+                                        </For>
+                                    </div>
+                                </Show>
+                            </div>
+                        );
+                    }}
+                </For>
+            </div>
+        </Show>
+    );
+
+    // Content area (table data or table list or empty)
+    const ContentArea = () => (
+        <div class="data-tree-content">
             <Show when={subLoading()}>
                 <div class="loading-state"><div class="loading-spinner" /> Loading...</div>
             </Show>
             <Show when={!subLoading()}>
-                {/* Level 3: Table data */}
+                {/* Table data */}
                 <Show when={selectedTable()}>
-                    <button class="back-link" onClick={goBackToTables}>
-                        {'\u2190'} Back to tables
-                    </button>
-                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                        <h2 style="margin:0">Table: {selectedDataset()}.{selectedTable()}</h2>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                        <h2 style="margin:0;font-size:16px">{selectedDataset()}.{selectedTable()}</h2>
                         <Show when={props.onAdd && tableData() && tableData().columns}>
                             <div style="display:flex;gap:6px">
                                 <button onClick={() => setShowCsvImport(true)}
@@ -637,12 +712,9 @@ function BigQueryView(props) {
                     </Show>
                 </Show>
 
-                {/* Level 2: Tables in dataset */}
+                {/* Tables list (no table selected, dataset selected) */}
                 <Show when={selectedDataset() && !selectedTable()}>
-                    <button class="back-link" onClick={goBackToDatasets}>
-                        {'\u2190'} Back to datasets
-                    </button>
-                    <h2>Dataset: {selectedDataset()}</h2>
+                    <h2 style="margin:0 0 12px 0;font-size:16px">Dataset: {selectedDataset()}</h2>
                     <Show when={tables().length > 0} fallback={
                         <div class="empty-state">
                             <div class="empty-state-icon">{'\u2205'}</div>
@@ -672,7 +744,7 @@ function BigQueryView(props) {
                     </Show>
                 </Show>
 
-                {/* Level 1: Datasets */}
+                {/* Datasets list (nothing selected) */}
                 <Show when={!selectedDataset()}>
                     <Show when={datasets().length > 0} fallback={
                         <div class="empty-state">
@@ -683,33 +755,36 @@ function BigQueryView(props) {
                     }>
                         <div class="data-table-wrapper">
                             <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>Dataset</th>
-                                        <th>Kind</th>
-                                        <th>Location</th>
-                                    </tr>
-                                </thead>
+                                <thead><tr><th>Dataset</th><th>Kind</th><th>Location</th></tr></thead>
                                 <tbody>
                                     <For each={datasets()}>
-                                        {(ds) => {
-                                            const dsName = ds.datasetReference
-                                                ? ds.datasetReference.datasetId
-                                                : (ds.id || ds.name || '--');
-                                            return (
-                                                <tr class="clickable-row" onClick={() => selectDataset(ds)}>
-                                                    <td style={{ "font-weight": "500" }}>{dsName}</td>
-                                                    <td>{ds.kind || 'dataset'}</td>
-                                                    <td>{ds.location || '--'}</td>
-                                                </tr>
-                                            );
-                                        }}
+                                        {(ds) => (
+                                            <tr class="clickable-row" onClick={() => selectDataset(ds)}>
+                                                <td style={{ "font-weight": "500" }}>{dsName(ds)}</td>
+                                                <td>{ds.kind || 'dataset'}</td>
+                                                <td>{ds.location || '--'}</td>
+                                            </tr>
+                                        )}
                                     </For>
                                 </tbody>
                             </table>
                         </div>
                     </Show>
                 </Show>
+            </Show>
+        </div>
+    );
+
+    return (
+        <div>
+            <Show when={selectedDataset()}>
+                <DataBreadcrumb crumbs={breadcrumbs()} />
+            </Show>
+            <Show when={datasets().length > 0 && selectedDataset()} fallback={<ContentArea />}>
+                <div class="data-tree-layout">
+                    <TreeSidebar />
+                    <ContentArea />
+                </div>
             </Show>
             <CsvImportWizard
                 show={showCsvImport()}
@@ -1183,42 +1258,47 @@ function SpannerView(props) {
         return cols.filter(c => !gen.has(c));
     });
 
-    // Parse column types from DDL for display
+    // Parse column types from DDL for display — filtered to selected table only
     const columnTypes = createMemo(() => {
         const ddl = ddlData();
-        if (!ddl || !ddl.statements) return {};
+        const table = selectedTable();
+        if (!ddl || !ddl.statements || !table) return {};
+        const tableStmt = ddl.statements.find(s =>
+            new RegExp('CREATE\\s+TABLE\\s+' + table + '\\b', 'i').test(s)
+        );
+        if (!tableStmt) return {};
         const types = {};
-        for (const stmt of ddl.statements) {
-            const lines = stmt.split('\n');
-            for (const line of lines) {
-                const trimmed = line.trim().replace(/,$/, '');
-                if (!trimmed || trimmed.startsWith(')') || trimmed.startsWith('--')) continue;
-                if (/\bAS\s*\(/.test(trimmed) || /TOKENLIST\s+AS/.test(trimmed)) continue;
-                const m = trimmed.match(/^(\w+)\s+(INT64|FLOAT64|BOOL|STRING\(\w+\)|STRING\(MAX\)|TIMESTAMP|DATE|BYTES\(\w+\))/i);
-                if (m) types[m[1]] = m[2];
-            }
+        const lines = tableStmt.split('\n');
+        for (const line of lines) {
+            const trimmed = line.trim().replace(/,$/, '');
+            if (!trimmed || trimmed.startsWith(')') || trimmed.startsWith('--')) continue;
+            if (/\bAS\s*\(/.test(trimmed) || /TOKENLIST\s+AS/.test(trimmed)) continue;
+            const m = trimmed.match(/^(\w+)\s+(INT64|FLOAT64|BOOL|STRING\(\w+\)|STRING\(MAX\)|TIMESTAMP|DATE|BYTES\(\w+\))/i);
+            if (m) types[m[1]] = m[2];
         }
         return types;
     });
 
-    // Parse NOT NULL columns from DDL for validation
+    // Parse NOT NULL columns from DDL for validation — filtered to selected table only
     const notNullColumns = createMemo(() => {
         const ddl = ddlData();
-        if (!ddl || !ddl.statements) return new Set();
+        const table = selectedTable();
+        if (!ddl || !ddl.statements || !table) return new Set();
+        // Find the DDL statement for the currently selected table
+        const tableStmt = ddl.statements.find(s =>
+            new RegExp('CREATE\\s+TABLE\\s+' + table + '\\b', 'i').test(s)
+        );
+        if (!tableStmt) return new Set();
         const cols = new Set();
-        for (const stmt of ddl.statements) {
-            const lines = stmt.split('\n');
-            let parenDepth = 0;
-            for (const line of lines) {
-                const trimmed = line.trim().replace(/,$/, '');
-                // Track paren depth to skip generated column bodies
-                for (const ch of trimmed) { if (ch === '(') parenDepth++; if (ch === ')') parenDepth--; }
-                // Only parse top-level column definitions (depth 1 = inside CREATE TABLE parens)
-                if (parenDepth > 1) continue;
-                if (/\bAS\s*\(/.test(trimmed) || /TOKENLIST\s+AS/.test(trimmed)) continue;
-                const m = trimmed.match(/^(\w+)\s+(INT64|FLOAT64|BOOL|STRING|TIMESTAMP|DATE|BYTES)\b.*\bNOT\s+NULL\b/i);
-                if (m) cols.add(m[1]);
-            }
+        const lines = tableStmt.split('\n');
+        let parenDepth = 0;
+        for (const line of lines) {
+            const trimmed = line.trim().replace(/,$/, '');
+            for (const ch of trimmed) { if (ch === '(') parenDepth++; if (ch === ')') parenDepth--; }
+            if (parenDepth > 1) continue;
+            if (/\bAS\s*\(/.test(trimmed) || /TOKENLIST\s+AS/.test(trimmed)) continue;
+            const m = trimmed.match(/^(\w+)\s+(INT64|FLOAT64|BOOL|STRING|TIMESTAMP|DATE|BYTES)\b.*\bNOT\s+NULL\b/i);
+            if (m) cols.add(m[1]);
         }
         return cols;
     });
@@ -1266,26 +1346,7 @@ function SpannerView(props) {
         return crumbs;
     });
 
-    const Breadcrumb = () => (
-        <nav class="spanner-breadcrumb" style="display:flex;align-items:center;gap:0;margin-bottom:12px;font-size:13px;flex-wrap:wrap">
-            <For each={breadcrumbs()}>
-                {(crumb, i) => (
-                    <>
-                        <Show when={i() > 0}>
-                            <span style="color:var(--text-tertiary);margin:0 6px;font-size:10px;user-select:none">{'\u203A'}</span>
-                        </Show>
-                        <Show when={crumb.onClick && !crumb.active} fallback={
-                            <span style="font-weight:600;color:var(--text)">{crumb.label}</span>
-                        }>
-                            <button onClick={crumb.onClick} style="background:none;border:none;padding:2px 6px;border-radius:4px;color:var(--text-secondary);cursor:pointer;font-size:13px;transition:all 0.15s" onMouseEnter={e => {e.currentTarget.style.background='var(--surface-hover)';e.currentTarget.style.color='var(--primary)'}} onMouseLeave={e => {e.currentTarget.style.background='none';e.currentTarget.style.color='var(--text-secondary)'}}>
-                                {crumb.label}
-                            </button>
-                        </Show>
-                    </>
-                )}
-            </For>
-        </nav>
-    );
+    const Breadcrumb = () => <DataBreadcrumb crumbs={breadcrumbs()} />;
 
     return (
         <div>
@@ -1572,6 +1633,19 @@ function SpannerView(props) {
 }
 
 // -- Memorystore (Redis) View --
+function formatRedisValue(value, type) {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'object') {
+        try {
+            return JSON.stringify(value);
+        } catch (e) {
+            return String(value);
+        }
+    }
+    return String(value);
+}
+
 function MemorystoreView(props) {
     const d = () => props.data();
     const keys = () => {
@@ -1612,7 +1686,7 @@ function MemorystoreView(props) {
                                     <tr>
                                         <td style={{ "font-weight": "500" }}>{k.key}</td>
                                         <td><span class="badge badge-neutral">{k.type}</span></td>
-                                        <td style={{ "max-width": "300px", "overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "font-size": "12px" }}>{k.value}</td>
+                                        <td style={{ "max-width": "300px", "overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "font-size": "12px" }}>{formatRedisValue(k.value, k.type)}</td>
                                         <td>{k.ttl || 'none'}</td>
                                         <td>
                                             <div style="display:flex;gap:4px">
@@ -1657,21 +1731,47 @@ function FirestoreView(props) {
         return raw.collections || [];
     };
 
-    const selectCollection = async (colName) => {
-        setSelectedCollection(colName);
+    const colName = (col) => typeof col === 'string' ? col : (col.name || col.id || '--');
+
+    const updateSubpath = (collection) => {
+        if (props.onSubpathChange) {
+            props.onSubpathChange(collection ? [collection] : []);
+        }
+    };
+
+    const selectCollection = async (name) => {
+        setSelectedCollection(name);
+        updateSubpath(name);
         setDocuments([]);
         setSubLoading(true);
         try {
-            const result = await api.browse('firestore', colName);
+            const result = await api.browse('firestore', name);
             setDocuments(result.documents || []);
         } catch { setDocuments([]); }
         finally { setSubLoading(false); }
     };
 
-    const goBack = () => {
-        setSelectedCollection(null);
-        setDocuments([]);
-    };
+    const goBack = () => { setSelectedCollection(null); setDocuments([]); updateSubpath(null); };
+
+    // Restore navigation from URL subpath
+    createEffect(() => {
+        const sp = typeof props.subpath === 'function' ? props.subpath() : props.subpath;
+        if (!sp || sp.length === 0) return;
+        const cols = collections();
+        if (!cols || cols.length === 0) return;
+        const [colId] = sp;
+        if (colId && !selectedCollection()) {
+            const exists = cols.find(c => colName(c) === colId);
+            if (exists) selectCollection(colId);
+        }
+    });
+
+    // Breadcrumb
+    const breadcrumbs = createMemo(() => {
+        const crumbs = [{ label: 'Collections', onClick: goBack, active: !selectedCollection() }];
+        if (selectedCollection()) crumbs.push({ label: selectedCollection(), onClick: null, active: true });
+        return crumbs;
+    });
 
     // CSV Import
     const [showCsvImport, setShowCsvImport] = createSignal(false);
@@ -1687,32 +1787,43 @@ function FirestoreView(props) {
         return await api.mutate('firestore', 'documents', { collection: selectedCollection(), documentId: docId, fields });
     };
 
-    // Extract all unique field names from documents for column headers
     const docFields = () => {
         const docs = documents();
         if (!docs || docs.length === 0) return [];
         const fieldSet = new Set();
-        docs.forEach(doc => {
-            Object.keys(doc).forEach(k => {
-                if (k !== '__id') fieldSet.add(k);
-            });
-        });
+        docs.forEach(doc => { Object.keys(doc).forEach(k => { if (k !== '__id') fieldSet.add(k); }); });
         return Array.from(fieldSet);
     };
 
-    return (
-        <div>
+    // Tree sidebar
+    const TreeSidebar = () => (
+        <Show when={collections().length > 0}>
+            <div class="data-tree">
+                <For each={collections()}>
+                    {(col) => {
+                        const name = colName(col);
+                        return (
+                            <button class={`data-tree-item ${selectedCollection() === name ? 'active' : ''}`} onClick={() => selectCollection(name)}>
+                                <svg class="data-tree-item-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2h5l2 2h5v10H2V2zm1 1v10h10V5H8.5L6.5 3H3z"/></svg>
+                                {name}
+                            </button>
+                        );
+                    }}
+                </For>
+            </div>
+        </Show>
+    );
+
+    // Content area
+    const ContentArea = () => (
+        <div class="data-tree-content">
             <Show when={subLoading()}>
                 <div class="loading-state"><div class="loading-spinner" /> Loading...</div>
             </Show>
             <Show when={!subLoading()}>
-                {/* Level 2: Documents in collection */}
                 <Show when={selectedCollection()}>
-                    <button class="back-link" onClick={goBack}>
-                        {'\u2190'} Back to collections
-                    </button>
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                        <h2 style="margin:0">Collection: {selectedCollection()}</h2>
+                        <h2 style="margin:0;font-size:16px">{selectedCollection()}</h2>
                         <Show when={props.onAdd}>
                             <div style="display:flex;gap:6px">
                                 <button onClick={() => setShowCsvImport(true)}
@@ -1791,7 +1902,6 @@ function FirestoreView(props) {
                     </Show>
                 </Show>
 
-                {/* Level 1: Collections */}
                 <Show when={!selectedCollection()}>
                     <Show when={collections().length > 0} fallback={
                         <div class="empty-state">
@@ -1805,14 +1915,11 @@ function FirestoreView(props) {
                                 <thead><tr><th>Collection</th></tr></thead>
                                 <tbody>
                                     <For each={collections()}>
-                                        {(col) => {
-                                            const colName = typeof col === 'string' ? col : (col.name || col.id || '--');
-                                            return (
-                                                <tr class="clickable-row" onClick={() => selectCollection(colName)}>
-                                                    <td style="font-weight:500">{colName}</td>
-                                                </tr>
-                                            );
-                                        }}
+                                        {(col) => (
+                                            <tr class="clickable-row" onClick={() => selectCollection(colName(col))}>
+                                                <td style="font-weight:500">{colName(col)}</td>
+                                            </tr>
+                                        )}
                                     </For>
                                 </tbody>
                             </table>
@@ -1820,11 +1927,25 @@ function FirestoreView(props) {
                     </Show>
                 </Show>
             </Show>
+        </div>
+    );
+
+    return (
+        <div>
+            <Show when={selectedCollection()}>
+                <DataBreadcrumb crumbs={breadcrumbs()} />
+            </Show>
+            <Show when={collections().length > 0 && selectedCollection()} fallback={<ContentArea />}>
+                <div class="data-tree-layout">
+                    <TreeSidebar />
+                    <ContentArea />
+                </div>
+            </Show>
             <CsvImportWizard
                 show={showCsvImport()}
                 onClose={() => setShowCsvImport(false)}
                 tableName={selectedCollection()}
-                columns={['__id', ...docFields()]}
+                columns={docFields().length > 0 ? ['__id', ...docFields()] : null}
                 serviceName="Firestore"
                 onImportRow={firestoreImportRow}
                 onImportDone={() => selectCollection(selectedCollection())}
@@ -1841,14 +1962,11 @@ function BigtableView(props) {
     const [rows, setRows] = createSignal([]);
     const [subLoading, setSubLoading] = createSignal(false);
 
-    // Browse response is now an array of instances: [{id, type, tables: [{id, columnFamilies}]}]
     const instances = () => {
         const raw = d();
         if (!raw) return [];
-        // Support both array (new) and {tables: [...]} (legacy) formats
         if (Array.isArray(raw)) return raw;
         if (raw.tables) {
-            // Legacy flat format — group by instance
             const byInst = {};
             raw.tables.forEach(t => {
                 const inst = t.instance || 'default';
@@ -1865,9 +1983,25 @@ function BigtableView(props) {
         return inst ? (inst.tables || []) : [];
     };
 
+    const updateSubpath = (inst, table) => {
+        if (props.onSubpathChange) {
+            const parts = [];
+            if (inst) { parts.push(inst); if (table) parts.push(table); }
+            props.onSubpathChange(parts);
+        }
+    };
+
+    const selectInstance = (instId) => {
+        setSelectedInstance(instId);
+        setSelectedTable(null);
+        setRows([]);
+        updateSubpath(instId, null);
+    };
+
     const selectTable = async (instanceId, tableId) => {
         setSelectedInstance(instanceId);
         setSelectedTable(tableId);
+        updateSubpath(instanceId, tableId);
         setRows([]);
         setSubLoading(true);
         try {
@@ -1877,55 +2011,110 @@ function BigtableView(props) {
         finally { setSubLoading(false); }
     };
 
-    const goBackToTables = () => { setSelectedTable(null); setRows([]); };
-    const goBackToInstances = () => { setSelectedInstance(null); setSelectedTable(null); setRows([]); };
+    const goBackToTables = () => { setSelectedTable(null); setRows([]); updateSubpath(selectedInstance(), null); };
+    const goBackToInstances = () => { setSelectedInstance(null); setSelectedTable(null); setRows([]); updateSubpath(null, null); };
+
+    // Restore navigation from URL subpath
+    createEffect(() => {
+        const sp = typeof props.subpath === 'function' ? props.subpath() : props.subpath;
+        if (!sp || sp.length === 0) return;
+        const insts = instances();
+        if (!insts || insts.length === 0) return;
+        const [instId, tblId] = sp;
+        if (instId && !selectedInstance()) {
+            const inst = insts.find(i => i.id === instId);
+            if (inst) {
+                if (tblId) {
+                    selectTable(instId, tblId);
+                } else {
+                    selectInstance(instId);
+                }
+            }
+        }
+    });
+
+    // Breadcrumb
+    const breadcrumbs = createMemo(() => {
+        const crumbs = [{ label: 'Instances', onClick: goBackToInstances, active: !selectedInstance() }];
+        if (selectedInstance()) {
+            crumbs.push({ label: selectedInstance(), onClick: goBackToTables, active: !selectedTable() });
+            if (selectedTable()) crumbs.push({ label: selectedTable(), onClick: null, active: true });
+        }
+        return crumbs;
+    });
 
     // CSV Import
     const [showCsvImport, setShowCsvImport] = createSignal(false);
     const bigtableImportRow = async (targetCols, values) => {
-        // First column = rowKey, rest = cells (columnFamily:column format or plain column in default 'cf1')
-        const rowKey = values[0] || 'row-' + Date.now();
+        const rkIdx = targetCols.indexOf('rowKey');
+        const rowKey = (rkIdx >= 0 ? values[rkIdx] : '') || 'row-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
         const cells = {};
-        for (let i = 1; i < targetCols.length; i++) {
-            const col = targetCols[i];
+        targetCols.forEach((col, i) => {
+            if (col === 'rowKey') return;
             const val = values[i]?.trim() || '';
             if (val) {
                 const cfCol = col.includes(':') ? col : 'cf1:' + col;
                 cells[cfCol] = val;
             }
-        }
-        return await api.mutate('bigtable', 'rows', {
-            table: selectedInstance() + '/' + selectedTable(),
-            rowKey,
-            cells
         });
+        return await api.mutate('bigtable', 'rows', { table: selectedInstance() + '/' + selectedTable(), rowKey, cells });
     };
 
-    // Extract all unique column families/qualifiers from rows
     const rowColumns = () => {
         const r = rows();
         if (!r || r.length === 0) return [];
         const colSet = new Set();
-        r.forEach(row => {
-            const cells = row.cells || {};
-            Object.keys(cells).forEach(k => colSet.add(k));
-        });
+        r.forEach(row => { Object.keys(row.cells || {}).forEach(k => colSet.add(k)); });
         return Array.from(colSet);
     };
 
-    return (
-        <div>
+    // Tree sidebar
+    const TreeSidebar = () => (
+        <Show when={instances().length > 0}>
+            <div class="data-tree">
+                <For each={instances()}>
+                    {(inst) => {
+                        const isOpen = () => selectedInstance() === inst.id;
+                        return (
+                            <div>
+                                <button class={`data-tree-toggle ${!isOpen() ? 'collapsed' : ''}`} onClick={() => { if (isOpen()) goBackToInstances(); else selectInstance(inst.id); }}>
+                                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M3 2l4 3-4 3z"/></svg>
+                                    {inst.id}
+                                </button>
+                                <Show when={isOpen()}>
+                                    <div class="data-tree-group">
+                                        <For each={inst.tables || []}>
+                                            {(tbl) => {
+                                                const tblId = tbl.id || tbl.name;
+                                                return (
+                                                    <button class={`data-tree-item ${selectedTable() === tblId ? 'active' : ''}`} onClick={() => selectTable(inst.id, tblId)}>
+                                                        <svg class="data-tree-item-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h12v2H2zm0 4h12v2H2zm0 4h12v2H2z"/></svg>
+                                                        {tblId}
+                                                    </button>
+                                                );
+                                            }}
+                                        </For>
+                                    </div>
+                                </Show>
+                            </div>
+                        );
+                    }}
+                </For>
+            </div>
+        </Show>
+    );
+
+    // Content area
+    const ContentArea = () => (
+        <div class="data-tree-content">
             <Show when={subLoading()}>
                 <div class="loading-state"><div class="loading-spinner" /> Loading...</div>
             </Show>
             <Show when={!subLoading()}>
-                {/* Level 3: Rows in table */}
+                {/* Rows */}
                 <Show when={selectedTable()}>
-                    <button class="back-link" onClick={goBackToTables}>
-                        {'\u2190'} Back to {selectedInstance()}
-                    </button>
-                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                        <h2 style="margin:0">{selectedInstance()} / {selectedTable()}</h2>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                        <h2 style="margin:0;font-size:16px">{selectedInstance()} / {selectedTable()}</h2>
                         <Show when={props.onAdd}>
                             <div style="display:flex;gap:6px">
                                 <button onClick={() => setShowCsvImport(true)}
@@ -1956,13 +2145,7 @@ function BigtableView(props) {
                     }>
                         <div class="data-table-wrapper">
                             <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>Row Key</th>
-                                        <For each={rowColumns()}>{(c) => <th>{c}</th>}</For>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
+                                <thead><tr><th>Row Key</th><For each={rowColumns()}>{(c) => <th>{c}</th>}</For><th>Actions</th></tr></thead>
                                 <tbody>
                                     <For each={rows()}>
                                         {(row) => (
@@ -1970,8 +2153,7 @@ function BigtableView(props) {
                                                 <td style="font-weight:500">{row.rowKey || row.row_key || '--'}</td>
                                                 <For each={rowColumns()}>
                                                     {(c) => {
-                                                        const cells = row.cells || {};
-                                                        const val = cells[c];
+                                                        const val = (row.cells || {})[c];
                                                         return <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">{val != null ? (typeof val === 'object' ? JSON.stringify(val) : String(val)) : '--'}</td>;
                                                     }}
                                                 </For>
@@ -1991,12 +2173,9 @@ function BigtableView(props) {
                     </Show>
                 </Show>
 
-                {/* Level 2: Tables in instance */}
+                {/* Tables list */}
                 <Show when={selectedInstance() && !selectedTable()}>
-                    <button class="back-link" onClick={goBackToInstances}>
-                        {'\u2190'} Back to instances
-                    </button>
-                    <h2 style="margin-bottom:16px">Instance: {selectedInstance()}</h2>
+                    <h2 style="margin:0 0 12px 0;font-size:16px">Instance: {selectedInstance()}</h2>
                     <Show when={currentTables().length > 0} fallback={
                         <div class="empty-state">
                             <div class="empty-state-icon">{'\u2205'}</div>
@@ -2022,7 +2201,7 @@ function BigtableView(props) {
                     </Show>
                 </Show>
 
-                {/* Level 1: Instances */}
+                {/* Instances list */}
                 <Show when={!selectedInstance()}>
                     <Show when={instances().length > 0} fallback={
                         <div class="empty-state">
@@ -2037,7 +2216,7 @@ function BigtableView(props) {
                                 <tbody>
                                     <For each={instances()}>
                                         {(inst) => (
-                                            <tr class="clickable-row" onClick={() => setSelectedInstance(inst.id)}>
+                                            <tr class="clickable-row" onClick={() => selectInstance(inst.id)}>
                                                 <td style="font-weight:500">{inst.id}</td>
                                                 <td style="font-size:12px;color:var(--text-secondary)">{(inst.tables || []).length} table(s)</td>
                                             </tr>
@@ -2048,6 +2227,20 @@ function BigtableView(props) {
                         </div>
                     </Show>
                 </Show>
+            </Show>
+        </div>
+    );
+
+    return (
+        <div>
+            <Show when={selectedInstance()}>
+                <DataBreadcrumb crumbs={breadcrumbs()} />
+            </Show>
+            <Show when={instances().length > 0 && selectedInstance()} fallback={<ContentArea />}>
+                <div class="data-tree-layout">
+                    <TreeSidebar />
+                    <ContentArea />
+                </div>
             </Show>
             <CsvImportWizard
                 show={showCsvImport()}
@@ -2259,11 +2452,17 @@ export default function DataBrowser(props) {
 
     // Fetch data when tab or project changes
     // props.activeProject is a signal accessor — call it to track reactively
+    let prevTab = null;
     createEffect(() => {
         const tab = selectedTab();
         const proj = typeof props.activeProject === 'function' ? props.activeProject() : props.activeProject;
         setError(null);
         setData(null); // Clear stale data immediately to prevent showing wrong service content
+        // Only clear subpath when service tab actually changes, not on initial mount
+        if (prevTab !== null && prevTab !== tab) {
+            if (props.onSubpathChange) props.onSubpathChange([]);
+        }
+        prevTab = tab;
         if (FETCH_SERVICES.has(tab)) {
             fetchData(tab);
         }
@@ -2305,14 +2504,14 @@ export default function DataBrowser(props) {
         switch (tab) {
             case 'gcs': return <GcsView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} />;
             case 'pubsub': return <PubSubView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
-            case 'firestore': return <FirestoreView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} />;
-            case 'bigquery': return <BigQueryView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
+            case 'firestore': return <FirestoreView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
+            case 'bigquery': return <BigQueryView data={data} onAdd={handleAdd} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
             case 'secretmanager': return <SecretManagerView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
             case 'cloudtasks': return <CloudTasksView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
             case 'logging': return <LoggingView data={data} />;
             case 'monitoring': return <MonitoringView data={data} />;
             case 'spanner': return <SpannerView data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
-            case 'bigtable': return <BigtableView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
+            case 'bigtable': return <BigtableView data={data} onAdd={handleAdd} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
             case 'memorystore': return <MemorystoreView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} />;
             default: return null;
         }

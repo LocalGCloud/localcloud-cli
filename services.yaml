@@ -184,12 +184,12 @@ services:
     terraformEnvVar: GOOGLE_CLOUD_RUN_CUSTOM_ENDPOINT
 
   memorystore:
-    displayName: "Memorystore (Redis)"
+    displayName: "Memorystore (Redis/Valkey)"
     port: 6379
     protocol: redis
     envVar: REDIS_HOST
     envValuePrefix: ""
-    type: facade
+    type: external
     defaultEnabled: true
     terraformEnvVar: GOOGLE_REDIS_CUSTOM_ENDPOINT
 

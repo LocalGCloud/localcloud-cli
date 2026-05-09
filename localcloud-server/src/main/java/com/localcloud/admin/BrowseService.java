@@ -25,6 +25,10 @@ import com.localcloud.config.ServiceRegistry;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
 import com.localcloud.persistence.PostgresDataSource;
 
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.params.ScanParams;
+import redis.clients.jedis.resps.ScanResult;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -543,31 +547,48 @@ public class BrowseService {
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid browse path"));
     }
 
-    // ========== Memorystore (Redis) ==========
+    // ========== Memorystore (Redis/Valkey) ==========
 
     private String browseMemorystore(String resourceType, String resourceId, String projectId) throws Exception {
-        if (!config.isPersistenceEnabled()) {
-            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
-        }
+        int redisPort = config.getServiceRegistry().getService("memorystore") != null
+                ? config.getServiceRegistry().getService("memorystore").port() : 6379;
 
         List<Map<String, Object>> keys = new ArrayList<>();
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                 "SELECT key_name, data_type, value, ttl_expires_at FROM redis_data " +
-                 "WHERE project_id = ? AND db_number = 0 AND (ttl_expires_at IS NULL OR ttl_expires_at > NOW()) " +
-                 "ORDER BY key_name LIMIT 200")) {
-            ps.setString(1, projectId);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
+        try (Jedis jedis = new Jedis("localhost", redisPort)) {
+            jedis.select(0); // project-scoped database
+            ScanParams scanParams = new ScanParams().match("*").count(200);
+            String cursor = "0";
+            do {
+                ScanResult<String> result = jedis.scan(cursor, scanParams);
+                for (String key : result.getResult()) {
                     Map<String, Object> k = new LinkedHashMap<>();
-                    k.put("key", rs.getString("key_name"));
-                    k.put("type", rs.getString("data_type"));
-                    k.put("value", rs.getString("value"));
-                    var ttl = rs.getTimestamp("ttl_expires_at");
-                    k.put("ttl", ttl != null ? ttl.toString() : null);
+                    k.put("key", key);
+                    String type = jedis.type(key);
+                    k.put("type", type);
+
+                    Object value = switch (type) {
+                        case "string" -> jedis.get(key);
+                        case "hash" -> jedis.hgetAll(key);
+                        case "list" -> jedis.lrange(key, 0, 99);
+                        case "set" -> jedis.smembers(key);
+                        case "zset" -> jedis.zrangeWithScores(key, 0, 99);
+                        case "stream" -> "stream (use XRANGE to view)";
+                        default -> "(unknown type: " + type + ")";
+                    };
+                    k.put("value", value);
+
+                    long ttl = jedis.ttl(key);
+                    k.put("ttl", ttl > 0 ? ttl : null);
+
                     keys.add(k);
+                    if (keys.size() >= 200) break;
                 }
-            }
+                cursor = result.getCursor();
+            } while (!"0".equals(cursor) && keys.size() < 200);
+        } catch (Exception e) {
+            logger.warn("Failed to browse Memorystore: {}", e.getMessage());
+            return mapper.writeValueAsString(Map.of("keys", List.of(),
+                    "error", "Cannot connect to Valkey on port " + redisPort + ": " + e.getMessage()));
         }
         return mapper.writeValueAsString(Map.of("keys", keys, "total", keys.size()));
     }
