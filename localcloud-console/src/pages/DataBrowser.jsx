@@ -1330,6 +1330,15 @@ function SpannerView(props) {
         return await api.query('spanner', sql, { instance: selectedInstance(), database: selectedDatabase() });
     };
 
+    const spannerImportBatch = async (targetCols, allValues) => {
+        const types = columnTypes();
+        const statements = allValues.map(values => {
+            const valueLiterals = values.map((v, i) => spannerEscape(v, types[targetCols[i]]));
+            return `INSERT OR UPDATE INTO ${selectedTable()} (${targetCols.join(', ')}) VALUES (${valueLiterals.join(', ')})`;
+        });
+        return await api.queryBatch('spanner', statements, { instance: selectedInstance(), database: selectedDatabase() });
+    };
+
     // Breadcrumb — reactive memo tracks signal changes
     const breadcrumbs = createMemo(() => {
         const crumbs = [];
@@ -1625,6 +1634,7 @@ function SpannerView(props) {
                     notNullColumns={notNullColumns()}
                     serviceName="Spanner"
                     onImportRow={spannerImportRow}
+                    onImportBatch={spannerImportBatch}
                     onImportDone={() => selectTable(selectedTable())}
                 />
             </Show>
@@ -1632,7 +1642,7 @@ function SpannerView(props) {
     );
 }
 
-// -- Memorystore (Redis) View --
+// -- Memorystore (Redis/Valkey) View with database drill-down --
 function formatRedisValue(value, type) {
     if (value === null || value === undefined) return '';
     if (typeof value === 'string') return value;
@@ -1648,71 +1658,261 @@ function formatRedisValue(value, type) {
 
 function MemorystoreView(props) {
     const d = () => props.data();
-    const keys = () => {
+    const [selectedDb, setSelectedDb] = createSignal(null);
+    const [keysData, setKeysData] = createSignal(null);
+    const [subLoading, setSubLoading] = createSignal(false);
+    const [namespaceFilter, setNamespaceFilter] = createSignal('');
+
+    const databases = () => {
         const raw = d();
         if (!raw) return [];
-        return raw.keys || [];
+        // If response has 'databases' array, we're in database listing mode
+        if (raw.databases) return raw.databases;
+        // Legacy: if response has 'keys' directly, show single db view
+        return [];
     };
+
+    const keys = () => {
+        const kd = keysData();
+        if (!kd) return [];
+        return kd.keys || [];
+    };
+
+    const namespaces = () => {
+        const kd = keysData();
+        if (!kd) return [];
+        return kd.namespaces || [];
+    };
+
+    const filteredKeys = () => {
+        const filter = namespaceFilter();
+        if (!filter) return keys();
+        return keys().filter(k => k.key.startsWith(filter + ':'));
+    };
+
+    const updateSubpath = (db, ns) => {
+        if (props.onSubpathChange) {
+            const parts = [];
+            if (db !== null && db !== undefined) parts.push('db' + db);
+            if (ns) parts.push(ns);
+            props.onSubpathChange(parts);
+        }
+    };
+
+    const selectDatabase = async (dbIndex) => {
+        setSelectedDb(dbIndex);
+        setNamespaceFilter('');
+        updateSubpath(dbIndex, null);
+        setSubLoading(true);
+        try {
+            const result = await api.browse('memorystore/db/' + dbIndex);
+            setKeysData(result);
+        } catch { setKeysData(null); }
+        finally { setSubLoading(false); }
+    };
+
+    const goBack = () => {
+        setSelectedDb(null);
+        setKeysData(null);
+        setNamespaceFilter('');
+        updateSubpath(null, null);
+    };
+
+    const selectNamespace = (ns) => {
+        setNamespaceFilter(ns);
+        updateSubpath(selectedDb(), ns);
+    };
+
+    const clearNamespace = () => {
+        setNamespaceFilter('');
+        updateSubpath(selectedDb(), null);
+    };
+
+    // Restore navigation from URL subpath
+    createEffect(() => {
+        const sp = typeof props.subpath === 'function' ? props.subpath() : props.subpath;
+        // If subpath is empty, reset to database listing
+        if (!sp || sp.length === 0) {
+            setSelectedDb(null);
+            setKeysData(null);
+            setNamespaceFilter('');
+            return;
+        }
+        const dbs = databases();
+        if (!dbs || dbs.length === 0) return;
+        const [dbPart, nsPart] = sp;
+        if (dbPart && dbPart.startsWith('db') && selectedDb() === null) {
+            const idx = parseInt(dbPart.slice(2));
+            if (!isNaN(idx)) {
+                selectDatabase(idx).then(() => {
+                    if (nsPart) setNamespaceFilter(nsPart);
+                });
+            }
+        }
+    });
+
+    // Reset when parent data is cleared (e.g. service tab re-selected triggers refetch)
+    createEffect(() => {
+        const raw = d();
+        if (!raw) {
+            setSelectedDb(null);
+            setKeysData(null);
+            setNamespaceFilter('');
+        }
+    });
+
+    // Breadcrumb
+    const breadcrumbs = createMemo(() => {
+        const crumbs = [{ label: 'Databases', onClick: goBack, active: selectedDb() === null }];
+        if (selectedDb() !== null) {
+            crumbs.push({ label: 'db' + selectedDb(), onClick: () => { clearNamespace(); }, active: !namespaceFilter() });
+            if (namespaceFilter()) {
+                crumbs.push({ label: namespaceFilter() + ':*', onClick: null, active: true });
+            }
+        }
+        return crumbs;
+    });
+
+    const refreshKeys = async () => {
+        if (selectedDb() !== null) {
+            await selectDatabase(selectedDb());
+        }
+    };
+
     return (
         <div>
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                <div />
-                <Show when={props.onAdd}>
-                    <button onClick={() => props.onAdd('Set Key', [
-                        {name: 'key', type: 'text'},
-                        {name: 'value', type: 'textarea'},
-                        {name: 'type', type: 'select', value: 'string', options: ['string', 'list', 'hash', 'set', 'zset']},
-                        {name: 'ttl', type: 'text'}
-                    ], async (formData) => {
-                        await api.mutate('memorystore', 'keys', formData);
-                    })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
-                        + Set Key
-                    </button>
+            <Show when={selectedDb() !== null}>
+                <DataBreadcrumb crumbs={breadcrumbs()} />
+            </Show>
+
+            <Show when={selectedDb() === null}>
+                {/* Database listing view */}
+                <Show when={databases().length > 0} fallback={
+                    <div class="empty-state">
+                        <div class="empty-state-icon">{'\u2205'}</div>
+                        <div class="empty-state-title">No databases available</div>
+                        <div class="empty-state-text">Valkey is not running or not reachable.</div>
+                    </div>
+                }>
+                    <div class="data-table-wrapper">
+                        <table class="data-table">
+                            <thead><tr><th>Database</th><th>Keys</th><th>Actions</th></tr></thead>
+                            <tbody>
+                                <For each={databases()}>
+                                    {(db) => (
+                                        <tr onClick={() => selectDatabase(db.index)} style={{ cursor: 'pointer' }}
+                                            class="clickable-row">
+                                            <td style={{ "font-weight": "500" }}>
+                                                <span style="color:var(--accent, #4285f4)">db{db.index}</span>
+                                            </td>
+                                            <td>
+                                                <span class={`badge ${db.keyCount > 0 ? 'badge-info' : 'badge-neutral'}`}>
+                                                    {db.keyCount} {db.keyCount === 1 ? 'key' : 'keys'}
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <Show when={db.keyCount > 0 && props.onDelete}>
+                                                    <button onClick={(e) => { e.stopPropagation(); props.onDelete('Flush all keys in db' + db.index + '?', async () => {
+                                                        await api.mutate('memorystore', 'flushdb', { db: db.index });
+                                                        if (props.onRefresh) await props.onRefresh();
+                                                    }); }} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Flush DB">Flush</button>
+                                                </Show>
+                                            </td>
+                                        </tr>
+                                    )}
+                                </For>
+                            </tbody>
+                        </table>
+                    </div>
                 </Show>
-            </div>
-            <Show when={keys().length > 0} fallback={
-                <div class="empty-state">
-                    <div class="empty-state-icon">{'\u2205'}</div>
-                    <div class="empty-state-title">No Redis keys found</div>
-                    <div class="empty-state-text">Use redis-cli to set some keys.</div>
-                </div>
-            }>
-                <div class="data-table-wrapper">
-                    <table class="data-table">
-                        <thead><tr><th>Key</th><th>Type</th><th>Value</th><th>TTL</th><th>Actions</th></tr></thead>
-                        <tbody>
-                            <For each={keys()}>
-                                {(k) => (
-                                    <tr>
-                                        <td style={{ "font-weight": "500" }}>{k.key}</td>
-                                        <td><span class="badge badge-neutral">{k.type}</span></td>
-                                        <td style={{ "max-width": "300px", "overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "font-size": "12px" }}>{formatRedisValue(k.value, k.type)}</td>
-                                        <td>{k.ttl || 'none'}</td>
-                                        <td>
-                                            <div style="display:flex;gap:4px">
-                                                <Show when={props.onEdit}>
-                                                    <button onClick={() => props.onEdit('Edit Key: ' + k.key, [
-                                                        {name: 'key', type: 'text', value: k.key},
-                                                        {name: 'value', type: 'textarea', value: typeof k.value === 'object' ? JSON.stringify(k.value) : (k.value || '')},
-                                                        {name: 'type', type: 'text', value: k.type || 'string'},
-                                                        {name: 'ttl', type: 'text', value: k.ttl || ''}
-                                                    ], async (formData) => {
-                                                        await api.mutate('memorystore', 'keys', { ...formData, _method: 'PUT' });
-                                                    })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text-secondary);cursor:pointer;font-size:11px" title="Edit">Edit</button>
-                                                </Show>
-                                                <Show when={props.onDelete}>
-                                                    <button onClick={() => props.onDelete('Delete key "' + k.key + '"?', async () => {
-                                                        await api.mutate('memorystore', 'keys/delete', { key: k.key });
-                                                    })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete">Del</button>
-                                                </Show>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                )}
-                            </For>
-                        </tbody>
-                    </table>
-                </div>
+            </Show>
+
+            <Show when={selectedDb() !== null}>
+                {/* Keys view within selected database */}
+                <Show when={subLoading()}>
+                    <div class="loading-state"><div class="loading-spinner" /> Loading keys...</div>
+                </Show>
+                <Show when={!subLoading()}>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                            {/* Namespace filter chips */}
+                            <Show when={namespaces().length > 0}>
+                                <span style="font-size:12px;color:var(--text-secondary)">Namespaces:</span>
+                                <button onClick={clearNamespace}
+                                    style={`padding:3px 10px;border:1px solid ${!namespaceFilter() ? 'var(--accent, #4285f4)' : 'var(--border)'};border-radius:12px;background:${!namespaceFilter() ? 'var(--accent, #4285f4)' : 'var(--bg)'};color:${!namespaceFilter() ? 'white' : 'var(--text-secondary)'};cursor:pointer;font-size:11px`}>
+                                    All
+                                </button>
+                                <For each={namespaces()}>
+                                    {(ns) => (
+                                        <button onClick={() => selectNamespace(ns)}
+                                            style={`padding:3px 10px;border:1px solid ${namespaceFilter() === ns ? 'var(--accent, #4285f4)' : 'var(--border)'};border-radius:12px;background:${namespaceFilter() === ns ? 'var(--accent, #4285f4)' : 'var(--bg)'};color:${namespaceFilter() === ns ? 'white' : 'var(--text-secondary)'};cursor:pointer;font-size:11px`}>
+                                            {ns}:*
+                                        </button>
+                                    )}
+                                </For>
+                            </Show>
+                        </div>
+                        <Show when={props.onAdd}>
+                            <button onClick={() => props.onAdd('Set Key in db' + selectedDb(), [
+                                {name: 'key', type: 'text'},
+                                {name: 'value', type: 'textarea'},
+                                {name: 'type', type: 'select', value: 'string', options: ['string', 'list', 'hash', 'set', 'zset']},
+                                {name: 'ttl', type: 'text'}
+                            ], async (formData) => {
+                                await api.mutate('memorystore', 'keys', { ...formData, db: selectedDb() });
+                                await refreshKeys();
+                            })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
+                                + Set Key
+                            </button>
+                        </Show>
+                    </div>
+                    <Show when={filteredKeys().length > 0} fallback={
+                        <div class="empty-state">
+                            <div class="empty-state-icon">{'\u2205'}</div>
+                            <div class="empty-state-title">{namespaceFilter() ? 'No keys matching "' + namespaceFilter() + ':*"' : 'No keys in db' + selectedDb()}</div>
+                            <div class="empty-state-text">{namespaceFilter() ? 'Try a different namespace filter.' : 'Use the + Set Key button or valkey-cli to add keys.'}</div>
+                        </div>
+                    }>
+                        <div class="data-table-wrapper">
+                            <table class="data-table">
+                                <thead><tr><th>Key</th><th>Type</th><th>Value</th><th>TTL</th><th>Actions</th></tr></thead>
+                                <tbody>
+                                    <For each={filteredKeys()}>
+                                        {(k) => (
+                                            <tr>
+                                                <td style={{ "font-weight": "500" }}>{k.key}</td>
+                                                <td><span class="badge badge-neutral">{k.type}</span></td>
+                                                <td style={{ "max-width": "300px", "overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "font-size": "12px" }}>{formatRedisValue(k.value, k.type)}</td>
+                                                <td>{k.ttl || 'none'}</td>
+                                                <td>
+                                                    <div style="display:flex;gap:4px">
+                                                        <Show when={props.onEdit}>
+                                                            <button onClick={() => props.onEdit('Edit Key: ' + k.key, [
+                                                                {name: 'key', type: 'text', value: k.key},
+                                                                {name: 'value', type: 'textarea', value: typeof k.value === 'object' ? JSON.stringify(k.value) : (k.value || '')},
+                                                                {name: 'type', type: 'text', value: k.type || 'string'},
+                                                                {name: 'ttl', type: 'text', value: k.ttl || ''}
+                                                            ], async (formData) => {
+                                                                await api.mutate('memorystore', 'keys', { ...formData, db: selectedDb(), _method: 'PUT' });
+                                                                await refreshKeys();
+                                                            })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text-secondary);cursor:pointer;font-size:11px" title="Edit">Edit</button>
+                                                        </Show>
+                                                        <Show when={props.onDelete}>
+                                                            <button onClick={() => props.onDelete('Delete key "' + k.key + '"?', async () => {
+                                                                await api.mutate('memorystore', 'keys/delete', { key: k.key, db: selectedDb() });
+                                                                await refreshKeys();
+                                                            })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete">Del</button>
+                                                        </Show>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </For>
+                                </tbody>
+                            </table>
+                        </div>
+                    </Show>
+                </Show>
             </Show>
         </div>
     );
@@ -2512,7 +2712,7 @@ export default function DataBrowser(props) {
             case 'monitoring': return <MonitoringView data={data} />;
             case 'spanner': return <SpannerView data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
             case 'bigtable': return <BigtableView data={data} onAdd={handleAdd} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
-            case 'memorystore': return <MemorystoreView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} />;
+            case 'memorystore': return <MemorystoreView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} onRefresh={loadData} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
             default: return null;
         }
     };

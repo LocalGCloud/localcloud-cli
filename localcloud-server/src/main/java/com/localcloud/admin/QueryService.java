@@ -58,6 +58,7 @@ public class QueryService {
 
     private final String bigqueryBase;
     private final String spannerBase;
+    private final int spannerGrpcPort;
     private final int bigtablePort;
 
     public QueryService(LocalCloudConfig config, PostgresDataSource dataSource,
@@ -67,6 +68,7 @@ public class QueryService {
         this.usageMetrics = usageMetrics;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
+                .version(HttpClient.Version.HTTP_1_1)
                 .build();
         this.mapper = new ObjectMapper();
 
@@ -77,6 +79,7 @@ public class QueryService {
         int spannerRestPort = spannerDef != null && spannerDef.additionalPorts().containsKey("rest")
                 ? spannerDef.additionalPorts().get("rest") : 9020;
         this.spannerBase = "http://localhost:" + spannerRestPort;
+        this.spannerGrpcPort = spannerDef != null ? spannerDef.port() : 9010;
 
         ServiceDefinition bigtableDef = registry.getService("bigtable");
         this.bigtablePort = bigtableDef != null ? bigtableDef.port() : 8087;
@@ -137,6 +140,257 @@ public class QueryService {
         } catch (Exception e) {
             logger.error("Query execution failed", e);
             return errorResponse(e.getMessage() != null ? e.getMessage() : "Query execution failed");
+        }
+    }
+
+    // ─── Spanner Batch DML (CSV import) ────────────────────────────────
+
+    /**
+     * Execute multiple DML statements against Spanner in a single session.
+     * Uses one session with per-statement mini-transactions for per-row error tracking.
+     * <p>
+     * Request body:
+     * <pre>
+     * {
+     *   "service": "spanner",
+     *   "statements": ["INSERT OR UPDATE INTO ...", "INSERT OR UPDATE INTO ...", ...],
+     *   "instance": "my-instance",
+     *   "database": "my-database"
+     * }
+     * </pre>
+     */
+    @Post("/query/batch")
+    public HttpResponse queryBatch(ServiceRequestContext ctx, AggregatedHttpRequest httpRequest) {
+        try {
+            String body = httpRequest.contentUtf8();
+            @SuppressWarnings("unchecked")
+            Map<String, Object> request = mapper.readValue(body, Map.class);
+
+            String service = (String) request.get("service");
+            @SuppressWarnings("unchecked")
+            List<String> statements = (List<String>) request.get("statements");
+
+            if (!"spanner".equals(service)) {
+                return errorResponse("Batch query only supports Spanner");
+            }
+            if (statements == null || statements.isEmpty()) {
+                return errorResponse("Missing required field: statements");
+            }
+
+            String project = ctx.queryParams().get("project");
+            String projectId = (project != null && !project.isBlank()) ? project : config.getProjectId();
+            String instance = (String) request.get("instance");
+            String database = (String) request.get("database");
+
+            usageMetrics.incrementCount(projectId, service, statements.size());
+            long startTime = System.currentTimeMillis();
+
+            return executeSpannerBatch(statements, projectId, instance, database, startTime);
+
+        } catch (Exception e) {
+            logger.error("Batch query failed", e);
+            return errorResponse(e.getMessage() != null ? e.getMessage() : "Batch query failed");
+        }
+    }
+
+    private HttpResponse executeSpannerBatch(List<String> statements, String projectId,
+                                              String instance, String database, long startTime) {
+        // Auto-resolve instance if not provided (same logic as single query, but done ONCE)
+        if (instance == null || instance.isBlank()) {
+            try {
+                String url = spannerBase + "/v1/projects/" + projectId + "/instances";
+                String body = proxyGet(url);
+                @SuppressWarnings("unchecked")
+                Map<String, Object> resp = mapper.readValue(body, Map.class);
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> instances = (List<Map<String, Object>>) resp.getOrDefault("instances", List.of());
+                if (instances.isEmpty()) {
+                    return errorResponse("No Spanner instances found. Create one first.");
+                }
+                String bestInst = null;
+                int bestDbCount = -1;
+                for (Map<String, Object> inst : instances) {
+                    String instFullName = (String) inst.get("name");
+                    String instName = instFullName.substring(instFullName.lastIndexOf('/') + 1);
+                    try {
+                        String dbsUrl = spannerBase + "/v1/projects/" + projectId + "/instances/" + instName + "/databases";
+                        String dbsBody = proxyGet(dbsUrl);
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> dbsResp = mapper.readValue(dbsBody, Map.class);
+                        @SuppressWarnings("unchecked")
+                        List<?> dbs = (List<?>) dbsResp.getOrDefault("databases", List.of());
+                        if (dbs.size() > bestDbCount) {
+                            bestDbCount = dbs.size();
+                            bestInst = instName;
+                        }
+                    } catch (Exception e) {
+                        if (bestInst == null) bestInst = instName;
+                    }
+                }
+                instance = bestInst;
+            } catch (Exception e) {
+                return errorResponse("Failed to auto-resolve Spanner instance: " + e.getMessage());
+            }
+        }
+
+        // Auto-resolve database if not provided (done ONCE for all statements)
+        if (database == null || database.isBlank()) {
+            try {
+                String url = spannerBase + "/v1/projects/" + projectId + "/instances/" + instance + "/databases";
+                String body = proxyGet(url);
+                @SuppressWarnings("unchecked")
+                Map<String, Object> resp = mapper.readValue(body, Map.class);
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> databases = (List<Map<String, Object>>) resp.getOrDefault("databases", List.of());
+                if (databases.isEmpty()) {
+                    return errorResponse("No databases in Spanner instance '" + instance + "'.");
+                }
+                // Use first table match from the first statement
+                String firstSql = statements.get(0).replaceAll("/\\*.*?\\*/", " ").replaceAll("--[^\n]*", " ");
+                java.util.regex.Matcher tableMatcher = java.util.regex.Pattern.compile(
+                        "(?i)(?:FROM|INTO|UPDATE|JOIN)\\s+([A-Za-z_][A-Za-z0-9_]*)").matcher(firstSql);
+                Set<String> referencedTables = new java.util.LinkedHashSet<>();
+                while (tableMatcher.find()) {
+                    referencedTables.add(tableMatcher.group(1).toUpperCase());
+                }
+                String bestDb = null;
+                int bestMatch = 0;
+                for (Map<String, Object> db : databases) {
+                    String dbFullName = (String) db.get("name");
+                    String dbName = dbFullName.substring(dbFullName.lastIndexOf('/') + 1);
+                    try {
+                        String ddlUrl = spannerBase + "/v1/projects/" + projectId + "/instances/" + instance
+                                + "/databases/" + dbName + "/ddl";
+                        String ddlBody = proxyGet(ddlUrl);
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> ddlResp = mapper.readValue(ddlBody, Map.class);
+                        @SuppressWarnings("unchecked")
+                        List<String> ddlStmts = (List<String>) ddlResp.getOrDefault("statements", List.of());
+                        Set<String> dbTables = new java.util.HashSet<>();
+                        for (String stmt : ddlStmts) {
+                            java.util.regex.Matcher cm = java.util.regex.Pattern.compile(
+                                    "(?i)CREATE\\s+TABLE\\s+([A-Za-z_][A-Za-z0-9_]*)").matcher(stmt);
+                            if (cm.find()) dbTables.add(cm.group(1).toUpperCase());
+                        }
+                        int matchCount = 0;
+                        for (String ref : referencedTables) {
+                            if (dbTables.contains(ref)) matchCount++;
+                        }
+                        if (matchCount > bestMatch) {
+                            bestMatch = matchCount;
+                            bestDb = dbName;
+                        }
+                    } catch (Exception ignored) {}
+                }
+                if (bestDb != null) {
+                    database = bestDb;
+                } else {
+                    String dbFullName = (String) databases.get(0).get("name");
+                    database = dbFullName.substring(dbFullName.lastIndexOf('/') + 1);
+                }
+            } catch (Exception e) {
+                return errorResponse("Failed to auto-resolve Spanner database: " + e.getMessage());
+            }
+        }
+
+        // Direct gRPC to Spanner emulator on port 9010 — bypasses the broken REST gateway.
+        // The REST gateway (port 9020) corrupts its gRPC connection after commit operations,
+        // returning EOF/code-14 errors and failing to persist data.
+        // Per-statement isolation: each row gets its own session+transaction so one bad row
+        // doesn't block others.
+        String dbPath = "projects/" + projectId + "/instances/" + instance + "/databases/" + database;
+
+        io.grpc.ManagedChannel channel = io.grpc.ManagedChannelBuilder
+                .forAddress("localhost", spannerGrpcPort)
+                .usePlaintext()
+                .build();
+
+        try {
+            com.google.spanner.v1.SpannerGrpc.SpannerBlockingStub stub =
+                    com.google.spanner.v1.SpannerGrpc.newBlockingStub(channel)
+                            .withDeadlineAfter(30, java.util.concurrent.TimeUnit.SECONDS);
+
+            List<Map<String, Object>> results = new ArrayList<>();
+            int succeeded = 0, failed = 0;
+
+            for (int i = 0; i < statements.size(); i++) {
+                String sql = statements.get(i);
+                String sessionName = null;
+                try {
+                    // 1. Create session
+                    com.google.spanner.v1.Session session = stub.createSession(
+                            com.google.spanner.v1.CreateSessionRequest.newBuilder()
+                                    .setDatabase(dbPath)
+                                    .build());
+                    sessionName = session.getName();
+
+                    // 2. ExecuteSql with inline transaction begin
+                    com.google.spanner.v1.ResultSet execResult = stub.executeSql(
+                            com.google.spanner.v1.ExecuteSqlRequest.newBuilder()
+                                    .setSession(sessionName)
+                                    .setSql(sql)
+                                    .setTransaction(com.google.spanner.v1.TransactionSelector.newBuilder()
+                                            .setBegin(com.google.spanner.v1.TransactionOptions.newBuilder()
+                                                    .setReadWrite(com.google.spanner.v1.TransactionOptions.ReadWrite
+                                                            .getDefaultInstance())))
+                                    .setSeqno(i + 1)
+                                    .build());
+
+                    // 3. Extract transaction ID and commit
+                    com.google.protobuf.ByteString txnId = execResult.getMetadata()
+                            .getTransaction().getId();
+                    stub.commit(com.google.spanner.v1.CommitRequest.newBuilder()
+                            .setSession(sessionName)
+                            .setTransactionId(txnId)
+                            .build());
+
+                    results.add(Map.of("success", true));
+                    succeeded++;
+
+                } catch (io.grpc.StatusRuntimeException e) {
+                    String errMsg = e.getStatus().getDescription();
+                    if (errMsg == null || errMsg.isBlank()) {
+                        errMsg = e.getStatus().getCode().name();
+                    }
+                    // Make error messages more user-friendly
+                    if (errMsg.contains("failed to marshal")) {
+                        errMsg = "Constraint violation (NOT NULL, duplicate key, or type mismatch)";
+                    }
+                    results.add(Map.of("success", false, "error", enrichErrorMessage("spanner", errMsg)));
+                    failed++;
+                    logger.debug("Spanner batch row {} failed: {}", i + 1, errMsg);
+                } catch (Exception e) {
+                    String errMsg = e.getMessage() != null ? e.getMessage() : "Unknown error";
+                    results.add(Map.of("success", false, "error", enrichErrorMessage("spanner", errMsg)));
+                    failed++;
+                    logger.debug("Spanner batch row {} failed: {}", i + 1, errMsg);
+                } finally {
+                    // Clean up session
+                    if (sessionName != null) {
+                        try {
+                            stub.deleteSession(com.google.spanner.v1.DeleteSessionRequest.newBuilder()
+                                    .setName(sessionName).build());
+                        } catch (Exception ignored) {}
+                    }
+                }
+            }
+
+            long elapsed = System.currentTimeMillis() - startTime;
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("results", results);
+            result.put("succeeded", succeeded);
+            result.put("failed", failed);
+            result.put("total", statements.size());
+            result.put("execution_time_ms", elapsed);
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
+
+        } catch (Exception e) {
+            String errMsg = e.getMessage() != null ? e.getMessage() : "Batch execution failed";
+            logger.error("Spanner batch failed: {}", errMsg, e);
+            return errorResponse(enrichErrorMessage("spanner", errMsg));
+        } finally {
+            channel.shutdownNow();
         }
     }
 
@@ -1685,8 +1939,20 @@ public class QueryService {
                 .timeout(Duration.ofSeconds(10))
                 .GET()
                 .build();
-        java.net.http.HttpResponse<String> response = httpClient.send(request, BodyHandlers.ofString());
-        return response.body();
+        try {
+            java.net.http.HttpResponse<String> response = httpClient.send(request, BodyHandlers.ofString());
+            return response.body();
+        } catch (java.io.IOException e) {
+            String msg = e.getMessage();
+            if (msg != null && (msg.contains("header parser received no bytes")
+                    || msg.contains("Connection reset")
+                    || msg.contains("Broken pipe"))) {
+                logger.debug("Retrying GET after transient connection error: {}", msg);
+                java.net.http.HttpResponse<String> response = httpClient.send(request, BodyHandlers.ofString());
+                return response.body();
+            }
+            throw e;
+        }
     }
 
     private String proxyPost(String url, String body) throws Exception {
@@ -1696,8 +1962,21 @@ public class QueryService {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
-        java.net.http.HttpResponse<String> response = httpClient.send(request, BodyHandlers.ofString());
-        return response.body();
+        // Retry once on transient connection reset (stale keep-alive)
+        try {
+            java.net.http.HttpResponse<String> response = httpClient.send(request, BodyHandlers.ofString());
+            return response.body();
+        } catch (java.io.IOException e) {
+            String msg = e.getMessage();
+            if (msg != null && (msg.contains("header parser received no bytes")
+                    || msg.contains("Connection reset")
+                    || msg.contains("Broken pipe"))) {
+                logger.debug("Retrying POST after transient connection error: {}", msg);
+                java.net.http.HttpResponse<String> response = httpClient.send(request, BodyHandlers.ofString());
+                return response.body();
+            }
+            throw e;
+        }
     }
 
     private void proxyDelete(String url) throws Exception {

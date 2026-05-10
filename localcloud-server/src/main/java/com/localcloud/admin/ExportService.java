@@ -461,36 +461,52 @@ public class ExportService {
 
     private Map<String, Object> exportMemorystore() throws Exception {
         Map<String, Object> result = new LinkedHashMap<>();
-        List<Map<String, Object>> keys = new ArrayList<>();
+        List<Map<String, Object>> databases = new ArrayList<>();
 
-        // Export key names and types by scanning Valkey directly
         int redisPort = config.getServiceRegistry().getService("memorystore") != null
                 ? config.getServiceRegistry().getService("memorystore").port() : 6379;
 
         try (Jedis jedis = new Jedis("localhost", redisPort)) {
-            jedis.select(0); // project-scoped database
-            ScanParams scanParams = new ScanParams().count(100);
-            String cursor = ScanParams.SCAN_POINTER_START;
-            do {
-                ScanResult<String> scanResult = jedis.scan(cursor, scanParams);
-                for (String keyName : scanResult.getResult()) {
-                    Map<String, Object> key = new LinkedHashMap<>();
-                    key.put("key", keyName);
-                    key.put("type", jedis.type(keyName));
-                    keys.add(key);
-                }
-                cursor = scanResult.getCursor();
-            } while (!"0".equals(cursor));
+            // Export all databases that have keys
+            int dbCount = 16;
+            try {
+                Map<String, String> dbConfig = jedis.configGet("databases");
+                String val = dbConfig.get("databases");
+                if (val != null) dbCount = Integer.parseInt(val);
+            } catch (Exception ignored) {}
+
+            for (int db = 0; db < dbCount; db++) {
+                jedis.select(db);
+                if (jedis.dbSize() == 0) continue;
+
+                Map<String, Object> dbEntry = new LinkedHashMap<>();
+                dbEntry.put("database", db);
+                List<Map<String, Object>> keys = new ArrayList<>();
+
+                ScanParams scanParams = new ScanParams().count(100);
+                String cursor = ScanParams.SCAN_POINTER_START;
+                do {
+                    ScanResult<String> scanResult = jedis.scan(cursor, scanParams);
+                    for (String keyName : scanResult.getResult()) {
+                        Map<String, Object> key = new LinkedHashMap<>();
+                        key.put("key", keyName);
+                        key.put("type", jedis.type(keyName));
+                        keys.add(key);
+                    }
+                    cursor = scanResult.getCursor();
+                } while (!"0".equals(cursor));
+
+                keys.sort((a, b) -> ((String) a.get("key")).compareTo((String) b.get("key")));
+                dbEntry.put("keys", keys);
+                databases.add(dbEntry);
+            }
         } catch (Exception e) {
             logger.warn("Failed to scan Memorystore keys: {}", e.getMessage());
             return Map.of();
         }
 
-        // Sort by key name for stable output
-        keys.sort((a, b) -> ((String) a.get("key")).compareTo((String) b.get("key")));
-
-        if (!keys.isEmpty()) {
-            result.put("keys", keys);
+        if (!databases.isEmpty()) {
+            result.put("databases", databases);
             result.put("_note", "Values omitted — data persists in mounted volume at /var/lib/localcloud");
         }
 

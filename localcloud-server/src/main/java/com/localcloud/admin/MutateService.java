@@ -566,7 +566,7 @@ public class MutateService {
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Secret Manager operation: " + operation));
     }
 
-    // ========== Memorystore (PostgreSQL) ==========
+    // ========== Memorystore (Valkey) ==========
 
     @SuppressWarnings("unchecked")
     private String mutateMemorystore(String operation, String subOp, Map<String, Object> json) throws Exception {
@@ -575,26 +575,35 @@ public class MutateService {
         }
 
         if ("keys".equals(operation) && subOp == null) {
-            // Create key
             return memorystoreUpsert(json);
         }
         if ("keys".equals(operation) && "update".equals(subOp)) {
-            // Update key (same as create with upsert)
             return memorystoreUpsert(json);
         }
         if ("keys".equals(operation) && "delete".equals(subOp)) {
-            // Delete key via Jedis
             String key = (String) json.get("key");
+            int dbIndex = json.containsKey("db") ? ((Number) json.get("db")).intValue() : 0;
 
             int redisPort = config.getServiceRegistry().getService("memorystore") != null
                     ? config.getServiceRegistry().getService("memorystore").port() : 6379;
             try (Jedis jedis = new Jedis("localhost", redisPort)) {
-                jedis.select(0); // project-scoped database
+                jedis.select(dbIndex);
                 jedis.del(key);
             }
 
-            logger.debug("Deleted memorystore key: {}", key);
-            return mapper.writeValueAsString(Map.of("status", "deleted", "key", key));
+            logger.debug("Deleted memorystore key '{}' in db{}", key, dbIndex);
+            return mapper.writeValueAsString(Map.of("status", "deleted", "key", key, "database", dbIndex));
+        }
+        if ("flushdb".equals(operation)) {
+            int dbIndex = json.containsKey("db") ? ((Number) json.get("db")).intValue() : 0;
+            int redisPort = config.getServiceRegistry().getService("memorystore") != null
+                    ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+            try (Jedis jedis = new Jedis("localhost", redisPort)) {
+                jedis.select(dbIndex);
+                jedis.flushDB();
+            }
+            logger.info("Flushed memorystore db{}", dbIndex);
+            return mapper.writeValueAsString(Map.of("status", "flushed", "database", dbIndex));
         }
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Memorystore operation: " + operation));
     }
@@ -604,12 +613,13 @@ public class MutateService {
         String key = (String) json.get("key");
         Object value = json.get("value");
         String type = (String) json.getOrDefault("type", "string");
+        int dbIndex = json.containsKey("db") ? ((Number) json.get("db")).intValue() : 0;
 
         int redisPort = config.getServiceRegistry().getService("memorystore") != null
                 ? config.getServiceRegistry().getService("memorystore").port() : 6379;
 
         try (Jedis jedis = new Jedis("localhost", redisPort)) {
-            jedis.select(0); // project-scoped database
+            jedis.select(dbIndex);
             switch (type) {
                 case "string":
                     // Value is a plain string
@@ -665,8 +675,8 @@ public class MutateService {
             }
         }
 
-        logger.debug("Upserted memorystore key: {} (type={})", key, type);
-        return mapper.writeValueAsString(Map.of("status", "created", "key", key, "type", type));
+        logger.debug("Upserted memorystore key '{}' (type={}) in db{}", key, type, dbIndex);
+        return mapper.writeValueAsString(Map.of("status", "created", "key", key, "type", type, "database", dbIndex));
     }
 
     // ========== Firestore ==========

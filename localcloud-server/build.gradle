@@ -60,6 +60,10 @@ dependencies {
     implementation 'com.google.api.grpc:proto-google-cloud-workflow-executions-v1:2.64.0'
     implementation 'com.google.api.grpc:grpc-google-cloud-workflow-executions-v1:2.64.0'
 
+    // Spanner gRPC stubs (direct gRPC to emulator, bypassing broken REST gateway)
+    implementation 'com.google.api.grpc:proto-google-cloud-spanner-v1:6.82.0'
+    implementation 'com.google.api.grpc:grpc-google-cloud-spanner-v1:6.82.0'
+
     // Bigtable external emulator admin/data clients
     implementation 'com.google.api.grpc:proto-google-cloud-bigtable-v2:2.70.0'
     implementation 'com.google.api.grpc:grpc-google-cloud-bigtable-v2:2.70.0'

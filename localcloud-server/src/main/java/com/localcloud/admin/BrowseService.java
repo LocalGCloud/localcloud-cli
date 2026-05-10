@@ -10,8 +10,10 @@ import java.sql.ResultSet;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.linecorp.armeria.common.HttpResponse;
@@ -172,6 +174,16 @@ public class BrowseService {
                 case "spanner" -> browseSpannerDatabase(a, b, c, projectId);
                 case "bigquery" -> browseBigQueryTables(a, b, c, projectId);
                 case "bigtable" -> browseBigtable(a, b + "/" + c, projectId);
+                case "memorystore" -> {
+                    // memorystore/db/{index}/keys?prefix=...
+                    if ("db".equals(a) && "keys".equals(c)) {
+                        int redisPort = config.getServiceRegistry().getService("memorystore") != null
+                                ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+                        yield browseMemorystoreKeys(redisPort, Integer.parseInt(b), null);
+                    }
+                    yield mapper.writeValueAsString(Map.of("error", true,
+                            "message", "Invalid Memorystore browse path"));
+                }
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unsupported 4-segment browse for service: " + service));
@@ -553,10 +565,53 @@ public class BrowseService {
         int redisPort = config.getServiceRegistry().getService("memorystore") != null
                 ? config.getServiceRegistry().getService("memorystore").port() : 6379;
 
-        List<Map<String, Object>> keys = new ArrayList<>();
+        // Browse path: null -> list databases, "db" + resourceId -> browse keys in that database
+        if ("db".equals(resourceType) && resourceId != null) {
+            return browseMemorystoreKeys(redisPort, Integer.parseInt(resourceId), null);
+        }
+
+        // Default: list all 16 databases with key counts
+        return browseMemorystoreDatabases(redisPort);
+    }
+
+    private String browseMemorystoreDatabases(int redisPort) throws Exception {
+        List<Map<String, Object>> databases = new ArrayList<>();
         try (Jedis jedis = new Jedis("localhost", redisPort)) {
-            jedis.select(0); // project-scoped database
-            ScanParams scanParams = new ScanParams().match("*").count(200);
+            // Valkey supports 16 databases by default (configurable)
+            int dbCount = 16;
+            try {
+                Map<String, String> dbConfig = jedis.configGet("databases");
+                String val = dbConfig.get("databases");
+                if (val != null) {
+                    dbCount = Integer.parseInt(val);
+                }
+            } catch (Exception ignored) {}
+
+            for (int i = 0; i < dbCount; i++) {
+                jedis.select(i);
+                long keyCount = jedis.dbSize();
+                Map<String, Object> db = new LinkedHashMap<>();
+                db.put("index", i);
+                db.put("name", "db" + i);
+                db.put("keyCount", keyCount);
+                databases.add(db);
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to list Memorystore databases: {}", e.getMessage());
+            return mapper.writeValueAsString(Map.of("databases", List.of(),
+                    "error", "Cannot connect to Valkey on port " + redisPort + ": " + e.getMessage()));
+        }
+        return mapper.writeValueAsString(Map.of("databases", databases));
+    }
+
+    private String browseMemorystoreKeys(int redisPort, int dbIndex, String prefixFilter) throws Exception {
+        List<Map<String, Object>> keys = new ArrayList<>();
+        Set<String> namespaces = new LinkedHashSet<>();
+        try (Jedis jedis = new Jedis("localhost", redisPort)) {
+            jedis.select(dbIndex);
+            String matchPattern = (prefixFilter != null && !prefixFilter.isEmpty())
+                    ? prefixFilter + "*" : "*";
+            ScanParams scanParams = new ScanParams().match(matchPattern).count(200);
             String cursor = "0";
             do {
                 ScanResult<String> result = jedis.scan(cursor, scanParams);
@@ -580,17 +635,28 @@ public class BrowseService {
                     long ttl = jedis.ttl(key);
                     k.put("ttl", ttl > 0 ? ttl : null);
 
+                    // Extract namespace prefix (first segment before ':')
+                    int colonIdx = key.indexOf(':');
+                    if (colonIdx > 0) {
+                        namespaces.add(key.substring(0, colonIdx));
+                    }
+
                     keys.add(k);
                     if (keys.size() >= 200) break;
                 }
                 cursor = result.getCursor();
             } while (!"0".equals(cursor) && keys.size() < 200);
         } catch (Exception e) {
-            logger.warn("Failed to browse Memorystore: {}", e.getMessage());
+            logger.warn("Failed to browse Memorystore db{}: {}", dbIndex, e.getMessage());
             return mapper.writeValueAsString(Map.of("keys", List.of(),
                     "error", "Cannot connect to Valkey on port " + redisPort + ": " + e.getMessage()));
         }
-        return mapper.writeValueAsString(Map.of("keys", keys, "total", keys.size()));
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("database", dbIndex);
+        response.put("keys", keys);
+        response.put("total", keys.size());
+        response.put("namespaces", new ArrayList<>(namespaces));
+        return mapper.writeValueAsString(response);
     }
 
     // ========== Spanner (proxy to Spanner REST API) ==========

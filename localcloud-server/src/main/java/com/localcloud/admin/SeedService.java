@@ -776,10 +776,17 @@ public class SeedService {
         int redisPort = config.getServiceRegistry().getService("memorystore") != null
                 ? config.getServiceRegistry().getService("memorystore").port() : 6379;
         try (Jedis jedis = new Jedis("localhost", redisPort)) {
-            jedis.select(0); // project-scoped database
-            jedis.flushDB(); // only flush current db, not all 16
-            logger.info("Reset Memorystore: flushed database 0");
-            return 1;
+            int flushed = 0;
+            for (int db = 0; db < 16; db++) {
+                jedis.select(db);
+                long size = jedis.dbSize();
+                if (size > 0) {
+                    jedis.flushDB();
+                    flushed++;
+                }
+            }
+            logger.info("Reset Memorystore: flushed {} database(s)", flushed);
+            return flushed;
         } catch (Exception e) {
             logger.warn("Failed to reset Memorystore: {}", e.getMessage());
             return 0;
@@ -1261,8 +1268,11 @@ public class SeedService {
         int redisPort = config.getServiceRegistry().getService("memorystore") != null
                 ? config.getServiceRegistry().getService("memorystore").port() : 6379;
 
+        // Support optional 'database' field (default: 0)
+        int dbIndex = ms.containsKey("database") ? ((Number) ms.get("database")).intValue() : 0;
+
         try (Jedis jedis = new Jedis("localhost", redisPort)) {
-            jedis.select(0); // project-scoped database
+            jedis.select(dbIndex);
             Pipeline pipe = jedis.pipelined();
 
             // Seed string keys

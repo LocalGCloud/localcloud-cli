@@ -143,6 +143,46 @@ export default function CsvImportWizard(props) {
         setCsvStep('importing');
         const mappedHeaders = parsed.headers.filter(h => mapping[h]);
         const targetCols = mappedHeaders.map(h => mapping[h]);
+
+        // Batch mode: send all rows in a single request (used by Spanner)
+        if (props.onImportBatch) {
+            const sortedIndices = [...selected].sort((a, b) => a - b);
+            const allValues = sortedIndices.map(rowIdx => {
+                const row = parsed.rows[rowIdx];
+                return mappedHeaders.map((h) => {
+                    const colIdx = parsed.headers.indexOf(h);
+                    return colIdx < row.length ? row[colIdx] : '';
+                });
+            });
+            try {
+                const result = await props.onImportBatch(targetCols, allValues);
+                let imported = 0, failed = 0;
+                const failedRows = [];
+                if (result && result.results) {
+                    result.results.forEach((r, i) => {
+                        if (r.success) {
+                            imported++;
+                        } else {
+                            failed++;
+                            let errMsg = r.error || 'Unknown error';
+                            if (errMsg.includes('failed to marshal')) errMsg = 'Constraint violation (NOT NULL, duplicate key, or type mismatch)';
+                            failedRows.push({row: sortedIndices[i] + 1, error: errMsg});
+                        }
+                    });
+                } else {
+                    imported = allValues.length;
+                }
+                setCsvImportResult({imported, failed, failedRows, total: selected.size});
+            } catch (e) {
+                setCsvImportResult({imported: 0, failed: selected.size, failedRows: [{row: 1, error: e.message || 'Batch import failed'}], total: selected.size});
+            }
+            setCsvImporting(false);
+            setCsvStep('done');
+            if (props.onImportDone) props.onImportDone();
+            return;
+        }
+
+        // Row-by-row mode (fallback for non-batch services)
         let imported = 0, failed = 0;
         const failedRows = [];
         for (const rowIdx of [...selected].sort((a, b) => a - b)) {

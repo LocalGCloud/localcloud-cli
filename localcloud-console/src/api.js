@@ -104,6 +104,7 @@ export const api = {
     disableService: (serviceId) => post(`/_localcloud/services/${encodeURIComponent(serviceId)}/disable`),
     // SQL query execution
     query: (service, sql, params) => postJson(appendProject('/_localcloud/query'), { ...params, service, sql }),
+    queryBatch: (service, statements, params) => postJson(appendProject('/_localcloud/query/batch'), { ...params, service, statements }),
     // Schema info
     schema: (service, params) => {
         let url = appendProject(`/_localcloud/schema/${encodeURIComponent(service)}`);
