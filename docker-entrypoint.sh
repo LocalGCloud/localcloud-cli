@@ -127,11 +127,10 @@ if [ -f "/var/lib/localcloud/pgdata/postmaster.pid" ]; then
 fi
 rm -f /var/run/postgresql/.s.PGSQL.* 2>/dev/null || true
 
-# Spanner LevelDB: validate data directory and restore from backup if corrupted.
-# LevelDB uses a MANIFEST file to track SST files. If MANIFEST is missing but the
-# directory has content, the data was likely corrupted by an unclean shutdown.
+# Spanner LevelDB: Validate data directory but DO NOT wipe it automatically.
+# LevelDB corruption is common after unclean shutdowns, but auto-wiping
+# causes permanent data loss. We now log a warning and let the user decide.
 SPANNER_DATA_DIR="/var/lib/localcloud/spanner-data"
-SPANNER_BACKUP_DIR="/var/lib/localcloud/spanner-data-backup"
 if [ "${LOCALCLOUD_ENABLE_SPANNER:-true}" = "true" ]; then
     if [ -d "$SPANNER_DATA_DIR" ]; then
         HAS_SST_FILES=$(find "$SPANNER_DATA_DIR" -maxdepth 1 -name '*.sst' -o -name '*.ldb' 2>/dev/null | head -1)
@@ -139,16 +138,9 @@ if [ "${LOCALCLOUD_ENABLE_SPANNER:-true}" = "true" ]; then
         HAS_CURRENT=$(test -f "$SPANNER_DATA_DIR/CURRENT" && echo "yes" || echo "no")
 
         if [ -n "$HAS_SST_FILES" ] && { [ -z "$HAS_MANIFEST" ] || [ "$HAS_CURRENT" = "no" ]; }; then
-            echo "WARNING: Spanner LevelDB data appears corrupted (has SST files but missing MANIFEST/CURRENT)."
-            if [ -d "$SPANNER_BACKUP_DIR" ] && [ -f "$SPANNER_BACKUP_DIR/CURRENT" ]; then
-                echo "Restoring Spanner data from last known-good backup..."
-                rm -rf "$SPANNER_DATA_DIR"
-                cp -a "$SPANNER_BACKUP_DIR" "$SPANNER_DATA_DIR"
-                echo "Spanner data restored from backup."
-            else
-                echo "No backup available. Spanner will start with empty data."
-                rm -rf "$SPANNER_DATA_DIR"/*
-            fi
+            echo "WARNING: Spanner LevelDB data appears incomplete (has SST files but missing MANIFEST/CURRENT)."
+            echo "This usually happens after an unclean shutdown. Data might be corrupted or lost."
+            echo "Manual recovery or restore from backup may be required."
         fi
     fi
 fi
