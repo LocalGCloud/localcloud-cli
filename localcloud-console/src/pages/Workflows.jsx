@@ -1,5 +1,6 @@
 import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
 import { api } from '../api.js';
+import { formatDateTime, onActivate } from '../utils/a11y.js';
 
 // --- Helpers ---
 
@@ -14,12 +15,7 @@ const STATE_COLORS = {
 
 function formatTimestamp(raw) {
     if (!raw) return '—';
-    try {
-        const d = new Date(raw.replace(' ', 'T'));
-        if (isNaN(d.getTime())) return raw;
-        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) +
-            ', ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-    } catch { return raw; }
+    return formatDateTime(raw) || raw;
 }
 
 function StateBadge(props) {
@@ -108,7 +104,7 @@ function Breadcrumb(props) {
                     <>
                         {idx() > 0 && <span style={{ color: 'var(--text-tertiary)' }}>/</span>}
                         {item.onClick ? (
-                            <span onClick={item.onClick} style={{
+                            <span onClick={item.onClick} onKeyDown={onActivate(item.onClick)} role="button" tabIndex="0" style={{
                                 color: 'var(--primary)', cursor: 'pointer',
                                 'text-decoration': 'none',
                             }}
@@ -226,36 +222,36 @@ function ImportModal(props) {
     const failedCount = () => Object.values(importStatus()).filter(s => s === 'failed').length;
 
     return (
-        <div class="modal-overlay" role="dialog" aria-modal="true"
+        <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="workflow-import-title"
              onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}
              onKeyDown={(e) => { if (e.key === 'Escape') props.onClose(); }}>
             <div class="card modal-card" style={{ 'max-width': '560px', 'max-height': '80vh', 'overflow-y': 'auto' }}
                  onClick={(e) => e.stopPropagation()}>
-                <h2 style={{ 'margin-bottom': '4px', 'font-size': '16px' }}>Import from Remote</h2>
+                <h2 id="workflow-import-title" style={{ 'margin-bottom': '4px', 'font-size': '16px' }}>Import from Remote</h2>
 
                 <Show when={step() === 'connect'}>
                     <p style={{ 'font-size': '12px', color: 'var(--text-secondary)', 'margin-bottom': '16px' }}>
                         Connect to a remote workflow source to import workflows.
                     </p>
                     <div style={{ 'margin-bottom': '12px' }}>
-                        <label class="form-label">Source URL</label>
-                        <input class="form-input" type="text" value={sourceUrl()}
+                        <label class="form-label" for="workflow-import-source-url">Source URL</label>
+                        <input id="workflow-import-source-url" name="workflow-import-source-url" autocomplete="off" class="form-input" type="text" value={sourceUrl()}
                             onInput={(e) => setSourceUrl(e.currentTarget.value)}
                             placeholder="http://10.179.131.124" />
                     </div>
                     <div style={{ 'margin-bottom': '12px' }}>
-                        <label class="form-label">Username</label>
-                        <input class="form-input" type="text" value={username()}
+                        <label class="form-label" for="workflow-import-username">Username</label>
+                        <input id="workflow-import-username" name="workflow-import-username" autocomplete="off" class="form-input" type="text" value={username()}
                             onInput={(e) => setUsername(e.currentTarget.value)}
                             placeholder="your-username" />
                     </div>
                     <Show when={connectError()}>
-                        <div class="alert alert-error" style={{ 'margin-bottom': '12px', 'font-size': '12px' }}>{connectError()}</div>
+                        <div class="alert alert-error" role="alert" style={{ 'margin-bottom': '12px', 'font-size': '12px' }}>{connectError()}</div>
                     </Show>
                     <div style={{ display: 'flex', gap: '8px', 'justify-content': 'flex-end' }}>
                         <button class="btn btn-secondary" onClick={props.onClose}>Cancel</button>
                         <button class="btn btn-primary" onClick={handleConnect} disabled={connecting()}>
-                            {connecting() ? 'Connecting...' : 'Connect'}
+                            {connecting() ? 'Connecting…' : 'Connect'}
                         </button>
                     </div>
                 </Show>
@@ -266,7 +262,7 @@ function ImportModal(props) {
                     </p>
 
                     <Show when={listLoading()}>
-                        <div class="loading-state"><div class="loading-spinner" /> Loading workflows...</div>
+                        <div class="loading-state"><div class="loading-spinner" /> Loading workflows…</div>
                     </Show>
 
                     <Show when={!listLoading() && remoteWorkflows().length === 0}>
@@ -279,6 +275,8 @@ function ImportModal(props) {
                         <div style={{ 'margin-bottom': '8px' }}>
                             <label style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'font-size': '12px', cursor: 'pointer' }}>
                                 <input type="checkbox"
+                                    name="workflow-import-select-all"
+                                    aria-label="Select all importable workflows"
                                     checked={selected().size > 0 && selected().size === remoteWorkflows().filter(w => !w.alreadyImported).length}
                                     onChange={selectAll} />
                                 Select all
@@ -294,6 +292,8 @@ function ImportModal(props) {
                                         opacity: wf.alreadyImported ? 0.5 : 1,
                                     }}>
                                         <input type="checkbox"
+                                            name={`workflow-import-${wf.name}`}
+                                            aria-label={`Select ${wf.name}`}
                                             checked={selected().has(wf.name)}
                                             disabled={wf.alreadyImported}
                                             onChange={() => toggleSelect(wf.name)} />
@@ -306,7 +306,7 @@ function ImportModal(props) {
                     </Show>
 
                     <Show when={connectError()}>
-                        <div class="alert alert-error" style={{ 'margin-top': '12px', 'font-size': '12px' }}>{connectError()}</div>
+                        <div class="alert alert-error" role="alert" style={{ 'margin-top': '12px', 'font-size': '12px' }}>{connectError()}</div>
                     </Show>
 
                     <div style={{ display: 'flex', gap: '8px', 'justify-content': 'flex-end', 'margin-top': '16px' }}>
@@ -321,7 +321,7 @@ function ImportModal(props) {
                     <p style={{ 'font-size': '12px', color: 'var(--text-secondary)', 'margin-bottom': '12px' }}>
                         {step() === 'done'
                             ? `Imported ${successCount()} workflow(s). ${failedCount()} failed.`
-                            : 'Importing workflows...'
+                            : 'Importing workflows…'
                         }
                     </p>
                     <div style={{ border: '1px solid var(--border)', 'border-radius': 'var(--radius-sm)' }}>
@@ -474,11 +474,11 @@ function EnvVarsSection(props) {
             </div>
 
             <Show when={error()}>
-                <div class="alert alert-error" style={{ 'margin-bottom': '8px', 'font-size': '12px' }}>{error()}</div>
+                <div class="alert alert-error" role="alert" style={{ 'margin-bottom': '8px', 'font-size': '12px' }}>{error()}</div>
             </Show>
 
             <Show when={loading()}>
-                <div class="loading-state" style={{ padding: '20px' }}><div class="loading-spinner" /> Loading...</div>
+                <div class="loading-state" style={{ padding: '20px' }}><div class="loading-spinner" /> Loading…</div>
             </Show>
 
             <Show when={!loading()}>
@@ -513,11 +513,14 @@ function EnvVarsSection(props) {
                                                 <td style={{ 'font-family': 'var(--font-mono)', 'font-size': '12px' }}>
                                                     <Show when={editingVar() === varName} fallback={
                                                         <span onClick={() => startEdit(varName, varValue)}
+                                                              onKeyDown={onActivate(() => startEdit(varName, varValue))}
+                                                              role="button"
+                                                              tabIndex="0"
                                                               style={{ cursor: 'pointer', 'min-width': '100px', display: 'inline-block' }}>
                                                             {varValue || <span style={{ color: 'var(--text-tertiary)' }}>(empty)</span>}
                                                         </span>
                                                     }>
-                                                        <input class="form-input" type="text" value={editValue()}
+                                                        <input class="form-input" type="text" name={`workflow-env-${varName}`} autocomplete="off" aria-label={`Edit ${varName}`} value={editValue()}
                                                             onInput={(e) => setEditValue(e.currentTarget.value)}
                                                             onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(varName); if (e.key === 'Escape') setEditingVar(null); }}
                                                             onBlur={() => saveEdit(varName)}
@@ -527,6 +530,7 @@ function EnvVarsSection(props) {
                                                 </td>
                                                 <td>
                                                     <button class="btn btn-secondary" style={{ height: '24px', 'font-size': '11px', padding: '0 6px', color: 'var(--error)' }}
+                                                        aria-label={`Delete ${varName}`}
                                                         onClick={() => deleteVar(varName)}>
                                                         ✕
                                                     </button>
@@ -543,11 +547,11 @@ function EnvVarsSection(props) {
                 {/* Add variable row */}
                 <Show when={adding()}>
                     <div style={{ display: 'flex', gap: '8px', 'margin-top': '8px', 'align-items': 'center' }}>
-                        <input class="form-input" type="text" placeholder="VAR_NAME" value={newVarName()}
+                        <input class="form-input" type="text" name="workflow-new-var-name" autocomplete="off" aria-label="New workflow environment variable name" placeholder="VAR_NAME" value={newVarName()}
                             onInput={(e) => setNewVarName(e.currentTarget.value)}
                             autofocus
                             style={{ flex: 1, 'font-family': 'var(--font-mono)', 'font-size': '12px', height: '32px' }} />
-                        <input class="form-input" type="text" placeholder="value" value={newVarValue()}
+                        <input class="form-input" type="text" name="workflow-new-var-value" autocomplete="off" aria-label="New workflow environment variable value" placeholder="value" value={newVarValue()}
                             onInput={(e) => setNewVarValue(e.currentTarget.value)}
                             onKeyDown={(e) => { if (e.key === 'Enter') addVar(); if (e.key === 'Escape') setAdding(false); }}
                             style={{ flex: 2, 'font-family': 'var(--font-mono)', 'font-size': '12px', height: '32px' }} />
@@ -745,7 +749,7 @@ export default function Workflows(props) {
                 <Show when={exec.error && exec.error !== 'null'}>
                     <div style={{ 'margin-bottom': '16px' }}>
                         <h3 style={{ 'font-size': '13px', 'font-weight': '600', 'margin-bottom': '8px', color: 'var(--error)' }}>Error</h3>
-                        <div class="alert alert-error" style={{ 'font-family': 'var(--font-mono)', 'font-size': '12px', 'white-space': 'pre-wrap' }}>
+                        <div class="alert alert-error" role="alert" style={{ 'font-family': 'var(--font-mono)', 'font-size': '12px', 'white-space': 'pre-wrap' }}>
                             {typeof exec.error === 'string' ? exec.error : JSON.stringify(exec.error, null, 2)}
                         </div>
                     </div>
@@ -757,7 +761,7 @@ export default function Workflows(props) {
     // --- Workflow Detail View ---
     const renderWorkflowDetail = () => {
         const detail = workflowDetail();
-        if (!detail) return <div class="loading-state"><div class="loading-spinner" /> Loading...</div>;
+        if (!detail) return <div class="loading-state"><div class="loading-spinner" /> Loading…</div>;
 
         return (
             <div>
@@ -786,14 +790,14 @@ export default function Workflows(props) {
                     <div class="se-mode-tabs">
                         <button class={`se-mode-tab ${activeTab() === 'definition' ? 'active' : ''}`}
                             onClick={() => setActiveTab('definition')}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                 <path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/>
                             </svg>
                             Source
                         </button>
                         <button class={`se-mode-tab ${activeTab() === 'executions' ? 'active' : ''}`}
                             onClick={() => setActiveTab('executions')}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                 <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/>
                             </svg>
                             Executions ({executions().length})
@@ -810,7 +814,7 @@ export default function Workflows(props) {
                         <>
                             <Show when={executions().length === 0}>
                                 <div class="loading-state" style={{ padding: '40px' }}>
-                                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" style={{ 'margin-bottom': '12px' }}>
+                                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" aria-hidden="true" focusable="false" style={{ 'margin-bottom': '12px' }}>
                                         <path d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/>
                                     </svg>
                                     <p style={{ 'font-weight': '600', 'margin-bottom': '4px' }}>No executions yet</p>
@@ -835,7 +839,7 @@ export default function Workflows(props) {
                                         <tbody>
                                             <For each={executions()}>
                                                 {(exec) => (
-                                                    <tr class="clickable-row" onClick={() => setSelectedExecution(exec)}>
+                                                    <tr class="clickable-row" onClick={() => setSelectedExecution(exec)} onKeyDown={onActivate(() => setSelectedExecution(exec))} role="button" tabIndex="0">
                                                         <td style={{ 'font-family': 'var(--font-mono)', 'font-size': '12px' }}>
                                                             {exec.execution_id || exec.name?.split('/').pop() || '—'}
                                                         </td>
@@ -858,17 +862,17 @@ export default function Workflows(props) {
 
                 {/* Create Execution Modal */}
                 <Show when={showCreateExec()}>
-                    <div class="modal-overlay" role="dialog" aria-modal="true"
+                    <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="execute-workflow-title"
                          onClick={(e) => { if (e.target === e.currentTarget) setShowCreateExec(false); }}
                          onKeyDown={(e) => { if (e.key === 'Escape') setShowCreateExec(false); }}>
                         <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
-                            <h2 style={{ 'margin-bottom': '4px', 'font-size': '16px' }}>Execute Workflow</h2>
+                            <h2 id="execute-workflow-title" style={{ 'margin-bottom': '4px', 'font-size': '16px' }}>Execute Workflow</h2>
                             <p style={{ 'font-size': '12px', color: 'var(--text-secondary)', 'margin-bottom': '16px' }}>
                                 Run <strong>{selectedWorkflow()}</strong> with the following input argument.
                             </p>
                             <div style={{ 'margin-bottom': '12px' }}>
-                                <label class="form-label">Input (JSON)</label>
-                                <textarea class="form-input form-input-mono"
+                                <label class="form-label" for="workflow-exec-input">Input (JSON)</label>
+                                <textarea id="workflow-exec-input" name="workflow-exec-input" autocomplete="off" class="form-input form-input-mono"
                                     style={{ 'min-height': '120px', resize: 'vertical', 'font-size': '12px' }}
                                     value={execArgument()}
                                     onInput={(e) => setExecArgument(e.currentTarget.value)}
@@ -878,7 +882,7 @@ export default function Workflows(props) {
                             <div style={{ display: 'flex', gap: '8px', 'justify-content': 'flex-end' }}>
                                 <button class="btn btn-secondary" onClick={() => setShowCreateExec(false)}>Cancel</button>
                                 <button class="btn btn-primary" onClick={handleCreateExecution} disabled={creating()}>
-                                    {creating() ? 'Starting...' : 'Execute'}
+                                    {creating() ? 'Starting…' : 'Execute'}
                                 </button>
                             </div>
                         </div>
@@ -893,7 +897,7 @@ export default function Workflows(props) {
         <div>
             <Show when={!selectedWorkflow()} fallback={renderWorkflowDetail()}>
                 <Show when={error()}>
-                    <div class="alert alert-error" style={{ 'margin-bottom': '16px' }}>{error()}</div>
+                    <div class="alert alert-error" role="alert" style={{ 'margin-bottom': '16px' }}>{error()}</div>
                 </Show>
 
                 {/* Action bar */}
@@ -905,12 +909,12 @@ export default function Workflows(props) {
                 </div>
 
                 <Show when={loading()}>
-                    <div class="loading-state"><div class="loading-spinner" /> Loading workflows...</div>
+                    <div class="loading-state"><div class="loading-spinner" /> Loading workflows…</div>
                 </Show>
 
                 <Show when={!loading() && workflows().length === 0}>
                     <div class="loading-state" style={{ padding: '60px' }}>
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" style={{ 'margin-bottom': '16px' }}>
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" aria-hidden="true" focusable="false" style={{ 'margin-bottom': '16px' }}>
                             <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2M9 5h6"/>
                             <path d="M9 14l2 2 4-4"/>
                         </svg>
@@ -936,7 +940,7 @@ export default function Workflows(props) {
                             <tbody>
                                 <For each={workflows()}>
                                     {(wf) => (
-                                        <tr class="clickable-row" onClick={() => selectWorkflow(wf.workflow_id || wf.name?.split('/').pop())}>
+                                        <tr class="clickable-row" onClick={() => selectWorkflow(wf.workflow_id || wf.name?.split('/').pop())} onKeyDown={onActivate(() => selectWorkflow(wf.workflow_id || wf.name?.split('/').pop()))} role="button" tabIndex="0">
                                             <td style={{ 'font-weight': '600' }}>
                                                 {wf.workflow_id || wf.name?.split('/').pop() || '—'}
                                             </td>

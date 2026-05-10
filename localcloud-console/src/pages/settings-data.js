@@ -763,7 +763,7 @@ ZREVRANGE leaderboard 0 2 WITHSCORES`,
                 title: 'Key Patterns & TTL',
                 supported: true,
                 sql: `# Set with TTL
-SET cache:page:/home "<html>..." EX 300
+SET cache:page:/home "<html>…" EX 300
 
 # Check TTL
 TTL cache:page:/home

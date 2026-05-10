@@ -2,6 +2,7 @@ import { createSignal, createEffect, createMemo, Show, For } from 'solid-js';
 import { api } from '../api.js';
 import CsvImportWizard from '../components/CsvImportWizard.jsx';
 import DataBreadcrumb from '../components/DataBreadcrumb.jsx';
+import { formatDateTime, onActivate } from '../utils/a11y.js';
 
 
 const TABS = [
@@ -83,13 +84,7 @@ function formatSize(bytes) {
 
 function formatDate(ts) {
     if (!ts) return '--';
-    try {
-        const d = new Date(ts);
-        if (isNaN(d.getTime())) return ts;
-        return d.toLocaleString();
-    } catch {
-        return ts;
-    }
+    return formatDateTime(ts) || ts;
 }
 
 // -- Reusable ConnectionInfoCard --
@@ -186,7 +181,7 @@ function GcsView(props) {
                     </Show>
                 </div>
                 <Show when={!objectsLoading()} fallback={
-                    <div class="loading-state"><div class="loading-spinner" /> Loading objects...</div>
+	                    <div class="loading-state"><div class="loading-spinner" /> Loading objects…</div>
                 }>
                     <Show when={bucketObjects() && bucketObjects().length > 0} fallback={
                         <div class="empty-state"
@@ -213,9 +208,9 @@ function GcsView(props) {
                                 }
                                 if (uploaded > 0) fetchBucketObjects(selectedBucket());
                             }}
-                            style={{ border: '2px dashed var(--border)', 'border-radius': '8px', cursor: 'pointer', transition: 'all 150ms ease' }}
+	                            style={{ border: '2px dashed var(--border)', 'border-radius': '8px', cursor: 'pointer', transition: 'border-color 150ms ease, background 150ms ease' }}
                         >
-                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" style={{ 'margin-bottom': '12px' }}>
+	                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" aria-hidden="true" focusable="false" style={{ 'margin-bottom': '12px' }}>
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                                 <polyline points="17 8 12 3 7 8"/>
                                 <line x1="12" y1="3" x2="12" y2="15"/>
@@ -304,7 +299,7 @@ function GcsView(props) {
                         <tbody>
                             <For each={d().buckets}>
                                 {(bucket) => (
-                                    <tr class="clickable-row" onClick={() => fetchBucketObjects(bucket.name)}>
+	                                    <tr class="clickable-row" onClick={() => fetchBucketObjects(bucket.name)} onKeyDown={onActivate(() => fetchBucketObjects(bucket.name))} role="button" tabIndex="0">
                                         <td>{bucket.name}</td>
                                         <td>{bucket.location || '--'}</td>
                                         <td>{formatDate(bucket.timeCreated)}</td>
@@ -446,7 +441,7 @@ function PubSubView(props) {
                 <div class="section" style={{ "margin-top": "24px" }}>
                     <h2>Messages: {selectedSub()}</h2>
                     <Show when={messagesLoading()}>
-                        <div class="loading-state"><div class="loading-spinner" /> Loading messages...</div>
+	                        <div class="loading-state"><div class="loading-spinner" /> Loading messages…</div>
                     </Show>
                     <Show when={!messagesLoading()}>
                         <Show when={pubsubMessages().length > 0} fallback={
@@ -473,7 +468,7 @@ function PubSubView(props) {
                                                     <td style={{ "font-weight": "500", "font-size": "12px" }}>{msg.messageId || msg.id || '--'}</td>
                                                     <td style={{ "font-size": "12px" }}>{formatDate(msg.publishTime)}</td>
                                                     <td style={{ "max-width": "300px", "overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "font-size": "12px" }}>
-                                                        {msg.data ? (msg.data.length > 100 ? msg.data.substring(0, 100) + '...' : msg.data) : '--'}
+	                                                        {msg.data ? (msg.data.length > 100 ? msg.data.substring(0, 100) + '…' : msg.data) : '--'}
                                                     </td>
                                                     <td style={{ "font-size": "12px", "color": "var(--text-secondary)" }}>
                                                         {msg.attributes ? (typeof msg.attributes === 'object' ? JSON.stringify(msg.attributes) : String(msg.attributes)) : '--'}
@@ -604,7 +599,7 @@ function BigQueryView(props) {
                         return (
                             <div>
                                 <button class={`data-tree-toggle ${!isOpen() ? 'collapsed' : ''}`} onClick={() => { if (isOpen()) goBackToDatasets(); else selectDataset(ds); }}>
-                                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M3 2l4 3-4 3z"/></svg>
+	                                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true" focusable="false"><path d="M3 2l4 3-4 3z"/></svg>
                                     {id}
                                 </button>
                                 <Show when={isOpen()}>
@@ -614,7 +609,7 @@ function BigQueryView(props) {
                                                 const tblId = tbl.tableReference ? tbl.tableReference.tableId : (tbl.name || tbl.id);
                                                 return (
                                                     <button class={`data-tree-item ${selectedTable() === tblId ? 'active' : ''}`} onClick={() => selectTable(tbl)}>
-                                                        <svg class="data-tree-item-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h12v2H2zm0 4h12v2H2zm0 4h12v2H2z"/></svg>
+	                                                        <svg class="data-tree-item-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M2 3h12v2H2zm0 4h12v2H2zm0 4h12v2H2z"/></svg>
                                                         {tblId}
                                                     </button>
                                                 );
@@ -634,7 +629,7 @@ function BigQueryView(props) {
     const ContentArea = () => (
         <div class="data-tree-content">
             <Show when={subLoading()}>
-                <div class="loading-state"><div class="loading-spinner" /> Loading...</div>
+	                <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
             </Show>
             <Show when={!subLoading()}>
                 {/* Table data */}
@@ -644,7 +639,7 @@ function BigQueryView(props) {
                         <Show when={props.onAdd && tableData() && tableData().columns}>
                             <div style="display:flex;gap:6px">
                                 <button onClick={() => setShowCsvImport(true)}
-                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:all 0.15s"
+	                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
                                     onMouseEnter={e => e.currentTarget.style.borderColor='var(--primary)'}
                                     onMouseLeave={e => e.currentTarget.style.borderColor='var(--border)'}>
                                     {'\u2191'} Import CSV
@@ -730,7 +725,7 @@ function BigQueryView(props) {
                                         {(tbl) => {
                                             const tblId = tbl.tableReference ? tbl.tableReference.tableId : (tbl.name || tbl.id);
                                             return (
-                                                <tr class="clickable-row" onClick={() => selectTable(tbl)}>
+	                                                <tr class="clickable-row" onClick={() => selectTable(tbl)} onKeyDown={onActivate(() => selectTable(tbl))} role="button" tabIndex="0">
                                                     <td style={{ "font-weight": "500" }}>{tblId}</td>
                                                     <td>{tbl.kind || 'table'}</td>
                                                     <td>{tbl.type || '--'}</td>
@@ -759,7 +754,7 @@ function BigQueryView(props) {
                                 <tbody>
                                     <For each={datasets()}>
                                         {(ds) => (
-                                            <tr class="clickable-row" onClick={() => selectDataset(ds)}>
+	                                            <tr class="clickable-row" onClick={() => selectDataset(ds)} onKeyDown={onActivate(() => selectDataset(ds))} role="button" tabIndex="0">
                                                 <td style={{ "font-weight": "500" }}>{dsName(ds)}</td>
                                                 <td>{ds.kind || 'dataset'}</td>
                                                 <td>{ds.location || '--'}</td>
@@ -1365,7 +1360,7 @@ function SpannerView(props) {
             </Show>
 
             <Show when={subLoading()}>
-                <div class="loading-state"><div class="loading-spinner" /> Loading...</div>
+	                <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
             </Show>
             <Show when={!subLoading()}>
                 {/* Level 4: Table data */}
@@ -1375,7 +1370,7 @@ function SpannerView(props) {
                         <Show when={props.onAdd && tableData() && tableData().columns}>
                             <div style="display:flex;gap:6px">
                                 <button onClick={() => setShowCsvImport(true)}
-                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:all 0.15s"
+	                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
                                     onMouseEnter={e => e.currentTarget.style.borderColor='var(--primary)'}
                                     onMouseLeave={e => e.currentTarget.style.borderColor='var(--border)'}>
                                     {'\u2191'} Import CSV
@@ -1490,7 +1485,7 @@ function SpannerView(props) {
                                         <tbody>
                                             <For each={tables}>
                                                 {(tbl) => (
-                                                    <tr class="clickable-row" onClick={() => selectTable(tbl)}>
+	                                                    <tr class="clickable-row" onClick={() => selectTable(tbl)} onKeyDown={onActivate(() => selectTable(tbl))} role="button" tabIndex="0">
                                                         <td style={{ "font-weight": "500" }}>{tbl}</td>
                                                     </tr>
                                                 )}
@@ -1524,7 +1519,7 @@ function SpannerView(props) {
                                         {(db) => {
                                             const dbName = db.name?.split('/').pop() || db;
                                             return (
-                                                <tr class="clickable-row" onClick={() => selectDatabase(db)}>
+	                                                <tr class="clickable-row" onClick={() => selectDatabase(db)} onKeyDown={onActivate(() => selectDatabase(db))} role="button" tabIndex="0">
                                                     <td style={{ "font-weight": "500" }}>{dbName}</td>
                                                 </tr>
                                             );
@@ -1554,7 +1549,7 @@ function SpannerView(props) {
                                 <tbody>
                                     <For each={instances()}>
                                         {(inst) => (
-                                            <tr class="clickable-row" onClick={() => selectInstance(inst)}>
+	                                            <tr class="clickable-row" onClick={() => selectInstance(inst)} onKeyDown={onActivate(() => selectInstance(inst))} role="button" tabIndex="0">
                                                 <td style={{ "font-weight": "500" }}>{instanceName(inst)}</td>
                                                 <td><span class={`badge ${inst.state === 'READY' ? 'badge-healthy' : 'badge-neutral'}`}>{inst.state || '--'}</span></td>
                                                 <td>{inst.nodeCount || '--'}</td>
@@ -1570,17 +1565,17 @@ function SpannerView(props) {
 
                 {/* Create Instance Modal */}
                 <Show when={showCreateInstance()}>
-                    <div class="modal-overlay" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) setShowCreateInstance(false); }}>
-                        <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
-                            <h2 style="margin-bottom:16px">Create Spanner Instance</h2>
-                            <Show when={createError()}><div class="alert alert-error" style="margin-bottom:12px">{createError()}</div></Show>
-                            <div style="margin-bottom:16px">
-                                <label class="form-label">Instance ID</label>
-                                <input type="text" class="form-input form-input-mono" value={createName()} onInput={(e) => setCreateName(e.currentTarget.value)} placeholder="my-instance" />
+	                    <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="spanner-create-instance-title" onClick={(e) => { if (e.target === e.currentTarget) setShowCreateInstance(false); }}>
+	                        <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
+	                            <h2 id="spanner-create-instance-title" style="margin-bottom:16px">Create Spanner Instance</h2>
+	                            <Show when={createError()}><div class="alert alert-error" role="alert" style="margin-bottom:12px">{createError()}</div></Show>
+	                            <div style="margin-bottom:16px">
+	                                <label class="form-label" for="spanner-instance-id">Instance ID</label>
+	                                <input id="spanner-instance-id" name="spanner-instance-id" autocomplete="off" type="text" class="form-input form-input-mono" value={createName()} onInput={(e) => setCreateName(e.currentTarget.value)} placeholder="my-instance" />
                             </div>
                             <div style="display:flex;gap:8px;justify-content:flex-end">
                                 <button class="btn btn-secondary" onClick={() => setShowCreateInstance(false)}>Cancel</button>
-                                <button class="btn btn-primary" onClick={handleCreateInstance} disabled={creating() || !createName().trim()}>{creating() ? 'Creating...' : 'Create'}</button>
+	                                <button class="btn btn-primary" onClick={handleCreateInstance} disabled={creating() || !createName().trim()}>{creating() ? 'Creating…' : 'Create'}</button>
                             </div>
                         </div>
                     </div>
@@ -1588,17 +1583,17 @@ function SpannerView(props) {
 
                 {/* Create Database Modal */}
                 <Show when={showCreateDatabase()}>
-                    <div class="modal-overlay" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) setShowCreateDatabase(false); }}>
-                        <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
-                            <h2 style="margin-bottom:16px">Create Database in {selectedInstance()}</h2>
-                            <Show when={createError()}><div class="alert alert-error" style="margin-bottom:12px">{createError()}</div></Show>
-                            <div style="margin-bottom:16px">
-                                <label class="form-label">Database Name</label>
-                                <input type="text" class="form-input form-input-mono" value={createName()} onInput={(e) => setCreateName(e.currentTarget.value)} placeholder="my-database" />
+	                    <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="spanner-create-database-title" onClick={(e) => { if (e.target === e.currentTarget) setShowCreateDatabase(false); }}>
+	                        <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
+	                            <h2 id="spanner-create-database-title" style="margin-bottom:16px">Create Database in {selectedInstance()}</h2>
+	                            <Show when={createError()}><div class="alert alert-error" role="alert" style="margin-bottom:12px">{createError()}</div></Show>
+	                            <div style="margin-bottom:16px">
+	                                <label class="form-label" for="spanner-database-name">Database Name</label>
+	                                <input id="spanner-database-name" name="spanner-database-name" autocomplete="off" type="text" class="form-input form-input-mono" value={createName()} onInput={(e) => setCreateName(e.currentTarget.value)} placeholder="my-database" />
                             </div>
                             <div style="display:flex;gap:8px;justify-content:flex-end">
                                 <button class="btn btn-secondary" onClick={() => setShowCreateDatabase(false)}>Cancel</button>
-                                <button class="btn btn-primary" onClick={handleCreateDatabase} disabled={creating() || !createName().trim()}>{creating() ? 'Creating...' : 'Create'}</button>
+	                                <button class="btn btn-primary" onClick={handleCreateDatabase} disabled={creating() || !createName().trim()}>{creating() ? 'Creating…' : 'Create'}</button>
                             </div>
                         </div>
                     </div>
@@ -1606,19 +1601,19 @@ function SpannerView(props) {
 
                 {/* Create Table Modal */}
                 <Show when={showCreateTable()}>
-                    <div class="modal-overlay" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) setShowCreateTable(false); }}>
-                        <div class="card modal-card" onClick={(e) => e.stopPropagation()} style="max-width:600px">
-                            <h2 style="margin-bottom:4px">Create Table in {selectedDatabase()}</h2>
+	                    <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="spanner-create-table-title" onClick={(e) => { if (e.target === e.currentTarget) setShowCreateTable(false); }}>
+	                        <div class="card modal-card" onClick={(e) => e.stopPropagation()} style="max-width:600px">
+	                            <h2 id="spanner-create-table-title" style="margin-bottom:4px">Create Table in {selectedDatabase()}</h2>
                             <p style="font-size:12px;color:var(--text-secondary);margin-bottom:16px">Enter a Spanner DDL statement.</p>
-                            <Show when={createError()}><div class="alert alert-error" style="margin-bottom:12px">{createError()}</div></Show>
-                            <div style="margin-bottom:16px">
-                                <label class="form-label">DDL Statement</label>
-                                <textarea class="form-input form-input-mono" style="min-height:120px;resize:vertical;font-size:12px" value={createDdl()} onInput={(e) => setCreateDdl(e.currentTarget.value)}
+	                            <Show when={createError()}><div class="alert alert-error" role="alert" style="margin-bottom:12px">{createError()}</div></Show>
+	                            <div style="margin-bottom:16px">
+	                                <label class="form-label" for="spanner-ddl-statement">DDL Statement</label>
+	                                <textarea id="spanner-ddl-statement" name="spanner-ddl-statement" autocomplete="off" class="form-input form-input-mono" style="min-height:120px;resize:vertical;font-size:12px" value={createDdl()} onInput={(e) => setCreateDdl(e.currentTarget.value)}
                                     placeholder={"CREATE TABLE MyTable (\n  Id STRING(36) NOT NULL,\n  Name STRING(100),\n  CreatedAt TIMESTAMP\n) PRIMARY KEY (Id)"} />
                             </div>
                             <div style="display:flex;gap:8px;justify-content:flex-end">
                                 <button class="btn btn-secondary" onClick={() => setShowCreateTable(false)}>Cancel</button>
-                                <button class="btn btn-primary" onClick={handleCreateTable} disabled={creating() || !createDdl().trim()}>{creating() ? 'Executing...' : 'Execute DDL'}</button>
+	                                <button class="btn btn-primary" onClick={handleCreateTable} disabled={creating() || !createDdl().trim()}>{creating() ? 'Executing…' : 'Execute DDL'}</button>
                             </div>
                         </div>
                     </div>
@@ -1800,8 +1795,8 @@ function MemorystoreView(props) {
                             <tbody>
                                 <For each={databases()}>
                                     {(db) => (
-                                        <tr onClick={() => selectDatabase(db.index)} style={{ cursor: 'pointer' }}
-                                            class="clickable-row">
+	                                        <tr onClick={() => selectDatabase(db.index)} onKeyDown={onActivate(() => selectDatabase(db.index))} role="button" tabIndex="0" style={{ cursor: 'pointer' }}
+	                                            class="clickable-row">
                                             <td style={{ "font-weight": "500" }}>
                                                 <span style="color:var(--accent, #4285f4)">db{db.index}</span>
                                             </td>
@@ -1830,7 +1825,7 @@ function MemorystoreView(props) {
             <Show when={selectedDb() !== null}>
                 {/* Keys view within selected database */}
                 <Show when={subLoading()}>
-                    <div class="loading-state"><div class="loading-spinner" /> Loading keys...</div>
+	                    <div class="loading-state"><div class="loading-spinner" /> Loading keys…</div>
                 </Show>
                 <Show when={!subLoading()}>
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
@@ -2004,7 +1999,7 @@ function FirestoreView(props) {
                         const name = colName(col);
                         return (
                             <button class={`data-tree-item ${selectedCollection() === name ? 'active' : ''}`} onClick={() => selectCollection(name)}>
-                                <svg class="data-tree-item-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2h5l2 2h5v10H2V2zm1 1v10h10V5H8.5L6.5 3H3z"/></svg>
+	                                <svg class="data-tree-item-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M2 2h5l2 2h5v10H2V2zm1 1v10h10V5H8.5L6.5 3H3z"/></svg>
                                 {name}
                             </button>
                         );
@@ -2018,7 +2013,7 @@ function FirestoreView(props) {
     const ContentArea = () => (
         <div class="data-tree-content">
             <Show when={subLoading()}>
-                <div class="loading-state"><div class="loading-spinner" /> Loading...</div>
+	                <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
             </Show>
             <Show when={!subLoading()}>
                 <Show when={selectedCollection()}>
@@ -2027,7 +2022,7 @@ function FirestoreView(props) {
                         <Show when={props.onAdd}>
                             <div style="display:flex;gap:6px">
                                 <button onClick={() => setShowCsvImport(true)}
-                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:all 0.15s"
+	                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
                                     onMouseEnter={e => e.currentTarget.style.borderColor='var(--primary)'}
                                     onMouseLeave={e => e.currentTarget.style.borderColor='var(--border)'}>
                                     {'\u2191'} Import CSV
@@ -2116,7 +2111,7 @@ function FirestoreView(props) {
                                 <tbody>
                                     <For each={collections()}>
                                         {(col) => (
-                                            <tr class="clickable-row" onClick={() => selectCollection(colName(col))}>
+	                                            <tr class="clickable-row" onClick={() => selectCollection(colName(col))} onKeyDown={onActivate(() => selectCollection(colName(col)))} role="button" tabIndex="0">
                                                 <td style="font-weight:500">{colName(col)}</td>
                                             </tr>
                                         )}
@@ -2278,7 +2273,7 @@ function BigtableView(props) {
                         return (
                             <div>
                                 <button class={`data-tree-toggle ${!isOpen() ? 'collapsed' : ''}`} onClick={() => { if (isOpen()) goBackToInstances(); else selectInstance(inst.id); }}>
-                                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M3 2l4 3-4 3z"/></svg>
+	                                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true" focusable="false"><path d="M3 2l4 3-4 3z"/></svg>
                                     {inst.id}
                                 </button>
                                 <Show when={isOpen()}>
@@ -2288,7 +2283,7 @@ function BigtableView(props) {
                                                 const tblId = tbl.id || tbl.name;
                                                 return (
                                                     <button class={`data-tree-item ${selectedTable() === tblId ? 'active' : ''}`} onClick={() => selectTable(inst.id, tblId)}>
-                                                        <svg class="data-tree-item-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h12v2H2zm0 4h12v2H2zm0 4h12v2H2z"/></svg>
+	                                                        <svg class="data-tree-item-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M2 3h12v2H2zm0 4h12v2H2zm0 4h12v2H2z"/></svg>
                                                         {tblId}
                                                     </button>
                                                 );
@@ -2308,7 +2303,7 @@ function BigtableView(props) {
     const ContentArea = () => (
         <div class="data-tree-content">
             <Show when={subLoading()}>
-                <div class="loading-state"><div class="loading-spinner" /> Loading...</div>
+	                <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
             </Show>
             <Show when={!subLoading()}>
                 {/* Rows */}
@@ -2318,7 +2313,7 @@ function BigtableView(props) {
                         <Show when={props.onAdd}>
                             <div style="display:flex;gap:6px">
                                 <button onClick={() => setShowCsvImport(true)}
-                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:all 0.15s"
+	                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
                                     onMouseEnter={e => e.currentTarget.style.borderColor='var(--primary)'}
                                     onMouseLeave={e => e.currentTarget.style.borderColor='var(--border)'}>
                                     {'\u2191'} Import CSV
@@ -2389,7 +2384,7 @@ function BigtableView(props) {
                                 <tbody>
                                     <For each={currentTables()}>
                                         {(tbl) => (
-                                            <tr class="clickable-row" onClick={() => selectTable(selectedInstance(), tbl.id || tbl.name)}>
+	                                            <tr class="clickable-row" onClick={() => selectTable(selectedInstance(), tbl.id || tbl.name)} onKeyDown={onActivate(() => selectTable(selectedInstance(), tbl.id || tbl.name))} role="button" tabIndex="0">
                                                 <td style="font-weight:500">{tbl.id || tbl.name}</td>
                                                 <td style="font-size:12px;color:var(--text-secondary)">{(tbl.columnFamilies || []).join(', ') || '--'}</td>
                                             </tr>
@@ -2416,7 +2411,7 @@ function BigtableView(props) {
                                 <tbody>
                                     <For each={instances()}>
                                         {(inst) => (
-                                            <tr class="clickable-row" onClick={() => selectInstance(inst.id)}>
+	                                            <tr class="clickable-row" onClick={() => selectInstance(inst.id)} onKeyDown={onActivate(() => selectInstance(inst.id))} role="button" tabIndex="0">
                                                 <td style="font-weight:500">{inst.id}</td>
                                                 <td style="font-size:12px;color:var(--text-secondary)">{(inst.tables || []).length} table(s)</td>
                                             </tr>
@@ -2471,30 +2466,33 @@ function CrudModal(props) {
         setFormData(prev => ({ ...prev, [name]: value }));
     };
 
-    return (
-        <Show when={props.show}>
-            <div style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000">
-                <div style="background:var(--surface);border-radius:8px;padding:24px;min-width:400px;max-width:600px;max-height:80vh;overflow-y:auto;border:1px solid var(--border)">
-                    <h3 style="margin:0 0 16px 0;color:var(--text)">{props.title}</h3>
-                    <For each={props.fields || []}>
-                        {(field) => (
-                            <div style="margin-bottom:12px">
-                                <label style="display:block;margin-bottom:4px;font-size:12px;color:var(--text-secondary)">{field.name}</label>
-                                {field.type === 'select' ? (
-                                    <select value={formData()[field.name] || ''} onChange={e => updateField(field.name, e.target.value)}
-                                        style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px">
-                                        <For each={field.options || []}>{opt => <option value={opt}>{opt}</option>}</For>
-                                    </select>
-                                ) : field.type === 'textarea' ? (
-                                    <textarea value={formData()[field.name] || ''} onInput={e => updateField(field.name, e.target.value)}
-                                        rows="4" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;font-family:monospace;resize:vertical" />
-                                ) : (
-                                    <input type="text" value={formData()[field.name] || ''} onInput={e => updateField(field.name, e.target.value)}
-                                        style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px" />
-                                )}
-                            </div>
-                        )}
-                    </For>
+	    return (
+	        <Show when={props.show}>
+	            <div role="dialog" aria-modal="true" aria-labelledby="crud-modal-title" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;overscroll-behavior:contain">
+	                <div style="background:var(--surface);border-radius:8px;padding:24px;min-width:400px;max-width:600px;max-height:80vh;overflow-y:auto;border:1px solid var(--border)">
+	                    <h3 id="crud-modal-title" style="margin:0 0 16px 0;color:var(--text)">{props.title}</h3>
+	                    <For each={props.fields || []}>
+	                        {(field) => {
+                                const fieldId = `crud-field-${String(field.name).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+                                return (
+                                    <div style="margin-bottom:12px">
+                                        <label for={fieldId} style="display:block;margin-bottom:4px;font-size:12px;color:var(--text-secondary)">{field.name}</label>
+                                        {field.type === 'select' ? (
+                                            <select id={fieldId} name={field.name} value={formData()[field.name] || ''} onChange={e => updateField(field.name, e.target.value)}
+                                                style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px">
+                                                <For each={field.options || []}>{opt => <option value={opt}>{opt}</option>}</For>
+                                            </select>
+                                        ) : field.type === 'textarea' ? (
+                                            <textarea id={fieldId} name={field.name} autocomplete="off" value={formData()[field.name] || ''} onInput={e => updateField(field.name, e.target.value)}
+                                                rows="4" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;font-family:monospace;resize:vertical" />
+                                        ) : (
+                                            <input id={fieldId} name={field.name} autocomplete="off" type="text" value={formData()[field.name] || ''} onInput={e => updateField(field.name, e.target.value)}
+                                                style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px" />
+                                        )}
+                                    </div>
+                                );
+                            }}
+	                    </For>
                     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
                         <button onClick={props.onClose} style="padding:8px 16px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);cursor:pointer">Cancel</button>
                         <button onClick={() => props.onSubmit(formData())} style="padding:8px 16px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer">{props.mode === 'edit' ? 'Save' : 'Create'}</button>
@@ -2507,11 +2505,11 @@ function CrudModal(props) {
 
 // -- Delete Confirmation Component --
 function DeleteConfirmation(props) {
-    return (
-        <Show when={props.show}>
-            <div style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000">
-                <div style="background:var(--surface);border-radius:8px;padding:24px;min-width:350px;border:1px solid var(--border)">
-                    <h3 style="margin:0 0 8px 0;color:var(--text)">Confirm Delete</h3>
+	    return (
+	        <Show when={props.show}>
+	            <div role="dialog" aria-modal="true" aria-labelledby="delete-confirm-title" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;overscroll-behavior:contain">
+	                <div style="background:var(--surface);border-radius:8px;padding:24px;min-width:350px;border:1px solid var(--border)">
+	                    <h3 id="delete-confirm-title" style="margin:0 0 8px 0;color:var(--text)">Confirm Delete</h3>
                     <p style="color:var(--text-secondary);margin:0 0 16px 0">{props.message || 'Are you sure you want to delete this item?'}</p>
                     <div style="display:flex;gap:8px;justify-content:flex-end">
                         <button onClick={props.onClose} style="padding:8px 16px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);cursor:pointer">Cancel</button>
@@ -2690,12 +2688,12 @@ export default function DataBrowser(props) {
 
         // Fetched data services
         if (loading()) {
-            return <div class="loading-state"><div class="loading-spinner" /> Loading...</div>;
+	            return <div class="loading-state"><div class="loading-spinner" /> Loading…</div>;
         }
         if (error()) {
             return (
                 <div>
-                    <div class="alert alert-error">{error()}</div>
+	                    <div class="alert alert-error" role="alert">{error()}</div>
                     <button class="btn btn-secondary" onClick={() => fetchData(tab)}>Retry</button>
                 </div>
             );

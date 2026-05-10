@@ -1,5 +1,6 @@
 import { createSignal, createEffect, createMemo, onCleanup, Show, For } from 'solid-js';
 import { api } from '../api.js';
+import { formatNumber, formatTime } from '../utils/a11y.js';
 
 const GCP_PRICING = {
     gcs: { label: 'Cloud Storage', unit: 'per 10K operations', price: 0.05, category: 'storage' },
@@ -75,11 +76,6 @@ function estimateCost(serviceId, requestCount) {
 
 function formatCost(amount) {
     return '$' + amount.toFixed(2);
-}
-
-function formatNumber(n) {
-    if (n == null) return '0';
-    return Number(n).toLocaleString();
 }
 
 export default function Usage(props) {
@@ -172,8 +168,10 @@ export default function Usage(props) {
 
             {/* Refresh Controls */}
             <div class="filter-bar" style="margin-bottom:16px">
-                <label>
+                <label for="usage-auto-refresh">
                     <input
+                        id="usage-auto-refresh"
+                        name="usage-auto-refresh"
                         type="checkbox"
                         checked={autoRefresh()}
                         onChange={e => toggleAutoRefresh(e.currentTarget.checked)}
@@ -181,9 +179,12 @@ export default function Usage(props) {
                     Auto-refresh
                 </label>
 
-                <label class="refresh-interval-label">
+                <label class="refresh-interval-label" for="usage-refresh-interval">
                     Every
                     <input
+                        id="usage-refresh-interval"
+                        name="usage-refresh-interval"
+                        autocomplete="off"
                         type="number"
                         min="1"
                         max="120"
@@ -201,17 +202,17 @@ export default function Usage(props) {
 
                 <Show when={lastUpdated()}>
                     <span style="font-size:12px;color:var(--text-secondary)">
-                        Last updated: {lastUpdated().toLocaleTimeString()}
+                        Last updated: {formatTime(lastUpdated())}
                     </span>
                 </Show>
             </div>
 
             <Show when={!loading()} fallback={
-                <div class="loading-state"><div class="loading-spinner" /> Loading usage data...</div>
+                <div class="loading-state"><div class="loading-spinner" /> Loading usage data…</div>
             }>
                 <Show when={!error()} fallback={
                     <div>
-                        <div class="alert alert-error">{error()}</div>
+                        <div class="alert alert-error" role="alert">{error()}</div>
                         <button class="btn btn-secondary" onClick={fetchUsage}>Retry</button>
                     </div>
                 }>
@@ -237,7 +238,7 @@ export default function Usage(props) {
                         <div style={{ "font-size": "12px", color: "var(--text-secondary)" }}>
                             {formatNumber(totalRequests())} total requests (all time)
                             <Show when={lastUpdated()}>
-                                {' '}&middot; updated {lastUpdated().toLocaleTimeString()}
+                                {' '}&middot; updated {formatTime(lastUpdated())}
                             </Show>
                         </div>
                     </div>

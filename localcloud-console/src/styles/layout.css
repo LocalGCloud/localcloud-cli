@@ -520,6 +520,9 @@
 .aura-topbar {
   height: var(--topbar-height);
   padding: 0 20px;
+  display: grid;
+  grid-template-columns: 240px auto minmax(220px, 1fr) auto;
+  gap: 12px;
   background: color-mix(in srgb, var(--surface) 88%, transparent);
   backdrop-filter: blur(18px);
   box-shadow: var(--shadow);
@@ -553,6 +556,7 @@
   display: flex;
   flex-direction: column;
   line-height: 1.1;
+  min-width: 96px;
 }
 
 .aura-brand-button {
@@ -568,11 +572,27 @@
   color: var(--text);
 }
 
-.aura-brand-mark {
+.aura-brand-version {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
   font-size: 10px;
   font-weight: 700;
   color: var(--primary);
   text-transform: uppercase;
+}
+
+.aura-brand-version.has-update {
+  color: var(--warning);
+}
+
+.aura-version-alert-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--warning);
+  box-shadow: 0 0 0 3px var(--warning-soft);
 }
 
 .aura-search-center {
@@ -582,7 +602,7 @@
 }
 
 .aura-global-search {
-  width: min(620px, 42vw);
+  width: min(540px, 34vw);
   height: 40px;
   display: flex;
   align-items: center;
@@ -620,7 +640,7 @@
 
 .aura-project-wrap {
   position: relative;
-  margin-left: 8px;
+  justify-self: start;
 }
 
 .aura-project-chip {
@@ -1102,6 +1122,11 @@
 }
 
 @media (max-width: 900px) {
+  .aura-topbar {
+    display: flex;
+    gap: 8px;
+  }
+
   .aura-sidebar,
   .aura-sidebar:hover,
   .aura-sidebar.pinned {

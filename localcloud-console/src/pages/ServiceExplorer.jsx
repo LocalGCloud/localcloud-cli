@@ -5,12 +5,13 @@ import CodeEditor, { toCodeMirrorSchema } from '../components/CodeEditor.jsx';
 import Workflows from './Workflows.jsx';
 import { RemoteSyncPanel } from '../components/RemoteSyncPanel.jsx';
 import { IconDatabase, IconTable, IconColumn, IconChevron } from '../components/TreeIcons.jsx';
+import { formatNumber, formatTime, onActivate } from '../utils/a11y.js';
 
 // ─── Service Metadata (icon, title, description) ─────────────────────
 const SERVICE_META = {
     gcs:           { label: 'Cloud Storage',    description: 'Object storage for companies of all sizes. Store any amount of data and retrieve it as often as you like.' },
     pubsub:        { label: 'Pub/Sub',          description: 'Global messaging and event ingestion. Reliable, many-to-many, asynchronous messaging between services.' },
-    firestore:     { label: 'Firestore',        description: 'Flexible, scalable NoSQL cloud database for mobile, web, and server development.' },
+    firestore:     { label: 'Firestore',        description: 'Flexible, scalable NoSQL cloud database for mobile, web, and server development.', tag: 'Coming up' },
     bigquery:      { label: 'BigQuery',         description: 'Serverless, highly scalable, and cost-effective multicloud data warehouse for analytics.' },
     secretmanager: { label: 'Secret Manager',   description: 'Store API keys, passwords, certificates, and other sensitive data securely.' },
     cloudtasks:    { label: 'Cloud Tasks',      description: 'Manage the execution of large numbers of distributed tasks, callbacks, and webhooks.' },
@@ -28,57 +29,40 @@ const SERVICE_META = {
 // ─── SQL-Capable Services ──────────────────────────────────────────────
 const SQL_SERVICES = [
     { id: 'pubsub', label: 'Pub/Sub', dialect: 'postgresql', dialectLabel: 'Pub/Sub SQL', icon: 'pubsub',
-      placeholder: "SELECT * FROM user-events LIMIT 10" },
+      placeholder: "" },
     { id: 'gcs', label: 'Cloud Storage', dialect: 'bigquery', dialectLabel: 'BigQuery SQL', icon: 'gcs',
-      placeholder: "-- Click a file in the explorer to generate a query" },
+      placeholder: "" },
     { id: 'bigquery', label: 'BigQuery', dialect: 'bigquery', dialectLabel: 'BigQuery SQL', icon: 'bigquery',
       placeholder: "SELECT * FROM `dataset.table` LIMIT 10" },
     { id: 'spanner', label: 'Spanner', dialect: 'googlesql', dialectLabel: 'GoogleSQL', icon: 'spanner',
       placeholder: "SELECT * FROM my_table LIMIT 10" },
     { id: 'secretmanager', label: 'Secret Manager', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'secretmanager',
-      placeholder: "SELECT secret_id, labels, created_at FROM secrets" },
+      placeholder: "" },
     { id: 'cloudtasks', label: 'Cloud Tasks', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'cloudtasks',
-      placeholder: "SELECT queue_id, state, max_attempts FROM task_queues" },
+      placeholder: "" },
     { id: 'logging', label: 'Logging', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'logging',
-      placeholder: "SELECT log_name, severity, text_payload, timestamp\nFROM log_entries\nORDER BY timestamp DESC\nLIMIT 100" },
+      placeholder: "" },
     { id: 'monitoring', label: 'Monitoring', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'monitoring',
-      placeholder: "SELECT metric_type, resource_type, points\nFROM time_series\nLIMIT 100" },
+      placeholder: "" },
     { id: 'bigtable', label: 'Bigtable', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'bigtable',
-      placeholder: "SELECT instance_id, table_name, row_key, cells\nFROM bigtable_data\nWHERE project_id = 'local-project'\nLIMIT 50" },
+      placeholder: "" },
     { id: 'compute', label: 'Compute Engine', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'compute',
-      placeholder: "SELECT name, zone, machine_type, status\nFROM compute_instances" },
+      placeholder: "" },
     { id: 'cloudrun', label: 'Cloud Run', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'cloudrun',
-      placeholder: "SELECT service_name, region, status, url\nFROM cloudrun_services" },
+      placeholder: "" },
     { id: 'gke', label: 'GKE', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'gke',
-      placeholder: "SELECT cluster_name, location, node_count, status\nFROM gke_clusters" },
+      placeholder: "" },
     { id: 'memorystore', label: 'Memorystore', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'memorystore',
-      placeholder: "SELECT key_name, data_type, value\nFROM redis_data\nLIMIT 200" },
+      placeholder: "" },
     { id: 'workflows', label: 'Cloud Workflows', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'workflows',
       placeholder: "SELECT workflow_id, state, revision_id, updated_at\nFROM workflows\nWHERE state = 'ACTIVE'" },
 ];
+const SQL_RESULT_PAGE_SIZE = 50;
 
 // ─── Static Schema Fallbacks ───────────────────────────────────────────
 const SERVICE_SCHEMAS = {
     bigquery: { tables: [] },
     spanner: { tables: [] },
-    secretmanager: { tables: [
-        { name: 'secrets', columns: [{ name: 'secret_id', type: 'TEXT' }, { name: 'labels', type: 'JSONB' }, { name: 'created_at', type: 'TIMESTAMP' }, { name: 'project_id', type: 'TEXT' }] },
-        { name: 'secret_versions', columns: [{ name: 'secret_id', type: 'TEXT' }, { name: 'version_id', type: 'TEXT' }, { name: 'payload', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'created_at', type: 'TIMESTAMP' }] }
-    ]},
-    cloudtasks: { tables: [
-        { name: 'task_queues', columns: [{ name: 'queue_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'max_attempts', type: 'INT' }, { name: 'created_at', type: 'TIMESTAMP' }, { name: 'project_id', type: 'TEXT' }] },
-        { name: 'task_contents', columns: [{ name: 'queue_id', type: 'TEXT' }, { name: 'task_name', type: 'TEXT' }, { name: 'http_url', type: 'TEXT' }, { name: 'http_method', type: 'TEXT' }, { name: 'body', type: 'TEXT' }, { name: 'created_at', type: 'TIMESTAMP' }] }
-    ]},
-    logging: { tables: [{ name: 'log_entries', columns: [{ name: 'id', type: 'SERIAL' }, { name: 'log_name', type: 'TEXT' }, { name: 'severity', type: 'TEXT' }, { name: 'text_payload', type: 'TEXT' }, { name: 'json_payload', type: 'JSONB' }, { name: 'timestamp', type: 'TIMESTAMP' }, { name: 'project_id', type: 'TEXT' }] }] },
-    monitoring: { tables: [{ name: 'time_series', columns: [{ name: 'id', type: 'SERIAL' }, { name: 'metric_type', type: 'TEXT' }, { name: 'metric_labels', type: 'JSONB' }, { name: 'resource_type', type: 'TEXT' }, { name: 'resource_labels', type: 'JSONB' }, { name: 'points', type: 'JSONB' }, { name: 'project_name', type: 'TEXT' }] }] },
-    bigtable: { tables: [{ name: 'bigtable_data', columns: [{ name: 'instance_id', type: 'TEXT' }, { name: 'table_name', type: 'TEXT' }, { name: 'row_key', type: 'TEXT' }, { name: 'cells', type: 'JSONB' }, { name: 'project_id', type: 'TEXT' }] }] },
-    compute: { tables: [{ name: 'compute_instances', columns: [{ name: 'instance_id', type: 'TEXT' }, { name: 'name', type: 'TEXT' }, { name: 'zone', type: 'TEXT' }, { name: 'machine_type', type: 'TEXT' }, { name: 'status', type: 'TEXT' }, { name: 'network_ip', type: 'TEXT' }, { name: 'project_id', type: 'TEXT' }] }] },
-    cloudrun: { tables: [
-        { name: 'cloudrun_services', columns: [{ name: 'service_name', type: 'TEXT' }, { name: 'region', type: 'TEXT' }, { name: 'image', type: 'TEXT' }, { name: 'port', type: 'INT' }, { name: 'env_vars', type: 'JSONB' }, { name: 'status', type: 'TEXT' }, { name: 'url', type: 'TEXT' }, { name: 'project_id', type: 'TEXT' }] },
-        { name: 'cloudrun_revisions', columns: [{ name: 'revision_name', type: 'TEXT' }, { name: 'service_name', type: 'TEXT' }, { name: 'image', type: 'TEXT' }, { name: 'created_at', type: 'TIMESTAMP' }, { name: 'traffic_percent', type: 'INT' }] }
-    ]},
-    gke: { tables: [{ name: 'gke_clusters', columns: [{ name: 'cluster_name', type: 'TEXT' }, { name: 'location', type: 'TEXT' }, { name: 'node_count', type: 'INT' }, { name: 'machine_type', type: 'TEXT' }, { name: 'k8s_version', type: 'TEXT' }, { name: 'status', type: 'TEXT' }, { name: 'project_id', type: 'TEXT' }] }] },
-    memorystore: { tables: [{ name: 'redis_data', columns: [{ name: 'key_name', type: 'TEXT' }, { name: 'data_type', type: 'TEXT' }, { name: 'value', type: 'JSONB' }, { name: 'db_number', type: 'INT' }, { name: 'ttl_expires_at', type: 'TIMESTAMP' }, { name: 'project_id', type: 'TEXT' }] }] },
     workflows: { tables: [
         { name: 'workflows', columns: [{ name: 'workflow_id', type: 'TEXT' }, { name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'source_contents', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'revision_id', type: 'INT' }, { name: 'labels', type: 'JSONB' }, { name: 'created_at', type: 'TIMESTAMP' }, { name: 'updated_at', type: 'TIMESTAMP' }] },
         { name: 'workflow_executions', columns: [{ name: 'execution_id', type: 'TEXT' }, { name: 'workflow_id', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'argument', type: 'JSONB' }, { name: 'result', type: 'JSONB' }, { name: 'error', type: 'JSONB' }, { name: 'start_time', type: 'TIMESTAMP' }, { name: 'end_time', type: 'TIMESTAMP' }] }
@@ -95,7 +79,7 @@ function formatDuration(ms) {
 function truncateCell(val, max = 120) {
     if (val == null) return 'NULL';
     const s = typeof val === 'object' ? JSON.stringify(val) : String(val);
-    return s.length > max ? s.slice(0, max) + '...' : s;
+    return s.length > max ? s.slice(0, max) + '…' : s;
 }
 
 function JsonCell(props) {
@@ -111,7 +95,7 @@ function JsonCell(props) {
     return (
         <Show when={parsed()} fallback={props.value == null ? <span class="sql-null">NULL</span> : truncateCell(props.value)}>
             {(json) => (
-                <button class={`aura-json-cell ${open() ? 'open' : ''}`} onClick={(e) => { e.stopPropagation(); setOpen(!open()); }}>
+	                <button class={`aura-json-cell ${open() ? 'open' : ''}`} aria-expanded={open()} onClick={(e) => { e.stopPropagation(); setOpen(!open()); }}>
                     <span>{open() ? 'Collapse JSON' : truncateCell(json(), 80)}</span>
                     <Show when={open()}>
                         <pre>{JSON.stringify(json(), null, 2)}</pre>
@@ -188,6 +172,7 @@ function SQLEditor(props) {
     const [activeSqlTab, setActiveSqlTab] = createSignal('tab-1');
     const [running, setRunning] = createSignal(false);
     const [result, setResult] = createSignal(null);
+    const [resultPage, setResultPage] = createSignal(1);
     const [error, setError] = createSignal(null);
     const [history, setHistory] = createSignal([]);
     const [showHistory, setShowHistory] = createSignal(false);
@@ -224,6 +209,19 @@ function SQLEditor(props) {
         document.addEventListener('mouseup', onUp);
         document.body.style.cursor = 'row-resize';
         document.body.style.userSelect = 'none';
+    };
+    const adjustEditorHeight = (delta) => {
+        const maxHeight = Math.max(120, window.innerHeight - 200);
+        setEditorHeight(h => Math.max(80, Math.min(h + delta, maxHeight)));
+    };
+    const onEditorResizeKeyDown = (e) => {
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            adjustEditorHeight(-16);
+        } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            adjustEditorHeight(16);
+        }
     };
 
     // GCS file explorer state
@@ -295,6 +293,7 @@ function SQLEditor(props) {
         persistActiveTab(query);
         setIsPlaceholder(false);
         setResult(null);
+        setResultPage(1);
         setError(null);
     }
 
@@ -310,11 +309,13 @@ function SQLEditor(props) {
 
     // Cache SQL text per service so switching back restores it
     const sqlCache = {};
+    let schemaLoadRequest = 0;
 
     // Reset editor state when service changes (preserve SQL in cache)
     createEffect((prev) => {
         const svc = service();
         if (prev && prev !== svc) {
+            schemaLoadRequest++;
             // Save current SQL to cache before switching
             sqlCache[prev] = { text: sqlText(), tabs: sqlTabs(), activeTab: activeSqlTab(), placeholder: isPlaceholder() };
             // Restore from cache or reset
@@ -331,7 +332,9 @@ function SQLEditor(props) {
                 setIsPlaceholder(true);
             }
             setResult(null);
+            setResultPage(1);
             setError(null);
+            setSchemaLoading(false);
             setExpanded({});
             setDynamicSchema(null);
             setSelectedInstance('');
@@ -349,6 +352,7 @@ function SQLEditor(props) {
     });
 
     async function loadDynamicSchema(svc) {
+        const requestId = ++schemaLoadRequest;
         setSchemaLoading(true);
         let data = null;
         try {
@@ -356,6 +360,7 @@ function SQLEditor(props) {
             // Instance/database selection only affects query execution, not schema browsing
             const schemaParams = undefined;
             data = await api.schema(svc, schemaParams);
+            if (requestId !== schemaLoadRequest || service() !== svc) return;
             if (data && data.tables) setDynamicSchema(data);
             else setDynamicSchema(null);
             // Populate Spanner instance/database signals from schema response
@@ -363,7 +368,11 @@ function SQLEditor(props) {
                 if (data.instances) setSpannerInstances(data.instances);
                 if (data.databases) setSpannerDatabases(data.databases);
             }
-        } catch { setDynamicSchema(null); }
+        } catch {
+            if (requestId !== schemaLoadRequest || service() !== svc) return;
+            setDynamicSchema(null);
+        }
+        if (requestId !== schemaLoadRequest || service() !== svc) return;
         setSchemaLoading(false);
         // Auto-expand nodes
         const info = SQL_SERVICES.find(s => s.id === svc);
@@ -384,9 +393,7 @@ function SQLEditor(props) {
 
     const currentServiceInfo = () => SQL_SERVICES.find(s => s.id === service());
     const currentSchema = () => {
-        const ds = dynamicSchema();
-        if (ds && ds.tables && ds.tables.length > 0) return ds;
-        return SERVICE_SCHEMAS[service()] || { tables: [] };
+        return serviceSchema() || { tables: [] };
     };
     const cmSchema = () => toCodeMirrorSchema(currentSchema()?.tables);
 
@@ -459,6 +466,7 @@ function SQLEditor(props) {
         setSqlText(tab.sql || '');
         setIsPlaceholder(!tab.sql);
         setResult(null);
+        setResultPage(1);
         setError(null);
     }
 
@@ -471,6 +479,7 @@ function SQLEditor(props) {
         setSqlText(dynamicPlaceholder() || '');
         setIsPlaceholder(true);
         setResult(null);
+        setResultPage(1);
         setError(null);
     }
 
@@ -492,7 +501,7 @@ function SQLEditor(props) {
         const query = sqlText().trim();
         if (!query || running()) return;
         persistActiveTab(query);
-        setRunning(true); setError(null); setResult(null);
+        setRunning(true); setError(null); setResult(null); setResultPage(1);
         const startTime = performance.now();
         try {
             // GCS file queries route through BigQuery emulator
@@ -511,6 +520,7 @@ function SQLEditor(props) {
             if (data.error) { setError(data.error); }
             else {
                 setResult({ columns: data.columns || [], rows: data.rows || [], rowCount: data.row_count ?? (data.rows || []).length, executionTime: data.execution_time_ms || elapsed });
+                setResultPage(1);
                 // Refresh schema tree after DDL statements (CREATE, DROP, ALTER)
                 const trimmedUpper = query.trim().toUpperCase();
                 if (trimmedUpper.startsWith('CREATE ') || trimmedUpper.startsWith('DROP ') || trimmedUpper.startsWith('ALTER ')) {
@@ -525,7 +535,7 @@ function SQLEditor(props) {
     }
 
     function loadHistoryItem(item) { setSqlText(item.sql); setShowHistory(false); }
-    function clearEditor() { setSqlText(''); persistActiveTab(''); setIsPlaceholder(true); setResult(null); setError(null); }
+    function clearEditor() { setSqlText(''); persistActiveTab(''); setIsPlaceholder(true); setResult(null); setResultPage(1); setError(null); }
 
     // Quick-select: write SELECT * FROM table LIMIT 10 and execute immediately
     function quickSelect(tableName, e) {
@@ -547,28 +557,28 @@ function SQLEditor(props) {
     // Track whether current sqlText is still auto-generated placeholder
     const [isPlaceholder, setIsPlaceholder] = createSignal(true);
 
-    // For PostgreSQL-backed services, filter schema to show only service-relevant tables
+    // For PostgreSQL-backed services, never show unrelated internal tables from
+    // a broad schema response. Some services intentionally publish no SQL schema.
     const serviceSchema = () => {
         const svc = currentServiceInfo();
         const ds = dynamicSchema();
         if (!svc || !ds || !ds.tables) return ds;
-        // BigQuery and Spanner return their own schema — no filtering needed
-        if (svc.dialect === 'bigquery' || svc.dialect === 'googlesql') return ds;
+        if (svc.dialect === 'bigquery' || svc.dialect === 'googlesql' || svc.id === 'pubsub' || svc.id === 'bigtable') return ds;
         // For PostgreSQL-backed services, use the static schema to filter
         const staticTables = SERVICE_SCHEMAS[service()]?.tables;
         if (staticTables && staticTables.length > 0) {
             const allowedNames = new Set(staticTables.map(t => t.name));
             const filtered = ds.tables.filter(t => allowedNames.has(t.name));
-            if (filtered.length > 0) return { ...ds, tables: filtered };
+            return { ...ds, tables: filtered };
         }
-        return ds;
+        return { ...ds, tables: [] };
     };
 
     // Dynamic placeholder: use first real table from service-filtered schema
     const dynamicPlaceholder = () => {
         const svc = currentServiceInfo();
         if (!svc) return '';
-        const ds = dynamicSchema();
+        const ds = serviceSchema();
         if (ds && ds.tables && ds.tables.length > 0) {
             const tbl = ds.tables[0];
             // Strip database prefix for Spanner (e.g., "my-database.Users" → "Users")
@@ -593,6 +603,14 @@ function SQLEditor(props) {
         setSqlText(val);
         persistActiveTab(val);
     };
+    const resultRows = () => result()?.rows || [];
+    const resultTotalPages = () => Math.max(1, Math.ceil(resultRows().length / SQL_RESULT_PAGE_SIZE));
+    const resultPageStart = () => (resultPage() - 1) * SQL_RESULT_PAGE_SIZE;
+    const resultPageEnd = () => Math.min(resultRows().length, resultPageStart() + SQL_RESULT_PAGE_SIZE);
+    const visibleResultRows = () => resultRows().slice(resultPageStart(), resultPageEnd());
+    createEffect(() => {
+        if (resultPage() > resultTotalPages()) setResultPage(resultTotalPages());
+    });
 
     return (
         <>
@@ -618,13 +636,16 @@ function SQLEditor(props) {
                         <span>{currentServiceInfo()?.label || 'Explorer'}</span>
                     </div>
                     <div class="sql-explorer-search">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.35, "flex-shrink": 0 }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false" style={{ opacity: 0.35, "flex-shrink": 0 }}>
                             <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
                         </svg>
                         <input
-                            type="text"
-                            placeholder="Filter resources..."
-                            value={schemaSearch()}
+	                            type="text"
+	                            placeholder="Filter resources…"
+                                aria-label="Filter SQL resources"
+                                name="sql-resource-filter"
+                                autocomplete="off"
+	                            value={schemaSearch()}
                             onInput={(e) => setSchemaSearch(e.currentTarget.value)}
                         />
                     </div>
@@ -633,7 +654,7 @@ function SQLEditor(props) {
                     <Show when={schemaLoading()}>
                         <div class="sql-explorer-loading">
                             <div class="loading-spinner" style={{ width: '14px', height: '14px', "border-width": '1.5px' }} />
-                            <span>{isGcsMode() ? 'Loading files...' : 'Loading schema...'}</span>
+	                            <span>{isGcsMode() ? 'Loading files…' : 'Loading schema…'}</span>
                         </div>
                     </Show>
 
@@ -641,7 +662,7 @@ function SQLEditor(props) {
                     <Show when={isGcsMode() && !schemaLoading()}>
                         <Show when={gcsBuckets().length === 0}>
                             <div class="sql-explorer-empty">
-                                <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.12 }}>
+	                                <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false" style={{ opacity: 0.12 }}>
                                     <path d="M20 6H12L10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/>
                                 </svg>
                                 <span>No buckets found</span>
@@ -658,9 +679,9 @@ function SQLEditor(props) {
                                 const otherCount = () => allObjects().length - allObjects().filter(o => isQueryableFile(o.name)).length;
                                 return (
                                     <div class="tree-group">
-                                        <div class="tree-row tree-row-db" onClick={() => toggle(bucketKey)} role="button" tabIndex={0}>
-                                            <IconChevron open={expanded()[bucketKey]} />
-                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" class="tree-icon tree-icon-db">
+	                                        <div class="tree-row tree-row-db" onClick={() => toggle(bucketKey)} onKeyDown={onActivate(() => toggle(bucketKey))} role="button" tabIndex={0} aria-expanded={!!expanded()[bucketKey]}>
+	                                            <IconChevron open={expanded()[bucketKey]} />
+	                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" class="tree-icon tree-icon-db" aria-hidden="true" focusable="false">
                                                 <path d="M20 6H12L10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.12"/>
                                             </svg>
                                             <span class="tree-name">{bucket.name}</span>
@@ -676,10 +697,16 @@ function SQLEditor(props) {
                                                         const isLoading = () => gcsSchemaLoading()[schemaKey];
                                                         return (
                                                             <div class="tree-group">
-                                                                <div class="tree-row tree-row-tbl" role="button" tabIndex={0}
-                                                                    onClick={() => handleFileClick(bucket.name, file.name)}>
-                                                                    <span style={{ cursor: 'pointer', display: 'inline-flex' }}
-                                                                        onClick={(e) => { e.stopPropagation(); handleFileExpand(bucket.name, file.name); }}>
+	                                                                <div class="tree-row tree-row-tbl" role="button" tabIndex={0}
+	                                                                    onClick={() => handleFileClick(bucket.name, file.name)}
+                                                                        onKeyDown={onActivate(() => handleFileClick(bucket.name, file.name))}
+                                                                        aria-expanded={!!expanded()[fileKey]}>
+	                                                                    <span style={{ cursor: 'pointer', display: 'inline-flex' }}
+	                                                                        onClick={(e) => { e.stopPropagation(); handleFileExpand(bucket.name, file.name); }}
+                                                                            onKeyDown={onActivate((e) => { e.stopPropagation(); handleFileExpand(bucket.name, file.name); })}
+                                                                            role="button"
+                                                                            tabIndex={0}
+                                                                            aria-label={`${expanded()[fileKey] ? 'Collapse' : 'Expand'} ${file.name}`}>
                                                                         <IconChevron open={expanded()[fileKey]} />
                                                                     </span>
                                                                     <IconTable />
@@ -694,7 +721,7 @@ function SQLEditor(props) {
                                                                         <Show when={isLoading()}>
                                                                             <div class="sql-explorer-loading" style={{ padding: '4px 0 4px 24px' }}>
                                                                                 <div class="loading-spinner" style={{ width: '12px', height: '12px', "border-width": '1.5px' }} />
-                                                                                <span>Detecting schema...</span>
+	                                                                                <span>Detecting schema…</span>
                                                                             </div>
                                                                         </Show>
                                                                         <Show when={!isLoading() && cols() && !cols().error}>
@@ -735,7 +762,7 @@ function SQLEditor(props) {
                     {/* ── Standard Schema Tree (non-GCS) ── */}
                     <Show when={!isGcsMode() && !schemaLoading() && Object.keys(schemaTree()).length === 0}>
                         <div class="sql-explorer-empty">
-                            <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.12 }}>
+	                            <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false" style={{ opacity: 0.12 }}>
                                 <ellipse cx="12" cy="5.5" rx="9" ry="3.5"/>
                                 <path d="M3 5.5v13c0 1.93 4.03 3.5 9 3.5s9-1.57 9-3.5v-13"/>
                             </svg>
@@ -751,9 +778,9 @@ function SQLEditor(props) {
                                 const dbCount = Object.keys(databases).length;
                                 return (
                                     <div class="tree-group">
-                                        <div class="tree-row tree-row-db" onClick={() => toggle(instKey)} role="button" tabIndex={0}>
-                                            <IconChevron open={expanded()[instKey] !== false} />
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" style={{"flex-shrink":"0"}}><path d="M19 15v4H5v-4h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 18.5c-.82 0-1.5-.67-1.5-1.5s.68-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM19 3v4H5V3h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V2c0-.55-.45-1-1-1zM7 6.5c-.82 0-1.5-.67-1.5-1.5S6.19 3.5 7 3.5s1.5.67 1.5 1.5S7.83 6.5 7 6.5zM19 9v4H5V9h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 12.5c-.82 0-1.5-.67-1.5-1.5s.68-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
+	                                        <div class="tree-row tree-row-db" onClick={() => toggle(instKey)} onKeyDown={onActivate(() => toggle(instKey))} role="button" tabIndex={0} aria-expanded={expanded()[instKey] !== false}>
+	                                            <IconChevron open={expanded()[instKey] !== false} />
+	                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true" focusable="false" style={{"flex-shrink":"0"}}><path d="M19 15v4H5v-4h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 18.5c-.82 0-1.5-.67-1.5-1.5s.68-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM19 3v4H5V3h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V2c0-.55-.45-1-1-1zM7 6.5c-.82 0-1.5-.67-1.5-1.5S6.19 3.5 7 3.5s1.5.67 1.5 1.5S7.83 6.5 7 6.5zM19 9v4H5V9h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 12.5c-.82 0-1.5-.67-1.5-1.5s.68-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
                                             <span class="tree-name" style={{"font-weight":"600"}}>{instName}</span>
                                             <span class="tree-badge tree-badge-db">{dbCount} db{dbCount !== 1 ? 's' : ''}</span>
                                         </div>
@@ -765,9 +792,10 @@ function SQLEditor(props) {
                                                         const tableCount = tables.length;
                                                         return (
                                                             <div class="tree-group">
-                                                                <div class="tree-row tree-row-db"
-                                                                    onClick={() => { toggle(dbKey); setSelectedInstance(instName); setSelectedDatabase(dbName); }}
-                                                                    role="button" tabIndex={0}>
+	                                                                <div class="tree-row tree-row-db"
+	                                                                    onClick={() => { toggle(dbKey); setSelectedInstance(instName); setSelectedDatabase(dbName); }}
+	                                                                    onKeyDown={onActivate(() => { toggle(dbKey); setSelectedInstance(instName); setSelectedDatabase(dbName); })}
+	                                                                    role="button" tabIndex={0} aria-expanded={!!expanded()[dbKey]}>
                                                                     <IconChevron open={expanded()[dbKey]} />
                                                                     <IconDatabase />
                                                                     <span class="tree-name">{dbName}</span>
@@ -781,15 +809,16 @@ function SQLEditor(props) {
                                                                                 const colCount = (table.columns || []).length;
                                                                                 return (
                                                                                     <div class="tree-group">
-                                                                                        <div class="tree-row tree-row-tbl"
-                                                                                            onClick={() => { toggle(tblKey); setSelectedInstance(instName); setSelectedDatabase(dbName); }}
-                                                                                            role="button" tabIndex={0}>
+	                                                                                        <div class="tree-row tree-row-tbl"
+	                                                                                            onClick={() => { toggle(tblKey); setSelectedInstance(instName); setSelectedDatabase(dbName); }}
+	                                                                                            onKeyDown={onActivate(() => { toggle(tblKey); setSelectedInstance(instName); setSelectedDatabase(dbName); })}
+	                                                                                            role="button" tabIndex={0} aria-expanded={!!expanded()[tblKey]}>
                                                                                             <IconChevron open={expanded()[tblKey]} />
                                                                                             <IconTable />
                                                                                             <span class="tree-name">{table.shortName}</span>
                                                                                             <span class="tree-badge">{colCount}</span>
-                                                                                            <button class="tree-run-btn" title="SELECT * LIMIT 10" onClick={(e) => quickSelect(table.shortName, e)}>
-                                                                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+	                                                                                            <button class="tree-run-btn" title="SELECT * LIMIT 10" aria-label={`Run SELECT * for ${table.shortName}`} onClick={(e) => quickSelect(table.shortName, e)}>
+	                                                                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg>
                                                                                             </button>
                                                                                         </div>
                                                                                         <Show when={expanded()[tblKey]}>
@@ -833,11 +862,13 @@ function SQLEditor(props) {
                             return (
                                 <div class="tree-group">
                                     {/* ── Database / Dataset node ── */}
-                                    <div
-                                        class="tree-row tree-row-db"
-                                        onClick={() => toggle(dbKey)}
-                                        role="button" tabIndex={0}
-                                    >
+	                                    <div
+	                                        class="tree-row tree-row-db"
+	                                        onClick={() => toggle(dbKey)}
+	                                        onKeyDown={onActivate(() => toggle(dbKey))}
+	                                        role="button" tabIndex={0}
+                                            aria-expanded={!!expanded()[dbKey]}
+	                                    >
                                         <IconChevron open={expanded()[dbKey]} />
                                         <IconDatabase />
                                         <span class="tree-name">{dbName}</span>
@@ -852,17 +883,19 @@ function SQLEditor(props) {
                                                     return (
                                                         <div class="tree-group">
                                                             {/* ── Table node ── */}
-                                                            <div
-                                                                class="tree-row tree-row-tbl"
-                                                                onClick={() => toggle(tblKey)}
-                                                                role="button" tabIndex={0}
-                                                            >
+	                                                            <div
+	                                                                class="tree-row tree-row-tbl"
+	                                                                onClick={() => toggle(tblKey)}
+	                                                                onKeyDown={onActivate(() => toggle(tblKey))}
+	                                                                role="button" tabIndex={0}
+                                                                    aria-expanded={!!expanded()[tblKey]}
+	                                                            >
                                                                 <IconChevron open={expanded()[tblKey]} />
                                                                 <IconTable />
                                                                 <span class="tree-name">{table.shortName}</span>
                                                                 <span class="tree-badge">{colCount}</span>
-                                                                <button class="tree-run-btn" title="SELECT * LIMIT 10" onClick={(e) => quickSelect(table.name, e)}>
-                                                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+	                                                                <button class="tree-run-btn" title="SELECT * LIMIT 10" aria-label={`Run SELECT * for ${table.shortName}`} onClick={(e) => quickSelect(table.name, e)}>
+	                                                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg>
                                                                 </button>
                                                             </div>
                                                             <Show when={expanded()[tblKey]}>
@@ -900,20 +933,22 @@ function SQLEditor(props) {
                 <div class="aura-sql-tabbar" role="tablist" aria-label="SQL tabs">
                     <For each={sqlTabs()}>
                         {(tab) => (
-                            <button
-                                class={`aura-sql-tab ${activeSqlTab() === tab.id ? 'active' : ''}`}
-                                role="tab"
-                                aria-selected={activeSqlTab() === tab.id}
-                                onClick={() => switchSqlTab(tab.id)}
-                            >
-                                <span>{tab.title}</span>
-                                <Show when={sqlTabs().length > 1}>
-                                    <i onClick={(e) => closeSqlTab(tab.id, e)}>&times;</i>
-                                </Show>
-                            </button>
+	                            <div
+	                                class={`aura-sql-tab ${activeSqlTab() === tab.id ? 'active' : ''}`}
+	                                role="tab"
+	                                aria-selected={activeSqlTab() === tab.id}
+	                                onClick={() => switchSqlTab(tab.id)}
+                                    onKeyDown={onActivate(() => switchSqlTab(tab.id))}
+                                    tabIndex="0"
+	                            >
+	                                <span>{tab.title}</span>
+	                                <Show when={sqlTabs().length > 1}>
+	                                    <button type="button" class="aura-sql-tab-close" onClick={(e) => closeSqlTab(tab.id, e)} aria-label={`Close ${tab.title}`}>&times;</button>
+	                                </Show>
+	                            </div>
                         )}
                     </For>
-                    <button class="aura-sql-tab-add" onClick={newSqlTab} title="New SQL tab">+</button>
+	                    <button class="aura-sql-tab-add" onClick={newSqlTab} title="New SQL tab" aria-label="New SQL tab">+</button>
                 </div>
                 {/* Consolidated Toolbar */}
                 <div class="sql-toolbar-unified">
@@ -923,11 +958,11 @@ function SQLEditor(props) {
                     <div class="sql-toolbar-center">
                         <button class="btn btn-primary sql-run-btn" onClick={runQuery} disabled={running() || !sqlText().trim()}>
                             <Show when={running()} fallback={
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+	                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg>
                             }>
                                 <div class="loading-spinner" style={{ width: '14px', height: '14px', "border-width": '2px' }} />
                             </Show>
-                            {running() ? 'Running...' : 'Run'}
+	                            {running() ? 'Running…' : 'Run'}
                         </button>
                         <button class="btn btn-secondary" onClick={clearEditor} title="Clear editor and results">Clear</button>
                         <div class="sql-shortcut-hint">
@@ -935,8 +970,8 @@ function SQLEditor(props) {
                         </div>
                     </div>
                     <div class="sql-toolbar-right">
-                        <button class="btn btn-icon sql-toolbar-btn" title="Query history" onClick={() => setShowHistory(!showHistory())}>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+	                        <button class="btn btn-icon sql-toolbar-btn" title="Query history" aria-label="Open query history" aria-expanded={showHistory()} onClick={() => setShowHistory(!showHistory())}>
+	                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                 <path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/>
                             </svg>
                         </button>
@@ -950,37 +985,44 @@ function SQLEditor(props) {
                         onChange={handleSqlChange}
                         dialect={currentServiceInfo()?.dialect || 'postgresql'}
                         schema={cmSchema()}
-                        placeholder="Enter SQL query..."
+	                        placeholder="Enter SQL query…"
                         onRun={runQuery}
                         class="sql-editor-fill"
                     />
                 </div>
 
                 {/* Resize Handle */}
-                <div
-                    class="sql-resize-handle"
-                    onMouseDown={startResize}
-                    title="Drag to resize editor"
-                />
+	                <div
+	                    class="sql-resize-handle"
+	                    onMouseDown={startResize}
+                        onKeyDown={onEditorResizeKeyDown}
+                        role="separator"
+                        aria-orientation="horizontal"
+                        aria-valuemin="80"
+                        aria-valuemax={Math.max(120, window.innerHeight - 200)}
+                        aria-valuenow={editorHeight()}
+                        tabIndex="0"
+	                    title="Drag to resize editor"
+	                />
 
                 {/* Status Bar */}
                 <div class="sql-status-bar">
                     <Show when={running()}>
                         <div class="loading-spinner" style={{ width: '12px', height: '12px', "border-width": '1.5px' }} />
-                        <span>Running query...</span>
+	                        <span>Running query…</span>
                     </Show>
                     <Show when={!running() && error()}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--error)">
+	                        <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--error)" aria-hidden="true" focusable="false">
                             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
                         </svg>
-                        <span class="sql-status-error">{error()}</span>
+	                        <span class="sql-status-error" role="alert">{error()}</span>
                     </Show>
                     <Show when={!running() && !error() && result()}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--success)">
+	                        <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--success)" aria-hidden="true" focusable="false">
                             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
                         </svg>
                         <span class="sql-status-ok">Query complete</span>
-                        <span class="sql-status-meta">{result().rowCount} row{result().rowCount !== 1 ? 's' : ''} &middot; TTFB {formatDuration(Math.max(1, Math.round(result().executionTime * 0.42)))} &middot; Local latency {formatDuration(result().executionTime)}</span>
+	                        <span class="sql-status-meta">{formatNumber(result().rowCount)} row{result().rowCount !== 1 ? 's' : ''} &middot; TTFB {formatDuration(Math.max(1, Math.round(result().executionTime * 0.42)))} &middot; Local latency {formatDuration(result().executionTime)}</span>
                     </Show>
                     <Show when={!running() && !error() && !result()}>
                         <span class="sql-status-idle">Run a query to see results</span>
@@ -999,10 +1041,10 @@ function SQLEditor(props) {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <For each={result().rows}>
-                                        {(row, idx) => (
-                                            <tr>
-                                                <td class="sql-results-rownum">{idx() + 1}</td>
+	                                    <For each={visibleResultRows()}>
+	                                        {(row, idx) => (
+	                                            <tr>
+	                                                <td class="sql-results-rownum">{resultPageStart() + idx() + 1}</td>
                                                 <For each={row}>
                                                     {(cell) => (
                                                         <td title={cell != null ? String(typeof cell === 'object' ? JSON.stringify(cell) : cell) : 'NULL'}>
@@ -1014,15 +1056,22 @@ function SQLEditor(props) {
                                         )}
                                     </For>
                                 </tbody>
-                            </table>
-                        </div>
-                    </Show>
+	                            </table>
+	                        </div>
+                            <Show when={resultRows().length > SQL_RESULT_PAGE_SIZE}>
+                                <div class="pagination-controls" aria-label="SQL result pagination">
+                                    <span>{resultPageStart() + 1}-{resultPageEnd()} of {formatNumber(resultRows().length)}</span>
+                                    <button class="btn btn-secondary" onClick={() => setResultPage(Math.max(1, resultPage() - 1))} disabled={resultPage() <= 1}>Previous</button>
+                                    <button class="btn btn-secondary" onClick={() => setResultPage(Math.min(resultTotalPages(), resultPage() + 1))} disabled={resultPage() >= resultTotalPages()}>Next</button>
+                                </div>
+                            </Show>
+	                    </Show>
                     <Show when={result() && result().rows.length === 0 && !error()}>
                         <div class="sql-results-placeholder">Query returned no rows.</div>
                     </Show>
                     <Show when={!result() && !error() && !running()}>
                         <div class="sql-results-placeholder">
-                            <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.15 }}>
+	                            <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false" style={{ opacity: 0.15 }}>
                                 <path d="M3 14h4v-4H3v4zm0 5h4v-4H3v4zM3 9h4V5H3v4zm5 5h13v-4H8v4zm0 5h13v-4H8v4zM8 5v4h13V5H8z"/>
                             </svg>
                             <span>Results will appear here</span>
@@ -1037,8 +1086,8 @@ function SQLEditor(props) {
                     <div class="sql-history-panel" onClick={(e) => e.stopPropagation()}>
                         <div class="sql-history-header">
                             <span class="sql-history-title">Query History</span>
-                            <button class="btn btn-icon" onClick={() => setShowHistory(false)}>
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+	                            <button class="btn btn-icon" onClick={() => setShowHistory(false)} aria-label="Close query history">
+	                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                     <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
                                 </svg>
                             </button>
@@ -1050,13 +1099,13 @@ function SQLEditor(props) {
                                     <button class="sql-history-item" onClick={() => loadHistoryItem(item)}>
                                         <div class="sql-history-item-top">
                                             <span class="sql-history-service">{SQL_SERVICES.find(s => s.id === item.service)?.label || item.service}</span>
-                                            <span class="sql-history-time">{item.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+	                                            <span class="sql-history-time">{formatTime(item.timestamp, { hour: '2-digit', minute: '2-digit' })}</span>
                                         </div>
-                                        <div class="sql-history-sql">{item.sql.length > 80 ? item.sql.slice(0, 80) + '...' : item.sql}</div>
+	                                        <div class="sql-history-sql">{item.sql.length > 80 ? item.sql.slice(0, 80) + '…' : item.sql}</div>
                                         <div class="sql-history-item-meta">
                                             <Show when={item.error}><span class="sql-history-error">Error</span></Show>
                                             <Show when={!item.error}>
-                                                <span>{item.rowCount} row{item.rowCount !== 1 ? 's' : ''}</span>
+	                                                <span>{formatNumber(item.rowCount)} row{item.rowCount !== 1 ? 's' : ''}</span>
                                                 <span class="sql-results-sep">&middot;</span>
                                                 <span>{formatDuration(item.executionTime)}</span>
                                             </Show>
@@ -1097,12 +1146,17 @@ export default function ServiceExplorer(props) {
             {/* Service Header — icon, title, description */}
             <div class="se-service-header">
                 <img
-                    src={`/icons/${activeService()}.svg`}
-                    alt=""
-                    class="se-service-icon"
+	                    src={`/icons/${activeService()}.svg`}
+	                    alt=""
+                        width="36"
+                        height="36"
+	                    class="se-service-icon"
                 />
                 <div class="se-service-info">
-                    <h1 class="se-service-title">{meta().label}</h1>
+                    <div class="se-service-title-row">
+                        <h1 class="se-service-title">{meta().label}</h1>
+                        <Show when={meta().tag}><span class="badge badge-coming-up">{meta().tag}</span></Show>
+                    </div>
                     <p class="se-service-desc">{meta().description}</p>
                 </div>
             </div>
@@ -1121,7 +1175,7 @@ export default function ServiceExplorer(props) {
                             class={`se-mode-tab ${mode() === 'editor' ? 'active' : ''}`}
                             onClick={() => setMode('editor')}
                         >
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+	                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                 <path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/>
                             </svg>
                             SQL Editor
@@ -1130,7 +1184,7 @@ export default function ServiceExplorer(props) {
                             class={`se-mode-tab ${mode() === 'explorer' ? 'active' : ''}`}
                             onClick={() => setMode('explorer')}
                         >
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+	                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                 <path d="M20 6H12L10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/>
                             </svg>
                             Data Explorer
@@ -1139,7 +1193,7 @@ export default function ServiceExplorer(props) {
                             class={`se-mode-tab ${mode() === 'sync' ? 'active' : ''}`}
                             onClick={() => setMode('sync')}
                         >
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+	                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                 <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
                             </svg>
                             Remote Sync

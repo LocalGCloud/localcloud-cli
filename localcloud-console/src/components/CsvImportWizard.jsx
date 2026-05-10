@@ -13,6 +13,7 @@
  *   serviceName   - Display name (e.g., 'Spanner', 'BigQuery')
  */
 import { createSignal, createMemo, Show, For } from 'solid-js';
+import { onActivate } from '../utils/a11y.js';
 
 export default function CsvImportWizard(props) {
     const [csvFile, setCsvFile] = createSignal(null);
@@ -240,6 +241,7 @@ export default function CsvImportWizard(props) {
     const ROW_H = 40, HDR_H = 30, COL_W = 240, GAP = 200, TOTAL_W = COL_W + GAP + COL_W;
 
     let containerRef;
+    let fileInput;
     const onMouseMove = (e) => {
         if (!connecting() || !containerRef) return;
         const inner = containerRef.firstElementChild;
@@ -252,13 +254,13 @@ export default function CsvImportWizard(props) {
 
     return (
         <Show when={props.show}>
-            <div class="modal-overlay" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) closeWizard(); }}>
+            <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="csv-import-title" onClick={(e) => { if (e.target === e.currentTarget) closeWizard(); }}>
                 <div class="card modal-card" onClick={(e) => e.stopPropagation()} style="max-width:900px;width:90vw;max-height:85vh;display:flex;flex-direction:column">
                     {/* Header */}
                     <div style="margin-bottom:16px">
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-                            <h2 style="margin:0;font-size:16px">Import CSV to {props.tableName || 'Table'}</h2>
-                            <button onClick={closeWizard} style="background:none;border:none;color:var(--text-tertiary);cursor:pointer;font-size:18px;padding:4px">{'\u00D7'}</button>
+                            <h2 id="csv-import-title" style="margin:0;font-size:16px">Import CSV to {props.tableName || 'Table'}</h2>
+                            <button onClick={closeWizard} aria-label="Close CSV import wizard" style="background:none;border:none;color:var(--text-tertiary);cursor:pointer;font-size:18px;padding:4px">{'\u00D7'}</button>
                         </div>
                         <div style="display:flex;gap:4px;align-items:center">
                             <For each={[{id:'upload',label:'Upload'},{id:'mapping',label:'Map Columns'},{id:'preview',label:'Preview'},{id:'importing',label:'Import'},{id:'done',label:'Done'}]}>
@@ -267,7 +269,7 @@ export default function CsvImportWizard(props) {
                                     return (
                                         <>
                                             <Show when={i() > 0}><div style={`width:20px;height:1px;background:${steps.indexOf(csvStep()) >= i() ? 'var(--primary)' : 'var(--border)'}`} /></Show>
-                                            <div style={`font-size:11px;padding:3px 8px;border-radius:10px;font-weight:${csvStep() === step.id ? '600' : '400'};background:${csvStep() === step.id ? 'var(--primary)' : (steps.indexOf(csvStep()) > steps.indexOf(step.id) ? 'var(--surface-hover)' : 'transparent')};color:${csvStep() === step.id ? 'white' : 'var(--text-tertiary)'};transition:all 0.2s`}>
+                                            <div style={`font-size:11px;padding:3px 8px;border-radius:10px;font-weight:${csvStep() === step.id ? '600' : '400'};background:${csvStep() === step.id ? 'var(--primary)' : (steps.indexOf(csvStep()) > steps.indexOf(step.id) ? 'var(--surface-hover)' : 'transparent')};color:${csvStep() === step.id ? 'white' : 'var(--text-tertiary)'};transition:background 0.2s, color 0.2s`}>
                                                 {step.label}
                                             </div>
                                         </>
@@ -279,20 +281,25 @@ export default function CsvImportWizard(props) {
 
                     <div style="flex:1;overflow-y:auto;min-height:0">
                         {/* Step 1: Upload */}
-                        <Show when={csvStep() === 'upload'}>
-                            <div
+	                        <Show when={csvStep() === 'upload'}>
+                                <input ref={el => fileInput = el} id="csv-file-input" name="csv-file" type="file" accept=".csv,.tsv,.txt" style="display:none" onChange={(e) => handleCsvFile(e.currentTarget.files[0])} />
+	                            <div
                                 onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'var(--surface-hover)'; }}
                                 onDragLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'transparent'; }}
                                 onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'transparent'; handleCsvFile(e.dataTransfer.files[0]); }}
-                                style="border:2px dashed var(--border);border-radius:8px;padding:40px 24px;text-align:center;cursor:pointer;transition:all 0.2s"
-                                onClick={() => { const input = document.createElement('input'); input.type = 'file'; input.accept = '.csv,.tsv,.txt'; input.onchange = (e) => handleCsvFile(e.target.files[0]); input.click(); }}
-                            >
+	                                style="border:2px dashed var(--border);border-radius:8px;padding:40px 24px;text-align:center;cursor:pointer;transition:border-color 0.2s, background 0.2s"
+	                                onClick={() => fileInput?.click()}
+                                    onKeyDown={onActivate(() => fileInput?.click())}
+                                    role="button"
+                                    tabIndex="0"
+                                    aria-label="Upload CSV file"
+	                            >
                                 <div style="font-size:32px;margin-bottom:8px;opacity:0.4">{'\u2191'}</div>
                                 <div style="font-size:14px;font-weight:500;margin-bottom:4px;color:var(--text)">Drop CSV file here or click to browse</div>
                                 <div style="font-size:12px;color:var(--text-tertiary)">Supports .csv, .tsv, .txt with comma, tab, semicolon, or pipe delimiters</div>
                             </div>
                             <Show when={csvErrors().length > 0}>
-                                <div class="alert alert-error" style="margin-top:12px">{csvErrors()[0].message}</div>
+	                                <div class="alert alert-error" role="alert" style="margin-top:12px">{csvErrors()[0].message}</div>
                             </Show>
                         </Show>
 
@@ -334,7 +341,7 @@ export default function CsvImportWizard(props) {
 
                                                 return (
                                                     <div style={`position:relative;min-width:${TOTAL_W}px;height:${svgH}px`}>
-                                                        <svg style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1" viewBox={`0 0 ${TOTAL_W} ${svgH}`} preserveAspectRatio="none">
+                                                        <svg style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1" viewBox={`0 0 ${TOTAL_W} ${svgH}`} preserveAspectRatio="none" aria-hidden="true" focusable="false">
                                                             <For each={csvHeaders}>
                                                                 {(header, i) => {
                                                                     const target = mapping[header];
@@ -346,7 +353,7 @@ export default function CsvImportWizard(props) {
                                                                     const x1 = COL_W, x2 = COL_W + GAP;
                                                                     const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
                                                                     const sampleVal = csvParsed()?.rows[0]?.[i()] || '';
-                                                                    const displayVal = sampleVal.length > 16 ? sampleVal.slice(0, 14) + '..' : sampleVal;
+                                                                    const displayVal = sampleVal.length > 16 ? sampleVal.slice(0, 14) + '…' : sampleVal;
                                                                     return (<>
                                                                         <path d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`} fill="none" stroke="#34a853" stroke-width="1.5" opacity="0.5" />
                                                                         <circle cx={x1} cy={y1} r="4" fill="#34a853" />
@@ -373,9 +380,13 @@ export default function CsvImportWizard(props) {
                                                                     const isActive = () => connecting() === header;
                                                                     return (
                                                                         <div onClick={() => isMapped() ? deleteMapping(header) : startConnect(header)}
-                                                                            style={`height:${ROW_H}px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--border-subtle);cursor:pointer;transition:all 0.15s;user-select:none;background:${isActive() ? 'rgba(66,133,244,0.1)' : isMapped() ? 'transparent' : 'rgba(251,188,4,0.06)'};border-right:${isActive() ? '2px solid #4285f4' : '2px solid transparent'}`}
+                                                                            onKeyDown={onActivate(() => isMapped() ? deleteMapping(header) : startConnect(header))}
+                                                                            role="button"
+                                                                            tabIndex="0"
+                                                                            aria-pressed={isMapped()}
+                                                                            style={`height:${ROW_H}px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--border-subtle);cursor:pointer;transition:background 0.15s, border-color 0.15s;color:var(--text);user-select:none;background:${isActive() ? 'rgba(66,133,244,0.1)' : isMapped() ? 'transparent' : 'rgba(251,188,4,0.06)'};border-right:${isActive() ? '2px solid #4285f4' : '2px solid transparent'}`}
                                                                             title={isMapped() ? 'Click to disconnect' : 'Click to connect'}>
-                                                                            <div style={`width:8px;height:8px;border-radius:50%;flex-shrink:0;border:2px solid ${isActive() ? '#4285f4' : isMapped() ? '#34a853' : '#fbbc04'};background:${isActive() ? '#4285f4' : isMapped() ? '#34a853' : 'transparent'};transition:all 0.15s`} />
+                                                                            <div style={`width:8px;height:8px;border-radius:50%;flex-shrink:0;border:2px solid ${isActive() ? '#4285f4' : isMapped() ? '#34a853' : '#fbbc04'};background:${isActive() ? '#4285f4' : isMapped() ? '#34a853' : 'transparent'};transition:background 0.15s, border-color 0.15s`} />
                                                                             <div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{header}</div></div>
                                                                             <Show when={isMapped()}><span style="font-size:9px;color:#ea4335;opacity:0.6">{'\u00D7'}</span></Show>
                                                                         </div>
@@ -394,8 +405,12 @@ export default function CsvImportWizard(props) {
                                                                     const colType = types[col] || '';
                                                                     return (
                                                                         <div onClick={() => { if (connecting()) finishConnect(col); }}
-                                                                            style={`height:${ROW_H}px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--border-subtle);transition:all 0.15s;user-select:none;cursor:${connecting() ? 'pointer' : 'default'};background:${connecting() && !isMapped() ? 'rgba(66,133,244,0.06)' : isMapped() ? 'transparent' : (isNN ? 'rgba(234,67,53,0.04)' : 'rgba(100,100,100,0.03)')};border-left:${connecting() && !isMapped() ? '2px solid #4285f4' : '2px solid transparent'}`}>
-                                                                            <div style={`width:8px;height:8px;border-radius:50%;flex-shrink:0;border:2px solid ${isMapped() ? '#34a853' : (isNN ? '#ea4335' : 'var(--border)')};background:${isMapped() ? '#34a853' : 'transparent'};transition:all 0.15s`} />
+                                                                            onKeyDown={onActivate(() => { if (connecting()) finishConnect(col); })}
+                                                                            role="button"
+                                                                            tabIndex="0"
+                                                                            aria-disabled={!connecting()}
+                                                                            style={`height:${ROW_H}px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--border-subtle);transition:background 0.15s, border-color 0.15s;user-select:none;cursor:${connecting() ? 'pointer' : 'default'};background:${connecting() && !isMapped() ? 'rgba(66,133,244,0.06)' : isMapped() ? 'transparent' : (isNN ? 'rgba(234,67,53,0.04)' : 'rgba(100,100,100,0.03)')};border-left:${connecting() && !isMapped() ? '2px solid #4285f4' : '2px solid transparent'}`}>
+                                                                            <div style={`width:8px;height:8px;border-radius:50%;flex-shrink:0;border:2px solid ${isMapped() ? '#34a853' : (isNN ? '#ea4335' : 'var(--border)')};background:${isMapped() ? '#34a853' : 'transparent'};transition:background 0.15s, border-color 0.15s`} />
                                                                             <div style="flex:1;min-width:0"><div style={`font-size:12px;font-weight:500;color:${isMapped() ? 'var(--text)' : 'var(--text-tertiary)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`}>{col}</div></div>
                                                                             <Show when={isNN}>
                                                                                 <span style={`font-size:8px;padding:1px 5px;border-radius:3px;font-weight:600;white-space:nowrap;background:${isMapped() ? 'rgba(52,168,83,0.1)' : 'rgba(234,67,53,0.12)'};color:${isMapped() ? '#34a853' : '#ea4335'}`}>{isMapped() ? 'REQ \u2713' : 'REQUIRED'}</span>
@@ -419,7 +434,7 @@ export default function CsvImportWizard(props) {
                                             <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;border:2px solid #ea4335;display:inline-block;box-sizing:border-box" /> Required</span>
                                         </div>
                                         <Show when={csvErrors().length > 0}>
-                                            <div class="alert alert-error" style="margin-bottom:12px">{csvErrors()[0].message}</div>
+                                            <div class="alert alert-error" role="alert" style="margin-bottom:12px">{csvErrors()[0].message}</div>
                                         </Show>
                                         <div style="display:flex;gap:8px;justify-content:flex-end">
                                             <button class="btn btn-secondary" onClick={resetCsvImport}>Back</button>
@@ -470,7 +485,7 @@ export default function CsvImportWizard(props) {
                                             <div style="background:var(--surface-hover);border:1px solid #ea433530;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:12px">
                                                 <div style="font-weight:600;color:#ea4335;margin-bottom:4px">Errors</div>
                                                 <For each={errors.slice(0, 5)}>{(err) => <div style="color:var(--text-secondary);margin-bottom:2px">{err.message}</div>}</For>
-                                                <Show when={errors.length > 5}><div style="color:var(--text-tertiary);margin-top:4px">...and {errors.length - 5} more</div></Show>
+                                                <Show when={errors.length > 5}><div style="color:var(--text-tertiary);margin-top:4px">… and {errors.length - 5} more</div></Show>
                                             </div>
                                         </Show>
                                         <div class="data-table-wrapper" style="max-height:300px;overflow:auto">
@@ -495,7 +510,7 @@ export default function CsvImportWizard(props) {
                                                             return (
                                                                 <tr style={`background:${hasError ? 'rgba(234,67,53,0.05)' : hasWarn ? 'rgba(251,188,4,0.05)' : ''}`}>
                                                                     <td style="position:sticky;left:0;z-index:2;background:var(--surface)">
-                                                                        <input type="checkbox" checked={isSelected} disabled={hasError} onChange={(e) => { const next = new Set(csvSelectedRows()); if (e.target.checked) next.add(rowIdx()); else next.delete(rowIdx()); setCsvSelectedRows(next); }} />
+                                                                        <input type="checkbox" checked={isSelected} disabled={hasError} aria-label={`Select CSV row ${rowIdx() + 1}`} onChange={(e) => { const next = new Set(csvSelectedRows()); if (e.target.checked) next.add(rowIdx()); else next.delete(rowIdx()); setCsvSelectedRows(next); }} />
                                                                     </td>
                                                                     <td style="font-size:10px;color:var(--text-tertiary)">{rowIdx() + 1}</td>
                                                                     <For each={mappedHeaders}>
@@ -539,7 +554,7 @@ export default function CsvImportWizard(props) {
                         <Show when={csvStep() === 'importing'}>
                             <div style="text-align:center;padding:40px">
                                 <div class="loading-spinner" style="margin:0 auto 16px" />
-                                <div style="font-size:14px;font-weight:500">Importing rows...</div>
+                                <div style="font-size:14px;font-weight:500" aria-live="polite">Importing rows…</div>
                                 <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">Inserting into {props.tableName}</div>
                             </div>
                         </Show>
@@ -560,7 +575,7 @@ export default function CsvImportWizard(props) {
                                             </div>
                                         </div>
                                         <Show when={r?.failedRows?.length > 0}>
-                                            <div style="background:var(--surface-hover);border:1px solid #ea433530;border-radius:6px;padding:10px 12px;margin-bottom:16px;max-height:160px;overflow-y:auto">
+                                            <div role="alert" style="background:var(--surface-hover);border:1px solid #ea433530;border-radius:6px;padding:10px 12px;margin-bottom:16px;max-height:160px;overflow-y:auto">
                                                 <div style="font-size:11px;font-weight:600;color:#ea4335;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.04em">Failed Rows</div>
                                                 <For each={r.failedRows}>{(fr) => <div style="font-size:12px;color:var(--text-secondary);margin-bottom:3px;font-family:var(--font-mono)">Row {fr.row}: {fr.error}</div>}</For>
                                             </div>

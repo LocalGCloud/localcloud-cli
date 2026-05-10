@@ -1,16 +1,8 @@
-import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
+import { createSignal, createEffect, createMemo, onCleanup, Show, For } from 'solid-js';
 import { api } from '../api.js';
+import { formatTime } from '../utils/a11y.js';
 
-function formatTime(ts) {
-    if (!ts) return '--';
-    try {
-        const d = new Date(ts);
-        if (isNaN(d.getTime())) return ts;
-        return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    } catch {
-        return ts;
-    }
-}
+const PAGE_SIZE = 50;
 
 function statusClass(code) {
     if (!code) return '';
@@ -55,6 +47,7 @@ export default function Logs(props) {
     const [refreshInterval, setRefreshInterval] = createSignal((() => {
         try { return parseInt(localStorage.getItem('localcloud-logs-interval') || '3', 10); } catch { return 3; }
     })());
+    const [page, setPage] = createSignal(1);
     let isInitialLoad = true;
 
     const fetchRequests = async () => {
@@ -63,7 +56,7 @@ export default function Logs(props) {
         try {
             const data = await api.requests();
             const list = data.requests || [];
-            setRequests(list.slice(0, 100));
+            setRequests(list);
         } catch (err) {
             setError('Failed to load requests: ' + err.message);
         } finally {
@@ -98,12 +91,22 @@ export default function Logs(props) {
         try { localStorage.setItem('localcloud-logs-interval', String(seconds)); } catch {}
     };
 
-    const filteredRequests = () => {
+    const filteredRequests = createMemo(() => {
         return requests().filter(r =>
             matchesMethodFilter(r.method, methodFilter()) &&
             matchesStatusFilter(r.status, statusFilter())
         );
-    };
+    });
+    const totalPages = () => Math.max(1, Math.ceil(filteredRequests().length / PAGE_SIZE));
+    const pageStart = () => (page() - 1) * PAGE_SIZE;
+    const pageEnd = () => Math.min(filteredRequests().length, pageStart() + PAGE_SIZE);
+    const visibleRequests = () => filteredRequests().slice(pageStart(), pageEnd());
+
+    createEffect(() => {
+        if (page() > totalPages()) {
+            setPage(totalPages());
+        }
+    });
 
     return (
         <div>
@@ -115,15 +118,18 @@ export default function Logs(props) {
             </div>
 
             <Show when={error()}>
-                <div class="alert alert-error">{error()}</div>
+                <div class="alert alert-error" role="alert">{error()}</div>
             </Show>
 
             {/* Filter Bar */}
             <div class="filter-bar">
-                <select
-                    value={methodFilter()}
-                    onChange={e => setMethodFilter(e.currentTarget.value)}
-                >
+                    <select
+                        id="logs-method-filter"
+                        name="logs-method-filter"
+                        aria-label="Filter logs by method"
+                        value={methodFilter()}
+                        onChange={e => { setMethodFilter(e.currentTarget.value); setPage(1); }}
+                    >
                     <option value="ALL">All Methods</option>
                     <option value="GET">GET</option>
                     <option value="POST">POST</option>
@@ -131,28 +137,36 @@ export default function Logs(props) {
                     <option value="DELETE">DELETE</option>
                 </select>
 
-                <select
-                    value={statusFilter()}
-                    onChange={e => setStatusFilter(e.currentTarget.value)}
-                >
+                    <select
+                        id="logs-status-filter"
+                        name="logs-status-filter"
+                        aria-label="Filter logs by status"
+                        value={statusFilter()}
+                        onChange={e => { setStatusFilter(e.currentTarget.value); setPage(1); }}
+                    >
                     <option value="ALL">All Status</option>
                     <option value="2xx">2xx Success</option>
                     <option value="4xx">4xx Client Error</option>
                     <option value="5xx">5xx Server Error</option>
                 </select>
 
-                <label>
-                    <input
-                        type="checkbox"
-                        checked={autoRefresh()}
-                        onChange={e => toggleAutoRefresh(e.currentTarget.checked)}
+                    <label for="logs-auto-refresh">
+                        <input
+                            id="logs-auto-refresh"
+                            name="logs-auto-refresh"
+                            type="checkbox"
+                            checked={autoRefresh()}
+                            onChange={e => toggleAutoRefresh(e.currentTarget.checked)}
                     />
                     Auto-refresh
                 </label>
 
-                <label class="refresh-interval-label">
+                <label class="refresh-interval-label" for="logs-refresh-interval">
                     Every
                     <input
+                        id="logs-refresh-interval"
+                        name="logs-refresh-interval"
+                        autocomplete="off"
                         type="number"
                         min="1"
                         max="60"
@@ -173,13 +187,13 @@ export default function Logs(props) {
             <Show when={!loading() || requests().length > 0} fallback={
                 <div class="loading-state">
                     <div class="loading-spinner" />
-                    Loading requests...
+                    Loading requests…
                 </div>
             }>
                 <Show when={filteredRequests().length > 0} fallback={
                     <div class="empty-state">
                         <div class="empty-state-icon">
-                            <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+                            <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
                         </div>
                         <div class="empty-state-title">No requests logged yet</div>
                         <div class="empty-state-text">
@@ -202,11 +216,11 @@ export default function Logs(props) {
                                 </tr>
                             </thead>
                             <tbody>
-                                <For each={filteredRequests()}>
+                                <For each={visibleRequests()}>
                                     {(req) => (
                                         <tr>
                                             <td style={{ "white-space": "nowrap", "font-family": "var(--font-mono)", "font-size": "11px", color: "var(--text-secondary)" }}>
-                                                {formatTime(req.timestamp)}
+                                                {formatTime(req.timestamp) || '--'}
                                             </td>
                                             <td>
                                                 <span class={`badge-method ${methodClass(req.method)}`}>
@@ -230,6 +244,13 @@ export default function Logs(props) {
                             </tbody>
                         </table>
                     </div>
+                    <Show when={filteredRequests().length > PAGE_SIZE}>
+                        <div class="pagination-controls" aria-label="Log pagination">
+                            <span>{pageStart() + 1}-{pageEnd()} of {filteredRequests().length}</span>
+                            <button class="btn btn-secondary" onClick={() => setPage(Math.max(1, page() - 1))} disabled={page() <= 1}>Previous</button>
+                            <button class="btn btn-secondary" onClick={() => setPage(Math.min(totalPages(), page() + 1))} disabled={page() >= totalPages()}>Next</button>
+                        </div>
+                    </Show>
                 </Show>
             </Show>
         </div>

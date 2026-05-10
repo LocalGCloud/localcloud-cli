@@ -1,5 +1,6 @@
 import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
 import { api } from '../api.js';
+import { formatNumber, onActivate } from '../utils/a11y.js';
 
 const SERVICE_NAMES = {
     gcs: 'Cloud Storage',
@@ -196,7 +197,7 @@ export default function Dashboard(props) {
             </div>
 
             <Show when={fetchError()}>
-                <div class="alert alert-error" style={{ "margin-bottom": "16px" }}>{fetchError()}</div>
+                <div class="alert alert-error" role="alert" style={{ "margin-bottom": "16px" }}>{fetchError()}</div>
             </Show>
 
             <div class="summary-bar">
@@ -219,7 +220,7 @@ export default function Dashboard(props) {
                 <div class="stat-card">
                     <div class="stat-card-label">Total Requests</div>
                     <div class="stat-card-value" style={{ "font-size": "16px" }}>
-                        {totalRequests().toLocaleString()}
+                        {formatNumber(totalRequests())}
                     </div>
                 </div>
                 <div class="stat-card">
@@ -267,7 +268,7 @@ export default function Dashboard(props) {
                                         return 'unhealthy';
                                     };
                                     const statusLabel = () => {
-                                        if (isToggling()) return 'Updating...';
+                                        if (isToggling()) return 'Updating…';
                                         if (isDisabled()) return 'Disabled';
                                         if (isHealthy()) return 'Healthy';
                                         if (isUnknown()) return 'Unknown';
@@ -291,6 +292,9 @@ export default function Dashboard(props) {
                                         <tr
                                             class={`clickable-row ${isDisabled() ? 'service-row-disabled' : ''}`}
                                             onClick={() => handleRowClick(svc.id)}
+                                            onKeyDown={onActivate(() => handleRowClick(svc.id))}
+                                            role="button"
+                                            tabIndex="0"
                                         >
                                             <td onClick={(e) => e.stopPropagation()}>
                                                 <label class="toggle-switch">
@@ -299,6 +303,7 @@ export default function Dashboard(props) {
                                                         checked={svc.enabled}
                                                         disabled={isToggling()}
                                                         onChange={() => handleToggle(svc.id, svc.enabled)}
+                                                        aria-label={`${svc.enabled ? 'Disable' : 'Enable'} ${svc.displayName}`}
                                                     />
                                                     <span class="toggle-slider" />
                                                 </label>
@@ -307,7 +312,10 @@ export default function Dashboard(props) {
                                                 <ServiceIcon id={svc.id} size={18} />
                                             </td>
                                             <td style={{ "font-weight": "600", "font-size": "13px" }}>
-                                                {svc.displayName}
+                                                <span style={{ display: 'inline-flex', "align-items": 'center', gap: '8px' }}>
+                                                    <span>{svc.displayName}</span>
+                                                    <Show when={svc.id === 'firestore'}><span class="badge badge-coming-up">Coming up</span></Show>
+                                                </span>
                                             </td>
                                             <td>
                                                 <span class="status-indicator">
@@ -336,17 +344,18 @@ export default function Dashboard(props) {
                                                         disabled={envVar === '--'}
                                                         onClick={() => handleCopyEnvVar(envVar, endpointVal)}
                                                         title={copied ? 'Copied!' : 'Copy export command'}
+                                                        aria-label={copied ? `Copied ${envVar}` : `Copy ${envVar} export command`}
                                                     >
                                                         {copied ? (
-                                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
                                                         ) : (
-                                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
                                                         )}
                                                     </button>
                                                 </div>
                                             </td>
                                             <td style={{ "text-align": 'right', "font-weight": '600', "font-family": "var(--font-mono)", "font-size": "12px" }}>
-                                                {(svc.request_count || 0).toLocaleString()}
+                                                {formatNumber(svc.request_count || 0)}
                                             </td>
                                             <td>
                                                 <div style={{ display: 'flex', "align-items": 'center', gap: '8px' }}>
@@ -361,7 +370,7 @@ export default function Dashboard(props) {
                                                 </div>
                                             </td>
                                             <td style={{ "text-align": 'right', "font-weight": '600', "font-size": "12px" }}>
-                                                {usageScore().toLocaleString()}
+                                                {formatNumber(usageScore())}
                                             </td>
                                         </tr>
                                     );
@@ -373,7 +382,7 @@ export default function Dashboard(props) {
             </div>
 
             <Show when={toggleError()}>
-                <div class="toggle-error">{toggleError()}</div>
+                <div class="toggle-error" role="alert">{toggleError()}</div>
             </Show>
 
             <div class="actions-bar">

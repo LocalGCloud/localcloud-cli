@@ -1,6 +1,7 @@
 import { createSignal, createEffect, For, Show } from 'solid-js';
 import { api } from '../api.js';
 import { IconChevron, IconColumn, iconForType } from './TreeIcons.jsx';
+import { onActivate } from '../utils/a11y.js';
 
 export function SchemaExplorer(props) {
     // props: source ("local"|"remote"), serviceId, onSelect, syncManifests
@@ -52,10 +53,13 @@ export function SchemaExplorer(props) {
         const Icon = iconForType(node.type);
         const syncInfo = () => isLeaf ? getSyncBadge(node.id) : null;
 
+        const activate = () => isLeaf ? select(node) : toggle(node.id);
+
         return (
             <div class="tree-group">
                 <div class={`tree-row ${isLeaf ? 'tree-row-tbl' : 'tree-row-db'} ${isLeaf && selected() === node.id ? 'active' : ''}`}
-                     onClick={() => isLeaf ? select(node) : toggle(node.id)}
+                     onClick={activate}
+                     onKeyDown={onActivate(activate)}
                      role={isLeaf ? 'treeitem' : 'button'}
                      aria-selected={isLeaf ? selected() === node.id : undefined}
                      aria-expanded={!isLeaf ? !!expanded()[node.id] : undefined}
@@ -118,12 +122,12 @@ export function SchemaExplorer(props) {
                 </div>
             </Show>
             <Show when={error()}>
-                <div class="alert alert-error" style="margin: 8px">{error()}</div>
+                <div class="alert alert-error" role="alert" style="margin: 8px">{error()}</div>
             </Show>
             <Show when={!loading() && !error()}>
                 <Show when={nodes().length === 0}>
                     <div class="sql-explorer-empty">
-                        <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.12 }}>
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false" style={{ opacity: 0.12 }}>
                             <ellipse cx="12" cy="5.5" rx="9" ry="3.5"/>
                             <path d="M3 5.5v13c0 1.93 4.03 3.5 9 3.5s9-1.57 9-3.5v-13"/>
                         </svg>

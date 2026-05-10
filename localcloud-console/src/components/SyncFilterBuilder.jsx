@@ -72,9 +72,10 @@ export function SyncFilterBuilder(props) {
                                     {(op) => <option value={op}>{op}</option>}
                                 </For>
                             </select>
-                            <input id={`filter-val-${i()}`} name={`filter-value-${i()}`}
-                                   aria-label={`Value for ${f.column}`}
-                                   class="form-input" type="text" value={f.value}
+	                            <input id={`filter-val-${i()}`} name={`filter-value-${i()}`}
+	                                   aria-label={`Value for ${f.column}`}
+                                       autocomplete="off"
+	                                   class="form-input" type="text" value={f.value}
                                    onInput={e => update(i(), 'value', e.target.value)}
                                    placeholder="value" style="flex: 1" />
                             <button class="btn btn-icon" onClick={() => remove(i())}

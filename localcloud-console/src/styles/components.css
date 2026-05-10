@@ -199,7 +199,7 @@ button,
   border-radius: var(--radius-sm);
   border: none;
   cursor: pointer;
-  transition: all var(--transition);
+  transition: background var(--transition), color var(--transition), border-color var(--transition), transform var(--transition), opacity var(--transition);
   white-space: nowrap;
   user-select: none;
   letter-spacing: 0;
@@ -267,7 +267,7 @@ button,
   align-items: center;
   justify-content: center;
   font-size: 16px;
-  transition: all var(--transition);
+  transition: background var(--transition), color var(--transition), border-color var(--transition), opacity var(--transition);
 }
 
 .btn-icon:hover {
@@ -324,6 +324,18 @@ button,
   padding: 1px 5px;
   border-radius: 3px;
   vertical-align: middle;
+}
+
+.badge-coming-up {
+  background: var(--warning-soft);
+  color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 24%, transparent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
 }
 
 .badge-local {
@@ -803,7 +815,7 @@ button,
   cursor: pointer;
   font-size: 13px;
   font-family: var(--font-body);
-  transition: all 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
 
 .data-breadcrumb-link:hover {
@@ -875,7 +887,7 @@ button,
   font-family: var(--font-body);
   cursor: pointer;
   text-align: left;
-  transition: all 0.12s;
+  transition: background 0.12s, color 0.12s;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -919,6 +931,21 @@ button,
 .clickable-row td:first-child {
   color: var(--primary);
   font-weight: 500;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.pagination-controls .btn {
+  height: 28px;
+  padding: 0 10px;
 }
 
 /* ---------- Actions Bar ---------- */
@@ -1061,7 +1088,7 @@ button,
   color: var(--text-tertiary);
   cursor: pointer;
   border-radius: var(--radius-xs);
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
   flex-shrink: 0;
 }
 
@@ -1243,7 +1270,7 @@ button,
   color: var(--text-secondary);
   cursor: pointer;
   font-family: var(--font-body);
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .segmented-toggle-btn:first-child {
@@ -1304,7 +1331,7 @@ button,
   color: var(--text-tertiary);
   cursor: pointer;
   border-radius: var(--radius-xs);
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
   opacity: 0;
 }
 
@@ -1372,6 +1399,7 @@ button,
   align-items: center;
   justify-content: center;
   animation: fade-in 100ms ease;
+  overscroll-behavior: contain;
 }
 
 .modal-card {
@@ -1476,6 +1504,13 @@ button,
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
+}
+
+.se-service-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -1806,8 +1841,14 @@ button,
   background: var(--primary-hover, #3b78e7);
   transform: scale(1.1);
 }
-.tree-row:hover .tree-run-btn {
+.tree-row:hover .tree-run-btn,
+.tree-row:focus-within .tree-run-btn {
   display: flex;
+}
+
+.sync-history-toggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
 }
 
 /* Column name + type */
@@ -2321,9 +2362,29 @@ button,
   border-color: var(--border);
 }
 
-.aura-sql-tab i {
-  font-style: normal;
+.aura-sql-tab:focus-visible,
+.aura-sql-tab-add:focus-visible,
+.sql-resize-handle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.aura-sql-tab-close {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
   opacity: 0.6;
+  padding: 2px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.aura-sql-tab-close:hover,
+.aura-sql-tab-close:focus-visible {
+  opacity: 1;
+  background: var(--surface-hover);
 }
 
 .aura-sql-tab-add {

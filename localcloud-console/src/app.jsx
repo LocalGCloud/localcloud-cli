@@ -28,7 +28,7 @@ const ICON_PATHS = {
 function Icon(props) {
     const path = ICON_PATHS[props.name];
     if (!path) return null;
-    return <svg width={props.size || 18} height={props.size || 18} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={path} /></svg>;
+    return <svg width={props.size || 18} height={props.size || 18} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d={path} /></svg>;
 }
 
 const NAV_ITEMS = [
@@ -40,12 +40,29 @@ const NAV_ITEMS = [
 
 const SERVICE_GROUPS = [
     { name: 'Storage', tone: 'green', services: [{ id: 'gcs', label: 'Cloud Storage' }, { id: 'secretmanager', label: 'Secret Manager' }] },
-    { name: 'Databases', tone: 'blue', services: [{ id: 'firestore', label: 'Firestore' }, { id: 'spanner', label: 'Spanner' }, { id: 'bigtable', label: 'Bigtable' }, { id: 'memorystore', label: 'Memorystore' }] },
+    { name: 'Databases', tone: 'blue', services: [{ id: 'firestore', label: 'Firestore', tag: 'Coming up' }, { id: 'spanner', label: 'Spanner' }, { id: 'bigtable', label: 'Bigtable' }, { id: 'memorystore', label: 'Memorystore' }] },
     { name: 'Analytics', tone: 'amber', services: [{ id: 'bigquery', label: 'BigQuery' }, { id: 'pubsub', label: 'Pub/Sub' }] },
     { name: 'Compute', tone: 'red', services: [{ id: 'cloudrun', label: 'Cloud Run' }, { id: 'gke', label: 'GKE' }, { id: 'compute', label: 'Compute Engine' }, { id: 'cloudtasks', label: 'Cloud Tasks' }, { id: 'workflows', label: 'Workflows' }] },
     { name: 'Operations', tone: 'violet', services: [{ id: 'logging', label: 'Logging' }, { id: 'monitoring', label: 'Monitoring' }] },
 ];
 const FLAT_SERVICES = SERVICE_GROUPS.flatMap(group => group.services.map(svc => ({ ...svc, group: group.name, tone: group.tone })));
+const DOCKERHUB_IMAGE = 'localcloud/localcloud';
+const DOCKERHUB_LATEST_TAG_URL = `https://hub.docker.com/v2/repositories/${DOCKERHUB_IMAGE}/tags/latest`;
+
+function shortVersion(health) {
+    const raw = String(health?.version || '0.1.0').trim();
+    const base = (raw.split('+')[0] || raw).trim();
+    if (!base) return 'v0.1.0';
+    return base.startsWith('v') ? base : `v${base}`;
+}
+
+function parseBuildDate(health) {
+    const raw = String(health?.version || '').trim();
+    const buildPart = raw.includes('+') ? raw.split('+').slice(1).join('+') : '';
+    const dateText = buildPart.includes('.') ? buildPart.split('.').slice(1).join('.') : '';
+    const parsed = dateText ? Date.parse(dateText) : NaN;
+    return Number.isFinite(parsed) ? parsed : null;
+}
 
 function parseHash() {
     const hash = window.location.hash.replace(/^#\/?/, '');
@@ -79,9 +96,11 @@ function App() {
     const [searchQuery, setSearchQuery] = createSignal('');
     const [globalSearchIndex, setGlobalSearchIndex] = createSignal([]);
     const [updateDismissed, setUpdateDismissed] = createSignal(false);
+    const [imageUpdateInfo, setImageUpdateInfo] = createSignal(null);
     const [settingsMenuOpen, setSettingsMenuOpen] = createSignal(false);
     const [collapsedGroups, setCollapsedGroups] = createSignal({});
     let healthFailCount = 0;
+    let imageUpdateCheckStarted = false;
 
     const [projects, setProjects] = createSignal([]);
     const [activeProject, setActiveProjectState] = createSignal(null);
@@ -254,11 +273,40 @@ function App() {
     const projectId = () => activeProject() || healthData()?.project_id || 'local-project';
     const projectRegion = () => routingData()?.__default_region || credentialData()?.region || 'us-central1';
     const persistenceMode = () => healthData()?.persistence || 'PostgreSQL';
+    const versionDisplay = () => shortVersion(healthData());
+    const versionTitle = () => healthData()?.version_display || healthData()?.version || versionDisplay();
 
-    const updateAvailable = () => {
+    const rawUpdateAvailable = () => {
         const h = healthData();
-        return h?.update_available && !updateDismissed() ? h.update_available : null;
+        return h?.update_available || imageUpdateInfo();
     };
+    const updateAvailable = () => {
+        const info = rawUpdateAvailable();
+        return info && !updateDismissed() ? info : null;
+    };
+
+    createEffect(() => {
+        const h = healthData();
+        if (!h || h.update_available || imageUpdateCheckStarted) return;
+        const localBuildTime = parseBuildDate(h);
+        if (!localBuildTime) return;
+        imageUpdateCheckStarted = true;
+        const controller = new AbortController();
+        fetch(DOCKERHUB_LATEST_TAG_URL, { cache: 'no-store', signal: controller.signal })
+            .then(res => res.ok ? res.json() : null)
+            .then(tag => {
+                const remoteUpdated = tag?.last_updated;
+                const remoteBuildTime = remoteUpdated ? Date.parse(remoteUpdated) : NaN;
+                if (!Number.isFinite(remoteBuildTime) || remoteBuildTime <= localBuildTime + 60000) return;
+                setImageUpdateInfo({
+                    current: h.version || versionDisplay(),
+                    remote_updated: remoteUpdated.slice(0, 10),
+                    pull: `docker pull ${DOCKERHUB_IMAGE}:latest`
+                });
+            })
+            .catch(() => {});
+        onCleanup(() => controller.abort());
+    });
 
     const buildGlobalSearchIndex = async () => {
         const dataServices = ['firestore', 'spanner', 'bigtable', 'bigquery', 'gcs', 'memorystore'];
@@ -310,7 +358,7 @@ function App() {
     });
 
     const renderPage = () => {
-        if (!activeProject()) return <div class="loading-state"><div class="loading-spinner" /> Loading project...</div>;
+        if (!activeProject()) return <div class="loading-state"><div class="loading-spinner" /> Loading project…</div>;
         switch (currentPage()) {
             case 'dashboard':
                 return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={activeProject} />;
@@ -346,46 +394,55 @@ function App() {
                     <button class="aura-sidebar-toggle" onClick={() => {
                         if (window.innerWidth <= 900) setMobileSidebarOpen(!mobileSidebarOpen());
                         else setSidebarPinned(!sidebarPinned());
-                    }} title={sidebarPinned() ? 'Collapse services' : 'Pin services'}>
-                        <img src="/icons/localcloud-mark.svg" alt="" />
+                    }} title={sidebarPinned() ? 'Collapse services' : 'Pin services'} aria-label={sidebarPinned() ? 'Collapse services sidebar' : 'Pin services sidebar'} aria-expanded={window.innerWidth <= 900 ? mobileSidebarOpen() : sidebarPinned()}>
+                        <img src="/icons/localcloud-mark.svg" alt="" width="28" height="28" />
                     </button>
                     <button class="aura-brand-lockup aura-brand-button" onClick={() => navigateTo('dashboard')} title="Nerve Center">
                         <span class="aura-brand-name">LocalCloud</span>
-                        <span class="aura-brand-mark">Aura</span>
+                        <span
+                            class={`aura-brand-version ${rawUpdateAvailable() ? 'has-update' : ''}`}
+                            title={rawUpdateAvailable() ? `New image available: ${rawUpdateAvailable().pull || `docker pull ${DOCKERHUB_IMAGE}:latest`}` : versionTitle()}
+                            aria-label={rawUpdateAvailable() ? `${versionDisplay()}, newer Docker image available` : versionDisplay()}
+                        >
+                            {versionDisplay()}
+                            <Show when={rawUpdateAvailable()}>
+                                <span class="aura-version-alert-dot" aria-hidden="true" />
+                            </Show>
+                        </span>
                     </button>
-                    <div class="aura-project-wrap">
-                        <button class="topbar-project-chip aura-project-chip" onClick={() => setProjectDropdownOpen(!projectDropdownOpen())}>
-                            <span class={`aura-connection-led ${connectionStatus()}`} />
-                            <span class="aura-project-main">{projectId()} ({projectRegion()})</span>
-                            <span class="aura-project-sub">{persistenceMode()} backend</span>
-                        </button>
-                        <Show when={projectDropdownOpen()}>
-                            <div class="project-dropdown aura-project-dropdown">
-                                <div class="project-dropdown-label">Projects</div>
-                                <For each={projects()}>
-                                    {(p) => <button class={`project-dropdown-item ${activeProject() === p.project_id ? 'active' : ''}`} onClick={() => switchProject(p.project_id)}>
-                                        <span>{p.project_id}</span>
-                                        <Show when={p.display_name && p.display_name !== p.project_id}><span>{p.display_name}</span></Show>
-                                    </button>}
-                                </For>
-                                <button class="project-dropdown-item aura-new-project" onClick={() => { setProjectDropdownOpen(false); setShowNewProjectDialog(true); }}>New Project</button>
-                            </div>
-                        </Show>
-                    </div>
+                </div>
+                <div class="aura-project-wrap">
+                    <button class="topbar-project-chip aura-project-chip" onClick={() => setProjectDropdownOpen(!projectDropdownOpen())} aria-expanded={projectDropdownOpen()}>
+                        <span class={`aura-connection-led ${connectionStatus()}`} />
+                        <span class="aura-project-main">{projectId()} ({projectRegion()})</span>
+                        <span class="aura-project-sub">{persistenceMode()} backend</span>
+                    </button>
+                    <Show when={projectDropdownOpen()}>
+                        <div class="project-dropdown aura-project-dropdown">
+                            <div class="project-dropdown-label">Projects</div>
+                            <For each={projects()}>
+                                {(p) => <button class={`project-dropdown-item ${activeProject() === p.project_id ? 'active' : ''}`} onClick={() => switchProject(p.project_id)}>
+                                    <span>{p.project_id}</span>
+                                    <Show when={p.display_name && p.display_name !== p.project_id}><span>{p.display_name}</span></Show>
+                                </button>}
+                            </For>
+                            <button class="project-dropdown-item aura-new-project" onClick={() => { setProjectDropdownOpen(false); setShowNewProjectDialog(true); }}>New Project</button>
+                        </div>
+                    </Show>
                 </div>
                 <div class="topbar-center aura-search-center">
                     <button class="aura-global-search" onClick={() => { setSearchOpen(true); setSearchQuery(''); if (globalSearchIndex().length === 0) buildGlobalSearchIndex(); }}>
                         <Icon name="search" size={16} />
-                        <span>Search services, tables, logs...</span>
+                        <span>Search services, tables, logs…</span>
                         <kbd>{navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}</kbd><kbd>K</kbd>
                     </button>
                 </div>
                 <div class="topbar-right">
-                    <button class="aura-top-icon" onClick={() => navigateTo('settings')} title="User docs">
+                    <button class="aura-top-icon" onClick={() => navigateTo('settings')} title="User docs" aria-label="Open user docs">
                         <Icon name="docs" size={22} />
                     </button>
                     <div class="aura-settings-wrap">
-                        <button class="aura-top-icon" onClick={() => setSettingsMenuOpen(!settingsMenuOpen())} title="Settings">
+                        <button class="aura-top-icon" onClick={() => setSettingsMenuOpen(!settingsMenuOpen())} title="Settings" aria-label="Open settings menu" aria-expanded={settingsMenuOpen()}>
                             <Icon name="settings" size={22} />
                         </button>
                         <Show when={settingsMenuOpen()}>
@@ -397,7 +454,7 @@ function App() {
                             </div>
                         </Show>
                     </div>
-                    <button class="topbar-toggle" onClick={toggleDarkMode} title={darkMode() ? 'Switch to light mode' : 'Switch to dark mode'}>
+                    <button class="topbar-toggle" onClick={toggleDarkMode} title={darkMode() ? 'Switch to light mode' : 'Switch to dark mode'} aria-label={darkMode() ? 'Switch to light mode' : 'Switch to dark mode'}>
                         <Icon name={darkMode() ? 'sun' : 'moon'} size={18} />
                     </button>
                 </div>
@@ -407,7 +464,7 @@ function App() {
                 <div class="offline-banner" role="alert">Cannot reach LocalCloud backend. Is the container running?</div>
             </Show>
             <Show when={connectionStatus() === 'connecting'}>
-                <div class="offline-banner connecting" role="status"><div class="loading-spinner" /> Connecting to LocalCloud...</div>
+                <div class="offline-banner connecting" role="status"><div class="loading-spinner" /> Connecting to LocalCloud…</div>
             </Show>
 
             <Show when={mobileSidebarOpen()}>
@@ -421,7 +478,7 @@ function App() {
                         <span class="aura-sidebar-nav-label">Nerve Center</span>
                         <div class="aura-tooltip">Nerve Center</div>
                     </button>
-                    <button class="aura-sidebar-pin-btn" onClick={() => setSidebarPinned(!sidebarPinned())}>
+                    <button class="aura-sidebar-pin-btn" onClick={() => setSidebarPinned(!sidebarPinned())} aria-label={sidebarPinned() ? 'Unpin sidebar' : 'Pin sidebar'} aria-pressed={sidebarPinned()}>
                         <Icon name="pin" size={16} />
                         <div class="aura-tooltip">{sidebarPinned() ? 'Unpin sidebar' : 'Pin sidebar'}</div>
                     </button>
@@ -429,7 +486,7 @@ function App() {
                 <div class="aura-service-groups">
                     <For each={SERVICE_GROUPS}>
                         {(group) => <div class={`aura-service-group tone-${group.tone}`}>
-                            <button class={`aura-group-label ${collapsedGroups()[group.name] ? 'collapsed' : ''}`} onClick={() => toggleGroup(group.name)} title={`${group.name} services`}>
+                            <button class={`aura-group-label ${collapsedGroups()[group.name] ? 'collapsed' : ''}`} onClick={() => toggleGroup(group.name)} title={`${group.name} services`} aria-expanded={!collapsedGroups()[group.name]}>
                                 <Icon name="chevron" size={16} />
                                 <span>{group.name}</span>
                                 <small>{group.services.length}</small>
@@ -438,8 +495,9 @@ function App() {
                                 <div class="aura-group-services">
                                     <For each={group.services}>
                                         {(svc) => <button class={`sidebar-sub-item ${selectedService() === svc.id && currentPage() === 'data' ? 'active' : ''}`} onClick={() => handleServiceClick(svc.id)}>
-                                            <img src={`/icons/${svc.id}.svg`} alt="" class="sidebar-sub-item-icon" />
+                                            <img src={`/icons/${svc.id}.svg`} alt="" width="20" height="20" class="sidebar-sub-item-icon" />
                                             <span class="sidebar-sub-item-label">{svc.label}</span>
+                                            <Show when={svc.tag}><span class="badge badge-coming-up">{svc.tag}</span></Show>
                                             <Show when={routingMode(svc.id) === 'remote'}><span class="badge badge-cloud">Cloud</span></Show>
                                             <span class={`sidebar-sub-item-dot ${healthStatus(svc.id)}`} title={healthStatus(svc.id)} />
                                             <div class="aura-tooltip">{svc.label}</div>
@@ -461,13 +519,13 @@ function App() {
                     <div class="aura-command-menu" onClick={(e) => e.stopPropagation()}>
                         <div class="aura-command-input">
                             <Icon name="search" size={18} />
-                            <input autofocus value={searchQuery()} onInput={(e) => setSearchQuery(e.currentTarget.value)} placeholder="Jump to a service, page, table, or log surface" />
+                            <input autofocus value={searchQuery()} onInput={(e) => setSearchQuery(e.currentTarget.value)} aria-label="Command search" name="command-search" autocomplete="off" placeholder="Jump to a service, page, table, or log surface…" />
                         </div>
                         <div class="aura-command-list">
                             <For each={searchResults()}>
                                 {(item) => <button class="aura-command-item" onClick={item.action}>
                                     <span class="aura-command-icon">
-                                        <Show when={item.type === 'Page'} fallback={<img src={`/icons/${item.icon}.svg`} alt="" />}>
+                                        <Show when={item.type === 'Page'} fallback={<img src={`/icons/${item.icon}.svg`} alt="" width="16" height="16" />}>
                                             <Icon name={item.icon} size={16} />
                                         </Show>
                                     </span>
@@ -483,14 +541,14 @@ function App() {
             </Show>
 
             <Show when={showNewProjectDialog()}>
-                <div class="modal-overlay" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) { setShowNewProjectDialog(false); setProjectError(null); } }}>
+                <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="new-project-title" onClick={(e) => { if (e.target === e.currentTarget) { setShowNewProjectDialog(false); setProjectError(null); } }}>
                     <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
-                        <h2>New Project</h2>
-                        <Show when={projectError()}><div class="alert alert-error">{projectError()}</div></Show>
+                        <h2 id="new-project-title">New Project</h2>
+                        <Show when={projectError()}><div class="alert alert-error" role="alert">{projectError()}</div></Show>
                         <label class="form-label" for="project-id-input">Project ID</label>
-                        <input id="project-id-input" class="form-input form-input-mono" value={newProjectId()} onInput={(e) => setNewProjectId(e.currentTarget.value)} placeholder="my-project" />
+                        <input id="project-id-input" name="project-id" autocomplete="off" class="form-input form-input-mono" value={newProjectId()} onInput={(e) => setNewProjectId(e.currentTarget.value)} placeholder="my-project" />
                         <label class="form-label" for="project-name-input">Display Name</label>
-                        <input id="project-name-input" class="form-input" value={newProjectName()} onInput={(e) => setNewProjectName(e.currentTarget.value)} placeholder="My Project" />
+                        <input id="project-name-input" name="project-display-name" autocomplete="off" class="form-input" value={newProjectName()} onInput={(e) => setNewProjectName(e.currentTarget.value)} placeholder="My Project" />
                         <div class="modal-actions">
                             <button class="btn btn-secondary" onClick={() => { setShowNewProjectDialog(false); setProjectError(null); }}>Cancel</button>
                             <button class="btn btn-primary" onClick={handleCreateProject} disabled={!newProjectId().trim()}>Create</button>

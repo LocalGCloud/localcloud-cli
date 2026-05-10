@@ -1,16 +1,18 @@
 import { createSignal, createEffect, Show, For } from 'solid-js';
 import { api } from '../api.js';
 import { SERVICE_META, SDK_ORDER, SAMPLE_CODE, CLI_COMMANDS, DOCKER_RUN_PORTS, DATABASE_EXAMPLES } from './settings-data.js';
+import { onActivate } from '../utils/a11y.js';
 
 // --- SVG Icons ---
 const CopyIcon = () => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
 );
 const CheckIcon = () => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="20 6 9 17 4 12"/></svg>
 );
 const ChevronIcon = (props) => (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+        aria-hidden="true" focusable="false"
         style={{ transition: "transform 150ms ease", transform: props.open ? "rotate(90deg)" : "rotate(0deg)" }}>
         <polyline points="9 18 15 12 9 6"/>
     </svg>
@@ -77,7 +79,7 @@ function CopyableEnvVar(props) {
         <div class="env-var-row">
             <span class="env-var-key">{props.name}</span>
             <span class="env-var-value">{props.value}</span>
-            <button class="env-var-copy" onClick={handleCopy} title="Copy to clipboard">
+            <button class="env-var-copy" onClick={handleCopy} title="Copy to clipboard" aria-label={`Copy ${props.name} export command`}>
                 <Show when={copied()} fallback={<CopyIcon />}>
                     <CheckIcon />
                 </Show>
@@ -115,7 +117,7 @@ function ServiceEnvCard(props) {
             </div>
             <CopyableEnvVar name={props.envKey} value={props.value} />
             <Show when={snippets()}>
-                <button class="env-sample-toggle" onClick={() => setExpanded(!expanded())}>
+                <button class="env-sample-toggle" onClick={() => setExpanded(!expanded())} aria-expanded={expanded()}>
                     <ChevronIcon open={expanded()} />
                     <span>Sample Code</span>
                 </button>
@@ -325,7 +327,11 @@ function EnvTabs(props) {
                             return (
                                 <div class="env-service-card" style={{ "margin-bottom": "8px" }}>
                                     <div style={{ display: "flex", "align-items": "center", gap: "10px", cursor: "pointer" }}
-                                        onClick={() => toggleService(svcId)}>
+                                        onClick={() => toggleService(svcId)}
+                                        onKeyDown={onActivate(() => toggleService(svcId))}
+                                        role="button"
+                                        tabIndex="0"
+                                        aria-expanded={expandedServices().has(svcId)}>
                                         <ChevronIcon open={expandedServices().has(svcId)} />
                                         <img src={`/icons/${svcId}.svg`} alt="" width="20" height="20" style={{ "object-fit": "contain" }} />
                                         <span class="env-service-name">{svc.label}</span>
@@ -480,7 +486,7 @@ function DatabaseExamples() {
                         <button
                             classList={{ "env-sample-tab": true, "active": activeDb() === id }}
                             onClick={() => setActiveDb(id)}
-                            style={{ "border-radius": "6px", padding: "5px 14px", "font-size": "12px", "font-weight": "500", border: "1px solid var(--border)", cursor: "pointer", background: activeDb() === id ? "var(--primary)" : "var(--surface)", color: activeDb() === id ? "#fff" : "var(--text-primary)", transition: "all 0.15s" }}
+                            style={{ "border-radius": "6px", padding: "5px 14px", "font-size": "12px", "font-weight": "500", border: "1px solid var(--border)", cursor: "pointer", background: activeDb() === id ? "var(--primary)" : "var(--surface)", color: activeDb() === id ? "#fff" : "var(--text-primary)", transition: "background 0.15s, border-color 0.15s, color 0.15s" }}
                         >
                             {db.label}
                         </button>
@@ -512,9 +518,13 @@ function DatabaseExamples() {
                                             {/* Header */}
                                             <div
                                                 onClick={() => toggleExample(idx())}
+                                                onKeyDown={onActivate(() => toggleExample(idx()))}
+                                                role="button"
+                                                tabIndex="0"
+                                                aria-expanded={expandedExamples().has(idx())}
                                                 style={{ display: "flex", "align-items": "center", gap: "8px", padding: "10px 14px", cursor: "pointer", "user-select": "none", background: !example.supported ? "rgba(234,67,53,0.04)" : "transparent" }}
                                             >
-                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="var(--text-secondary)" style={{ transition: "transform 0.15s", transform: expandedExamples().has(idx()) ? "rotate(90deg)" : "rotate(0deg)", "flex-shrink": "0" }}>
+                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="var(--text-secondary)" aria-hidden="true" focusable="false" style={{ transition: "transform 0.15s", transform: expandedExamples().has(idx()) ? "rotate(90deg)" : "rotate(0deg)", "flex-shrink": "0" }}>
                                                     <path d="M8 5v14l11-7z"/>
                                                 </svg>
                                                 <span style={{ "font-size": "13px", "font-weight": "600", flex: "1" }}>{example.title}</span>
@@ -536,7 +546,7 @@ function DatabaseExamples() {
                                                 <div style={{ "border-top": "1px solid var(--border)" }}>
                                                     <Show when={!example.supported && example.note}>
                                                         <div style={{ padding: "8px 14px", "font-size": "12px", color: "#ea4335", background: "rgba(234,67,53,0.04)", "border-bottom": "1px solid var(--border)", display: "flex", gap: "6px", "align-items": "flex-start" }}>
-                                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="#ea4335" style={{ "flex-shrink": "0", "margin-top": "1px" }}><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+                                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="#ea4335" aria-hidden="true" focusable="false" style={{ "flex-shrink": "0", "margin-top": "1px" }}><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
                                                             <span>{example.note}</span>
                                                         </div>
                                                     </Show>
@@ -593,15 +603,15 @@ function UserGuideModal(props) {
     );
 
     return (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", "z-index": 300, display: "flex", "align-items": "stretch", "justify-content": "center", "padding": "24px" }}
+        <div role="dialog" aria-modal="true" aria-labelledby="user-guide-title" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", "z-index": 300, display: "flex", "align-items": "stretch", "justify-content": "center", "padding": "24px", "overscroll-behavior": "contain" }}
             onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
             <div style={{ background: "var(--surface)", "border-radius": "var(--radius)", width: "100%", "max-width": "860px", display: "flex", "flex-direction": "column", overflow: "hidden", "box-shadow": "var(--shadow-hover)" }}
                 onClick={(e) => e.stopPropagation()}>
                 {/* Header */}
                 <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", padding: "16px 24px", "border-bottom": "1px solid var(--border)" }}>
-                    <h2 style={{ margin: 0, "font-size": "18px", "font-weight": "400" }}>User Guide</h2>
-                    <button class="btn btn-icon" onClick={props.onClose} style={{ "font-size": "20px" }}>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    <h2 id="user-guide-title" style={{ margin: 0, "font-size": "18px", "font-weight": "400" }}>User Guide</h2>
+                    <button class="btn btn-icon" onClick={props.onClose} style={{ "font-size": "20px" }} aria-label="Close user guide">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                 </div>
 
@@ -716,7 +726,7 @@ gcloud secrets list --project=dev`}</CopyableCodeBlock>
 unset CLOUDSDK_AUTH_ACCESS_TOKEN
 unset CLOUDSDK_API_ENDPOINT_OVERRIDES_PUBSUB
 unset CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER
-# ... or simply open a new terminal session`}</CopyableCodeBlock>
+	# … or simply open a new terminal session`}</CopyableCodeBlock>
                             <Text>Opening a new terminal window is the simplest way to revert, since all LocalCloud variables are session-scoped.</Text>
                         </Section>
                         <Section title="Zero code changes">
@@ -970,10 +980,10 @@ export default function Settings(props) {
                 </p>
 
                 <Show when={envError()}>
-                    <div class="alert alert-error">{envError()}</div>
+                    <div class="alert alert-error" role="alert">{envError()}</div>
                 </Show>
                 <Show when={envLoading()}>
-                    <div class="loading-state"><div class="loading-spinner" /> Loading...</div>
+                    <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
                 </Show>
 
                 <Show when={categorized()}>
@@ -983,7 +993,7 @@ export default function Settings(props) {
                         <div class="env-quick-setup-desc">Run this command to auto-configure all environment variables:</div>
                         <div class="env-quick-setup-cmd">
                             <code>{autoConfigCmd}</code>
-                            <button class="env-var-copy" onClick={handleQuickCopy} title="Copy to clipboard" style={{ "flex-shrink": "0" }}>
+                            <button class="env-var-copy" onClick={handleQuickCopy} title="Copy to clipboard" aria-label="Copy quick setup command" style={{ "flex-shrink": "0" }}>
                                 <Show when={quickCopied()} fallback={<CopyIcon />}>
                                     <CheckIcon />
                                 </Show>
@@ -1068,7 +1078,7 @@ environment:
                                     </CopyableCodeBlock>
                                 </Show>
                                 <Show when={creds()?.error}>
-                                    <div class="alert alert-error" style={{ "margin-top": "8px", "margin-bottom": "0" }}>
+                                    <div class="alert alert-error" role="alert" style={{ "margin-top": "8px", "margin-bottom": "0" }}>
                                         {creds()?.error}
                                     </div>
                                 </Show>
@@ -1175,7 +1185,7 @@ environment:
                 </p>
                 <div class="card" style={{ padding: "16px 20px" }}>
                     <Show when={remoteAuthLoading()}>
-                        <div class="loading-state"><div class="loading-spinner" /> Checking connection...</div>
+                        <div class="loading-state"><div class="loading-spinner" /> Checking connection…</div>
                     </Show>
                     <Show when={!remoteAuthLoading()}>
                         <div style={{ display: "flex", "align-items": "center", gap: "10px", "margin-bottom": "12px" }}>
@@ -1199,7 +1209,7 @@ environment:
                             </div>
                             <div style={{ "margin-top": "12px" }}>
                                 <button class="btn btn-danger" onClick={handleRemoteDisconnect} disabled={remoteDisconnecting()}>
-                                    {remoteDisconnecting() ? 'Disconnecting...' : 'Disconnect'}
+                                    {remoteDisconnecting() ? 'Disconnecting…' : 'Disconnect'}
                                 </button>
                             </div>
                         </Show>
@@ -1222,12 +1232,15 @@ environment:
                 <div class="card" style={{ padding: "0" }}>
                     <div class="settings-row" style={{ padding: "16px 20px" }}>
                         <div class="settings-row-info">
-                            <div class="settings-row-label">Health Refresh</div>
+                            <label class="settings-row-label" for="settings-health-refresh">Health Refresh</label>
                             <div class="settings-row-desc">How often to poll for health data (1-60 seconds).</div>
                         </div>
                         <div class="settings-row-action">
                             <div class="input-group">
                                 <input
+                                    id="settings-health-refresh"
+                                    name="settings-health-refresh"
+                                    autocomplete="off"
                                     type="number"
                                     min="1"
                                     max="60"
@@ -1241,12 +1254,15 @@ environment:
                     </div>
                     <div class="settings-row" style={{ padding: "16px 20px", "border-top": "1px solid var(--border)" }}>
                         <div class="settings-row-info">
-                            <div class="settings-row-label">Logs Auto-Refresh</div>
+                            <label class="settings-row-label" for="settings-logs-refresh">Logs Auto-Refresh</label>
                             <div class="settings-row-desc">Polling interval for the Logs page (1-60 seconds). Toggle on/off in the Logs page.</div>
                         </div>
                         <div class="settings-row-action">
                             <div class="input-group">
                                 <input
+                                    id="settings-logs-refresh"
+                                    name="settings-logs-refresh"
+                                    autocomplete="off"
                                     type="number"
                                     min="1"
                                     max="60"
@@ -1260,12 +1276,15 @@ environment:
                     </div>
                     <div class="settings-row" style={{ padding: "16px 20px", "border-top": "1px solid var(--border)" }}>
                         <div class="settings-row-info">
-                            <div class="settings-row-label">Usage Auto-Refresh</div>
+                            <label class="settings-row-label" for="settings-usage-refresh">Usage Auto-Refresh</label>
                             <div class="settings-row-desc">Polling interval for the Cost Analysis page (1-120 seconds). Toggle on/off in the Usage page.</div>
                         </div>
                         <div class="settings-row-action">
                             <div class="input-group">
                                 <input
+                                    id="settings-usage-refresh"
+                                    name="settings-usage-refresh"
+                                    autocomplete="off"
                                     type="number"
                                     min="1"
                                     max="120"
@@ -1278,7 +1297,7 @@ environment:
                         </div>
                     </div>
                     <Show when={intervalMsg() || prefsMsg()}>
-                        <div style={{ padding: "0 20px 12px", "font-size": "12px", color: "var(--success)" }}>
+                        <div style={{ padding: "0 20px 12px", "font-size": "12px", color: "var(--success)" }} aria-live="polite">
                             {intervalMsg() || prefsMsg()}
                         </div>
                     </Show>
@@ -1304,7 +1323,7 @@ environment:
                         URL.revokeObjectURL(url);
                     } catch (e) { console.error('Export failed:', e); }
                 }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     Export State
                 </button>
             </div>
@@ -1326,7 +1345,7 @@ environment:
                             alert('Seed complete: ' + (data.total_records || 0) + ' records loaded across ' + Object.keys(data.services || {}).length + ' services');
                         } catch (e) { alert('Seed failed: ' + e.message); }
                     }}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
                         Re-seed Data
                     </button>
                 </div>
@@ -1586,7 +1605,7 @@ function AboutPage(props) {
                                         "font-size": "12px", "font-weight": "500",
                                         background: "var(--bg-subtle, #f1f3f4)", color: "var(--text-secondary)",
                                         "text-decoration": "none", border: "1px solid var(--border)",
-                                        transition: "all 0.15s",
+                                        transition: "background 0.15s, border-color 0.15s, color 0.15s",
                                     }}>
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
                                     jaysen@apache.org

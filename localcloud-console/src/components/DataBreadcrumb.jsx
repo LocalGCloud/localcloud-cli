@@ -6,12 +6,12 @@ import { Show, For } from 'solid-js';
  */
 export default function DataBreadcrumb(props) {
     return (
-        <nav class="data-breadcrumb">
+        <nav class="data-breadcrumb" aria-label="Data path">
             <For each={props.crumbs}>
                 {(crumb, i) => (
                     <>
                         <Show when={i() > 0}>
-                            <span class="data-breadcrumb-sep">{'\u203A'}</span>
+                            <span class="data-breadcrumb-sep" aria-hidden="true">{'\u203A'}</span>
                         </Show>
                         <Show when={crumb.onClick && !crumb.active} fallback={
                             <span class="data-breadcrumb-active">{crumb.label}</span>
