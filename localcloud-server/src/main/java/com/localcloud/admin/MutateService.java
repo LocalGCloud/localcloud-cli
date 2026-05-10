@@ -667,8 +667,8 @@ public class MutateService {
 
             // Apply TTL if provided
             Object ttlObj = json.get("ttl");
-            if (ttlObj != null) {
-                long ttl = Long.parseLong(ttlObj.toString());
+            if (ttlObj != null && !ttlObj.toString().isBlank()) {
+                long ttl = Long.parseLong(ttlObj.toString().trim());
                 if (ttl > 0) {
                     jedis.expire(key, ttl);
                 }
