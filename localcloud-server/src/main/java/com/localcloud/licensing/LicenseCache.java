@@ -35,9 +35,15 @@ public class LicenseCache {
 
     private static final Logger logger = LoggerFactory.getLogger(LicenseCache.class);
     private static final int MAGIC = 0x4C434C43; // "LCLC"
-    private static final int FORMAT_VERSION = 1;
+    private static final int FORMAT_VERSION = 2;
     private static final int HMAC_LENGTH = 32;
-    private static final String EMBEDDED_SECRET = "lc-cache-v1-k8x2m9";
+    // Secret split across multiple constants to prevent trivial `strings` extraction.
+    // Each part is raw bytes; XOR-combined at runtime in deriveKey().
+    // NOTE: Changing these constants invalidates existing license cache files (HMAC mismatch).
+    // Clients will re-validate and write a fresh cache automatically.
+    private static final byte[] SECRET_A = {0x6c, 0x63, 0x2d, 0x63, 0x61, 0x63, 0x68, 0x65}; // "lc-cache"
+    private static final byte[] SECRET_B = {0x2d, 0x76, 0x31, 0x2d, 0x73, 0x67, 0x6e, 0x64}; // "-v1-sgnd"
+    private static final byte[] SECRET_C = {0x21, 0x6b, 0x38, 0x78, 0x32, 0x6d, 0x39, 0x21}; // "!k8x2m9!"
 
     private final Path cacheDir;
     private final byte[] hmacKey;
@@ -158,8 +164,13 @@ public class LicenseCache {
 
     private byte[] deriveKey(String deviceFingerprint) {
         try {
+            // XOR-combine the secret fragments at runtime
+            byte[] combined = new byte[SECRET_A.length];
+            for (int i = 0; i < combined.length; i++) {
+                combined[i] = (byte) (SECRET_A[i] ^ SECRET_B[i] ^ SECRET_C[i]);
+            }
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            md.update(EMBEDDED_SECRET.getBytes(StandardCharsets.UTF_8));
+            md.update(combined);
             md.update(deviceFingerprint.getBytes(StandardCharsets.UTF_8));
             return md.digest();
         } catch (Exception e) {
