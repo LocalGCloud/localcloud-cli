@@ -42,4 +42,22 @@ class OnlineKeyValidatorTest {
         assertFalse(result.isValid());
         assertTrue(result.errorMessage().contains("unreachable") || result.errorMessage().contains("connect"));
     }
+
+    @Test
+    void httpUrlToNonLocalhostLogsWarningAndFails() {
+        OnlineKeyValidator validator = new OnlineKeyValidator("http://api.example.com");
+        LicenseResult result = validator.validate("lco_somekey", "device-id");
+        assertFalse(result.isValid());
+        assertTrue(result.errorMessage().contains("HTTPS") || result.errorMessage().contains("insecure"),
+                "Should reject non-HTTPS non-localhost URL, got: " + result.errorMessage());
+    }
+
+    @Test
+    void httpLocalhostIsAllowedForDevelopment() {
+        OnlineKeyValidator validator = new OnlineKeyValidator("http://localhost:19998");
+        LicenseResult result = validator.validate("lco_somekey", "device-id");
+        assertFalse(result.isValid());
+        assertFalse(result.errorMessage().contains("HTTPS"),
+                "localhost http:// should not trigger HTTPS error, got: " + result.errorMessage());
+    }
 }

@@ -21,14 +21,23 @@ public class OnlineKeyValidator {
     private static final String PREFIX = "lco_";
 
     private final String licenseServerUrl;
+    private final boolean insecureUrl;
     private final ObjectMapper mapper = new ObjectMapper();
     private final HttpClient httpClient;
 
     public OnlineKeyValidator(String licenseServerUrl) {
         this.licenseServerUrl = licenseServerUrl != null ? licenseServerUrl : "none";
+        this.insecureUrl = isInsecureUrl(this.licenseServerUrl);
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
+    }
+
+    private static boolean isInsecureUrl(String url) {
+        if ("none".equalsIgnoreCase(url)) return false;
+        if (!url.startsWith("http://")) return false;
+        // localhost and 127.x are OK for development
+        return !url.contains("localhost") && !url.contains("127.0.0.1");
     }
 
     public LicenseResult validate(String key, String deviceId) {
@@ -39,6 +48,14 @@ public class OnlineKeyValidator {
         String keyBody = key.substring(PREFIX.length());
         if (keyBody.isBlank()) {
             return LicenseResult.invalid("Empty key value after prefix");
+        }
+
+        if (insecureUrl) {
+            logger.error("SECURITY: License server URL uses HTTP (not HTTPS): {}. " +
+                    "License keys will be transmitted in plaintext.", licenseServerUrl);
+            return LicenseResult.invalid(
+                "License server URL must use HTTPS for security. " +
+                "Current URL is insecure: " + licenseServerUrl);
         }
 
         // Bypass mode: no license server configured
