@@ -64,7 +64,7 @@ public final class DeviceFingerprint {
                     .findFirst()
                     .orElse(0L);
         } catch (IOException e) {
-            return Runtime.getRuntime().totalMemory() / (1024 * 1024);
+            return 0L;
         }
     }
 
