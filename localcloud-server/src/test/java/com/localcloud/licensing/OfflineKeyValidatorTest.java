@@ -117,6 +117,15 @@ class OfflineKeyValidatorTest {
         assertTrue(result.errorMessage().contains("prefix"));
     }
 
+    @Test
+    void nullPublicKeyRejectsWithClearMessage() {
+        OfflineKeyValidator nullValidator = new OfflineKeyValidator(null);
+        LicenseResult result = nullValidator.validate("lck_someencodedkey", null);
+        assertFalse(result.isValid());
+        assertTrue(result.errorMessage().contains("public key"),
+                "Error should mention public key, was: " + result.errorMessage());
+    }
+
     private static String generateTestKey(String jsonPayload, PrivateKey privateKey) throws Exception {
         byte[] payloadBytes = jsonPayload.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         Signature sig = Signature.getInstance("Ed25519");

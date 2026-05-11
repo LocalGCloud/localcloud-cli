@@ -47,6 +47,12 @@ public class OfflineKeyValidator {
             return LicenseResult.invalid("Invalid key prefix — expected 'lck_'");
         }
 
+        if (publicKey == null) {
+            return LicenseResult.invalid(
+                "No license public key configured. Set LOCALCLOUD_LICENSE_PUBLIC_KEY env var " +
+                "or contact support at https://localcloud.dev");
+        }
+
         try {
             String encoded = key.substring(PREFIX.length());
             byte[] combined = Base64.getUrlDecoder().decode(encoded);
