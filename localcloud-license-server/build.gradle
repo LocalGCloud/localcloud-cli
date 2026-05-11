@@ -1,0 +1,73 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'com.github.johnrengelman.shadow' version '8.1.1'
+}
+
+group = 'com.localcloud'
+version = '0.1.0-SNAPSHOT'
+description = 'LocalCloud License Server'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs << '-parameters'
+}
+
+repositories {
+    mavenCentral()
+}
+
+def armeriaVersion = '1.31.3'
+def jacksonVersion = '2.17.0'
+
+dependencies {
+    implementation platform("com.linecorp.armeria:armeria-bom:${armeriaVersion}")
+    implementation "com.linecorp.armeria:armeria"
+
+    implementation 'org.postgresql:postgresql:42.7.3'
+    implementation 'com.zaxxer:HikariCP:5.1.0'
+
+    implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
+    implementation "com.fasterxml.jackson.datatype:jackson-datatype-jsr310:${jacksonVersion}"
+
+    // JavaMail for OTP email
+    implementation 'com.sun.mail:jakarta.mail:2.0.1'
+
+    // SLF4J + Logback
+    implementation 'org.slf4j:slf4j-api:2.0.12'
+    implementation 'ch.qos.logback:logback-classic:1.5.3'
+
+    // JUnit 5
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    testImplementation 'org.mockito:mockito-core:5.11.0'
+    testImplementation 'org.mockito:mockito-junit-jupiter:5.11.0'
+    testImplementation 'com.h2database:h2:2.2.224'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+application {
+    mainClass = 'com.localcloud.license.LicenseServerApplication'
+}
+
+shadowJar {
+    archiveBaseName.set('localcloud-license-server')
+    archiveClassifier.set('all')
+    archiveVersion.set(project.version.toString())
+    mergeServiceFiles()
+    manifest {
+        attributes 'Main-Class': application.mainClass
+    }
+}
+
+test {
+    useJUnitPlatform()
+}
+
+tasks.named('build') {
+    dependsOn tasks.named('shadowJar')
+}
