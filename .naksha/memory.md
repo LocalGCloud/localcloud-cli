@@ -1,0 +1,2 @@
+# Naksha Project Memory — LocalCloud
+

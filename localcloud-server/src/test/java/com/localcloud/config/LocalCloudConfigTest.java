@@ -337,11 +337,11 @@ class LocalCloudConfigTest {
     }
 
     // -----------------------------------------------------------------------
-    // All 15 services present in registry
+    // All services present in registry
     // -----------------------------------------------------------------------
 
     @Test
-    void serviceRegistryContainsAllFifteenServices() {
+    void serviceRegistryContainsAllServices() {
         LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
         var allServices = config.getServiceRegistry().getAllServices();
         assertTrue(allServices.containsKey("gcs"));
@@ -359,6 +359,12 @@ class LocalCloudConfigTest {
         assertTrue(allServices.containsKey("cloudrun"));
         assertTrue(allServices.containsKey("memorystore"));
         assertTrue(allServices.containsKey("workflows"));
-        assertEquals(15, allServices.size(), "services.yaml should define exactly 15 services");
+        assertTrue(allServices.containsKey("vertexai"));
+        assertTrue(allServices.containsKey("kms"));
+        assertTrue(allServices.containsKey("cloudsql"));
+        assertEquals(18, allServices.size(), "services.yaml should define exactly 18 services");
+        assertFalse(config.isServiceEnabled("vertexai"), "vertexai should be disabled by default");
+        assertFalse(config.isServiceEnabled("kms"), "kms should be disabled by default");
+        assertFalse(config.isServiceEnabled("cloudsql"), "cloudsql should be disabled by default");
     }
 }

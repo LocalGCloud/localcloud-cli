@@ -1,0 +1,5 @@
+[   10549ms] [VERBOSE] [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) %o @ http://localhost:8080/#/data/spanner:0
+[  660434ms] [ERROR] Failed to load resource: net::ERR_EMPTY_RESPONSE @ http://localhost:8080/_localcloud/health:0
+[  665432ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_RESET @ http://localhost:8080/_localcloud/health:0
+[  670432ms] [ERROR] Failed to load resource: net::ERR_EMPTY_RESPONSE @ http://localhost:8080/_localcloud/health:0
+[  675433ms] [ERROR] Failed to load resource: net::ERR_EMPTY_RESPONSE @ http://localhost:8080/_localcloud/health:0

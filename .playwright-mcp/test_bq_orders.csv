@@ -1,0 +1,4 @@
+order_id,customer_name,amount,status,created_at
+csv-ord-001,Alice Smith,49.99,pending,2024-01-15
+csv-ord-002,Bob Jones,125.00,shipped,2024-01-16
+csv-ord-003,Carol Williams,89.50,delivered,2024-01-17

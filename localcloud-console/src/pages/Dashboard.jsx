@@ -18,6 +18,9 @@ const SERVICE_NAMES = {
     cloudrun: 'Cloud Run',
     memorystore: 'Memorystore (Redis)',
     workflows: 'Cloud Workflows',
+    vertexai: 'Vertex AI',
+    kms: 'Cloud KMS',
+    cloudsql: 'Cloud SQL',
 };
 
 const ALL_SERVICE_IDS = [
@@ -36,6 +39,9 @@ const ALL_SERVICE_IDS = [
     { id: 'compute', port: 8080, protocol: 'REST', env_var: 'COMPUTE_EMULATOR_HOST', endpoint: 'http://localhost:8080' },
     { id: 'cloudrun', port: 8080, protocol: 'GRPC', env_var: 'CLOUD_RUN_EMULATOR_HOST', endpoint: 'localhost:8080' },
     { id: 'workflows', port: 8080, protocol: 'REST', env_var: 'WORKFLOWS_EMULATOR_HOST', endpoint: 'http://localhost:8080' },
+    { id: 'vertexai', port: 8080, protocol: 'REST', env_var: 'AIPLATFORM_EMULATOR_HOST', endpoint: 'http://localhost:8080' },
+    { id: 'kms', port: 8080, protocol: 'REST', env_var: 'CLOUD_KMS_EMULATOR_HOST', endpoint: 'http://localhost:8080' },
+    { id: 'cloudsql', port: 8080, protocol: 'REST', env_var: 'CLOUD_SQL_EMULATOR_HOST', endpoint: 'http://localhost:8080' },
 ];
 
 function ServiceIcon({ id, size = 20 }) {

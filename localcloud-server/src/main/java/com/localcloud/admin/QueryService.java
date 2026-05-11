@@ -47,7 +47,8 @@ public class QueryService {
     /** Services whose data lives in the internal PostgreSQL database. */
     private static final Set<String> POSTGRES_SERVICES = Set.of(
             "secretmanager", "cloudtasks", "logging", "monitoring",
-            "bigtable", "compute", "cloudrun", "gke", "memorystore", "workflows"
+            "bigtable", "compute", "cloudrun", "gke", "memorystore", "workflows",
+            "vertexai", "kms", "cloudsql"
     );
 
     private final LocalCloudConfig config;

@@ -1,0 +1,13 @@
+{
+  "name": "LocalCloud",
+  "brand": {
+    "primary": "#4285F4",
+    "secondary": "#34A853",
+    "font": "Google Sans",
+    "voice": "Developer-friendly and pragmatic"
+  },
+  "framework": "html",
+  "tokenFormat": "tailwind",
+  "createdAt": "2026-04-11T22:02:00Z",
+  "updatedAt": "2026-04-11T22:02:00Z"
+}

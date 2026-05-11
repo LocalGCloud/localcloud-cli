@@ -40,8 +40,10 @@ const NAV_ITEMS = [
 
 const SERVICE_GROUPS = [
     { name: 'Storage', tone: 'green', services: [{ id: 'gcs', label: 'Cloud Storage' }, { id: 'secretmanager', label: 'Secret Manager' }] },
-    { name: 'Databases', tone: 'blue', services: [{ id: 'firestore', label: 'Firestore', tag: 'Coming up' }, { id: 'spanner', label: 'Spanner' }, { id: 'bigtable', label: 'Bigtable' }, { id: 'memorystore', label: 'Memorystore' }] },
+    { name: 'Databases', tone: 'blue', services: [{ id: 'firestore', label: 'Firestore', tag: 'Coming up' }, { id: 'spanner', label: 'Spanner' }, { id: 'bigtable', label: 'Bigtable' }, { id: 'memorystore', label: 'Memorystore' }, { id: 'cloudsql', label: 'Cloud SQL' }] },
     { name: 'Analytics', tone: 'amber', services: [{ id: 'bigquery', label: 'BigQuery' }, { id: 'pubsub', label: 'Pub/Sub' }] },
+    { name: 'AI/ML', tone: 'violet', services: [{ id: 'vertexai', label: 'Vertex AI' }] },
+    { name: 'Security', tone: 'green', services: [{ id: 'kms', label: 'Cloud KMS' }] },
     { name: 'Compute', tone: 'red', services: [{ id: 'cloudrun', label: 'Cloud Run' }, { id: 'gke', label: 'GKE' }, { id: 'compute', label: 'Compute Engine' }, { id: 'cloudtasks', label: 'Cloud Tasks' }, { id: 'workflows', label: 'Workflows' }] },
     { name: 'Operations', tone: 'violet', services: [{ id: 'logging', label: 'Logging' }, { id: 'monitoring', label: 'Monitoring' }] },
 ];

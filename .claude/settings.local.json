@@ -1,0 +1,110 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(bash:*)",
+      "Bash(find:*)",
+      "Bash(./gradlew compileJava:*)",
+      "Bash(python3:*)",
+      "Bash(./gradlew test:*)",
+      "Bash(pip install:*)",
+      "Bash(pip3 install:*)",
+      "Bash(./gradlew cleanTest:*)",
+      "Bash(for f in /Users/jsenjaliya/src/my/localcloud/localcloud-server/build/test-results/test/TEST-com.localcloud.emulators*.xml)",
+      "Bash(do basename \"$f\" .xml)",
+      "Bash(read f:*)",
+      "Bash(git status:*)",
+      "Bash(git add:*)",
+      "Bash(curl:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker images:*)",
+      "Bash(ls:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker stats:*)",
+      "Bash(docker rm:*)",
+      "Bash(docker run:*)",
+      "Bash(docker info:*)",
+      "Bash(pip3:*)",
+      "Bash(STORAGE_EMULATOR_HOST=http://localhost:4443 PUBSUB_EMULATOR_HOST=localhost:8085 FIRESTORE_EMULATOR_HOST=localhost:8086 BIGQUERY_EMULATOR_HOST=http://localhost:9050 SECRET_MANAGER_EMULATOR_HOST=localhost:8080 CLOUD_TASKS_EMULATOR_HOST=localhost:8080 CLOUD_LOGGING_EMULATOR_HOST=localhost:8080 CLOUD_MONITORING_EMULATOR_HOST=localhost:8080 BIGTABLE_EMULATOR_HOST=localhost:8087 SPANNER_EMULATOR_HOST=localhost:9010 GKE_EMULATOR_HOST=localhost:8080 COMPUTE_EMULATOR_HOST=http://localhost:8080 CLOUD_RUN_EMULATOR_HOST=localhost:8080 GCLOUD_PROJECT=local-project python3:*)",
+      "Bash(/tmp/AnalysisSummary.md:*)",
+      "Bash(/tmp/VALIDATION_REPORT.md:*)",
+      "WebSearch",
+      "mcp__plugin_context7_context7__resolve-library-id",
+      "mcp__plugin_context7_context7__query-docs",
+      "WebFetch(domain:posthog.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(docker exec:*)",
+      "Bash(grep:*)",
+      "Bash(npm run:*)",
+      "Bash(done)",
+      "Bash(./gradlew shadowJar:*)",
+      "Bash(openspec new:*)",
+      "Bash(openspec status:*)",
+      "Bash(rtk:*)",
+      "Bash(head:*)",
+      "WebFetch(domain:registry.terraform.io)",
+      "WebFetch(domain:github.com)",
+      "Bash(terraform version:*)",
+      "Bash(rtk curl:*)",
+      "Bash(chmod +x:*)",
+      "Bash(jar tf:*)",
+      "Bash(unzip:*)",
+      "Bash(gortex server:*)",
+      "Bash(./gradlew build:*)",
+      "Bash(gortex:*)",
+      "Bash(bc:*)"
+    ]
+  },
+  "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/gortex hook",
+            "timeout": 3000,
+            "statusMessage": "Injecting Gortex orientation snapshot..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read|Grep|Glob|Task|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/gortex hook",
+            "timeout": 3000,
+            "statusMessage": "Enriching with Gortex graph context..."
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/gortex hook",
+            "timeout": 3000,
+            "statusMessage": "Loading Gortex graph orientation..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/gortex hook",
+            "timeout": 5000,
+            "statusMessage": "Running Gortex post-task diagnostics..."
+          }
+        ]
+      }
+    ]
+  }
+}

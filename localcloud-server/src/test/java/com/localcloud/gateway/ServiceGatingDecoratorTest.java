@@ -64,6 +64,18 @@ class ServiceGatingDecoratorTest {
                 ServiceGatingDecorator.resolveService("/compute/v1/projects/p/zones/z/instances/i"));
     }
 
+    @Test
+    void resolveService_newFacadeRestPaths() {
+        assertEquals("vertexai",
+                ServiceGatingDecorator.resolveService("/v1/projects/p/locations/us/publishers/google/models/gemini:generateContent"));
+        assertEquals("kms",
+                ServiceGatingDecorator.resolveService("/v1/projects/p/locations/us/keyRings/r/cryptoKeys/k:encrypt"));
+        assertEquals("cloudsql",
+                ServiceGatingDecorator.resolveService("/sql/v1beta4/projects/p/instances/i"));
+        assertEquals("cloudsql",
+                ServiceGatingDecorator.resolveService("/sql/v1/projects/p/instances/i/databases"));
+    }
+
     // --- False positive prevention (the critical fix) ---
 
     @Test

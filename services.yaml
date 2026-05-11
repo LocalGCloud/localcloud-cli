@@ -203,3 +203,39 @@ services:
     defaultEnabled: true
     gcloudApiName: workflows
     terraformEnvVar: GOOGLE_WORKFLOWS_CUSTOM_ENDPOINT
+
+  vertexai:
+    displayName: "Vertex AI"
+    port: gateway
+    protocol: rest
+    envVar: AIPLATFORM_EMULATOR_HOST
+    envValuePrefix: "http://"
+    type: facade
+    defaultEnabled: false
+    gcloudApiName: aiplatform
+    terraformEnvVar: GOOGLE_VERTEX_AI_CUSTOM_ENDPOINT
+
+  kms:
+    displayName: "Cloud KMS"
+    port: gateway
+    protocol: rest
+    envVar: CLOUD_KMS_EMULATOR_HOST
+    envValuePrefix: "http://"
+    type: facade
+    defaultEnabled: false
+    gcloudApiName: cloudkms
+    terraformEnvVar: GOOGLE_KMS_CUSTOM_ENDPOINT
+
+  cloudsql:
+    displayName: "Cloud SQL"
+    port: gateway
+    protocol: rest
+    envVar: CLOUD_SQL_EMULATOR_HOST
+    envValuePrefix: "http://"
+    type: facade
+    defaultEnabled: false
+    gcloudApiName: sqladmin
+    terraformEnvVar: GOOGLE_SQL_CUSTOM_ENDPOINT
+    additionalPorts:
+      postgres: 5432
+      mysql: 3306

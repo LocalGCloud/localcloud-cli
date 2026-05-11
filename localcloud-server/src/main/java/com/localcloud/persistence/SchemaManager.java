@@ -275,6 +275,124 @@ public class SchemaManager {
                 ")"
             );
 
+            // Vertex AI: local GenAI request/response history
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS vertexai_requests (" +
+                "    id BIGSERIAL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    publisher VARCHAR(255) NOT NULL," +
+                "    model_id VARCHAR(512) NOT NULL," +
+                "    method VARCHAR(64) NOT NULL," +
+                "    request_json TEXT NOT NULL," +
+                "    response_json TEXT," +
+                "    prompt_tokens INT DEFAULT 0," +
+                "    response_tokens INT DEFAULT 0," +
+                "    backend VARCHAR(64) DEFAULT 'stub'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                ")"
+            );
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_vertexai_requests_project ON vertexai_requests (project_id, location_id, model_id)");
+
+            // Cloud KMS: key hierarchy and local key material
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS kms_key_rings (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    key_ring_id VARCHAR(255) NOT NULL," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location_id, key_ring_id)" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS kms_crypto_keys (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    key_ring_id VARCHAR(255) NOT NULL," +
+                "    crypto_key_id VARCHAR(255) NOT NULL," +
+                "    purpose VARCHAR(64) DEFAULT 'ENCRYPT_DECRYPT'," +
+                "    algorithm VARCHAR(128) DEFAULT 'GOOGLE_SYMMETRIC_ENCRYPTION'," +
+                "    primary_version INT DEFAULT 1," +
+                "    labels TEXT DEFAULT '{}'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location_id, key_ring_id, crypto_key_id)" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS kms_crypto_key_versions (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    key_ring_id VARCHAR(255) NOT NULL," +
+                "    crypto_key_id VARCHAR(255) NOT NULL," +
+                "    version_number INT NOT NULL," +
+                "    state VARCHAR(32) DEFAULT 'ENABLED'," +
+                "    algorithm VARCHAR(128) DEFAULT 'GOOGLE_SYMMETRIC_ENCRYPTION'," +
+                "    key_material BYTEA," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location_id, key_ring_id, crypto_key_id, version_number)" +
+                ")"
+            );
+
+            // Cloud SQL: Admin API control-plane metadata
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS cloudsql_instances (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    instance_id VARCHAR(255) NOT NULL," +
+                "    region VARCHAR(255) DEFAULT 'us-central1'," +
+                "    database_version VARCHAR(64) DEFAULT 'POSTGRES_15'," +
+                "    tier VARCHAR(128) DEFAULT 'db-custom-1-3840'," +
+                "    state VARCHAR(32) DEFAULT 'RUNNABLE'," +
+                "    backend_type VARCHAR(64) DEFAULT 'POSTGRES'," +
+                "    connection_name VARCHAR(512)," +
+                "    settings_json TEXT DEFAULT '{}'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, instance_id)" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS cloudsql_databases (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    instance_id VARCHAR(255) NOT NULL," +
+                "    database_name VARCHAR(255) NOT NULL," +
+                "    charset VARCHAR(64) DEFAULT 'UTF8'," +
+                "    collation VARCHAR(128) DEFAULT ''," +
+                "    physical_name VARCHAR(255)," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, instance_id, database_name)" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS cloudsql_users (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    instance_id VARCHAR(255) NOT NULL," +
+                "    user_name VARCHAR(255) NOT NULL," +
+                "    host VARCHAR(255) DEFAULT '%'," +
+                "    password_hash VARCHAR(255)," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, instance_id, user_name, host)" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS cloudsql_operations (" +
+                "    operation_id VARCHAR(255) NOT NULL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    instance_id VARCHAR(255)," +
+                "    operation_type VARCHAR(64) NOT NULL," +
+                "    status VARCHAR(32) DEFAULT 'DONE'," +
+                "    target_link VARCHAR(1024)," +
+                "    error_json TEXT DEFAULT '{}'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS cloudsql_flags (" +
+                "    database_version VARCHAR(64) NOT NULL," +
+                "    flag_name VARCHAR(255) NOT NULL," +
+                "    allowed_string_values TEXT DEFAULT '[]'," +
+                "    PRIMARY KEY (database_version, flag_name)" +
+                ")"
+            );
+
             // Telemetry queue: unsent events persisted for retry
             stmt.execute(
                 "CREATE TABLE IF NOT EXISTS telemetry_queue (" +

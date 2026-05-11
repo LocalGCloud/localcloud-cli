@@ -82,6 +82,15 @@ public class ServiceGatingDecorator implements DecoratingHttpServiceFunction {
         if (path.startsWith("/v1/") && path.contains("/secrets")) {
             return "secretmanager";
         }
+        if (path.startsWith("/v1/") && path.contains("/publishers/") && path.contains("/models/")) {
+            return "vertexai";
+        }
+        if (path.startsWith("/v1/") && path.contains("/keyRings")) {
+            return "kms";
+        }
+        if (path.startsWith("/sql/v1/") || path.startsWith("/sql/v1beta4/")) {
+            return "cloudsql";
+        }
         if (path.startsWith("/v2/") && path.contains("/queues")) {
             return "cloudtasks";
         }

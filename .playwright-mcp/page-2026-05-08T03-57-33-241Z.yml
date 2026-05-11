@@ -1,0 +1,478 @@
+- generic [ref=e2]:
+  - link "Skip to content" [ref=e3] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - button "Collapse services" [ref=e6] [cursor=pointer]
+      - button "LocalCloud Aura" [ref=e7] [cursor=pointer]:
+        - generic [ref=e8]: LocalCloud
+        - generic [ref=e9]: Aura
+      - button "local-project (us-central1) backend" [ref=e11] [cursor=pointer]:
+        - generic [ref=e13]: local-project (us-central1)
+        - generic [ref=e14]: backend
+    - button "Search services, tables, logs... ⌘ K" [ref=e16] [cursor=pointer]:
+      - img [ref=e17]
+      - generic [ref=e19]: Search services, tables, logs...
+      - generic [ref=e20]: ⌘
+      - generic [ref=e21]: K
+    - generic [ref=e22]:
+      - button "User docs" [ref=e23] [cursor=pointer]:
+        - img [ref=e24]
+      - button "Settings" [ref=e27] [cursor=pointer]:
+        - img [ref=e28]
+      - button "Switch to light mode" [ref=e30] [cursor=pointer]:
+        - img [ref=e31]
+  - navigation "Service navigation" [ref=e33]:
+    - generic [ref=e34]:
+      - button "Nerve Center" [ref=e35] [cursor=pointer]:
+        - img [ref=e36]
+        - generic [ref=e38]: Nerve Center
+      - button [ref=e39] [cursor=pointer]:
+        - img [ref=e40]
+    - generic [ref=e42]:
+      - generic [ref=e43]:
+        - button "Storage 2" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - generic [ref=e47]: Storage
+          - generic [ref=e48]: "2"
+        - generic [ref=e49]:
+          - button "Cloud Storage healthy" [ref=e50] [cursor=pointer]:
+            - generic [ref=e51]: Cloud Storage
+            - generic "healthy" [ref=e52]
+          - button "Secret Manager healthy" [ref=e53] [cursor=pointer]:
+            - generic [ref=e54]: Secret Manager
+            - generic "healthy" [ref=e55]
+      - generic [ref=e56]:
+        - button "Databases 4" [ref=e57] [cursor=pointer]:
+          - img [ref=e58]
+          - generic [ref=e60]: Databases
+          - generic [ref=e61]: "4"
+        - generic [ref=e62]:
+          - button "Firestore healthy" [ref=e63] [cursor=pointer]:
+            - generic [ref=e64]: Firestore
+            - generic "healthy" [ref=e65]
+          - button "Spanner healthy" [ref=e66] [cursor=pointer]:
+            - generic [ref=e67]: Spanner
+            - generic "healthy" [ref=e68]
+          - button "Bigtable healthy" [ref=e69] [cursor=pointer]:
+            - generic [ref=e70]: Bigtable
+            - generic "healthy" [ref=e71]
+          - button "Memorystore healthy" [ref=e72] [cursor=pointer]:
+            - generic [ref=e73]: Memorystore
+            - generic "healthy" [ref=e74]
+      - generic [ref=e75]:
+        - button "Analytics 2" [ref=e76] [cursor=pointer]:
+          - img [ref=e77]
+          - generic [ref=e79]: Analytics
+          - generic [ref=e80]: "2"
+        - generic [ref=e81]:
+          - button "BigQuery healthy" [ref=e82] [cursor=pointer]:
+            - generic [ref=e83]: BigQuery
+            - generic "healthy" [ref=e84]
+          - button "Pub/Sub healthy" [ref=e85] [cursor=pointer]:
+            - generic [ref=e86]: Pub/Sub
+            - generic "healthy" [ref=e87]
+      - generic [ref=e88]:
+        - button "Compute 5" [ref=e89] [cursor=pointer]:
+          - img [ref=e90]
+          - generic [ref=e92]: Compute
+          - generic [ref=e93]: "5"
+        - generic [ref=e94]:
+          - button "Cloud Run unknown" [ref=e95] [cursor=pointer]:
+            - generic [ref=e96]: Cloud Run
+            - generic "unknown" [ref=e97]
+          - button "GKE unknown" [ref=e98] [cursor=pointer]:
+            - generic [ref=e99]: GKE
+            - generic "unknown" [ref=e100]
+          - button "Compute Engine unknown" [ref=e101] [cursor=pointer]:
+            - generic [ref=e102]: Compute Engine
+            - generic "unknown" [ref=e103]
+          - button "Cloud Tasks healthy" [ref=e104] [cursor=pointer]:
+            - generic [ref=e105]: Cloud Tasks
+            - generic "healthy" [ref=e106]
+          - button "Workflows healthy" [ref=e107] [cursor=pointer]:
+            - generic [ref=e108]: Workflows
+            - generic "healthy" [ref=e109]
+      - generic [ref=e110]:
+        - button "Operations 2" [ref=e111] [cursor=pointer]:
+          - img [ref=e112]
+          - generic [ref=e114]: Operations
+          - generic [ref=e115]: "2"
+        - generic [ref=e116]:
+          - button "Logging healthy" [ref=e117] [cursor=pointer]:
+            - generic [ref=e118]: Logging
+            - generic "healthy" [ref=e119]
+          - button "Monitoring healthy" [ref=e120] [cursor=pointer]:
+            - generic [ref=e121]: Monitoring
+            - generic "healthy" [ref=e122]
+  - main [ref=e123]:
+    - generic [ref=e124]:
+      - generic [ref=e125]:
+        - heading "Dashboard" [level=1] [ref=e126]
+        - paragraph [ref=e127]: Overview of all emulated GCP services and system health.
+      - generic [ref=e128]:
+        - generic [ref=e129]:
+          - generic [ref=e130]: Services
+          - generic [ref=e131]: 12 / 12
+        - generic [ref=e132]:
+          - generic [ref=e133]: Project
+          - generic [ref=e134]: local-project
+        - generic [ref=e135]:
+          - generic [ref=e136]: Uptime
+          - generic [ref=e137]: 4m 18s
+        - generic [ref=e138]:
+          - generic [ref=e139]: Total Requests
+          - generic [ref=e140]: 1,105
+        - generic [ref=e141]:
+          - generic [ref=e142]: Status
+          - generic [ref=e144]: HEALTHY
+      - generic [ref=e145]:
+        - heading "APIs & Services" [level=2] [ref=e146]
+        - table [ref=e148]:
+          - rowgroup [ref=e149]:
+            - row "On Service Status Port Protocol Env Var Requests CPU Memory Total Usage" [ref=e150]:
+              - columnheader "On" [ref=e151]
+              - columnheader [ref=e152]
+              - columnheader "Service" [ref=e153]
+              - columnheader "Status" [ref=e154]
+              - columnheader "Port" [ref=e155]
+              - columnheader "Protocol" [ref=e156]
+              - columnheader "Env Var" [ref=e157]
+              - columnheader "Requests" [ref=e158]
+              - columnheader "CPU" [ref=e159]
+              - columnheader "Memory" [ref=e160]
+              - columnheader "Total Usage" [ref=e161]
+          - rowgroup [ref=e162]:
+            - row "Cloud Storage Healthy 4443 REST STORAGE_EMULATOR_HOST 485 20% 69% 262" [ref=e163] [cursor=pointer]:
+              - cell [ref=e164]:
+                - generic [ref=e165]:
+                  - checkbox [checked]
+              - cell [ref=e167]
+              - cell "Cloud Storage" [ref=e168]
+              - cell "Healthy" [ref=e169]:
+                - generic [ref=e170]: Healthy
+              - cell "4443" [ref=e172]
+              - cell "REST" [ref=e173]:
+                - generic [ref=e174]: REST
+              - cell "STORAGE_EMULATOR_HOST" [ref=e175]:
+                - generic [ref=e176]:
+                  - code [ref=e177]: STORAGE_EMULATOR_HOST
+                  - button "Copy export command" [ref=e178]:
+                    - img [ref=e179]
+              - cell "485" [ref=e181]
+              - cell "20%" [ref=e182]:
+                - generic [ref=e184]: 20%
+              - cell "69%" [ref=e186]:
+                - generic [ref=e188]: 69%
+              - cell "262" [ref=e190]
+            - row "Pub/Sub Healthy 8085 GRPC PUBSUB_EMULATOR_HOST 14 29% 78% 31" [ref=e191] [cursor=pointer]:
+              - cell [ref=e192]:
+                - generic [ref=e193]:
+                  - checkbox [checked]
+              - cell [ref=e195]
+              - cell "Pub/Sub" [ref=e196]
+              - cell "Healthy" [ref=e197]:
+                - generic [ref=e198]: Healthy
+              - cell "8085" [ref=e200]
+              - cell "GRPC" [ref=e201]:
+                - generic [ref=e202]: GRPC
+              - cell "PUBSUB_EMULATOR_HOST" [ref=e203]:
+                - generic [ref=e204]:
+                  - code [ref=e205]: PUBSUB_EMULATOR_HOST
+                  - button "Copy export command" [ref=e206]:
+                    - img [ref=e207]
+              - cell "14" [ref=e209]
+              - cell "29%" [ref=e210]:
+                - generic [ref=e212]: 29%
+              - cell "78%" [ref=e214]:
+                - generic [ref=e216]: 78%
+              - cell "31" [ref=e218]
+            - row "Firestore Healthy 8086 GRPC FIRESTORE_EMULATOR_HOST 7 22% 71% 24" [ref=e219] [cursor=pointer]:
+              - cell [ref=e220]:
+                - generic [ref=e221]:
+                  - checkbox [checked]
+              - cell [ref=e223]
+              - cell "Firestore" [ref=e224]
+              - cell "Healthy" [ref=e225]:
+                - generic [ref=e226]: Healthy
+              - cell "8086" [ref=e228]
+              - cell "GRPC" [ref=e229]:
+                - generic [ref=e230]: GRPC
+              - cell "FIRESTORE_EMULATOR_HOST" [ref=e231]:
+                - generic [ref=e232]:
+                  - code [ref=e233]: FIRESTORE_EMULATOR_HOST
+                  - button "Copy export command" [ref=e234]:
+                    - img [ref=e235]
+              - cell "7" [ref=e237]
+              - cell "22%" [ref=e238]:
+                - generic [ref=e240]: 22%
+              - cell "71%" [ref=e242]:
+                - generic [ref=e244]: 71%
+              - cell "24" [ref=e246]
+            - row "Bigtable Healthy 8087 GRPC BIGTABLE_EMULATOR_HOST 74 29% 78% 61" [ref=e247] [cursor=pointer]:
+              - cell [ref=e248]:
+                - generic [ref=e249]:
+                  - checkbox [checked]
+              - cell [ref=e251]
+              - cell "Bigtable" [ref=e252]
+              - cell "Healthy" [ref=e253]:
+                - generic [ref=e254]: Healthy
+              - cell "8087" [ref=e256]
+              - cell "GRPC" [ref=e257]:
+                - generic [ref=e258]: GRPC
+              - cell "BIGTABLE_EMULATOR_HOST" [ref=e259]:
+                - generic [ref=e260]:
+                  - code [ref=e261]: BIGTABLE_EMULATOR_HOST
+                  - button "Copy export command" [ref=e262]:
+                    - img [ref=e263]
+              - cell "74" [ref=e265]
+              - cell "29%" [ref=e266]:
+                - generic [ref=e268]: 29%
+              - cell "78%" [ref=e270]:
+                - generic [ref=e272]: 78%
+              - cell "61" [ref=e274]
+            - row "Spanner Healthy 9010 GRPC SPANNER_EMULATOR_HOST 436 31% 65% 240" [ref=e275] [cursor=pointer]:
+              - cell [ref=e276]:
+                - generic [ref=e277]:
+                  - checkbox [checked]
+              - cell [ref=e279]
+              - cell "Spanner" [ref=e280]
+              - cell "Healthy" [ref=e281]:
+                - generic [ref=e282]: Healthy
+              - cell "9010" [ref=e284]
+              - cell "GRPC" [ref=e285]:
+                - generic [ref=e286]: GRPC
+              - cell "SPANNER_EMULATOR_HOST" [ref=e287]:
+                - generic [ref=e288]:
+                  - code [ref=e289]: SPANNER_EMULATOR_HOST
+                  - button "Copy export command" [ref=e290]:
+                    - img [ref=e291]
+              - cell "436" [ref=e293]
+              - cell "31%" [ref=e294]:
+                - generic [ref=e296]: 31%
+              - cell "65%" [ref=e298]:
+                - generic [ref=e300]: 65%
+              - cell "240" [ref=e302]
+            - row "BigQuery Healthy 9050 REST BIGQUERY_EMULATOR_HOST 54 29% 73% 50" [ref=e303] [cursor=pointer]:
+              - cell [ref=e304]:
+                - generic [ref=e305]:
+                  - checkbox [checked]
+              - cell [ref=e307]
+              - cell "BigQuery" [ref=e308]
+              - cell "Healthy" [ref=e309]:
+                - generic [ref=e310]: Healthy
+              - cell "9050" [ref=e312]
+              - cell "REST" [ref=e313]:
+                - generic [ref=e314]: REST
+              - cell "BIGQUERY_EMULATOR_HOST" [ref=e315]:
+                - generic [ref=e316]:
+                  - code [ref=e317]: BIGQUERY_EMULATOR_HOST
+                  - button "Copy export command" [ref=e318]:
+                    - img [ref=e319]
+              - cell "54" [ref=e321]
+              - cell "29%" [ref=e322]:
+                - generic [ref=e324]: 29%
+              - cell "73%" [ref=e326]:
+                - generic [ref=e328]: 73%
+              - cell "50" [ref=e330]
+            - row "Secret Manager Healthy 8080 GRPC SECRET_MANAGER_EMULATOR_HOST 10 25% 74% 27" [ref=e331] [cursor=pointer]:
+              - cell [ref=e332]:
+                - generic [ref=e333]:
+                  - checkbox [checked]
+              - cell [ref=e335]
+              - cell "Secret Manager" [ref=e336]
+              - cell "Healthy" [ref=e337]:
+                - generic [ref=e338]: Healthy
+              - cell "8080" [ref=e340]
+              - cell "GRPC" [ref=e341]:
+                - generic [ref=e342]: GRPC
+              - cell "SECRET_MANAGER_EMULATOR_HOST" [ref=e343]:
+                - generic [ref=e344]:
+                  - code [ref=e345]: SECRET_MANAGER_EMULATOR_HOST
+                  - button "Copy export command" [ref=e346]:
+                    - img [ref=e347]
+              - cell "10" [ref=e349]
+              - cell "25%" [ref=e350]:
+                - generic [ref=e352]: 25%
+              - cell "74%" [ref=e354]:
+                - generic [ref=e356]: 74%
+              - cell "27" [ref=e358]
+            - row "Cloud Tasks Healthy 8080 GRPC CLOUD_TASKS_EMULATOR_HOST 7 22% 71% 24" [ref=e359] [cursor=pointer]:
+              - cell [ref=e360]:
+                - generic [ref=e361]:
+                  - checkbox [checked]
+              - cell [ref=e363]
+              - cell "Cloud Tasks" [ref=e364]
+              - cell "Healthy" [ref=e365]:
+                - generic [ref=e366]: Healthy
+              - cell "8080" [ref=e368]
+              - cell "GRPC" [ref=e369]:
+                - generic [ref=e370]: GRPC
+              - cell "CLOUD_TASKS_EMULATOR_HOST" [ref=e371]:
+                - generic [ref=e372]:
+                  - code [ref=e373]: CLOUD_TASKS_EMULATOR_HOST
+                  - button "Copy export command" [ref=e374]:
+                    - img [ref=e375]
+              - cell "7" [ref=e377]
+              - cell "22%" [ref=e378]:
+                - generic [ref=e380]: 22%
+              - cell "71%" [ref=e382]:
+                - generic [ref=e384]: 71%
+              - cell "24" [ref=e386]
+            - row "Cloud Logging Healthy 8080 GRPC CLOUD_LOGGING_EMULATOR_HOST 1 16% 65% 18" [ref=e387] [cursor=pointer]:
+              - cell [ref=e388]:
+                - generic [ref=e389]:
+                  - checkbox [checked]
+              - cell [ref=e391]
+              - cell "Cloud Logging" [ref=e392]
+              - cell "Healthy" [ref=e393]:
+                - generic [ref=e394]: Healthy
+              - cell "8080" [ref=e396]
+              - cell "GRPC" [ref=e397]:
+                - generic [ref=e398]: GRPC
+              - cell "CLOUD_LOGGING_EMULATOR_HOST" [ref=e399]:
+                - generic [ref=e400]:
+                  - code [ref=e401]: CLOUD_LOGGING_EMULATOR_HOST
+                  - button "Copy export command" [ref=e402]:
+                    - img [ref=e403]
+              - cell "1" [ref=e405]
+              - cell "16%" [ref=e406]:
+                - generic [ref=e408]: 16%
+              - cell "65%" [ref=e410]:
+                - generic [ref=e412]: 65%
+              - cell "18" [ref=e414]
+            - row "Cloud Monitoring Healthy 8080 GRPC CLOUD_MONITORING_EMULATOR_HOST 0 15% 64% 17" [ref=e415] [cursor=pointer]:
+              - cell [ref=e416]:
+                - generic [ref=e417]:
+                  - checkbox [checked]
+              - cell [ref=e419]
+              - cell "Cloud Monitoring" [ref=e420]
+              - cell "Healthy" [ref=e421]:
+                - generic [ref=e422]: Healthy
+              - cell "8080" [ref=e424]
+              - cell "GRPC" [ref=e425]:
+                - generic [ref=e426]: GRPC
+              - cell "CLOUD_MONITORING_EMULATOR_HOST" [ref=e427]:
+                - generic [ref=e428]:
+                  - code [ref=e429]: CLOUD_MONITORING_EMULATOR_HOST
+                  - button "Copy export command" [ref=e430]:
+                    - img [ref=e431]
+              - cell "0" [ref=e433]
+              - cell "15%" [ref=e434]:
+                - generic [ref=e436]: 15%
+              - cell "64%" [ref=e438]:
+                - generic [ref=e440]: 64%
+              - cell "17" [ref=e442]
+            - row "Memorystore (Redis) Healthy 6379 REDIS REDIS_HOST 12 27% 76% 29" [ref=e443] [cursor=pointer]:
+              - cell [ref=e444]:
+                - generic [ref=e445]:
+                  - checkbox [checked]
+              - cell [ref=e447]
+              - cell "Memorystore (Redis)" [ref=e448]
+              - cell "Healthy" [ref=e449]:
+                - generic [ref=e450]: Healthy
+              - cell "6379" [ref=e452]
+              - cell "REDIS" [ref=e453]:
+                - generic [ref=e454]: REDIS
+              - cell "REDIS_HOST" [ref=e455]:
+                - generic [ref=e456]:
+                  - code [ref=e457]: REDIS_HOST
+                  - button "Copy export command" [ref=e458]:
+                    - img [ref=e459]
+              - cell "12" [ref=e461]
+              - cell "27%" [ref=e462]:
+                - generic [ref=e464]: 27%
+              - cell "76%" [ref=e466]:
+                - generic [ref=e468]: 76%
+              - cell "29" [ref=e470]
+            - row "GKE Disabled 8080 GRPC GKE_EMULATOR_HOST 0 15% 64% 17" [ref=e471] [cursor=pointer]:
+              - cell [ref=e472]:
+                - generic [ref=e473]:
+                  - checkbox
+              - cell [ref=e475]
+              - cell "GKE" [ref=e476]
+              - cell "Disabled" [ref=e477]:
+                - generic [ref=e478]: Disabled
+              - cell "8080" [ref=e480]
+              - cell "GRPC" [ref=e481]:
+                - generic [ref=e482]: GRPC
+              - cell "GKE_EMULATOR_HOST" [ref=e483]:
+                - generic [ref=e484]:
+                  - code [ref=e485]: GKE_EMULATOR_HOST
+                  - button "Copy export command" [ref=e486]:
+                    - img [ref=e487]
+              - cell "0" [ref=e489]
+              - cell "15%" [ref=e490]:
+                - generic [ref=e492]: 15%
+              - cell "64%" [ref=e494]:
+                - generic [ref=e496]: 64%
+              - cell "17" [ref=e498]
+            - row "Compute Engine Disabled 8080 REST COMPUTE_EMULATOR_HOST 4 19% 68% 21" [ref=e499] [cursor=pointer]:
+              - cell [ref=e500]:
+                - generic [ref=e501]:
+                  - checkbox
+              - cell [ref=e503]
+              - cell "Compute Engine" [ref=e504]
+              - cell "Disabled" [ref=e505]:
+                - generic [ref=e506]: Disabled
+              - cell "8080" [ref=e508]
+              - cell "REST" [ref=e509]:
+                - generic [ref=e510]: REST
+              - cell "COMPUTE_EMULATOR_HOST" [ref=e511]:
+                - generic [ref=e512]:
+                  - code [ref=e513]: COMPUTE_EMULATOR_HOST
+                  - button "Copy export command" [ref=e514]:
+                    - img [ref=e515]
+              - cell "4" [ref=e517]
+              - cell "19%" [ref=e518]:
+                - generic [ref=e520]: 19%
+              - cell "68%" [ref=e522]:
+                - generic [ref=e524]: 68%
+              - cell "21" [ref=e526]
+            - row "Cloud Run Disabled 8080 GRPC CLOUD_RUN_EMULATOR_HOST 0 15% 64% 17" [ref=e527] [cursor=pointer]:
+              - cell [ref=e528]:
+                - generic [ref=e529]:
+                  - checkbox
+              - cell [ref=e531]
+              - cell "Cloud Run" [ref=e532]
+              - cell "Disabled" [ref=e533]:
+                - generic [ref=e534]: Disabled
+              - cell "8080" [ref=e536]
+              - cell "GRPC" [ref=e537]:
+                - generic [ref=e538]: GRPC
+              - cell "CLOUD_RUN_EMULATOR_HOST" [ref=e539]:
+                - generic [ref=e540]:
+                  - code [ref=e541]: CLOUD_RUN_EMULATOR_HOST
+                  - button "Copy export command" [ref=e542]:
+                    - img [ref=e543]
+              - cell "0" [ref=e545]
+              - cell "15%" [ref=e546]:
+                - generic [ref=e548]: 15%
+              - cell "64%" [ref=e550]:
+                - generic [ref=e552]: 64%
+              - cell "17" [ref=e554]
+            - row "Cloud Workflows Healthy 8080 GRPC WORKFLOWS_EMULATOR_HOST 1 16% 65% 18" [ref=e555] [cursor=pointer]:
+              - cell [ref=e556]:
+                - generic [ref=e557]:
+                  - checkbox [checked]
+              - cell [ref=e559]
+              - cell "Cloud Workflows" [ref=e560]
+              - cell "Healthy" [ref=e561]:
+                - generic [ref=e562]: Healthy
+              - cell "8080" [ref=e564]
+              - cell "GRPC" [ref=e565]:
+                - generic [ref=e566]: GRPC
+              - cell "WORKFLOWS_EMULATOR_HOST" [ref=e567]:
+                - generic [ref=e568]:
+                  - code [ref=e569]: WORKFLOWS_EMULATOR_HOST
+                  - button "Copy export command" [ref=e570]:
+                    - img [ref=e571]
+              - cell "1" [ref=e573]
+              - cell "16%" [ref=e574]:
+                - generic [ref=e576]: 16%
+              - cell "65%" [ref=e578]:
+                - generic [ref=e580]: 65%
+              - cell "18" [ref=e582]
+      - generic [ref=e583]:
+        - button "Copy Env Vars" [ref=e584] [cursor=pointer]
+        - button "Export State" [ref=e585] [cursor=pointer]

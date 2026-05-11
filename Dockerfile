@@ -29,6 +29,8 @@
 #   9060  — BigQuery (gRPC)
 #   6379  — Memorystore / Redis (RESP2)
 #   6443  — GKE / k3d Kubernetes API (optional, requires docker.sock)
+#   5432  — Cloud SQL PostgreSQL data plane (optional)
+#   3306  — Cloud SQL MySQL-compatible data plane (optional, requires OpenHalo image path)
 #
 # ENVIRONMENT VARIABLES
 # ---------------------
@@ -40,7 +42,8 @@
 #                             (default: /etc/localcloud/seed.yaml, baked into image)
 #   JAVA_OPTS                 JVM flags (default: -Xmx512m -Xms128m -XX:+UseZGC)
 #
-#   Individual service flags (all default to true except GKE, Compute, Cloud Run):
+#   Individual service flags (all default to true except GKE, Compute, Cloud Run,
+#   Vertex AI, Cloud KMS, and Cloud SQL):
 #     LOCALCLOUD_ENABLE_GCS, LOCALCLOUD_ENABLE_PUBSUB,
 #     LOCALCLOUD_ENABLE_FIRESTORE, LOCALCLOUD_ENABLE_BIGQUERY,
 #     LOCALCLOUD_ENABLE_SPANNER, LOCALCLOUD_ENABLE_BIGTABLE,
@@ -49,7 +52,10 @@
 #     LOCALCLOUD_ENABLE_MEMORYSTORE,
 #     LOCALCLOUD_ENABLE_GKE (default: false),
 #     LOCALCLOUD_ENABLE_COMPUTE (default: false),
-#     LOCALCLOUD_ENABLE_CLOUDRUN (default: false)
+#     LOCALCLOUD_ENABLE_CLOUDRUN (default: false),
+#     LOCALCLOUD_ENABLE_VERTEXAI (default: false),
+#     LOCALCLOUD_ENABLE_KMS (default: false),
+#     LOCALCLOUD_ENABLE_CLOUDSQL (default: false)
 #
 # DATA PERSISTENCE
 # ----------------
@@ -358,7 +364,10 @@ ENV LOCALCLOUD_PROJECT="local-project" \
     LOCALCLOUD_ENABLE_COMPUTE="false" \
     LOCALCLOUD_ENABLE_CLOUDRUN="false" \
     LOCALCLOUD_ENABLE_MEMORYSTORE="true" \
-    LOCALCLOUD_ENABLE_WORKFLOWS="true"
+    LOCALCLOUD_ENABLE_WORKFLOWS="true" \
+    LOCALCLOUD_ENABLE_VERTEXAI="false" \
+    LOCALCLOUD_ENABLE_KMS="false" \
+    LOCALCLOUD_ENABLE_CLOUDSQL="false"
 
 # Telemetry: sends anonymous usage stats (API key set at runtime in entrypoint)
 ENV LOCALCLOUD_TELEMETRY="true"
@@ -366,8 +375,8 @@ ENV LOCALCLOUD_TELEMETRY="true"
 # Data persistence volume
 VOLUME /var/lib/localcloud
 
-# Ports: gateway (+ console), GCS, Memorystore, GKE/k3d, Pub/Sub, Firestore, Bigtable, Spanner, BigQuery
-EXPOSE 8080 4443 6379 6443 8085 8086 8087 9010 9020 9050 9060
+# Ports: gateway (+ console), Cloud SQL, GCS, Memorystore, GKE/k3d, Pub/Sub, Firestore, Bigtable, Spanner, BigQuery
+EXPOSE 8080 3306 4443 5432 6379 6443 8085 8086 8087 9010 9020 9050 9060
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
   CMD curl -f http://localhost:8080/_localcloud/health || exit 1

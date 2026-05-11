@@ -24,6 +24,9 @@ const SERVICE_META = {
     cloudrun:      { label: 'Cloud Run',        description: 'Fully managed compute platform for deploying and scaling containerized applications quickly and securely.' },
     memorystore:   { label: 'Memorystore',      description: 'Fully managed in-memory data store service for Redis and Memcached.' },
     workflows:     { label: 'Cloud Workflows',  description: 'Orchestrate and automate Google Cloud and HTTP-based API services with serverless workflows.' },
+    vertexai:      { label: 'Vertex AI',        description: 'Local Gemini-style generative AI endpoints with deterministic stub responses and optional backend wiring.' },
+    kms:           { label: 'Cloud KMS',         description: 'Local key rings, crypto keys, key versions, and software-backed encryption/decryption for development.' },
+    cloudsql:      { label: 'Cloud SQL',         description: 'Cloud SQL Admin API control plane for PostgreSQL and MySQL-compatible development workflows.' },
 };
 
 // ─── SQL-Capable Services ──────────────────────────────────────────────
@@ -56,6 +59,12 @@ const SQL_SERVICES = [
       placeholder: "" },
     { id: 'workflows', label: 'Cloud Workflows', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'workflows',
       placeholder: "SELECT workflow_id, state, revision_id, updated_at\nFROM workflows\nWHERE state = 'ACTIVE'" },
+    { id: 'vertexai', label: 'Vertex AI', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'vertexai',
+      placeholder: "SELECT model_id, method, prompt_tokens, response_tokens, created_at\nFROM vertexai_requests\nORDER BY created_at DESC\nLIMIT 20" },
+    { id: 'kms', label: 'Cloud KMS', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'kms',
+      placeholder: "SELECT key_ring_id, crypto_key_id, primary_version, created_at\nFROM kms_crypto_keys\nORDER BY created_at DESC" },
+    { id: 'cloudsql', label: 'Cloud SQL', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'cloudsql',
+      placeholder: "SELECT instance_id, database_version, backend_type, state, created_at\nFROM cloudsql_instances\nORDER BY created_at DESC" },
 ];
 const SQL_RESULT_PAGE_SIZE = 50;
 
@@ -66,6 +75,17 @@ const SERVICE_SCHEMAS = {
     workflows: { tables: [
         { name: 'workflows', columns: [{ name: 'workflow_id', type: 'TEXT' }, { name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'source_contents', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'revision_id', type: 'INT' }, { name: 'labels', type: 'JSONB' }, { name: 'created_at', type: 'TIMESTAMP' }, { name: 'updated_at', type: 'TIMESTAMP' }] },
         { name: 'workflow_executions', columns: [{ name: 'execution_id', type: 'TEXT' }, { name: 'workflow_id', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'argument', type: 'JSONB' }, { name: 'result', type: 'JSONB' }, { name: 'error', type: 'JSONB' }, { name: 'start_time', type: 'TIMESTAMP' }, { name: 'end_time', type: 'TIMESTAMP' }] }
+    ]},
+    vertexai: { tables: [
+        { name: 'vertexai_requests', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'model_id', type: 'TEXT' }, { name: 'method', type: 'TEXT' }, { name: 'prompt_tokens', type: 'INT' }, { name: 'response_tokens', type: 'INT' }, { name: 'created_at', type: 'TIMESTAMP' }] }
+    ]},
+    kms: { tables: [
+        { name: 'kms_key_rings', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'key_ring_id', type: 'TEXT' }, { name: 'created_at', type: 'TIMESTAMP' }] },
+        { name: 'kms_crypto_keys', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'key_ring_id', type: 'TEXT' }, { name: 'crypto_key_id', type: 'TEXT' }, { name: 'purpose', type: 'TEXT' }, { name: 'primary_version', type: 'INT' }] }
+    ]},
+    cloudsql: { tables: [
+        { name: 'cloudsql_instances', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'instance_id', type: 'TEXT' }, { name: 'database_version', type: 'TEXT' }, { name: 'backend_type', type: 'TEXT' }, { name: 'state', type: 'TEXT' }] },
+        { name: 'cloudsql_databases', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'instance_id', type: 'TEXT' }, { name: 'database_name', type: 'TEXT' }, { name: 'physical_name', type: 'TEXT' }] }
     ]}
 };
 

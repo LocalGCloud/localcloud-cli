@@ -1,0 +1,452 @@
+- generic [ref=e2]:
+  - link "Skip to content" [ref=e3] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - button "Collapse services" [ref=e6] [cursor=pointer]
+      - button "LocalCloud Aura" [ref=e7] [cursor=pointer]:
+        - generic [ref=e8]: LocalCloud
+        - generic [ref=e9]: Aura
+      - button "local-project (us-central1) backend" [ref=e11] [cursor=pointer]:
+        - generic [ref=e13]: local-project (us-central1)
+        - generic [ref=e14]: backend
+    - button "Search services, tables, logs... ⌘ K" [ref=e16] [cursor=pointer]:
+      - img [ref=e17]
+      - generic [ref=e19]: Search services, tables, logs...
+      - generic [ref=e20]: ⌘
+      - generic [ref=e21]: K
+    - generic [ref=e22]:
+      - button "User docs" [ref=e23] [cursor=pointer]:
+        - img [ref=e24]
+      - button "Settings" [ref=e27] [cursor=pointer]:
+        - img [ref=e28]
+      - button "Switch to light mode" [ref=e30] [cursor=pointer]:
+        - img [ref=e31]
+  - navigation "Service navigation" [ref=e33]:
+    - generic [ref=e34]:
+      - button "Nerve Center" [ref=e35] [cursor=pointer]:
+        - img [ref=e36]
+        - generic [ref=e38]: Nerve Center
+      - button [ref=e39] [cursor=pointer]:
+        - img [ref=e40]
+    - generic [ref=e42]:
+      - generic [ref=e43]:
+        - button "Storage 2" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - generic [ref=e47]: Storage
+          - generic [ref=e48]: "2"
+        - generic [ref=e49]:
+          - button "Cloud Storage healthy" [ref=e50] [cursor=pointer]:
+            - generic [ref=e51]: Cloud Storage
+            - generic "healthy" [ref=e52]
+          - button "Secret Manager healthy" [ref=e53] [cursor=pointer]:
+            - generic [ref=e54]: Secret Manager
+            - generic "healthy" [ref=e55]
+      - generic [ref=e56]:
+        - button "Databases 4" [ref=e57] [cursor=pointer]:
+          - img [ref=e58]
+          - generic [ref=e60]: Databases
+          - generic [ref=e61]: "4"
+        - generic [ref=e62]:
+          - button "Firestore healthy" [ref=e63] [cursor=pointer]:
+            - generic [ref=e64]: Firestore
+            - generic "healthy" [ref=e65]
+          - button "Spanner healthy" [ref=e66] [cursor=pointer]:
+            - generic [ref=e67]: Spanner
+            - generic "healthy" [ref=e68]
+          - button "Bigtable healthy" [ref=e69] [cursor=pointer]:
+            - generic [ref=e70]: Bigtable
+            - generic "healthy" [ref=e71]
+          - button "Memorystore healthy" [ref=e72] [cursor=pointer]:
+            - generic [ref=e73]: Memorystore
+            - generic "healthy" [ref=e74]
+      - generic [ref=e75]:
+        - button "Analytics 2" [ref=e76] [cursor=pointer]:
+          - img [ref=e77]
+          - generic [ref=e79]: Analytics
+          - generic [ref=e80]: "2"
+        - generic [ref=e81]:
+          - button "BigQuery healthy" [ref=e82] [cursor=pointer]:
+            - generic [ref=e83]: BigQuery
+            - generic "healthy" [ref=e84]
+          - button "Pub/Sub healthy" [ref=e85] [cursor=pointer]:
+            - generic [ref=e86]: Pub/Sub
+            - generic "healthy" [ref=e87]
+      - generic [ref=e88]:
+        - button "Compute 5" [ref=e89] [cursor=pointer]:
+          - img [ref=e90]
+          - generic [ref=e92]: Compute
+          - generic [ref=e93]: "5"
+        - generic [ref=e94]:
+          - button "Cloud Run unknown" [ref=e95] [cursor=pointer]:
+            - generic [ref=e96]: Cloud Run
+            - generic "unknown" [ref=e97]
+          - button "GKE unknown" [ref=e98] [cursor=pointer]:
+            - generic [ref=e99]: GKE
+            - generic "unknown" [ref=e100]
+          - button "Compute Engine unknown" [ref=e101] [cursor=pointer]:
+            - generic [ref=e102]: Compute Engine
+            - generic "unknown" [ref=e103]
+          - button "Cloud Tasks healthy" [ref=e104] [cursor=pointer]:
+            - generic [ref=e105]: Cloud Tasks
+            - generic "healthy" [ref=e106]
+          - button "Workflows healthy" [ref=e107] [cursor=pointer]:
+            - generic [ref=e108]: Workflows
+            - generic "healthy" [ref=e109]
+      - generic [ref=e110]:
+        - button "Operations 2" [ref=e111] [cursor=pointer]:
+          - img [ref=e112]
+          - generic [ref=e114]: Operations
+          - generic [ref=e115]: "2"
+        - generic [ref=e116]:
+          - button "Logging healthy" [ref=e117] [cursor=pointer]:
+            - generic [ref=e118]: Logging
+            - generic "healthy" [ref=e119]
+          - button "Monitoring healthy" [ref=e120] [cursor=pointer]:
+            - generic [ref=e121]: Monitoring
+            - generic "healthy" [ref=e122]
+  - main [ref=e123]:
+    - generic [ref=e124]:
+      - generic [ref=e126]:
+        - heading "Spanner" [level=1] [ref=e127]
+        - paragraph [ref=e128]: Fully managed relational database with unlimited scale, strong consistency, and up to 99.999% availability.
+      - generic [ref=e129]:
+        - generic [ref=e130]:
+          - button "SQL Editor" [ref=e131] [cursor=pointer]:
+            - img [ref=e132]
+            - text: SQL Editor
+          - button "Data Explorer" [ref=e134] [cursor=pointer]:
+            - img [ref=e135]
+            - text: Data Explorer
+          - button "Remote Sync BETA" [ref=e137] [cursor=pointer]:
+            - img [ref=e138]
+            - text: Remote Sync
+            - generic [ref=e140]: BETA
+        - generic [ref=e141]:
+          - button "Refresh" [ref=e142] [cursor=pointer]
+          - button "Reset" [ref=e143] [cursor=pointer]
+      - generic [ref=e146]:
+        - navigation [ref=e170]:
+          - button "Instances" [ref=e205] [cursor=pointer]
+          - generic [ref=e206]: ›
+          - button "jay-instance" [ref=e207] [cursor=pointer]
+          - generic [ref=e208]: ›
+          - button "p2p" [ref=e209] [cursor=pointer]
+          - generic [ref=e210]: ›
+          - generic [ref=e211]: P2P_USER_PEERS_V5
+        - generic [ref=e212]:
+          - heading "P2P_USER_PEERS_V5" [level=2] [ref=e213]
+          - generic [ref=e214]:
+            - button "↑ Import CSV" [ref=e215] [cursor=pointer]
+            - button "+ Add Row" [ref=e216] [cursor=pointer]
+        - table [ref=e218]:
+          - rowgroup [ref=e219]:
+            - row "PEER_ID NETWORK_TYPE ENTITY_TYPE ENTITY_INTERNAL_ID ENTITY_EXTERNAL_ID ENTITY_EXTERNAL_HANDLE ENTITY_PHOTO_URL ENTITY_FIRST_NAME ENTITY_MIDDLE_NAME ENTITY_LAST_NAME ENTITY_BUSINESS_NAME ENTITY_CITY ENTITY_STATE ENTITY_COUNTRY LAT LON GEO_BLOCK PHONE_SEARCH_ENABLED EMAIL_SEARCH_ENABLED PRIVACY_CONTROL_FLAG PRIVACY_PREFERENCE_TYPE TIME_CREATED TIME_UPDATED name_search norm_first norm_last norm_full_name first_soundex last_soundex norm_business norm_business_spaced Actions" [ref=e220]:
+              - columnheader "PEER_ID" [ref=e221]
+              - columnheader "NETWORK_TYPE" [ref=e222]
+              - columnheader "ENTITY_TYPE" [ref=e223]
+              - columnheader "ENTITY_INTERNAL_ID" [ref=e224]
+              - columnheader "ENTITY_EXTERNAL_ID" [ref=e225]
+              - columnheader "ENTITY_EXTERNAL_HANDLE" [ref=e226]
+              - columnheader "ENTITY_PHOTO_URL" [ref=e227]
+              - columnheader "ENTITY_FIRST_NAME" [ref=e228]
+              - columnheader "ENTITY_MIDDLE_NAME" [ref=e229]
+              - columnheader "ENTITY_LAST_NAME" [ref=e230]
+              - columnheader "ENTITY_BUSINESS_NAME" [ref=e231]
+              - columnheader "ENTITY_CITY" [ref=e232]
+              - columnheader "ENTITY_STATE" [ref=e233]
+              - columnheader "ENTITY_COUNTRY" [ref=e234]
+              - columnheader "LAT" [ref=e235]
+              - columnheader "LON" [ref=e236]
+              - columnheader "GEO_BLOCK" [ref=e237]
+              - columnheader "PHONE_SEARCH_ENABLED" [ref=e238]
+              - columnheader "EMAIL_SEARCH_ENABLED" [ref=e239]
+              - columnheader "PRIVACY_CONTROL_FLAG" [ref=e240]
+              - columnheader "PRIVACY_PREFERENCE_TYPE" [ref=e241]
+              - columnheader "TIME_CREATED" [ref=e242]
+              - columnheader "TIME_UPDATED" [ref=e243]
+              - columnheader "name_search" [ref=e244]
+              - columnheader "norm_first" [ref=e245]
+              - columnheader "norm_last" [ref=e246]
+              - columnheader "norm_full_name" [ref=e247]
+              - columnheader "first_soundex" [ref=e248]
+              - columnheader "last_soundex" [ref=e249]
+              - columnheader "norm_business" [ref=e250]
+              - columnheader "norm_business_spaced" [ref=e251]
+              - columnheader "Actions" [ref=e252]
+          - rowgroup [ref=e253]:
+            - row "8020022739563358326 PAYPAL USER 1124119929842401584 PBHSAHXTHV3A3 -- -- Giuseppe Alexy Keller -- strasbourg Grand Est FR 48.5734 7.7521 852792 true true -- -- 2026-04-18T14:26:46Z 2026-05-06T14:25:50Z Giuseppe Keller giuseppe keller giuseppekeller g100 k460 -- -- Edit Del" [ref=e254]:
+              - cell "8020022739563358326" [ref=e255]
+              - cell "PAYPAL" [ref=e256]
+              - cell "USER" [ref=e257]
+              - cell "1124119929842401584" [ref=e258]
+              - cell "PBHSAHXTHV3A3" [ref=e259]
+              - cell "--" [ref=e260]
+              - cell "--" [ref=e261]
+              - cell "Giuseppe" [ref=e262]
+              - cell "Alexy" [ref=e263]
+              - cell "Keller" [ref=e264]
+              - cell "--" [ref=e265]
+              - cell "strasbourg" [ref=e266]
+              - cell "Grand Est" [ref=e267]
+              - cell "FR" [ref=e268]
+              - cell "48.5734" [ref=e269]
+              - cell "7.7521" [ref=e270]
+              - cell "852792" [ref=e271]
+              - cell "true" [ref=e272]
+              - cell "true" [ref=e273]
+              - cell "--" [ref=e274]
+              - cell "--" [ref=e275]
+              - cell "2026-04-18T14:26:46Z" [ref=e276]
+              - cell "2026-05-06T14:25:50Z" [ref=e277]
+              - cell "Giuseppe Keller" [ref=e278]
+              - cell "giuseppe" [ref=e279]
+              - cell "keller" [ref=e280]
+              - cell "giuseppekeller" [ref=e281]
+              - cell "g100" [ref=e282]
+              - cell "k460" [ref=e283]
+              - cell "--" [ref=e284]
+              - cell "--" [ref=e285]
+              - cell "Edit Del" [ref=e286]:
+                - generic [ref=e287]:
+                  - button "Edit" [ref=e288] [cursor=pointer]
+                  - button "Del" [ref=e289] [cursor=pointer]
+            - row "8029285218042207586 PAYPAL USER 1277484236918946327 -- -- -- Tomas -- Bray -- charlotte NC US 35.2271 -80.8431 414408 true true -- SIMPLIFIED 2025-03-06T13:52:23Z 2025-05-21T15:01:26Z Tomas Bray tomas bray tomasbray t520 b600 -- -- Edit Del" [ref=e290]:
+              - cell "8029285218042207586" [ref=e291]
+              - cell "PAYPAL" [ref=e292]
+              - cell "USER" [ref=e293]
+              - cell "1277484236918946327" [ref=e294]
+              - cell "--" [ref=e295]
+              - cell "--" [ref=e296]
+              - cell "--" [ref=e297]
+              - cell "Tomas" [ref=e298]
+              - cell "--" [ref=e299]
+              - cell "Bray" [ref=e300]
+              - cell "--" [ref=e301]
+              - cell "charlotte" [ref=e302]
+              - cell "NC" [ref=e303]
+              - cell "US" [ref=e304]
+              - cell "35.2271" [ref=e305]
+              - cell "-80.8431" [ref=e306]
+              - cell "414408" [ref=e307]
+              - cell "true" [ref=e308]
+              - cell "true" [ref=e309]
+              - cell "--" [ref=e310]
+              - cell "SIMPLIFIED" [ref=e311]
+              - cell "2025-03-06T13:52:23Z" [ref=e312]
+              - cell "2025-05-21T15:01:26Z" [ref=e313]
+              - cell "Tomas Bray" [ref=e314]
+              - cell "tomas" [ref=e315]
+              - cell "bray" [ref=e316]
+              - cell "tomasbray" [ref=e317]
+              - cell "t520" [ref=e318]
+              - cell "b600" [ref=e319]
+              - cell "--" [ref=e320]
+              - cell "--" [ref=e321]
+              - cell "Edit Del" [ref=e322]:
+                - generic [ref=e323]:
+                  - button "Edit" [ref=e324] [cursor=pointer]
+                  - button "Del" [ref=e325] [cursor=pointer]
+        - dialog [ref=e326]:
+          - generic [ref=e327] [cursor=pointer]:
+            - generic [ref=e328]:
+              - generic [ref=e329]:
+                - heading "Import CSV to P2P_USER_PEERS_V5" [level=2] [ref=e330]
+                - button "×" [ref=e331]
+              - generic [ref=e332]:
+                - generic [ref=e333]: Upload
+                - generic [ref=e335]: Map Columns
+                - generic [ref=e337]: Preview
+                - generic [ref=e339]: Import
+                - generic [ref=e341]: Done
+            - generic [ref=e347]:
+              - generic [ref=e348]:
+                - generic [ref=e349]: ✓ 3 rows
+                - generic [ref=e350]:
+                  - text: "Delimiter:"
+                  - strong [ref=e351]: ","
+                - generic [ref=e352]:
+                  - text: "File:"
+                  - strong [ref=e353]: real_peers.csv
+                - generic [ref=e354]:
+                  - strong [ref=e355]: 23/23
+                  - text: mapped
+              - generic [ref=e356]: Click source column, then click target to connect. Click a mapped source to disconnect.
+              - generic [ref=e358]:
+                - img:
+                  - generic: 80200227395633..
+                  - generic: PAYPAL
+                  - generic: USER
+                  - generic: 11241199298424..
+                  - generic: PBHSAHXTHV3A3
+                  - generic: Giuseppe
+                  - generic: Alexy
+                  - generic: Keller
+                  - generic: strasbourg
+                  - generic: Grand Est
+                  - generic: FR
+                  - generic: "48.5734"
+                  - generic: "7.7521"
+                  - generic: "852792"
+                  - generic: "True"
+                  - generic: "True"
+                  - generic: 2026-04-18T14:..
+                  - generic: 2026-05-06T14:..
+                - generic [ref=e359]:
+                  - generic [ref=e360]: Source (CSV)
+                  - generic "Click to disconnect" [ref=e361]:
+                    - generic [ref=e364]: PEER_ID
+                    - generic [ref=e365]: ×
+                  - generic "Click to disconnect" [ref=e366]:
+                    - generic [ref=e369]: NETWORK_TYPE
+                    - generic [ref=e370]: ×
+                  - generic "Click to disconnect" [ref=e371]:
+                    - generic [ref=e374]: ENTITY_TYPE
+                    - generic [ref=e375]: ×
+                  - generic "Click to disconnect" [ref=e376]:
+                    - generic [ref=e379]: ENTITY_INTERNAL_ID
+                    - generic [ref=e380]: ×
+                  - generic "Click to disconnect" [ref=e381]:
+                    - generic [ref=e384]: ENTITY_EXTERNAL_ID
+                    - generic [ref=e385]: ×
+                  - generic "Click to disconnect" [ref=e386]:
+                    - generic [ref=e389]: ENTITY_EXTERNAL_HANDLE
+                    - generic [ref=e390]: ×
+                  - generic "Click to disconnect" [ref=e391]:
+                    - generic [ref=e394]: ENTITY_PHOTO_URL
+                    - generic [ref=e395]: ×
+                  - generic "Click to disconnect" [ref=e396]:
+                    - generic [ref=e399]: ENTITY_FIRST_NAME
+                    - generic [ref=e400]: ×
+                  - generic "Click to disconnect" [ref=e401]:
+                    - generic [ref=e404]: ENTITY_MIDDLE_NAME
+                    - generic [ref=e405]: ×
+                  - generic "Click to disconnect" [ref=e406]:
+                    - generic [ref=e409]: ENTITY_LAST_NAME
+                    - generic [ref=e410]: ×
+                  - generic "Click to disconnect" [ref=e411]:
+                    - generic [ref=e414]: ENTITY_BUSINESS_NAME
+                    - generic [ref=e415]: ×
+                  - generic "Click to disconnect" [ref=e416]:
+                    - generic [ref=e419]: ENTITY_CITY
+                    - generic [ref=e420]: ×
+                  - generic "Click to disconnect" [ref=e421]:
+                    - generic [ref=e424]: ENTITY_STATE
+                    - generic [ref=e425]: ×
+                  - generic "Click to disconnect" [ref=e426]:
+                    - generic [ref=e429]: ENTITY_COUNTRY
+                    - generic [ref=e430]: ×
+                  - generic "Click to disconnect" [ref=e431]:
+                    - generic [ref=e434]: LAT
+                    - generic [ref=e435]: ×
+                  - generic "Click to disconnect" [ref=e436]:
+                    - generic [ref=e439]: LON
+                    - generic [ref=e440]: ×
+                  - generic "Click to disconnect" [ref=e441]:
+                    - generic [ref=e444]: GEO_BLOCK
+                    - generic [ref=e445]: ×
+                  - generic "Click to disconnect" [ref=e446]:
+                    - generic [ref=e449]: PHONE_SEARCH_ENABLED
+                    - generic [ref=e450]: ×
+                  - generic "Click to disconnect" [ref=e451]:
+                    - generic [ref=e454]: EMAIL_SEARCH_ENABLED
+                    - generic [ref=e455]: ×
+                  - generic "Click to disconnect" [ref=e456]:
+                    - generic [ref=e459]: PRIVACY_CONTROL_FLAG
+                    - generic [ref=e460]: ×
+                  - generic "Click to disconnect" [ref=e461]:
+                    - generic [ref=e464]: TIME_CREATED
+                    - generic [ref=e465]: ×
+                  - generic "Click to disconnect" [ref=e466]:
+                    - generic [ref=e469]: TIME_UPDATED
+                    - generic [ref=e470]: ×
+                  - generic "Click to disconnect" [ref=e471]:
+                    - generic [ref=e474]: PRIVACY_PREFERENCE_TYPE
+                    - generic [ref=e475]: ×
+                - generic [ref=e476]:
+                  - generic [ref=e477]: Target (Table)
+                  - generic [ref=e478]:
+                    - generic [ref=e481]: PEER_ID
+                    - generic [ref=e482]: REQ ✓
+                    - generic [ref=e483]: INT64
+                  - generic [ref=e484]:
+                    - generic [ref=e487]: NETWORK_TYPE
+                    - generic [ref=e488]: REQ ✓
+                    - generic [ref=e489]: STRING(16)
+                  - generic [ref=e490]:
+                    - generic [ref=e493]: ENTITY_TYPE
+                    - generic [ref=e494]: REQ ✓
+                    - generic [ref=e495]: STRING(16)
+                  - generic [ref=e496]:
+                    - generic [ref=e499]: ENTITY_INTERNAL_ID
+                    - generic [ref=e500]: REQ ✓
+                    - generic [ref=e501]: STRING(64)
+                  - generic [ref=e502]:
+                    - generic [ref=e505]: ENTITY_EXTERNAL_ID
+                    - generic [ref=e506]: STRING(64)
+                  - generic [ref=e507]:
+                    - generic [ref=e510]: ENTITY_EXTERNAL_HANDLE
+                    - generic [ref=e511]: STRING(64)
+                  - generic [ref=e512]:
+                    - generic [ref=e515]: ENTITY_PHOTO_URL
+                    - generic [ref=e516]: STRING(1024)
+                  - generic [ref=e517]:
+                    - generic [ref=e520]: ENTITY_FIRST_NAME
+                    - generic [ref=e521]: STRING(64)
+                  - generic [ref=e522]:
+                    - generic [ref=e525]: ENTITY_MIDDLE_NAME
+                    - generic [ref=e526]: STRING(64)
+                  - generic [ref=e527]:
+                    - generic [ref=e530]: ENTITY_LAST_NAME
+                    - generic [ref=e531]: STRING(64)
+                  - generic [ref=e532]:
+                    - generic [ref=e535]: ENTITY_BUSINESS_NAME
+                    - generic [ref=e536]: STRING(64)
+                  - generic [ref=e537]:
+                    - generic [ref=e540]: ENTITY_CITY
+                    - generic [ref=e541]: STRING(64)
+                  - generic [ref=e542]:
+                    - generic [ref=e545]: ENTITY_STATE
+                    - generic [ref=e546]: STRING(64)
+                  - generic [ref=e547]:
+                    - generic [ref=e550]: ENTITY_COUNTRY
+                    - generic [ref=e551]: STRING(2)
+                  - generic [ref=e552]:
+                    - generic [ref=e555]: LAT
+                    - generic [ref=e556]: FLOAT64
+                  - generic [ref=e557]:
+                    - generic [ref=e560]: LON
+                    - generic [ref=e561]: FLOAT64
+                  - generic [ref=e562]:
+                    - generic [ref=e565]: GEO_BLOCK
+                    - generic [ref=e566]: INT64
+                  - generic [ref=e567]:
+                    - generic [ref=e570]: PHONE_SEARCH_ENABLED
+                    - generic [ref=e571]: REQ ✓
+                    - generic [ref=e572]: BOOL
+                  - generic [ref=e573]:
+                    - generic [ref=e576]: EMAIL_SEARCH_ENABLED
+                    - generic [ref=e577]: REQ ✓
+                    - generic [ref=e578]: BOOL
+                  - generic [ref=e579]:
+                    - generic [ref=e582]: PRIVACY_CONTROL_FLAG
+                    - generic [ref=e583]: INT64
+                  - generic [ref=e584]:
+                    - generic [ref=e587]: PRIVACY_PREFERENCE_TYPE
+                    - generic [ref=e588]: STRING(16)
+                  - generic [ref=e589]:
+                    - generic [ref=e592]: TIME_CREATED
+                    - generic [ref=e593]: REQ ✓
+                    - generic [ref=e594]: TIMESTAMP
+                  - generic [ref=e595]:
+                    - generic [ref=e598]: TIME_UPDATED
+                    - generic [ref=e599]: REQ ✓
+                    - generic [ref=e600]: TIMESTAMP
+              - generic [ref=e601]:
+                - generic [ref=e602]: Mapped
+                - generic [ref=e604]: Unmapped source
+                - generic [ref=e606]: Required (NOT NULL)
+                - generic [ref=e608]: Optional
+              - generic [ref=e610]:
+                - button "Back" [ref=e611]
+                - button "Validate & Preview" [ref=e612]

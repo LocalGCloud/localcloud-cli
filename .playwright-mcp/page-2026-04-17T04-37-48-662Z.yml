@@ -1,0 +1,228 @@
+- generic [ref=e2]:
+  - link "Skip to content" [ref=e3] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - generic [ref=e7]: LC
+      - generic [ref=e8]: LocalCloud
+    - button "local-project" [ref=e10] [cursor=pointer]:
+      - img [ref=e11]
+      - generic [ref=e13]: local-project
+      - img [ref=e14]
+    - button "Switch to light mode" [ref=e17] [cursor=pointer]:
+      - img [ref=e18]
+  - navigation "Main navigation" [ref=e20]:
+    - generic [ref=e21]: Navigation
+    - button "Dashboard" [ref=e22] [cursor=pointer]:
+      - img [ref=e24]
+      - generic [ref=e26]: Dashboard
+    - button "APIs & Services" [ref=e27] [cursor=pointer]:
+      - img [ref=e29]
+      - generic [ref=e31]: APIs & Services
+    - button "Logs" [ref=e32] [cursor=pointer]:
+      - img [ref=e34]
+      - generic [ref=e36]: Logs
+    - button "Service Explorer" [ref=e37] [cursor=pointer]:
+      - img [ref=e39]
+      - generic [ref=e41]: Service Explorer
+      - img [ref=e42]
+    - generic:
+      - button "Cloud Storage" [ref=e44] [cursor=pointer]:
+        - generic [ref=e45]: Cloud Storage
+      - button "Pub/Sub" [ref=e47] [cursor=pointer]:
+        - generic [ref=e48]: Pub/Sub
+      - button "Firestore Beta" [ref=e50] [cursor=pointer]:
+        - generic [ref=e51]: Firestore
+        - generic [ref=e52]: Beta
+      - button "BigQuery" [ref=e54] [cursor=pointer]:
+        - generic [ref=e55]: BigQuery
+      - button "Secret Manager" [ref=e57] [cursor=pointer]:
+        - generic [ref=e58]: Secret Manager
+      - button "Cloud Tasks" [ref=e60] [cursor=pointer]:
+        - generic [ref=e61]: Cloud Tasks
+      - button "Spanner" [ref=e63] [cursor=pointer]:
+        - generic [ref=e64]: Spanner
+      - button "Bigtable" [ref=e66] [cursor=pointer]:
+        - generic [ref=e67]: Bigtable
+      - button "Logging" [ref=e69] [cursor=pointer]:
+        - generic [ref=e70]: Logging
+      - button "Monitoring" [ref=e72] [cursor=pointer]:
+        - generic [ref=e73]: Monitoring
+      - button "GKE Beta" [ref=e75] [cursor=pointer]:
+        - generic [ref=e76]: GKE
+        - generic [ref=e77]: Beta
+      - button "Compute Beta" [ref=e79] [cursor=pointer]:
+        - generic [ref=e80]: Compute
+        - generic [ref=e81]: Beta
+      - button "Cloud Run" [ref=e83] [cursor=pointer]:
+        - generic [ref=e84]: Cloud Run
+      - button "Memorystore" [ref=e86] [cursor=pointer]:
+        - generic [ref=e87]: Memorystore
+      - button "Workflows" [ref=e89] [cursor=pointer]:
+        - generic [ref=e90]: Workflows
+    - button "Usage" [ref=e92] [cursor=pointer]:
+      - img [ref=e94]
+      - generic [ref=e96]: Usage
+    - button "Settings" [ref=e97] [cursor=pointer]:
+      - img [ref=e99]
+      - generic [ref=e101]: Settings
+  - main [ref=e102]:
+    - generic [ref=e103]:
+      - generic [ref=e104]:
+        - heading "Dashboard" [level=1] [ref=e105]
+        - paragraph [ref=e106]: Overview of all emulated GCP services and system health.
+      - generic [ref=e107]:
+        - generic [ref=e108]:
+          - generic [ref=e109]: Services
+          - generic [ref=e110]: 11 / 11
+        - generic [ref=e111]:
+          - generic [ref=e112]: Project
+          - generic [ref=e113]: local-project
+        - generic [ref=e114]:
+          - generic [ref=e115]: Uptime
+          - generic [ref=e116]: 1m 1s
+        - generic [ref=e117]:
+          - generic [ref=e118]: Total Requests
+          - generic [ref=e119]: "80"
+        - generic [ref=e120]:
+          - generic [ref=e121]: Status
+          - generic [ref=e123]: HEALTHY
+      - generic [ref=e124]:
+        - heading "Local Services" [level=2] [ref=e125]
+        - generic [ref=e126]:
+          - button "Cloud Storage — Healthy" [ref=e127] [cursor=pointer]:
+            - generic [ref=e129]: Cloud Storage
+            - generic [ref=e132]: Healthy
+            - generic [ref=e133]:
+              - generic [ref=e134]: :4443
+              - generic [ref=e135]: REST
+            - generic [ref=e136]:
+              - generic [ref=e137]: Requests
+              - generic [ref=e138]: "52"
+          - button "Pub/Sub — Healthy" [ref=e139] [cursor=pointer]:
+            - generic [ref=e141]: Pub/Sub
+            - generic [ref=e144]: Healthy
+            - generic [ref=e145]:
+              - generic [ref=e146]: :8085
+              - generic [ref=e147]: GRPC
+            - generic [ref=e148]:
+              - generic [ref=e149]: Requests
+              - generic [ref=e150]: "0"
+          - button "Firestore — Healthy" [ref=e151] [cursor=pointer]:
+            - generic [ref=e153]: Firestore
+            - generic [ref=e156]: Healthy
+            - generic [ref=e157]:
+              - generic [ref=e158]: :8086
+              - generic [ref=e159]: GRPC
+            - generic [ref=e160]:
+              - generic [ref=e161]: Requests
+              - generic [ref=e162]: "0"
+          - button "Bigtable — Healthy" [ref=e163] [cursor=pointer]:
+            - generic [ref=e165]: Bigtable
+            - generic [ref=e168]: Healthy
+            - generic [ref=e169]:
+              - generic [ref=e170]: :8087
+              - generic [ref=e171]: GRPC
+            - generic [ref=e172]:
+              - generic [ref=e173]: Requests
+              - generic [ref=e174]: "0"
+          - button "Spanner — Healthy" [ref=e175] [cursor=pointer]:
+            - generic [ref=e177]: Spanner
+            - generic [ref=e180]: Healthy
+            - generic [ref=e181]:
+              - generic [ref=e182]: :9010
+              - generic [ref=e183]: GRPC
+            - generic [ref=e184]:
+              - generic [ref=e185]: Requests
+              - generic [ref=e186]: "3"
+          - button "BigQuery — Healthy" [ref=e187] [cursor=pointer]:
+            - generic [ref=e189]: BigQuery
+            - generic [ref=e192]: Healthy
+            - generic [ref=e193]:
+              - generic [ref=e194]: :9050
+              - generic [ref=e195]: REST
+            - generic [ref=e196]:
+              - generic [ref=e197]: Requests
+              - generic [ref=e198]: "25"
+          - button "Secret Manager — Healthy" [ref=e199] [cursor=pointer]:
+            - generic [ref=e201]: Secret Manager
+            - generic [ref=e204]: Healthy
+            - generic [ref=e205]:
+              - generic [ref=e206]: :8080
+              - generic [ref=e207]: GRPC
+            - generic [ref=e208]:
+              - generic [ref=e209]: Requests
+              - generic [ref=e210]: "0"
+          - button "Cloud Tasks — Healthy" [ref=e211] [cursor=pointer]:
+            - generic [ref=e213]: Cloud Tasks
+            - generic [ref=e216]: Healthy
+            - generic [ref=e217]:
+              - generic [ref=e218]: :8080
+              - generic [ref=e219]: GRPC
+            - generic [ref=e220]:
+              - generic [ref=e221]: Requests
+              - generic [ref=e222]: "0"
+          - button "Cloud Logging — Healthy" [ref=e223] [cursor=pointer]:
+            - generic [ref=e225]: Cloud Logging
+            - generic [ref=e228]: Healthy
+            - generic [ref=e229]:
+              - generic [ref=e230]: :8080
+              - generic [ref=e231]: GRPC
+            - generic [ref=e232]:
+              - generic [ref=e233]: Requests
+              - generic [ref=e234]: "0"
+          - button "Cloud Monitoring — Healthy" [ref=e235] [cursor=pointer]:
+            - generic [ref=e237]: Cloud Monitoring
+            - generic [ref=e240]: Healthy
+            - generic [ref=e241]:
+              - generic [ref=e242]: :8080
+              - generic [ref=e243]: GRPC
+            - generic [ref=e244]:
+              - generic [ref=e245]: Requests
+              - generic [ref=e246]: "0"
+          - button "Memorystore (Redis) — Healthy" [ref=e247] [cursor=pointer]:
+            - generic [ref=e249]: Memorystore (Redis)
+            - generic [ref=e252]: Healthy
+            - generic [ref=e253]:
+              - generic [ref=e254]: :6379
+              - generic [ref=e255]: REDIS
+            - generic [ref=e256]:
+              - generic [ref=e257]: Requests
+              - generic [ref=e258]: "0"
+          - button "GKE — Disabled":
+            - generic:
+              - generic: GKE
+            - generic:
+              - generic: Disabled
+            - generic:
+              - generic: :8080
+              - generic: GRPC
+            - generic:
+              - generic: Requests
+              - generic: "0"
+          - button "Compute Engine — Disabled":
+            - generic:
+              - generic: Compute Engine
+            - generic:
+              - generic: Disabled
+            - generic:
+              - generic: :8080
+              - generic: REST
+            - generic:
+              - generic: Requests
+              - generic: "0"
+          - button "Cloud Run — Disabled":
+            - generic:
+              - generic: Cloud Run
+            - generic:
+              - generic: Disabled
+            - generic:
+              - generic: :8080
+              - generic: GRPC
+            - generic:
+              - generic: Requests
+              - generic: "0"
+      - generic [ref=e259]:
+        - button "Reset All Data" [ref=e260] [cursor=pointer]
+        - button "Copy Env Vars" [ref=e261] [cursor=pointer]
+        - button "Export State" [ref=e262] [cursor=pointer]

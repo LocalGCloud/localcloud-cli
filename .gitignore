@@ -17,6 +17,8 @@ __pycache__/
 # Console frontend
 localcloud-console/dist/
 localcloud-console/node_modules/
+localcloud-console-old/dist/
+localcloud-console-old/node_modules/
 
 # IDE
 .idea/

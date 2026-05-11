@@ -1,0 +1,755 @@
+- generic [ref=e2]:
+  - link "Skip to content" [ref=e3] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - button "Collapse services" [ref=e6] [cursor=pointer]
+      - button "LocalCloud Aura" [ref=e7] [cursor=pointer]:
+        - generic [ref=e8]: LocalCloud
+        - generic [ref=e9]: Aura
+      - button "local-project (us-central1) backend" [ref=e11] [cursor=pointer]:
+        - generic [ref=e13]: local-project (us-central1)
+        - generic [ref=e14]: backend
+    - button "Search services, tables, logs... ⌘ K" [ref=e16] [cursor=pointer]:
+      - img [ref=e17]
+      - generic [ref=e19]: Search services, tables, logs...
+      - generic [ref=e20]: ⌘
+      - generic [ref=e21]: K
+    - generic [ref=e22]:
+      - button "User docs" [ref=e23] [cursor=pointer]:
+        - img [ref=e24]
+      - button "Settings" [ref=e27] [cursor=pointer]:
+        - img [ref=e28]
+      - button "Switch to light mode" [ref=e30] [cursor=pointer]:
+        - img [ref=e31]
+  - navigation "Service navigation" [ref=e33]:
+    - generic [ref=e34]:
+      - button "Nerve Center" [ref=e35] [cursor=pointer]:
+        - img [ref=e36]
+        - generic [ref=e38]: Nerve Center
+      - button [ref=e39] [cursor=pointer]:
+        - img [ref=e40]
+    - generic [ref=e42]:
+      - generic [ref=e43]:
+        - button "Storage 2" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - generic [ref=e47]: Storage
+          - generic [ref=e48]: "2"
+        - generic [ref=e49]:
+          - button "Cloud Storage healthy" [ref=e50] [cursor=pointer]:
+            - generic [ref=e51]: Cloud Storage
+            - generic "healthy" [ref=e52]
+          - button "Secret Manager healthy" [ref=e53] [cursor=pointer]:
+            - generic [ref=e54]: Secret Manager
+            - generic "healthy" [ref=e55]
+      - generic [ref=e56]:
+        - button "Databases 4" [ref=e57] [cursor=pointer]:
+          - img [ref=e58]
+          - generic [ref=e60]: Databases
+          - generic [ref=e61]: "4"
+        - generic [ref=e62]:
+          - button "Firestore healthy" [ref=e63] [cursor=pointer]:
+            - generic [ref=e64]: Firestore
+            - generic "healthy" [ref=e65]
+          - button "Spanner healthy" [ref=e66] [cursor=pointer]:
+            - generic [ref=e67]: Spanner
+            - generic "healthy" [ref=e68]
+          - button "Bigtable healthy" [ref=e69] [cursor=pointer]:
+            - generic [ref=e70]: Bigtable
+            - generic "healthy" [ref=e71]
+          - button "Memorystore healthy" [ref=e72] [cursor=pointer]:
+            - generic [ref=e73]: Memorystore
+            - generic "healthy" [ref=e74]
+      - generic [ref=e75]:
+        - button "Analytics 2" [ref=e76] [cursor=pointer]:
+          - img [ref=e77]
+          - generic [ref=e79]: Analytics
+          - generic [ref=e80]: "2"
+        - generic [ref=e81]:
+          - button "BigQuery healthy" [ref=e82] [cursor=pointer]:
+            - generic [ref=e83]: BigQuery
+            - generic "healthy" [ref=e84]
+          - button "Pub/Sub healthy" [ref=e85] [cursor=pointer]:
+            - generic [ref=e86]: Pub/Sub
+            - generic "healthy" [ref=e87]
+      - generic [ref=e88]:
+        - button "Compute 5" [ref=e89] [cursor=pointer]:
+          - img [ref=e90]
+          - generic [ref=e92]: Compute
+          - generic [ref=e93]: "5"
+        - generic [ref=e94]:
+          - button "Cloud Run unknown" [ref=e95] [cursor=pointer]:
+            - generic [ref=e96]: Cloud Run
+            - generic "unknown" [ref=e97]
+          - button "GKE unknown" [ref=e98] [cursor=pointer]:
+            - generic [ref=e99]: GKE
+            - generic "unknown" [ref=e100]
+          - button "Compute Engine unknown" [ref=e101] [cursor=pointer]:
+            - generic [ref=e102]: Compute Engine
+            - generic "unknown" [ref=e103]
+          - button "Cloud Tasks healthy" [ref=e104] [cursor=pointer]:
+            - generic [ref=e105]: Cloud Tasks
+            - generic "healthy" [ref=e106]
+          - button "Workflows healthy" [ref=e107] [cursor=pointer]:
+            - generic [ref=e108]: Workflows
+            - generic "healthy" [ref=e109]
+      - generic [ref=e110]:
+        - button "Operations 2" [ref=e111] [cursor=pointer]:
+          - img [ref=e112]
+          - generic [ref=e114]: Operations
+          - generic [ref=e115]: "2"
+        - generic [ref=e116]:
+          - button "Logging healthy" [ref=e117] [cursor=pointer]:
+            - generic [ref=e118]: Logging
+            - generic "healthy" [ref=e119]
+          - button "Monitoring healthy" [ref=e120] [cursor=pointer]:
+            - generic [ref=e121]: Monitoring
+            - generic "healthy" [ref=e122]
+  - main [ref=e123]:
+    - generic [ref=e124]:
+      - generic [ref=e126]:
+        - heading "Spanner" [level=1] [ref=e127]
+        - paragraph [ref=e128]: Fully managed relational database with unlimited scale, strong consistency, and up to 99.999% availability.
+      - generic [ref=e129]:
+        - generic [ref=e130]:
+          - button "SQL Editor" [ref=e131] [cursor=pointer]:
+            - img [ref=e132]
+            - text: SQL Editor
+          - button "Data Explorer" [ref=e134] [cursor=pointer]:
+            - img [ref=e135]
+            - text: Data Explorer
+          - button "Remote Sync BETA" [ref=e137] [cursor=pointer]:
+            - img [ref=e138]
+            - text: Remote Sync
+            - generic [ref=e140]: BETA
+        - generic [ref=e141]:
+          - button "Refresh" [ref=e142] [cursor=pointer]
+          - button "Reset" [ref=e143] [cursor=pointer]
+      - generic [ref=e146]:
+        - navigation [ref=e170]:
+          - button "Instances" [ref=e205] [cursor=pointer]
+          - generic [ref=e206]: ›
+          - button "jay-instance" [ref=e207] [cursor=pointer]
+          - generic [ref=e208]: ›
+          - button "p2p" [ref=e209] [cursor=pointer]
+          - generic [ref=e210]: ›
+          - generic [ref=e211]: P2P_USER_PEERS_V5
+        - generic [ref=e212]:
+          - heading "P2P_USER_PEERS_V5" [level=2] [ref=e213]
+          - generic [ref=e214]:
+            - button "↑ Import CSV" [ref=e215] [cursor=pointer]
+            - button "+ Add Row" [ref=e216] [cursor=pointer]
+        - table [ref=e218]:
+          - rowgroup [ref=e219]:
+            - row "PEER_ID NETWORK_TYPE ENTITY_TYPE ENTITY_INTERNAL_ID ENTITY_EXTERNAL_ID ENTITY_EXTERNAL_HANDLE ENTITY_PHOTO_URL ENTITY_FIRST_NAME ENTITY_MIDDLE_NAME ENTITY_LAST_NAME ENTITY_BUSINESS_NAME ENTITY_CITY ENTITY_STATE ENTITY_COUNTRY LAT LON GEO_BLOCK PHONE_SEARCH_ENABLED EMAIL_SEARCH_ENABLED PRIVACY_CONTROL_FLAG PRIVACY_PREFERENCE_TYPE TIME_CREATED TIME_UPDATED name_search norm_first norm_last norm_full_name first_soundex last_soundex norm_business norm_business_spaced Actions" [ref=e220]:
+              - columnheader "PEER_ID" [ref=e221]
+              - columnheader "NETWORK_TYPE" [ref=e222]
+              - columnheader "ENTITY_TYPE" [ref=e223]
+              - columnheader "ENTITY_INTERNAL_ID" [ref=e224]
+              - columnheader "ENTITY_EXTERNAL_ID" [ref=e225]
+              - columnheader "ENTITY_EXTERNAL_HANDLE" [ref=e226]
+              - columnheader "ENTITY_PHOTO_URL" [ref=e227]
+              - columnheader "ENTITY_FIRST_NAME" [ref=e228]
+              - columnheader "ENTITY_MIDDLE_NAME" [ref=e229]
+              - columnheader "ENTITY_LAST_NAME" [ref=e230]
+              - columnheader "ENTITY_BUSINESS_NAME" [ref=e231]
+              - columnheader "ENTITY_CITY" [ref=e232]
+              - columnheader "ENTITY_STATE" [ref=e233]
+              - columnheader "ENTITY_COUNTRY" [ref=e234]
+              - columnheader "LAT" [ref=e235]
+              - columnheader "LON" [ref=e236]
+              - columnheader "GEO_BLOCK" [ref=e237]
+              - columnheader "PHONE_SEARCH_ENABLED" [ref=e238]
+              - columnheader "EMAIL_SEARCH_ENABLED" [ref=e239]
+              - columnheader "PRIVACY_CONTROL_FLAG" [ref=e240]
+              - columnheader "PRIVACY_PREFERENCE_TYPE" [ref=e241]
+              - columnheader "TIME_CREATED" [ref=e242]
+              - columnheader "TIME_UPDATED" [ref=e243]
+              - columnheader "name_search" [ref=e244]
+              - columnheader "norm_first" [ref=e245]
+              - columnheader "norm_last" [ref=e246]
+              - columnheader "norm_full_name" [ref=e247]
+              - columnheader "first_soundex" [ref=e248]
+              - columnheader "last_soundex" [ref=e249]
+              - columnheader "norm_business" [ref=e250]
+              - columnheader "norm_business_spaced" [ref=e251]
+              - columnheader "Actions" [ref=e252]
+          - rowgroup [ref=e253]:
+            - row "303 PAYPAL USER user303 -- -- -- Charlie -- Brown -- -- -- -- -- -- -- false true -- -- 2024-01-03T00:00:00Z 2024-01-03T00:00:00Z Charlie Brown charlie brown charliebrown c640 b650 -- -- Edit Del" [ref=e254]:
+              - cell "303" [ref=e255]
+              - cell "PAYPAL" [ref=e256]
+              - cell "USER" [ref=e257]
+              - cell "user303" [ref=e258]
+              - cell "--" [ref=e259]
+              - cell "--" [ref=e260]
+              - cell "--" [ref=e261]
+              - cell "Charlie" [ref=e262]
+              - cell "--" [ref=e263]
+              - cell "Brown" [ref=e264]
+              - cell "--" [ref=e265]
+              - cell "--" [ref=e266]
+              - cell "--" [ref=e267]
+              - cell "--" [ref=e268]
+              - cell "--" [ref=e269]
+              - cell "--" [ref=e270]
+              - cell "--" [ref=e271]
+              - cell "false" [ref=e272]
+              - cell "true" [ref=e273]
+              - cell "--" [ref=e274]
+              - cell "--" [ref=e275]
+              - cell "2024-01-03T00:00:00Z" [ref=e276]
+              - cell "2024-01-03T00:00:00Z" [ref=e277]
+              - cell "Charlie Brown" [ref=e278]
+              - cell "charlie" [ref=e279]
+              - cell "brown" [ref=e280]
+              - cell "charliebrown" [ref=e281]
+              - cell "c640" [ref=e282]
+              - cell "b650" [ref=e283]
+              - cell "--" [ref=e284]
+              - cell "--" [ref=e285]
+              - cell "Edit Del" [ref=e286]:
+                - generic [ref=e287]:
+                  - button "Edit" [ref=e288] [cursor=pointer]
+                  - button "Del" [ref=e289] [cursor=pointer]
+            - row "302 PAYPAL USER user302 -- -- -- Bob -- Jones -- -- -- -- -- -- -- true false -- -- 2024-01-02T00:00:00Z 2024-01-02T00:00:00Z Bob Jones bob jones bobjones b000 j520 -- -- Edit Del" [ref=e290]:
+              - cell "302" [ref=e291]
+              - cell "PAYPAL" [ref=e292]
+              - cell "USER" [ref=e293]
+              - cell "user302" [ref=e294]
+              - cell "--" [ref=e295]
+              - cell "--" [ref=e296]
+              - cell "--" [ref=e297]
+              - cell "Bob" [ref=e298]
+              - cell "--" [ref=e299]
+              - cell "Jones" [ref=e300]
+              - cell "--" [ref=e301]
+              - cell "--" [ref=e302]
+              - cell "--" [ref=e303]
+              - cell "--" [ref=e304]
+              - cell "--" [ref=e305]
+              - cell "--" [ref=e306]
+              - cell "--" [ref=e307]
+              - cell "true" [ref=e308]
+              - cell "false" [ref=e309]
+              - cell "--" [ref=e310]
+              - cell "--" [ref=e311]
+              - cell "2024-01-02T00:00:00Z" [ref=e312]
+              - cell "2024-01-02T00:00:00Z" [ref=e313]
+              - cell "Bob Jones" [ref=e314]
+              - cell "bob" [ref=e315]
+              - cell "jones" [ref=e316]
+              - cell "bobjones" [ref=e317]
+              - cell "b000" [ref=e318]
+              - cell "j520" [ref=e319]
+              - cell "--" [ref=e320]
+              - cell "--" [ref=e321]
+              - cell "Edit Del" [ref=e322]:
+                - generic [ref=e323]:
+                  - button "Edit" [ref=e324] [cursor=pointer]
+                  - button "Del" [ref=e325] [cursor=pointer]
+            - row "301 PAYPAL USER user301 -- -- -- Alice -- Smith -- -- -- -- -- -- -- true true -- -- 2024-01-01T00:00:00Z 2024-01-01T00:00:00Z Alice Smith alice smith alicesmith a420 s530 -- -- Edit Del" [ref=e326]:
+              - cell "301" [ref=e327]
+              - cell "PAYPAL" [ref=e328]
+              - cell "USER" [ref=e329]
+              - cell "user301" [ref=e330]
+              - cell "--" [ref=e331]
+              - cell "--" [ref=e332]
+              - cell "--" [ref=e333]
+              - cell "Alice" [ref=e334]
+              - cell "--" [ref=e335]
+              - cell "Smith" [ref=e336]
+              - cell "--" [ref=e337]
+              - cell "--" [ref=e338]
+              - cell "--" [ref=e339]
+              - cell "--" [ref=e340]
+              - cell "--" [ref=e341]
+              - cell "--" [ref=e342]
+              - cell "--" [ref=e343]
+              - cell "true" [ref=e344]
+              - cell "true" [ref=e345]
+              - cell "--" [ref=e346]
+              - cell "--" [ref=e347]
+              - cell "2024-01-01T00:00:00Z" [ref=e348]
+              - cell "2024-01-01T00:00:00Z" [ref=e349]
+              - cell "Alice Smith" [ref=e350]
+              - cell "alice" [ref=e351]
+              - cell "smith" [ref=e352]
+              - cell "alicesmith" [ref=e353]
+              - cell "a420" [ref=e354]
+              - cell "s530" [ref=e355]
+              - cell "--" [ref=e356]
+              - cell "--" [ref=e357]
+              - cell "Edit Del" [ref=e358]:
+                - generic [ref=e359]:
+                  - button "Edit" [ref=e360] [cursor=pointer]
+                  - button "Del" [ref=e361] [cursor=pointer]
+            - row "200 PAYPAL USER csv-test-200 -- -- -- -- -- -- -- -- -- -- -- -- -- true true -- -- 2024-01-01T00:00:00Z 2024-01-01T00:00:00Z -- -- Edit Del" [ref=e362]:
+              - cell "200" [ref=e363]
+              - cell "PAYPAL" [ref=e364]
+              - cell "USER" [ref=e365]
+              - cell "csv-test-200" [ref=e366]
+              - cell "--" [ref=e367]
+              - cell "--" [ref=e368]
+              - cell "--" [ref=e369]
+              - cell "--" [ref=e370]
+              - cell "--" [ref=e371]
+              - cell "--" [ref=e372]
+              - cell "--" [ref=e373]
+              - cell "--" [ref=e374]
+              - cell "--" [ref=e375]
+              - cell "--" [ref=e376]
+              - cell "--" [ref=e377]
+              - cell "--" [ref=e378]
+              - cell "--" [ref=e379]
+              - cell "true" [ref=e380]
+              - cell "true" [ref=e381]
+              - cell "--" [ref=e382]
+              - cell "--" [ref=e383]
+              - cell "2024-01-01T00:00:00Z" [ref=e384]
+              - cell "2024-01-01T00:00:00Z" [ref=e385]
+              - cell [ref=e386]
+              - cell [ref=e387]
+              - cell [ref=e388]
+              - cell [ref=e389]
+              - cell [ref=e390]
+              - cell [ref=e391]
+              - cell "--" [ref=e392]
+              - cell "--" [ref=e393]
+              - cell "Edit Del" [ref=e394]:
+                - generic [ref=e395]:
+                  - button "Edit" [ref=e396] [cursor=pointer]
+                  - button "Del" [ref=e397] [cursor=pointer]
+            - row "400 PAYPAL USER user400 -- -- -- Test -- User -- -- -- -- -- -- -- true true -- -- 2024-01-01T00:00:00Z 2024-01-01T00:00:00Z Test User test user testuser t230 u260 -- -- Edit Del" [ref=e398]:
+              - cell "400" [ref=e399]
+              - cell "PAYPAL" [ref=e400]
+              - cell "USER" [ref=e401]
+              - cell "user400" [ref=e402]
+              - cell "--" [ref=e403]
+              - cell "--" [ref=e404]
+              - cell "--" [ref=e405]
+              - cell "Test" [ref=e406]
+              - cell "--" [ref=e407]
+              - cell "User" [ref=e408]
+              - cell "--" [ref=e409]
+              - cell "--" [ref=e410]
+              - cell "--" [ref=e411]
+              - cell "--" [ref=e412]
+              - cell "--" [ref=e413]
+              - cell "--" [ref=e414]
+              - cell "--" [ref=e415]
+              - cell "true" [ref=e416]
+              - cell "true" [ref=e417]
+              - cell "--" [ref=e418]
+              - cell "--" [ref=e419]
+              - cell "2024-01-01T00:00:00Z" [ref=e420]
+              - cell "2024-01-01T00:00:00Z" [ref=e421]
+              - cell "Test User" [ref=e422]
+              - cell "test" [ref=e423]
+              - cell "user" [ref=e424]
+              - cell "testuser" [ref=e425]
+              - cell "t230" [ref=e426]
+              - cell "u260" [ref=e427]
+              - cell "--" [ref=e428]
+              - cell "--" [ref=e429]
+              - cell "Edit Del" [ref=e430]:
+                - generic [ref=e431]:
+                  - button "Edit" [ref=e432] [cursor=pointer]
+                  - button "Del" [ref=e433] [cursor=pointer]
+        - dialog [ref=e434]:
+          - generic [ref=e435] [cursor=pointer]:
+            - generic [ref=e436]:
+              - generic [ref=e437]:
+                - heading "Import CSV to P2P_USER_PEERS_V5" [level=2] [ref=e438]
+                - button "×" [ref=e439]
+              - generic [ref=e440]:
+                - generic [ref=e441]: Upload
+                - generic [ref=e443]: Map Columns
+                - generic [ref=e445]: Preview
+                - generic [ref=e447]: Import
+                - generic [ref=e449]: Done
+            - generic [ref=e455]:
+              - generic [ref=e456]:
+                - generic [ref=e457]: ✓ 3 rows
+                - generic [ref=e458]:
+                  - text: "Delimiter:"
+                  - strong [ref=e459]: ","
+                - generic [ref=e460]:
+                  - text: "File:"
+                  - strong [ref=e461]: test_peers.csv
+                - generic [ref=e462]:
+                  - strong [ref=e463]: 10/10
+                  - text: columns mapped
+              - generic [ref=e464]:
+                - generic [ref=e465]:
+                  - generic [ref=e466]: CSV Columns
+                  - generic [ref=e467]:
+                    - generic [ref=e468]:
+                      - generic [ref=e470]:
+                        - generic [ref=e471]: PEER_ID
+                        - generic [ref=e472]: "301"
+                      - combobox [ref=e473]:
+                        - option "(skip)"
+                        - option "PEER_ID" [selected]
+                        - option "NETWORK_TYPE"
+                        - option "ENTITY_TYPE"
+                        - option "ENTITY_INTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_HANDLE"
+                        - option "ENTITY_PHOTO_URL"
+                        - option "ENTITY_FIRST_NAME"
+                        - option "ENTITY_MIDDLE_NAME"
+                        - option "ENTITY_LAST_NAME"
+                        - option "ENTITY_BUSINESS_NAME"
+                        - option "ENTITY_CITY"
+                        - option "ENTITY_STATE"
+                        - option "ENTITY_COUNTRY"
+                        - option "LAT"
+                        - option "LON"
+                        - option "GEO_BLOCK"
+                        - option "PHONE_SEARCH_ENABLED"
+                        - option "EMAIL_SEARCH_ENABLED"
+                        - option "PRIVACY_CONTROL_FLAG"
+                        - option "PRIVACY_PREFERENCE_TYPE"
+                        - option "TIME_CREATED"
+                        - option "TIME_UPDATED"
+                    - generic [ref=e474]:
+                      - generic [ref=e476]:
+                        - generic [ref=e477]: NETWORK_TYPE
+                        - generic [ref=e478]: PAYPAL
+                      - combobox [ref=e479]:
+                        - option "(skip)"
+                        - option "PEER_ID"
+                        - option "NETWORK_TYPE" [selected]
+                        - option "ENTITY_TYPE"
+                        - option "ENTITY_INTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_HANDLE"
+                        - option "ENTITY_PHOTO_URL"
+                        - option "ENTITY_FIRST_NAME"
+                        - option "ENTITY_MIDDLE_NAME"
+                        - option "ENTITY_LAST_NAME"
+                        - option "ENTITY_BUSINESS_NAME"
+                        - option "ENTITY_CITY"
+                        - option "ENTITY_STATE"
+                        - option "ENTITY_COUNTRY"
+                        - option "LAT"
+                        - option "LON"
+                        - option "GEO_BLOCK"
+                        - option "PHONE_SEARCH_ENABLED"
+                        - option "EMAIL_SEARCH_ENABLED"
+                        - option "PRIVACY_CONTROL_FLAG"
+                        - option "PRIVACY_PREFERENCE_TYPE"
+                        - option "TIME_CREATED"
+                        - option "TIME_UPDATED"
+                    - generic [ref=e480]:
+                      - generic [ref=e482]:
+                        - generic [ref=e483]: ENTITY_TYPE
+                        - generic [ref=e484]: USER
+                      - combobox [ref=e485]:
+                        - option "(skip)"
+                        - option "PEER_ID"
+                        - option "NETWORK_TYPE"
+                        - option "ENTITY_TYPE" [selected]
+                        - option "ENTITY_INTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_HANDLE"
+                        - option "ENTITY_PHOTO_URL"
+                        - option "ENTITY_FIRST_NAME"
+                        - option "ENTITY_MIDDLE_NAME"
+                        - option "ENTITY_LAST_NAME"
+                        - option "ENTITY_BUSINESS_NAME"
+                        - option "ENTITY_CITY"
+                        - option "ENTITY_STATE"
+                        - option "ENTITY_COUNTRY"
+                        - option "LAT"
+                        - option "LON"
+                        - option "GEO_BLOCK"
+                        - option "PHONE_SEARCH_ENABLED"
+                        - option "EMAIL_SEARCH_ENABLED"
+                        - option "PRIVACY_CONTROL_FLAG"
+                        - option "PRIVACY_PREFERENCE_TYPE"
+                        - option "TIME_CREATED"
+                        - option "TIME_UPDATED"
+                    - generic [ref=e486]:
+                      - generic [ref=e488]:
+                        - generic [ref=e489]: ENTITY_INTERNAL_ID
+                        - generic [ref=e490]: user301
+                      - combobox [ref=e491]:
+                        - option "(skip)"
+                        - option "PEER_ID"
+                        - option "NETWORK_TYPE"
+                        - option "ENTITY_TYPE"
+                        - option "ENTITY_INTERNAL_ID" [selected]
+                        - option "ENTITY_EXTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_HANDLE"
+                        - option "ENTITY_PHOTO_URL"
+                        - option "ENTITY_FIRST_NAME"
+                        - option "ENTITY_MIDDLE_NAME"
+                        - option "ENTITY_LAST_NAME"
+                        - option "ENTITY_BUSINESS_NAME"
+                        - option "ENTITY_CITY"
+                        - option "ENTITY_STATE"
+                        - option "ENTITY_COUNTRY"
+                        - option "LAT"
+                        - option "LON"
+                        - option "GEO_BLOCK"
+                        - option "PHONE_SEARCH_ENABLED"
+                        - option "EMAIL_SEARCH_ENABLED"
+                        - option "PRIVACY_CONTROL_FLAG"
+                        - option "PRIVACY_PREFERENCE_TYPE"
+                        - option "TIME_CREATED"
+                        - option "TIME_UPDATED"
+                    - generic [ref=e492]:
+                      - generic [ref=e494]:
+                        - generic [ref=e495]: PHONE_SEARCH_ENABLED
+                        - generic [ref=e496]: "true"
+                      - combobox [ref=e497]:
+                        - option "(skip)"
+                        - option "PEER_ID"
+                        - option "NETWORK_TYPE"
+                        - option "ENTITY_TYPE"
+                        - option "ENTITY_INTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_HANDLE"
+                        - option "ENTITY_PHOTO_URL"
+                        - option "ENTITY_FIRST_NAME"
+                        - option "ENTITY_MIDDLE_NAME"
+                        - option "ENTITY_LAST_NAME"
+                        - option "ENTITY_BUSINESS_NAME"
+                        - option "ENTITY_CITY"
+                        - option "ENTITY_STATE"
+                        - option "ENTITY_COUNTRY"
+                        - option "LAT"
+                        - option "LON"
+                        - option "GEO_BLOCK"
+                        - option "PHONE_SEARCH_ENABLED" [selected]
+                        - option "EMAIL_SEARCH_ENABLED"
+                        - option "PRIVACY_CONTROL_FLAG"
+                        - option "PRIVACY_PREFERENCE_TYPE"
+                        - option "TIME_CREATED"
+                        - option "TIME_UPDATED"
+                    - generic [ref=e498]:
+                      - generic [ref=e500]:
+                        - generic [ref=e501]: EMAIL_SEARCH_ENABLED
+                        - generic [ref=e502]: "true"
+                      - combobox [ref=e503]:
+                        - option "(skip)"
+                        - option "PEER_ID"
+                        - option "NETWORK_TYPE"
+                        - option "ENTITY_TYPE"
+                        - option "ENTITY_INTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_HANDLE"
+                        - option "ENTITY_PHOTO_URL"
+                        - option "ENTITY_FIRST_NAME"
+                        - option "ENTITY_MIDDLE_NAME"
+                        - option "ENTITY_LAST_NAME"
+                        - option "ENTITY_BUSINESS_NAME"
+                        - option "ENTITY_CITY"
+                        - option "ENTITY_STATE"
+                        - option "ENTITY_COUNTRY"
+                        - option "LAT"
+                        - option "LON"
+                        - option "GEO_BLOCK"
+                        - option "PHONE_SEARCH_ENABLED"
+                        - option "EMAIL_SEARCH_ENABLED" [selected]
+                        - option "PRIVACY_CONTROL_FLAG"
+                        - option "PRIVACY_PREFERENCE_TYPE"
+                        - option "TIME_CREATED"
+                        - option "TIME_UPDATED"
+                    - generic [ref=e504]:
+                      - generic [ref=e506]:
+                        - generic [ref=e507]: TIME_CREATED
+                        - generic [ref=e508]: 2024-01-01T00:00:00Z
+                      - combobox [ref=e509]:
+                        - option "(skip)"
+                        - option "PEER_ID"
+                        - option "NETWORK_TYPE"
+                        - option "ENTITY_TYPE"
+                        - option "ENTITY_INTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_HANDLE"
+                        - option "ENTITY_PHOTO_URL"
+                        - option "ENTITY_FIRST_NAME"
+                        - option "ENTITY_MIDDLE_NAME"
+                        - option "ENTITY_LAST_NAME"
+                        - option "ENTITY_BUSINESS_NAME"
+                        - option "ENTITY_CITY"
+                        - option "ENTITY_STATE"
+                        - option "ENTITY_COUNTRY"
+                        - option "LAT"
+                        - option "LON"
+                        - option "GEO_BLOCK"
+                        - option "PHONE_SEARCH_ENABLED"
+                        - option "EMAIL_SEARCH_ENABLED"
+                        - option "PRIVACY_CONTROL_FLAG"
+                        - option "PRIVACY_PREFERENCE_TYPE"
+                        - option "TIME_CREATED" [selected]
+                        - option "TIME_UPDATED"
+                    - generic [ref=e510]:
+                      - generic [ref=e512]:
+                        - generic [ref=e513]: TIME_UPDATED
+                        - generic [ref=e514]: 2024-01-01T00:00:00Z
+                      - combobox [ref=e515]:
+                        - option "(skip)"
+                        - option "PEER_ID"
+                        - option "NETWORK_TYPE"
+                        - option "ENTITY_TYPE"
+                        - option "ENTITY_INTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_HANDLE"
+                        - option "ENTITY_PHOTO_URL"
+                        - option "ENTITY_FIRST_NAME"
+                        - option "ENTITY_MIDDLE_NAME"
+                        - option "ENTITY_LAST_NAME"
+                        - option "ENTITY_BUSINESS_NAME"
+                        - option "ENTITY_CITY"
+                        - option "ENTITY_STATE"
+                        - option "ENTITY_COUNTRY"
+                        - option "LAT"
+                        - option "LON"
+                        - option "GEO_BLOCK"
+                        - option "PHONE_SEARCH_ENABLED"
+                        - option "EMAIL_SEARCH_ENABLED"
+                        - option "PRIVACY_CONTROL_FLAG"
+                        - option "PRIVACY_PREFERENCE_TYPE"
+                        - option "TIME_CREATED"
+                        - option "TIME_UPDATED" [selected]
+                    - generic [ref=e516]:
+                      - generic [ref=e518]:
+                        - generic [ref=e519]: ENTITY_FIRST_NAME
+                        - generic [ref=e520]: Alice
+                      - combobox [ref=e521]:
+                        - option "(skip)"
+                        - option "PEER_ID"
+                        - option "NETWORK_TYPE"
+                        - option "ENTITY_TYPE"
+                        - option "ENTITY_INTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_HANDLE"
+                        - option "ENTITY_PHOTO_URL"
+                        - option "ENTITY_FIRST_NAME" [selected]
+                        - option "ENTITY_MIDDLE_NAME"
+                        - option "ENTITY_LAST_NAME"
+                        - option "ENTITY_BUSINESS_NAME"
+                        - option "ENTITY_CITY"
+                        - option "ENTITY_STATE"
+                        - option "ENTITY_COUNTRY"
+                        - option "LAT"
+                        - option "LON"
+                        - option "GEO_BLOCK"
+                        - option "PHONE_SEARCH_ENABLED"
+                        - option "EMAIL_SEARCH_ENABLED"
+                        - option "PRIVACY_CONTROL_FLAG"
+                        - option "PRIVACY_PREFERENCE_TYPE"
+                        - option "TIME_CREATED"
+                        - option "TIME_UPDATED"
+                    - generic [ref=e522]:
+                      - generic [ref=e524]:
+                        - generic [ref=e525]: ENTITY_LAST_NAME
+                        - generic [ref=e526]: Smith
+                      - combobox [ref=e527]:
+                        - option "(skip)"
+                        - option "PEER_ID"
+                        - option "NETWORK_TYPE"
+                        - option "ENTITY_TYPE"
+                        - option "ENTITY_INTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_ID"
+                        - option "ENTITY_EXTERNAL_HANDLE"
+                        - option "ENTITY_PHOTO_URL"
+                        - option "ENTITY_FIRST_NAME"
+                        - option "ENTITY_MIDDLE_NAME"
+                        - option "ENTITY_LAST_NAME" [selected]
+                        - option "ENTITY_BUSINESS_NAME"
+                        - option "ENTITY_CITY"
+                        - option "ENTITY_STATE"
+                        - option "ENTITY_COUNTRY"
+                        - option "LAT"
+                        - option "LON"
+                        - option "GEO_BLOCK"
+                        - option "PHONE_SEARCH_ENABLED"
+                        - option "EMAIL_SEARCH_ENABLED"
+                        - option "PRIVACY_CONTROL_FLAG"
+                        - option "PRIVACY_PREFERENCE_TYPE"
+                        - option "TIME_CREATED"
+                        - option "TIME_UPDATED"
+                - generic [ref=e528]: →
+                - generic [ref=e529]:
+                  - generic [ref=e530]: Table Columns
+                  - generic [ref=e531]:
+                    - generic [ref=e534]:
+                      - generic [ref=e535]: PEER_ID
+                      - generic [ref=e536]: ← PEER_ID
+                    - generic [ref=e539]:
+                      - generic [ref=e540]: NETWORK_TYPE
+                      - generic [ref=e541]: ← NETWORK_TYPE
+                    - generic [ref=e544]:
+                      - generic [ref=e545]: ENTITY_TYPE
+                      - generic [ref=e546]: ← ENTITY_TYPE
+                    - generic [ref=e549]:
+                      - generic [ref=e550]: ENTITY_INTERNAL_ID
+                      - generic [ref=e551]: ← ENTITY_INTERNAL_ID
+                    - generic [ref=e554]:
+                      - generic [ref=e555]: ENTITY_EXTERNAL_ID
+                      - generic [ref=e556]: not mapped
+                    - generic [ref=e559]:
+                      - generic [ref=e560]: ENTITY_EXTERNAL_HANDLE
+                      - generic [ref=e561]: not mapped
+                    - generic [ref=e564]:
+                      - generic [ref=e565]: ENTITY_PHOTO_URL
+                      - generic [ref=e566]: not mapped
+                    - generic [ref=e569]:
+                      - generic [ref=e570]: ENTITY_FIRST_NAME
+                      - generic [ref=e571]: ← ENTITY_FIRST_NAME
+                    - generic [ref=e574]:
+                      - generic [ref=e575]: ENTITY_MIDDLE_NAME
+                      - generic [ref=e576]: not mapped
+                    - generic [ref=e579]:
+                      - generic [ref=e580]: ENTITY_LAST_NAME
+                      - generic [ref=e581]: ← ENTITY_LAST_NAME
+                    - generic [ref=e584]:
+                      - generic [ref=e585]: ENTITY_BUSINESS_NAME
+                      - generic [ref=e586]: not mapped
+                    - generic [ref=e589]:
+                      - generic [ref=e590]: ENTITY_CITY
+                      - generic [ref=e591]: not mapped
+                    - generic [ref=e594]:
+                      - generic [ref=e595]: ENTITY_STATE
+                      - generic [ref=e596]: not mapped
+                    - generic [ref=e599]:
+                      - generic [ref=e600]: ENTITY_COUNTRY
+                      - generic [ref=e601]: not mapped
+                    - generic [ref=e604]:
+                      - generic [ref=e605]: LAT
+                      - generic [ref=e606]: not mapped
+                    - generic [ref=e609]:
+                      - generic [ref=e610]: LON
+                      - generic [ref=e611]: not mapped
+                    - generic [ref=e614]:
+                      - generic [ref=e615]: GEO_BLOCK
+                      - generic [ref=e616]: not mapped
+                    - generic [ref=e619]:
+                      - generic [ref=e620]: PHONE_SEARCH_ENABLED
+                      - generic [ref=e621]: ← PHONE_SEARCH_ENABLED
+                    - generic [ref=e624]:
+                      - generic [ref=e625]: EMAIL_SEARCH_ENABLED
+                      - generic [ref=e626]: ← EMAIL_SEARCH_ENABLED
+                    - generic [ref=e629]:
+                      - generic [ref=e630]: PRIVACY_CONTROL_FLAG
+                      - generic [ref=e631]: not mapped
+                    - generic [ref=e634]:
+                      - generic [ref=e635]: PRIVACY_PREFERENCE_TYPE
+                      - generic [ref=e636]: not mapped
+                    - generic [ref=e639]:
+                      - generic [ref=e640]: TIME_CREATED
+                      - generic [ref=e641]: ← TIME_CREATED
+                    - generic [ref=e644]:
+                      - generic [ref=e645]: TIME_UPDATED
+                      - generic [ref=e646]: ← TIME_UPDATED
+              - generic [ref=e647]:
+                - generic [ref=e648]: Mapped
+                - generic [ref=e650]: CSV unmapped (will skip)
+                - generic [ref=e652]: Table column (no source)
+              - generic [ref=e654]:
+                - button "Back" [ref=e655]
+                - button "Validate & Preview" [ref=e656]
