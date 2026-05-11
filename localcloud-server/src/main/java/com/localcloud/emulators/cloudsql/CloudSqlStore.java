@@ -113,7 +113,7 @@ public class CloudSqlStore {
         String physical = physicalName(project, instance, database);
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO cloudsql_databases (project_id, instance_id, database_name, charset, collation, physical_name) " +
+                     "INSERT INTO cloudsql_databases (project_id, instance_id, database_name, charset, \"collation\", physical_name) " +
                              "VALUES (?, ?, ?, ?, ?, ?)")) {
             ps.setString(1, project);
             ps.setString(2, instance);
@@ -129,7 +129,7 @@ public class CloudSqlStore {
     public Map<String, Object> getDatabase(String project, String instance, String database) throws SQLException {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "SELECT project_id, instance_id, database_name, charset, collation, physical_name, created_at " +
+                     "SELECT project_id, instance_id, database_name, charset, \"collation\", physical_name, created_at " +
                              "FROM cloudsql_databases WHERE project_id = ? AND instance_id = ? AND database_name = ?")) {
             ps.setString(1, project);
             ps.setString(2, instance);
@@ -144,7 +144,7 @@ public class CloudSqlStore {
         List<Map<String, Object>> result = new ArrayList<>();
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "SELECT project_id, instance_id, database_name, charset, collation, physical_name, created_at " +
+                     "SELECT project_id, instance_id, database_name, charset, \"collation\", physical_name, created_at " +
                              "FROM cloudsql_databases WHERE project_id = ? AND instance_id = ? ORDER BY database_name")) {
             ps.setString(1, project);
             ps.setString(2, instance);
@@ -290,7 +290,7 @@ public class CloudSqlStore {
         row.put("instance_id", rs.getString("instance_id"));
         row.put("database_name", rs.getString("database_name"));
         row.put("charset", rs.getString("charset"));
-        row.put("collation", rs.getString("collation"));
+        row.put("collation", rs.getString("collation")); // column aliased in query as "collation"
         row.put("physical_name", rs.getString("physical_name"));
         row.put("created_at", rs.getTimestamp("created_at"));
         return row;
