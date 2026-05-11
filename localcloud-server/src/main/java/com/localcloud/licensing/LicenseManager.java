@@ -36,7 +36,7 @@ public class LicenseManager {
 
         // Bypass mode: no key AND no server configured
         this.bypassMode = (apiKey == null || apiKey.isBlank())
-                && ("none".equalsIgnoreCase(licenseServerUrl) || licenseServerUrl == null || licenseServerUrl.isBlank());
+                && (licenseServerUrl == null || licenseServerUrl.isBlank() || "none".equalsIgnoreCase(licenseServerUrl));
     }
 
     /**
@@ -86,7 +86,9 @@ public class LicenseManager {
 
     private LicenseResult checkCacheGrace(String originalError) {
         LicenseResult cached = cache.read();
-        if (cached != null && cached.isValid() && cache.isWithinGracePeriod(GRACE_HOURS)) {
+        if (cached != null && cached.isValid()
+                && cached.expiresEpoch() > java.time.Instant.now().getEpochSecond()
+                && cache.isWithinGracePeriod(GRACE_HOURS)) {
             logger.info("Using cached license (grace period) — tier={}", cached.tier());
             cache.write(cached);
             return cached;
