@@ -26,7 +26,7 @@ public final class DeviceFingerprint {
         String cpuModel = readCpuModel();
         int cores = Runtime.getRuntime().availableProcessors();
         long ramMb = readTotalRamMb();
-        String mac = readPrimaryMac();
+        String mac = readMacAddress();
         String diskSerial = readDiskSerial();
         String kernel = System.getProperty("os.version", "unknown");
         return fromComponents(cpuModel, cores, ramMb, mac, diskSerial, kernel);
@@ -64,29 +64,73 @@ public final class DeviceFingerprint {
                     .findFirst()
                     .orElse(0L);
         } catch (IOException e) {
-            return 0L;
+            // Cross-platform fallback: OS MXBean
+            try {
+                var bean = (com.sun.management.OperatingSystemMXBean)
+                        java.lang.management.ManagementFactory.getOperatingSystemMXBean();
+                return bean.getTotalMemorySize() / (1024 * 1024);
+            } catch (Exception ex) {
+                return 0L;
+            }
         }
     }
 
-    private static String readPrimaryMac() {
+    /**
+     * Read primary MAC address. Tries Linux /sys first, then Java NetworkInterface (cross-platform).
+     * Package-private for testing.
+     */
+    static String readMacAddress() {
+        // Linux/Docker: try /sys/class/net first
         try {
             Path netDir = Path.of("/sys/class/net");
-            if (!Files.isDirectory(netDir)) return "no-mac";
-            try (Stream<Path> dirs = Files.list(netDir)) {
-                return dirs
-                        .filter(p -> !p.getFileName().toString().equals("lo"))
-                        .map(p -> {
-                            try {
-                                return Files.readString(p.resolve("address")).trim();
-                            } catch (IOException e) {
-                                return "";
-                            }
-                        })
-                        .filter(addr -> !addr.isBlank() && !addr.equals("00:00:00:00:00:00"))
-                        .findFirst()
-                        .orElse("no-mac");
+            if (Files.isDirectory(netDir)) {
+                try (Stream<Path> dirs = Files.list(netDir)) {
+                    String linuxMac = dirs
+                            .filter(p -> !p.getFileName().toString().equals("lo"))
+                            .map(p -> {
+                                try {
+                                    return Files.readString(p.resolve("address")).trim();
+                                } catch (IOException e) {
+                                    return "";
+                                }
+                            })
+                            .filter(addr -> !addr.isBlank() && !addr.equals("00:00:00:00:00:00"))
+                            .findFirst()
+                            .orElse(null);
+                    if (linuxMac != null) return linuxMac;
+                }
             }
-        } catch (IOException e) {
+        } catch (IOException ignored) {}
+
+        // Cross-platform fallback: java.net.NetworkInterface
+        try {
+            return java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())
+                    .stream()
+                    .filter(ni -> {
+                        try {
+                            return !ni.isLoopback() && ni.isUp() && ni.getHardwareAddress() != null;
+                        } catch (java.net.SocketException e) {
+                            return false;
+                        }
+                    })
+                    .map(ni -> {
+                        try {
+                            byte[] mac = ni.getHardwareAddress();
+                            if (mac == null) return null;
+                            StringBuilder sb = new StringBuilder();
+                            for (int i = 0; i < mac.length; i++) {
+                                if (i > 0) sb.append(':');
+                                sb.append(String.format("%02x", mac[i]));
+                            }
+                            return sb.toString();
+                        } catch (Exception e) {
+                            return null;
+                        }
+                    })
+                    .filter(m -> m != null && !m.isBlank())
+                    .findFirst()
+                    .orElse("no-mac");
+        } catch (java.net.SocketException e) {
             return "no-mac";
         }
     }

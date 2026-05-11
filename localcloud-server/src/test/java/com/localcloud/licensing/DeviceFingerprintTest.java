@@ -34,4 +34,20 @@ class DeviceFingerprintTest {
         String fp2 = DeviceFingerprint.fromComponents("TestCPU", 16, 16384, "aa:bb:cc:dd:ee:ff", "SERIAL1", "6.5.0");
         assertNotEquals(fp1, fp2, "Different core count should produce different fingerprint");
     }
+
+    @Test
+    void computeProducesUniqueishFingerprintOnAnyOS() {
+        String fp = DeviceFingerprint.compute();
+        assertEquals(64, fp.length());
+        assertNotNull(fp);
+    }
+
+    @Test
+    void readMacAddressReturnsValidMacOrFallback() {
+        String mac = DeviceFingerprint.readMacAddress();
+        assertNotNull(mac);
+        assertFalse(mac.isBlank());
+        assertTrue(mac.equals("no-mac") || mac.contains(":"),
+                "Expected no-mac or colon-separated MAC, got: " + mac);
+    }
 }
