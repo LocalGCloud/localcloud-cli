@@ -34,6 +34,8 @@ public class LocalCloudConfig {
     private String gcpCredentialSaKeyPath;
     private ConcurrentHashMap<String, Boolean> enabledServicesMap;
     private ConcurrentHashMap<String, String> configSourceMap;
+    private String apiKey;
+    private String licenseServerUrl;
 
     private static final Logger logger = LoggerFactory.getLogger(LocalCloudConfig.class);
 
@@ -73,6 +75,8 @@ public class LocalCloudConfig {
         config.postgresDatabase = env("LOCALCLOUD_PG_DATABASE", "localcloud");
         config.postgresUser = env("LOCALCLOUD_PG_USER", "localcloud");
         config.postgresPassword = env("LOCALCLOUD_PG_PASSWORD", "localcloud");
+        config.apiKey = env("LOCALCLOUD_API_KEY", "");
+        config.licenseServerUrl = env("LOCALCLOUD_LICENSE_SERVER", "none");
 
         // Initialize enabled services map and track config source
         config.enabledServicesMap = new ConcurrentHashMap<>();
@@ -204,6 +208,9 @@ public class LocalCloudConfig {
     public String getGcpCredentialSaKeyPath() {
         return gcpCredentialSaKeyPath;
     }
+
+    public String getApiKey() { return apiKey; }
+    public String getLicenseServerUrl() { return licenseServerUrl; }
 
     /**
      * Check if a service is dynamically enabled (supports runtime toggling).

@@ -31,6 +31,9 @@ import com.localcloud.emulators.compute.ComputeEmulator;
 import com.localcloud.emulators.cloudrun.CloudRunEmulator;
 import com.localcloud.emulators.gke.GkeEmulator;
 import com.localcloud.emulators.gke.K3dManager;
+import com.localcloud.emulators.cloudsql.CloudSqlEmulator;
+import com.localcloud.emulators.kms.KmsEmulator;
+import com.localcloud.emulators.vertexai.VertexAiEmulator;
 import com.localcloud.emulators.workflows.WorkflowsCallbackService;
 import com.localcloud.emulators.workflows.WorkflowsEmulator;
 import com.localcloud.emulators.workflows.WorkflowEnvVarsRepository;
@@ -137,6 +140,49 @@ public class LocalCloudApplication {
             }
         } catch (Exception e) {
             logger.warn("Failed to load persisted service config: {}", e.getMessage());
+        }
+
+        // --- License validation ---
+        // For Phase 1: public key is null when LOCALCLOUD_LICENSE_PUBLIC_KEY is not set
+        // (bypass mode uses online validator which accepts "none" server)
+        // In Phase 2, embed the production Ed25519 public key here
+        java.security.PublicKey licensePublicKey = null;
+        try {
+            String pubKeyEnv = System.getenv("LOCALCLOUD_LICENSE_PUBLIC_KEY");
+            if (pubKeyEnv != null && !pubKeyEnv.isBlank()) {
+                licensePublicKey = com.localcloud.licensing.KeyGenerator.decodePublicKey(pubKeyEnv);
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to load license public key: {}", e.getMessage());
+        }
+
+        var licenseManager = new com.localcloud.licensing.LicenseManager(
+                config.getApiKey().isBlank() ? null : config.getApiKey(),
+                config.getLicenseServerUrl(),
+                config.getDataDir(),
+                licensePublicKey);
+
+        com.localcloud.licensing.LicenseResult licenseResult = licenseManager.validate();
+
+        if (!licenseResult.isValid()) {
+            logger.error("=== LICENSE VALIDATION FAILED ===");
+            logger.error(licenseResult.errorMessage());
+            logger.error("Set LOCALCLOUD_API_KEY or visit https://localcloud.dev to get a license key.");
+            logger.error("================================");
+            System.exit(1);
+        }
+
+        logger.info("License: tier={}, email={}, device={}", licenseResult.tier(), licenseResult.email(),
+                licenseManager.getDeviceId().substring(0, 8) + "...");
+
+        // Apply tier-based service gating
+        if (licenseResult.tier() != null) {
+            for (String serviceName : config.getServiceRegistry().getAllServices().keySet()) {
+                if (!licenseResult.tier().isServiceAllowed(serviceName)) {
+                    config.setServiceEnabled(serviceName, false);
+                    logger.info("Service '{}' disabled — not available in {} tier", serviceName, licenseResult.tier());
+                }
+            }
         }
 
         // Build Armeria server
@@ -359,6 +405,31 @@ public class LocalCloudApplication {
 
             hasGrpcServices = true;
             logger.info("Cloud Workflows facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        if (config.isServiceEnabled("vertexai")) {
+            VertexAiEmulator vertexAiEmulator = new VertexAiEmulator(dataSource, config.getGatewayPort());
+            vertexAiEmulator.start();
+            sb.annotatedService("/v1", vertexAiEmulator.getRestService());
+            gateway.registerRestEmulator("/v1/projects/*/locations/*/publishers/*/models", vertexAiEmulator, null);
+            logger.info("Vertex AI facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        if (config.isServiceEnabled("kms")) {
+            KmsEmulator kmsEmulator = new KmsEmulator(dataSource, config.getGatewayPort());
+            kmsEmulator.start();
+            sb.annotatedService("/v1", kmsEmulator.getRestService());
+            gateway.registerRestEmulator("/v1/projects/*/locations/*/keyRings", kmsEmulator, null);
+            logger.info("Cloud KMS facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        if (config.isServiceEnabled("cloudsql")) {
+            CloudSqlEmulator cloudSqlEmulator = new CloudSqlEmulator(dataSource, config.getGatewayPort());
+            cloudSqlEmulator.start();
+            sb.annotatedService("/sql/v1beta4", cloudSqlEmulator.getRestService());
+            sb.annotatedService("/sql/v1", cloudSqlEmulator.getRestService());
+            gateway.registerRestEmulator("/sql", cloudSqlEmulator, null);
+            logger.info("Cloud SQL Admin API facade registered on gateway port {}", config.getGatewayPort());
         }
 
         if (hasGrpcServices) {
