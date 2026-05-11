@@ -20,6 +20,16 @@ public class LicenseManager {
     private static final Logger logger = LoggerFactory.getLogger(LicenseManager.class);
     private static final int GRACE_HOURS = 72;
 
+    /**
+     * Build-time timestamp floor (seconds since epoch).
+     * The system clock can never legitimately be before this value.
+     */
+    private static final long BUILD_TIMESTAMP_FLOOR = 1747000000L; // 2025-05-11
+
+    public static long getBuildTimestampFloor() {
+        return BUILD_TIMESTAMP_FLOOR;
+    }
+
     private final String apiKey;
     private final String deviceId;
     private final OfflineKeyValidator offlineValidator;
@@ -44,6 +54,19 @@ public class LicenseManager {
      * Call once at startup.
      */
     public LicenseResult validate() {
+        // Clock tamper detection
+        long now = java.time.Instant.now().getEpochSecond();
+        if (now < BUILD_TIMESTAMP_FLOOR) {
+            return LicenseResult.invalid(
+                "System clock appears to be set before build date. " +
+                "Please set the correct system time.");
+        }
+        if (cache.detectClockRollback()) {
+            return LicenseResult.invalid(
+                "System clock was rolled back since last run. " +
+                "Clock manipulation is not permitted. Please set the correct system time.");
+        }
+
         if (bypassMode) {
             logger.info("License bypass mode — no API key required (development mode)");
             LicenseResult result = LicenseResult.valid(LicenseTier.PRO, "dev@localcloud.dev", deviceId, Long.MAX_VALUE);

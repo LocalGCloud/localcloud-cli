@@ -122,6 +122,23 @@ public class LicenseCache {
         return (now - lastSeenTimestamp) < graceSeconds;
     }
 
+    /**
+     * Detect if the system clock has been rolled back since the last boot.
+     * Returns true if current time is BEFORE the last-seen timestamp.
+     * Returns false if no cache exists (first boot) or clock is normal.
+     */
+    public boolean detectClockRollback() {
+        LicenseCacheData data = readRaw();
+        if (data == null) return false;
+        long now = Instant.now().getEpochSecond();
+        if (now < data.lastSeen()) {
+            logger.warn("Clock rollback detected: last-seen={}, now={}, delta={}s",
+                    data.lastSeen(), now, data.lastSeen() - now);
+            return true;
+        }
+        return false;
+    }
+
     private LicenseCacheData readRaw() {
         Path cacheFile = cacheDir.resolve("token.bin");
         if (!Files.exists(cacheFile)) return null;
