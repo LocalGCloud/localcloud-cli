@@ -184,6 +184,9 @@ if [ -n "${LOCALCLOUD_SERVICES}" ]; then
     export LOCALCLOUD_ENABLE_CLOUDRUN="false"
     export LOCALCLOUD_ENABLE_MEMORYSTORE="false"
     export LOCALCLOUD_ENABLE_WORKFLOWS="false"
+    export LOCALCLOUD_ENABLE_VERTEXAI="false"
+    export LOCALCLOUD_ENABLE_KMS="false"
+    export LOCALCLOUD_ENABLE_CLOUDSQL="false"
 
     # Parse comma-separated service list and enable matching services
     IFS=',' read -ra SERVICES <<< "${LOCALCLOUD_SERVICES}"
@@ -206,6 +209,9 @@ if [ -n "${LOCALCLOUD_SERVICES}" ]; then
             cloudrun)       export LOCALCLOUD_ENABLE_CLOUDRUN="true" ;;
             memorystore)    export LOCALCLOUD_ENABLE_MEMORYSTORE="true" ;;
             workflows)      export LOCALCLOUD_ENABLE_WORKFLOWS="true" ;;
+            vertexai)       export LOCALCLOUD_ENABLE_VERTEXAI="true" ;;
+            kms)            export LOCALCLOUD_ENABLE_KMS="true" ;;
+            cloudsql)       export LOCALCLOUD_ENABLE_CLOUDSQL="true" ;;
             *)
                 echo "WARNING: Unknown service '${service}' in LOCALCLOUD_SERVICES" >&2
                 ;;
@@ -389,6 +395,23 @@ if [ "${LOCALCLOUD_SKIP_UPDATE_CHECK}" != "true" ]; then
             > /tmp/localcloud-update-available.json 2>/dev/null || true
     ) &
 fi
+
+# --- License status banner ---
+echo ""
+if [ -n "$LOCALCLOUD_API_KEY" ]; then
+    case "$LOCALCLOUD_API_KEY" in
+        lck_*) echo "  License: offline key provided" ;;
+        lco_*) echo "  License: online key provided" ;;
+        *)     echo "  License: key format not recognized" ;;
+    esac
+else
+    if [ "$LOCALCLOUD_LICENSE_SERVER" = "none" ] || [ -z "$LOCALCLOUD_LICENSE_SERVER" ]; then
+        echo "  License: development mode (no key required)"
+    else
+        echo "  License: no key provided — trial or cached license will be used"
+    fi
+fi
+echo ""
 
 # Drop privileges: run CMD as the runtime user
 exec gosu "$RUN_USER" "$@"
