@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.localcloud.license.auth.AuthRepositoryTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-05-11T18:13:45.857Z" hostname="LM-SJN-40043519" time="0.238">
+  <properties/>
+  <testcase name="registerCreatesUser()" classname="com.localcloud.license.auth.AuthRepositoryTest" time="0.175"/>
+  <testcase name="emailVerificationUpdatesUser()" classname="com.localcloud.license.auth.AuthRepositoryTest" time="0.015"/>
+  <testcase name="wrongOtpIsRejected()" classname="com.localcloud.license.auth.AuthRepositoryTest" time="0.01"/>
+  <testcase name="duplicateEmailIsIdempotent()" classname="com.localcloud.license.auth.AuthRepositoryTest" time="0.011"/>
+  <testcase name="otpIsGeneratedAndValidated()" classname="com.localcloud.license.auth.AuthRepositoryTest" time="0.013"/>
+  <testcase name="otpIsConsumedAfterUse()" classname="com.localcloud.license.auth.AuthRepositoryTest" time="0.008"/>
+  <system-out><![CDATA[11:13:46.016 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+11:13:46.040 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+11:13:46.056 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+11:13:46.067 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+11:13:46.078 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+11:13:46.092 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

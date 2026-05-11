@@ -5,12 +5,14 @@ import com.localcloud.license.keys.ApiKeyRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.SQLException;
-import java.util.UUID;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 public class LicenseValidator {
 
     private static final Logger logger = LoggerFactory.getLogger(LicenseValidator.class);
+    private static final int JWT_VALID_HOURS = 4;
+
     private final ApiKeyRepository keyRepo;
     private final AuthRepository authRepo;
     private final DeviceTracker deviceTracker;
@@ -21,30 +23,33 @@ public class LicenseValidator {
         this.deviceTracker = deviceTracker;
     }
 
-    public ValidationResult validate(String keyHash, String deviceFingerprint) throws SQLException {
-        if (keyHash == null || keyHash.isBlank()) {
-            return ValidationResult.invalid("Missing API key");
+    public ValidationResult validate(String rawKey, String deviceId) {
+        if (rawKey == null || !rawKey.startsWith("lco_")) {
+            return ValidationResult.invalid("Invalid key format — expected lco_ prefix");
         }
-        if (!keyRepo.keyExists(keyHash)) {
-            return ValidationResult.invalid("Invalid or revoked API key");
+        try {
+            ApiKeyRepository.KeyInfo keyInfo = keyRepo.findActiveKeyByHash(rawKey);
+            if (keyInfo == null) return ValidationResult.invalid("Unknown or revoked key");
+
+            // Track device
+            if (deviceId != null && !deviceId.isBlank() && keyInfo.userId() != null) {
+                deviceTracker.recordDevice(keyInfo.userId(), deviceId);
+            }
+
+            long expires = Instant.now().plus(JWT_VALID_HOURS, ChronoUnit.HOURS).getEpochSecond();
+            String email = keyInfo.userEmail() != null ? keyInfo.userEmail() : "unknown";
+            return new ValidationResult(true, keyInfo.tier(), email, expires, null);
+
+        } catch (Exception e) {
+            logger.error("License validation error: {}", e.getMessage());
+            return ValidationResult.invalid("Validation failed: " + e.getMessage());
         }
-        UUID userId = keyRepo.getUserIdForKey(keyHash);
-        if (userId == null) {
-            return ValidationResult.invalid("Key not associated with user");
-        }
-        String tier = keyRepo.getTierForKey(keyHash);
-        if (deviceFingerprint != null && !deviceFingerprint.isBlank()) {
-            deviceTracker.recordDevice(userId, deviceFingerprint);
-        }
-        return ValidationResult.valid(userId, tier);
     }
 
-    public record ValidationResult(boolean valid, UUID userId, String tier, String reason) {
-        public static ValidationResult valid(UUID userId, String tier) {
-            return new ValidationResult(true, userId, tier, null);
-        }
-        public static ValidationResult invalid(String reason) {
-            return new ValidationResult(false, null, null, reason);
+    public record ValidationResult(boolean valid, String tier, String email,
+                                    long expiresEpoch, String errorMessage) {
+        public static ValidationResult invalid(String msg) {
+            return new ValidationResult(false, null, null, 0, msg);
         }
     }
 }
