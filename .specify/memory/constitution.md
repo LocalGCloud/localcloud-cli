@@ -105,7 +105,7 @@ tool, not a full administration platform.
 
 - **Languages**: Java 21 LTS (primary, API gateway and facade
   emulators), Python 3.11+ (CLI tooling, seed processing),
-  Solid.js (web console frontend), Flask (console backend).
+  Solid.js (web console frontend), Armeria (console backend).
   Go is excluded.
 - **Persistence**: PostgreSQL (managed by supervisord inside the
   Docker container) for structured data. Filesystem for blob

@@ -19,6 +19,9 @@ localcloud-console/dist/
 localcloud-console/node_modules/
 localcloud-console-old/dist/
 localcloud-console-old/node_modules/
+localcloud-console-gemini/dist/
+localcloud-console-gemini/node_modules/
+
 
 # IDE
 .idea/
