@@ -413,5 +413,16 @@ else
 fi
 echo ""
 
+# License preflight gate — must pass before supervisord starts external emulators
+echo "Checking license..."
+if ! bash /opt/localcloud/license-gate.sh; then
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════════╗"
+    echo "║  License validation failed. Container will not start.           ║"
+    echo "║  Set LOCALCLOUD_API_KEY or get a key at https://localcloud.dev  ║"
+    echo "╚══════════════════════════════════════════════════════════════════╝"
+    exit 1
+fi
+
 # Drop privileges: run CMD as the runtime user
 exec gosu "$RUN_USER" "$@"

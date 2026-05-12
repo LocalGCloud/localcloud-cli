@@ -341,7 +341,13 @@ COPY seed.yaml /etc/localcloud/seed.yaml
 COPY supervisord.conf /etc/supervisor/conf.d/localcloud.conf
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY wait-for-pg.sh /usr/local/bin/wait-for-pg.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/wait-for-pg.sh
+COPY license-gate.sh /opt/localcloud/license-gate.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/wait-for-pg.sh /opt/localcloud/license-gate.sh
+
+# Build mode: "development" (default) skips license gate when no key is set.
+# Pass --build-arg BUILD_MODE=production to enforce key requirement at startup.
+ARG BUILD_MODE=development
+RUN echo "${BUILD_MODE}" > /opt/localcloud/BUILD_MODE
 
 # JVM tuning for container environment (Java 25 LTS)
 # ZGenerational is default in Java 25 LTS, no need to specify it
