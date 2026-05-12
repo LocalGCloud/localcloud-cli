@@ -48,13 +48,10 @@ class LicenseIntegrationTest {
         assertTrue(result.isValid());
         assertEquals(LicenseTier.COMMUNITY, result.tier());
 
-        assertTrue(result.tier().isServiceAllowed("gcs"));
-        assertTrue(result.tier().isServiceAllowed("pubsub"));
-        assertTrue(result.tier().isServiceAllowed("firestore"));
-        assertFalse(result.tier().isServiceAllowed("spanner"));
-        assertFalse(result.tier().isServiceAllowed("bigquery"));
-        assertFalse(result.tier().isServiceAllowed("bigtable"));
-        assertFalse(result.tier().isServiceAllowed("memorystore"));
+        // Community includes community-tier services
+        assertTrue(result.tier().includes(LicenseTier.COMMUNITY));
+        // Community does not include pro-tier services (spanner, bigtable, etc.)
+        assertFalse(result.tier().includes(LicenseTier.PRO));
     }
 
     @Test

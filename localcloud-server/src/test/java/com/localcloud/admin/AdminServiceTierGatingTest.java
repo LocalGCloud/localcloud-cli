@@ -164,11 +164,13 @@ class AdminServiceTierGatingTest {
         HttpResponse response = service.updateServiceConfig("{\"spanner\": true}");
         var agg = response.aggregate().join();
 
-        assertEquals(HttpStatus.FORBIDDEN, agg.status());
+        // Always 200 — callers read applied/blocked maps to know what happened
+        assertEquals(HttpStatus.OK, agg.status());
         String body = agg.contentUtf8();
         assertTrue(body.contains("blocked"), "Body should have blocked map: " + body);
         assertTrue(body.contains("spanner"), "Body should name the blocked service: " + body);
         assertTrue(body.contains("upgrade_url"), "Body should contain upgrade_url: " + body);
+        assertTrue(body.contains("applied"), "Body should have applied map: " + body);
 
         // Verify service was NOT enabled
         verify(config, never()).setServiceEnabled(eq("spanner"), eq(true));
@@ -181,19 +183,17 @@ class AdminServiceTierGatingTest {
 
         service = buildService(LicenseTier.COMMUNITY, defs);
         when(registry.getAllServices()).thenReturn(defs);
-        // Return a non-null config source so the env-lock check passes
         when(config.getConfigSource("spanner")).thenReturn("yaml");
-        // Stub getServiceConfig() return values
         when(config.isServiceDynamicallyEnabled("spanner")).thenReturn(true);
-
-        ServiceConfigRepository repo = mock(ServiceConfigRepository.class);
 
         // Disabling a PRO service should be allowed regardless of tier
         HttpResponse response = service.updateServiceConfig("{\"spanner\": false}");
         var agg = response.aggregate().join();
 
-        // Should not be 403 — disabling doesn't require tier check
-        assertNotEquals(HttpStatus.FORBIDDEN, agg.status());
+        assertEquals(HttpStatus.OK, agg.status());
+        String body = agg.contentUtf8();
+        assertTrue(body.contains("applied"), "Body should have applied map: " + body);
+        assertTrue(body.contains("spanner"), "Applied should contain spanner: " + body);
         verify(config).setServiceEnabled("spanner", false);
     }
 
@@ -210,8 +210,10 @@ class AdminServiceTierGatingTest {
         HttpResponse response = service.updateServiceConfig("{\"gcs\": true}");
         var agg = response.aggregate().join();
 
-        // Should not be blocked
-        assertNotEquals(HttpStatus.FORBIDDEN, agg.status());
+        assertEquals(HttpStatus.OK, agg.status());
+        String body = agg.contentUtf8();
+        assertTrue(body.contains("applied"), "Body should have applied map: " + body);
+        assertTrue(body.contains("gcs"), "Applied should contain gcs: " + body);
         verify(config).setServiceEnabled("gcs", true);
     }
 }

@@ -5,7 +5,7 @@ public final class StaticLicenseTierProvider implements LicenseTierProvider {
     private final LicenseTier tier;
 
     public StaticLicenseTierProvider(LicenseTier tier) {
-        this.tier = tier;
+        this.tier = tier != null ? tier : LicenseTier.COMMUNITY;
     }
 
     @Override

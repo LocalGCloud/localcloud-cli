@@ -41,6 +41,7 @@ public class AdminApiService {
     private static final Logger logger = LoggerFactory.getLogger(AdminApiService.class);
     private static final int DEFAULT_REQUEST_LIMIT = 100;
     private static final int MAX_REQUEST_LIMIT = 1000;
+    private static final String UPGRADE_URL = "https://localcloud.dev/pricing";
 
     private final LocalCloudConfig config;
     private final RequestLogger requestLogger;
@@ -469,7 +470,7 @@ public class AdminApiService {
                         "error", "Service '" + serviceId + "' requires " + required.name().toLowerCase() + " tier or higher",
                         "current_tier", tierProvider.currentTier().name().toLowerCase(),
                         "required_tier", required.name().toLowerCase(),
-                        "upgrade_url", "https://localcloud.dev/pricing")));
+                        "upgrade_url", UPGRADE_URL)));
             }
 
             if (config.isServiceDynamicallyEnabled(serviceId)) {
@@ -580,6 +581,7 @@ public class AdminApiService {
         try {
             @SuppressWarnings("unchecked")
             Map<String, Object> updates = mapper.readValue(body, Map.class);
+            Map<String, Object> applied = new LinkedHashMap<>();
             Map<String, Object> blocked = new LinkedHashMap<>();
             for (Map.Entry<String, Object> entry : updates.entrySet()) {
                 String serviceId = entry.getKey();
@@ -600,7 +602,7 @@ public class AdminApiService {
                                 "error", "Service '" + serviceId + "' requires " + required.name().toLowerCase() + " tier or higher",
                                 "current_tier", tierProvider.currentTier().name().toLowerCase(),
                                 "required_tier", required.name().toLowerCase(),
-                                "upgrade_url", "https://localcloud.dev/pricing"));
+                                "upgrade_url", UPGRADE_URL));
                             continue; // Skip this service
                         }
                     }
@@ -608,6 +610,7 @@ public class AdminApiService {
 
                 config.setServiceEnabled(serviceId, enabled);
                 serviceConfigRepository.upsert(serviceId, enabled);
+                applied.put(serviceId, Map.of("enabled", enabled));
 
                 // Start/stop external services via supervisord
                 ServiceDefinition def = config.getServiceRegistry().getAllServices().get(serviceId);
@@ -627,16 +630,9 @@ public class AdminApiService {
                     }
                 }
             }
-            // If any services were blocked by tier, return 207 with details
-            if (!blocked.isEmpty()) {
-                Map<String, Object> response = new LinkedHashMap<>();
-                response.put("blocked", blocked);
-                response.put("upgrade_url", "https://localcloud.dev/pricing");
-                // Still return current config for applied changes
-                return HttpResponse.of(HttpStatus.FORBIDDEN, MediaType.JSON,
-                        mapper.writerWithDefaultPrettyPrinter().writeValueAsString(response));
-            }
-            return getServiceConfig(); // Return updated state
+            // Always return 200 with both applied and blocked so callers know exactly what happened
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writeValueAsString(Map.of("applied", applied, "blocked", blocked)));
         } catch (Exception e) {
             logger.error("Error updating service config", e);
             return errorResponse(e);

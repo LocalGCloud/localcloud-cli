@@ -2,6 +2,7 @@ package com.localcloud;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
@@ -49,6 +50,8 @@ import com.localcloud.gateway.ProcessHealthChecker;
 import com.localcloud.gateway.RequestLogger;
 import com.localcloud.persistence.PostgresDataSource;
 import com.localcloud.persistence.SchemaManager;
+import com.localcloud.config.ServiceRegistry.ServiceDefinition;
+import com.localcloud.licensing.LicenseTier;
 import com.localcloud.licensing.LicenseTierProvider;
 import com.localcloud.licensing.StaticLicenseTierProvider;
 import com.localcloud.sync.SyncApiService;
@@ -181,17 +184,20 @@ public class LocalCloudApplication {
                 licenseManager.getDeviceId().substring(0, 8) + "...");
 
         // Create tier provider and AdminApiService now that the license tier is known
-        LicenseTierProvider tierProvider = new StaticLicenseTierProvider(licenseResult.tier());
+        LicenseTier currentTier = licenseResult.tier() != null ? licenseResult.tier() : LicenseTier.COMMUNITY;
+        LicenseTierProvider tierProvider = new StaticLicenseTierProvider(currentTier);
         this.adminApiService = new AdminApiService(config, requestLogger, projectService,
                 routingRepository, credentialBroker, serviceConfigRepository, tierProvider);
 
-        // Apply tier-based service gating
-        if (licenseResult.tier() != null) {
-            for (String serviceName : config.getServiceRegistry().getAllServices().keySet()) {
-                if (!licenseResult.tier().isServiceAllowed(serviceName)) {
-                    config.setServiceEnabled(serviceName, false);
-                    logger.info("Service '{}' disabled — not available in {} tier", serviceName, licenseResult.tier());
-                }
+        // Apply tier-based service gating using minTier from services.yaml
+        for (Map.Entry<String, ServiceDefinition> entry : config.getServiceRegistry().getAllServices().entrySet()) {
+            String serviceName = entry.getKey();
+            ServiceDefinition def = entry.getValue();
+            LicenseTier required = def.minTier() != null ? def.minTier() : LicenseTier.COMMUNITY;
+            if (!currentTier.includes(required)) {
+                config.setServiceEnabled(serviceName, false);
+                logger.info("Service '{}' disabled — requires {} tier (current: {})",
+                        serviceName, required, currentTier);
             }
         }
 
