@@ -49,6 +49,8 @@ import com.localcloud.gateway.ProcessHealthChecker;
 import com.localcloud.gateway.RequestLogger;
 import com.localcloud.persistence.PostgresDataSource;
 import com.localcloud.persistence.SchemaManager;
+import com.localcloud.licensing.LicenseTierProvider;
+import com.localcloud.licensing.StaticLicenseTierProvider;
 import com.localcloud.sync.SyncApiService;
 import com.localcloud.sync.CredentialEncryption;
 import com.localcloud.sync.SyncCredentialRepository;
@@ -77,7 +79,7 @@ public class LocalCloudApplication {
     private final ProcessHealthChecker processHealthChecker;
     private final HealthCheckService healthCheckService;
     private final ProjectService projectService;
-    private final AdminApiService adminApiService;
+    private AdminApiService adminApiService;
     private final ServiceConfigRepository serviceConfigRepository;
     private final TelemetryService telemetryService;
     private final BrowseService browseService;
@@ -89,6 +91,9 @@ public class LocalCloudApplication {
     private IamMiddleware iamMiddleware;
     private Server server;
 
+    // Stored for deferred AdminApiService construction after license validation
+    private final ServiceRoutingRepository routingRepository;
+
     public LocalCloudApplication(LocalCloudConfig config) {
         this.config = config;
         this.dataSource = new PostgresDataSource(config);
@@ -99,10 +104,10 @@ public class LocalCloudApplication {
         var usageMetrics = new UsageMetricsRepository(dataSource);
         this.healthCheckService = new HealthCheckService(config, gateway, processHealthChecker, usageMetrics);
         this.projectService = new ProjectService(dataSource);
-        var routingRepository = new ServiceRoutingRepository(dataSource);
+        this.routingRepository = new ServiceRoutingRepository(dataSource);
         this.serviceConfigRepository = new ServiceConfigRepository(dataSource);
         this.credentialBroker = new CredentialBroker(config);
-        this.adminApiService = new AdminApiService(config, requestLogger, projectService, routingRepository, credentialBroker, serviceConfigRepository);
+        // adminApiService is constructed in start() after license validation (needs LicenseTierProvider)
         this.telemetryService = new TelemetryService(config, usageMetrics, processHealthChecker, projectService, dataSource);
         this.browseService = new BrowseService(config, dataSource, config.getServiceRegistry(), usageMetrics);
         this.mutateService = new MutateService(config, dataSource, config.getServiceRegistry());
@@ -174,6 +179,11 @@ public class LocalCloudApplication {
 
         logger.info("License: tier={}, email={}, device={}", licenseResult.tier(), licenseResult.email(),
                 licenseManager.getDeviceId().substring(0, 8) + "...");
+
+        // Create tier provider and AdminApiService now that the license tier is known
+        LicenseTierProvider tierProvider = new StaticLicenseTierProvider(licenseResult.tier());
+        this.adminApiService = new AdminApiService(config, requestLogger, projectService,
+                routingRepository, credentialBroker, serviceConfigRepository, tierProvider);
 
         // Apply tier-based service gating
         if (licenseResult.tier() != null) {

@@ -2,6 +2,7 @@ package com.localcloud.admin;
 
 import com.localcloud.config.ServiceRegistry;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
+import com.localcloud.licensing.LicenseTier;
 
 import org.junit.jupiter.api.Test;
 
@@ -22,7 +23,7 @@ class AdminApiServiceTerraformTest {
                 id, id, port, "rest",
                 "SOME_HOST", envValuePrefix, "facade",
                 true, null, 0,
-                Collections.emptyMap(), null, terraformEnvVar);
+                Collections.emptyMap(), null, terraformEnvVar, LicenseTier.COMMUNITY);
     }
 
     @Test
@@ -63,7 +64,7 @@ class AdminApiServiceTerraformTest {
                 "SPANNER_EMULATOR_HOST", "", "external",
                 true, "spanner", 9020,
                 java.util.Map.of("rest", 9020), null,
-                "GOOGLE_SPANNER_CUSTOM_ENDPOINT");
+                "GOOGLE_SPANNER_CUSTOM_ENDPOINT", LicenseTier.PRO);
         assertEquals("GOOGLE_SPANNER_CUSTOM_ENDPOINT", def.terraformEnvVar());
         assertTrue(def.additionalPorts().containsKey("rest"));
         assertEquals(9020, def.additionalPorts().get("rest"));

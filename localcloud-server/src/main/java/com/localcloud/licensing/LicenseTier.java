@@ -35,6 +35,15 @@ public enum LicenseTier {
     }
 
     /**
+     * Returns true if this tier grants access to resources requiring the given tier.
+     * Enum ordinal order: COMMUNITY(0) < TRIAL(1) < PRO(2) < TEAM(3) < ENTERPRISE(4).
+     */
+    public boolean includes(LicenseTier required) {
+        if (required == null) return true; // no requirement = always allowed
+        return this.ordinal() >= required.ordinal();
+    }
+
+    /**
      * Parse tier from string, case-insensitive. Defaults to COMMUNITY for unknown values.
      */
     public static LicenseTier fromString(String tier) {

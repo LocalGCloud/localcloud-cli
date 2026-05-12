@@ -23,6 +23,7 @@ services:
     envValuePrefix: "http://"
     type: external
     defaultEnabled: true
+    minTier: community
     gcloudApiName: storage
     terraformEnvVar: GOOGLE_STORAGE_CUSTOM_ENDPOINT
     healthCheck:
@@ -36,6 +37,7 @@ services:
     envValuePrefix: ""
     type: external
     defaultEnabled: true
+    minTier: community
     gcloudApiName: pubsub
     terraformEnvVar: GOOGLE_PUBSUB_CUSTOM_ENDPOINT
     healthCheck:
@@ -49,6 +51,7 @@ services:
     envValuePrefix: ""
     type: external
     defaultEnabled: true
+    minTier: community
     gcloudApiName: firestore
     terraformEnvVar: GOOGLE_FIRESTORE_CUSTOM_ENDPOINT
     healthCheck:
@@ -62,6 +65,7 @@ services:
     envValuePrefix: ""
     type: external
     defaultEnabled: true
+    minTier: pro
     # No gcloudApiName: Bigtable emulator is gRPC data-plane only; gcloud bigtable
     # commands use the bigtableadmin REST API which the emulator does not serve.
     terraformEnvVar: GOOGLE_BIGTABLE_CUSTOM_ENDPOINT
@@ -76,6 +80,7 @@ services:
     envValuePrefix: ""
     type: external
     defaultEnabled: true
+    minTier: pro
     gcloudApiName: spanner
     gcloudPort: 9020
     terraformEnvVar: GOOGLE_SPANNER_CUSTOM_ENDPOINT
@@ -96,6 +101,7 @@ services:
     envValuePrefix: "http://"
     type: external
     defaultEnabled: true
+    minTier: community
     gcloudApiName: bigquery
     terraformEnvVar: GOOGLE_BIGQUERY_CUSTOM_ENDPOINT
     additionalPorts:
@@ -112,6 +118,7 @@ services:
     envValuePrefix: ""
     type: facade
     defaultEnabled: true
+    minTier: community
     gcloudApiName: secretmanager
     terraformEnvVar: GOOGLE_SECRET_MANAGER_CUSTOM_ENDPOINT
 
@@ -123,6 +130,7 @@ services:
     envValuePrefix: ""
     type: facade
     defaultEnabled: true
+    minTier: community
     gcloudApiName: cloudtasks
     terraformEnvVar: GOOGLE_CLOUD_TASKS_CUSTOM_ENDPOINT
 
@@ -134,6 +142,7 @@ services:
     envValuePrefix: ""
     type: facade
     defaultEnabled: true
+    minTier: community
     gcloudApiName: logging
     terraformEnvVar: GOOGLE_LOGGING_CUSTOM_ENDPOINT
 
@@ -145,6 +154,7 @@ services:
     envValuePrefix: ""
     type: facade
     defaultEnabled: true
+    minTier: community
     gcloudApiName: monitoring
     terraformEnvVar: GOOGLE_MONITORING_CUSTOM_ENDPOINT
 
@@ -156,6 +166,7 @@ services:
     envValuePrefix: ""
     type: facade
     defaultEnabled: false
+    minTier: pro
     gcloudApiName: container
     terraformEnvVar: GOOGLE_CONTAINER_CUSTOM_ENDPOINT
     additionalPorts:
@@ -169,6 +180,7 @@ services:
     envValuePrefix: "http://"
     type: facade
     defaultEnabled: false
+    minTier: pro
     gcloudApiName: compute
     terraformEnvVar: GOOGLE_COMPUTE_CUSTOM_ENDPOINT
 
@@ -180,6 +192,7 @@ services:
     envValuePrefix: ""
     type: facade
     defaultEnabled: false
+    minTier: pro
     gcloudApiName: run
     terraformEnvVar: GOOGLE_CLOUD_RUN_CUSTOM_ENDPOINT
 
@@ -191,6 +204,7 @@ services:
     envValuePrefix: ""
     type: external
     defaultEnabled: true
+    minTier: community
     terraformEnvVar: GOOGLE_REDIS_CUSTOM_ENDPOINT
 
   workflows:
@@ -201,6 +215,7 @@ services:
     envValuePrefix: ""
     type: facade
     defaultEnabled: true
+    minTier: community
     gcloudApiName: workflows
     terraformEnvVar: GOOGLE_WORKFLOWS_CUSTOM_ENDPOINT
 
@@ -212,6 +227,7 @@ services:
     envValuePrefix: "http://"
     type: facade
     defaultEnabled: false
+    minTier: pro
     gcloudApiName: aiplatform
     terraformEnvVar: GOOGLE_VERTEX_AI_CUSTOM_ENDPOINT
 
@@ -223,6 +239,7 @@ services:
     envValuePrefix: "http://"
     type: facade
     defaultEnabled: false
+    minTier: pro
     gcloudApiName: cloudkms
     terraformEnvVar: GOOGLE_KMS_CUSTOM_ENDPOINT
 
@@ -234,6 +251,7 @@ services:
     envValuePrefix: "http://"
     type: facade
     defaultEnabled: false
+    minTier: pro
     gcloudApiName: sqladmin
     terraformEnvVar: GOOGLE_SQL_CUSTOM_ENDPOINT
     additionalPorts:

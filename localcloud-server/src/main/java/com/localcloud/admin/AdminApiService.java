@@ -25,6 +25,8 @@ import com.localcloud.config.ServiceRegistry;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
 import com.localcloud.gateway.RequestLogger;
 import com.localcloud.gateway.RequestLogger.RequestLogEntry;
+import com.localcloud.licensing.LicenseTier;
+import com.localcloud.licensing.LicenseTierProvider;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,18 +48,21 @@ public class AdminApiService {
     private final ServiceRoutingRepository routingRepository;
     private final CredentialBroker credentialBroker;
     private final ServiceConfigRepository serviceConfigRepository;
+    private final LicenseTierProvider tierProvider;
     private final SupervisorClient supervisorClient;
     private final ObjectMapper mapper;
 
     public AdminApiService(LocalCloudConfig config, RequestLogger requestLogger,
                            ProjectService projectService, ServiceRoutingRepository routingRepository,
-                           CredentialBroker credentialBroker, ServiceConfigRepository serviceConfigRepository) {
+                           CredentialBroker credentialBroker, ServiceConfigRepository serviceConfigRepository,
+                           LicenseTierProvider tierProvider) {
         this.config = config;
         this.requestLogger = requestLogger;
         this.projectService = projectService;
         this.routingRepository = routingRepository;
         this.credentialBroker = credentialBroker;
         this.serviceConfigRepository = serviceConfigRepository;
+        this.tierProvider = tierProvider;
         this.supervisorClient = new SupervisorClient();
         this.mapper = new ObjectMapper();
         this.mapper.registerModule(new JavaTimeModule());
@@ -456,6 +461,17 @@ public class AdminApiService {
                 return HttpResponse.of(HttpStatus.NOT_FOUND, MediaType.JSON, mapper.writeValueAsString(error));
             }
 
+            // License tier check: block if current tier is below the service's minTier
+            LicenseTier required = def.minTier() != null ? def.minTier() : LicenseTier.COMMUNITY;
+            if (!tierProvider.currentTier().includes(required)) {
+                return HttpResponse.of(HttpStatus.FORBIDDEN, MediaType.JSON,
+                    mapper.writeValueAsString(Map.of(
+                        "error", "Service '" + serviceId + "' requires " + required.name().toLowerCase() + " tier or higher",
+                        "current_tier", tierProvider.currentTier().name().toLowerCase(),
+                        "required_tier", required.name().toLowerCase(),
+                        "upgrade_url", "https://localcloud.dev/pricing")));
+            }
+
             if (config.isServiceDynamicallyEnabled(serviceId)) {
                 Map<String, Object> result = Map.of("service", serviceId, "status", "already_enabled");
                 return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
@@ -564,6 +580,7 @@ public class AdminApiService {
         try {
             @SuppressWarnings("unchecked")
             Map<String, Object> updates = mapper.readValue(body, Map.class);
+            Map<String, Object> blocked = new LinkedHashMap<>();
             for (Map.Entry<String, Object> entry : updates.entrySet()) {
                 String serviceId = entry.getKey();
                 Object val = entry.getValue();
@@ -571,6 +588,22 @@ public class AdminApiService {
 
                 if ("env".equals(config.getConfigSource(serviceId))) {
                     continue; // Skip env-locked services
+                }
+
+                // License tier check: block enabling services above current tier
+                if (enabled) {
+                    ServiceDefinition def = config.getServiceRegistry().getAllServices().get(serviceId);
+                    if (def != null) {
+                        LicenseTier required = def.minTier() != null ? def.minTier() : LicenseTier.COMMUNITY;
+                        if (!tierProvider.currentTier().includes(required)) {
+                            blocked.put(serviceId, Map.of(
+                                "error", "Service '" + serviceId + "' requires " + required.name().toLowerCase() + " tier or higher",
+                                "current_tier", tierProvider.currentTier().name().toLowerCase(),
+                                "required_tier", required.name().toLowerCase(),
+                                "upgrade_url", "https://localcloud.dev/pricing"));
+                            continue; // Skip this service
+                        }
+                    }
                 }
 
                 config.setServiceEnabled(serviceId, enabled);
@@ -593,6 +626,15 @@ public class AdminApiService {
                         }
                     }
                 }
+            }
+            // If any services were blocked by tier, return 207 with details
+            if (!blocked.isEmpty()) {
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("blocked", blocked);
+                response.put("upgrade_url", "https://localcloud.dev/pricing");
+                // Still return current config for applied changes
+                return HttpResponse.of(HttpStatus.FORBIDDEN, MediaType.JSON,
+                        mapper.writerWithDefaultPrettyPrinter().writeValueAsString(response));
             }
             return getServiceConfig(); // Return updated state
         } catch (Exception e) {

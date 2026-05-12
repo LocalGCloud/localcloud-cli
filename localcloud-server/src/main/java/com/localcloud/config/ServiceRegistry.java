@@ -12,6 +12,7 @@ import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import com.localcloud.licensing.LicenseTier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,6 +58,7 @@ public class ServiceRegistry {
      * @param additionalPorts optional map of extra named ports
      * @param healthCheck    optional health check definition (external only)
      * @param terraformEnvVar Terraform Google provider env var name (e.g. "GOOGLE_STORAGE_CUSTOM_ENDPOINT")
+     * @param minTier         minimum license tier required to enable this service (null = COMMUNITY)
      */
     public record ServiceDefinition(
             String id, String displayName, int port, String protocol,
@@ -64,7 +66,8 @@ public class ServiceRegistry {
             boolean defaultEnabled, String gcloudApiName, int gcloudPort,
             Map<String, Integer> additionalPorts,
             HealthCheckDef healthCheck,
-            String terraformEnvVar
+            String terraformEnvVar,
+            LicenseTier minTier
     ) {
         /**
          * Build the full environment variable value for a given host.
@@ -249,10 +252,13 @@ public class ServiceRegistry {
 
         String terraformEnvVar = (String) map.get("terraformEnvVar");
 
+        // minTier: parse from YAML string, default to COMMUNITY if absent/unrecognized
+        LicenseTier minTier = LicenseTier.fromString((String) map.get("minTier"));
+
         return new ServiceDefinition(id, displayName, port, protocol,
                 envVar, envValuePrefix, type, defaultEnabled,
                 gcloudApiName, gcloudPort, additionalPorts, healthCheck,
-                terraformEnvVar);
+                terraformEnvVar, minTier);
     }
 
     // ---- Lookup methods ----
