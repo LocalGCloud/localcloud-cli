@@ -14,11 +14,35 @@ import java.security.PublicKey;
  *
  * When no API key is set AND license server is "none", operates in bypass mode
  * (all services unlocked as PRO). This is the default for development/testing.
+ * In production builds (BUILD_MODE file contains "production"), bypass mode is disabled.
  */
 public class LicenseManager {
 
     private static final Logger logger = LoggerFactory.getLogger(LicenseManager.class);
     private static final int GRACE_HOURS = 72;
+
+    /**
+     * Path to the BUILD_MODE file baked into the Docker image at build time.
+     * Overridable via system property for testing.
+     */
+    static final String BUILD_MODE_PATH_PROPERTY = "localcloud.buildModePath";
+    private static final String DEFAULT_BUILD_MODE_PATH = "/opt/localcloud/BUILD_MODE";
+
+    /**
+     * Returns true if this is a production build (BUILD_MODE file contains "production").
+     * Reads the file on every call — no static caching — so tests can override the
+     * system property {@code localcloud.buildModePath} before calling.
+     */
+    public static boolean isProductionBuild() {
+        String path = System.getProperty(BUILD_MODE_PATH_PROPERTY, DEFAULT_BUILD_MODE_PATH);
+        try {
+            String mode = java.nio.file.Files.readString(
+                    java.nio.file.Path.of(path)).strip();
+            return "production".equalsIgnoreCase(mode);
+        } catch (Exception e) {
+            return false; // file missing = dev build
+        }
+    }
 
     /**
      * Build-time timestamp floor (seconds since epoch).
@@ -44,9 +68,11 @@ public class LicenseManager {
         this.onlineValidator = new OnlineKeyValidator(licenseServerUrl);
         this.cache = new LicenseCache(dataDir, deviceId);
 
-        // Bypass mode: no key AND no server configured
-        this.bypassMode = (apiKey == null || apiKey.isBlank())
-                && (licenseServerUrl == null || licenseServerUrl.isBlank() || "none".equalsIgnoreCase(licenseServerUrl));
+        // Bypass mode: no key AND no server configured AND not a production build
+        this.bypassMode = !isProductionBuild()
+                && (apiKey == null || apiKey.isBlank())
+                && (licenseServerUrl == null || licenseServerUrl.isBlank()
+                    || "none".equalsIgnoreCase(licenseServerUrl));
     }
 
     /**

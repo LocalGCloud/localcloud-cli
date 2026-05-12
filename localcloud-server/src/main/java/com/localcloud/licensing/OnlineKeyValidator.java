@@ -73,7 +73,12 @@ public class OnlineKeyValidator {
 
         // Bypass mode: no license server configured
         if ("none".equalsIgnoreCase(licenseServerUrl)) {
-            logger.info("License server bypass mode — accepting key as PRO");
+            if (LicenseManager.isProductionBuild()) {
+                return LicenseResult.invalid(
+                    "LOCALCLOUD_LICENSE_SERVER must be configured in production builds. " +
+                    "Get a key at https://localcloud.dev");
+            }
+            logger.info("License server bypass mode — accepting key as PRO (dev build only)");
             return LicenseResult.valid(LicenseTier.PRO, "bypass@localcloud.dev", deviceId,
                     Long.MAX_VALUE);
         }
