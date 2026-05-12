@@ -8,6 +8,8 @@ import com.linecorp.armeria.server.ServerBuilder;
 import com.localcloud.license.auth.AuthHandler;
 import com.localcloud.license.auth.AuthRepository;
 import com.localcloud.license.auth.OtpService;
+import com.localcloud.license.auth.SessionAuthDecorator;
+import com.localcloud.license.auth.SessionRepository;
 import com.localcloud.license.db.LicenseDatabase;
 import com.localcloud.license.db.SchemaInitializer;
 import com.localcloud.license.email.EmailService;
@@ -34,6 +36,7 @@ public class LicenseServerApplication {
         var authRepo = new AuthRepository(db.getDataSource());
         var otpService = new OtpService(db.getDataSource(), config.getOtpExpiryMinutes());
         var emailService = new EmailService(config);
+        var sessionRepo = new SessionRepository(db.getDataSource());
         var keyRepo = new ApiKeyRepository(db.getDataSource());
         var deviceTracker = new DeviceTracker(db.getDataSource());
         var licenseValidator = new LicenseValidator(keyRepo, authRepo, deviceTracker);
@@ -42,8 +45,9 @@ public class LicenseServerApplication {
         ServerBuilder sb = Server.builder();
         sb.http(config.getPort());
 
-        sb.annotatedService("/auth", new AuthHandler(authRepo, otpService, emailService));
-        sb.annotatedService("/keys", new ApiKeyHandler(keyRepo, authRepo));
+        sb.annotatedService("/auth", new AuthHandler(authRepo, otpService, emailService, sessionRepo));
+        sb.annotatedService("/keys", new ApiKeyHandler(keyRepo),
+            new SessionAuthDecorator(sessionRepo));
         sb.annotatedService("/license", new LicenseValidationHandler(licenseValidator));
         sb.annotatedService("/trial", new TrialHandler(trialRepo, authRepo, keyRepo));
 

@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Map;
+import java.util.UUID;
 
 @ProducesJson
 public class AuthHandler {
@@ -20,12 +21,15 @@ public class AuthHandler {
     private final AuthRepository authRepo;
     private final OtpService otpService;
     private final EmailService emailService;
+    private final SessionRepository sessionRepo;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public AuthHandler(AuthRepository authRepo, OtpService otpService, EmailService emailService) {
+    public AuthHandler(AuthRepository authRepo, OtpService otpService, EmailService emailService,
+                       SessionRepository sessionRepo) {
         this.authRepo = authRepo;
         this.otpService = otpService;
         this.emailService = emailService;
+        this.sessionRepo = sessionRepo;
     }
 
     @Post("/register")
@@ -56,7 +60,13 @@ public class AuthHandler {
             boolean valid = otpService.verifyOtp(email, code);
             if (!valid) return error(HttpStatus.UNAUTHORIZED, "Invalid or expired verification code");
             authRepo.markEmailVerified(email);
-            return ok(Map.of("message", "Email verified successfully"));
+            UUID userId = authRepo.getUserId(email);
+            String sessionToken = sessionRepo.createSession(userId);
+            return ok(Map.of(
+                "message", "Email verified successfully",
+                "session_token", sessionToken,
+                "expires_in_seconds", 3600
+            ));
         } catch (Exception e) {
             logger.error("Verification failed for {}: {}", email, e.getMessage());
             return error(HttpStatus.INTERNAL_SERVER_ERROR, "Verification failed");

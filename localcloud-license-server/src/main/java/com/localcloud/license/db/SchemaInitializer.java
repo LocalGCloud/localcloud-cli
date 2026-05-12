@@ -76,6 +76,17 @@ public class SchemaInitializer {
                 )
                 """);
 
+            stmt.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    token      VARCHAR(64) PRIMARY KEY,
+                    user_id    UUID NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    expires_at TIMESTAMP NOT NULL
+                )
+                """);
+
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)");
+
             logger.info("License server database schema initialized");
         }
     }

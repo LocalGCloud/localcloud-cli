@@ -4,8 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.server.ServiceRequestContext;
 import com.linecorp.armeria.server.annotation.*;
-import com.localcloud.license.auth.AuthRepository;
+import com.localcloud.license.auth.SessionAuthDecorator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,26 +19,21 @@ public class ApiKeyHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(ApiKeyHandler.class);
     private final ApiKeyRepository keyRepo;
-    private final AuthRepository authRepo;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public ApiKeyHandler(ApiKeyRepository keyRepo, AuthRepository authRepo) {
+    public ApiKeyHandler(ApiKeyRepository keyRepo) {
         this.keyRepo = keyRepo;
-        this.authRepo = authRepo;
     }
 
-    /** POST /keys/generate — body: {email, tier} */
+    /** POST /keys/generate — body: {tier} (optional) */
     @Post("/generate")
-    public HttpResponse generate(@RequestObject Map<String, String> body) {
-        String email = body.get("email");
+    public HttpResponse generate(ServiceRequestContext ctx, @RequestObject Map<String, String> body) {
+        UUID userId = ctx.attr(SessionAuthDecorator.USER_ID_KEY);
+        if (userId == null) return error(HttpStatus.UNAUTHORIZED, "Authentication required");
         String tier = body.getOrDefault("tier", "community");
-        if (email == null) return error(HttpStatus.BAD_REQUEST, "email required");
         try {
-            UUID userId = authRepo.getUserId(email);
-            if (userId == null) return error(HttpStatus.NOT_FOUND, "User not found");
-            if (!authRepo.isEmailVerified(email)) return error(HttpStatus.FORBIDDEN, "Email not verified");
             String rawKey = keyRepo.generateOnlineKey(userId, tier);
-            logger.info("Generated {} key for {}", tier, email);
+            logger.info("Generated {} key for user {}", tier, userId);
             return ok(Map.of("key", rawKey, "tier", tier,
                 "message", "Save this key — it will not be shown again"));
         } catch (Exception e) {
@@ -46,12 +42,12 @@ public class ApiKeyHandler {
         }
     }
 
-    /** GET /keys/list?email=x */
+    /** GET /keys/list */
     @Get("/list")
-    public HttpResponse list(@Param("email") String email) {
+    public HttpResponse list(ServiceRequestContext ctx) {
+        UUID userId = ctx.attr(SessionAuthDecorator.USER_ID_KEY);
+        if (userId == null) return error(HttpStatus.UNAUTHORIZED, "Authentication required");
         try {
-            UUID userId = authRepo.getUserId(email);
-            if (userId == null) return error(HttpStatus.NOT_FOUND, "User not found");
             List<ApiKeyRepository.KeyInfo> keys = keyRepo.listUserKeys(userId);
             var result = keys.stream().map(k -> Map.of(
                 "id", k.id().toString(),
@@ -65,15 +61,14 @@ public class ApiKeyHandler {
         }
     }
 
-    /** POST /keys/revoke — body: {email, key_id} */
+    /** POST /keys/revoke — body: {key_id} */
     @Post("/revoke")
-    public HttpResponse revoke(@RequestObject Map<String, String> body) {
-        String email = body.get("email");
+    public HttpResponse revoke(ServiceRequestContext ctx, @RequestObject Map<String, String> body) {
+        UUID userId = ctx.attr(SessionAuthDecorator.USER_ID_KEY);
+        if (userId == null) return error(HttpStatus.UNAUTHORIZED, "Authentication required");
         String keyId = body.get("key_id");
-        if (email == null || keyId == null) return error(HttpStatus.BAD_REQUEST, "email and key_id required");
+        if (keyId == null) return error(HttpStatus.BAD_REQUEST, "key_id required");
         try {
-            UUID userId = authRepo.getUserId(email);
-            if (userId == null) return error(HttpStatus.NOT_FOUND, "User not found");
             boolean revoked = keyRepo.revokeKey(UUID.fromString(keyId), userId);
             if (!revoked) return error(HttpStatus.NOT_FOUND, "Key not found or already revoked");
             return ok(Map.of("message", "Key revoked"));
