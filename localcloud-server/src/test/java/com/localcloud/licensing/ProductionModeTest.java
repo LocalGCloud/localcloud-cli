@@ -90,15 +90,7 @@ class ProductionModeTest {
     }
 
     @Test
-    void productionMode_onlineKeyBypassBlocked() {
-        // Simulate production build in OnlineKeyValidator directly
-        // (tests the code path in OnlineKeyValidator.validate() for "none" server)
-        // We can't easily set system property mid-test and have it affect the validator
-        // since OnlineKeyValidator calls LicenseManager.isProductionBuild() dynamically.
-        // So we just verify the validator rejects bypass when production file exists.
-        // (Covered more thoroughly by productionMode_bypassModeDisabled above via LicenseManager)
-
-        // Dev build: bypass passes through OnlineKeyValidator
+    void devMode_onlineKeyBypassPassesThrough() {
         System.setProperty(LicenseManager.BUILD_MODE_PATH_PROPERTY,
                 "/tmp/nonexistent-build-mode-file-xyz-localcloud");
         OnlineKeyValidator validator = new OnlineKeyValidator("none");

@@ -3,6 +3,8 @@ package com.localcloud.licensing;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.security.PublicKey;
 
@@ -36,11 +38,14 @@ public class LicenseManager {
     public static boolean isProductionBuild() {
         String path = System.getProperty(BUILD_MODE_PATH_PROPERTY, DEFAULT_BUILD_MODE_PATH);
         try {
-            String mode = java.nio.file.Files.readString(
-                    java.nio.file.Path.of(path)).strip();
+            String mode = Files.readString(Path.of(path)).strip();
             return "production".equalsIgnoreCase(mode);
+        } catch (NoSuchFileException e) {
+            return false; // file missing = dev build (expected)
         } catch (Exception e) {
-            return false; // file missing = dev build
+            logger.warn("Could not read BUILD_MODE file at '{}': {} — defaulting to dev build",
+                    path, e.getMessage());
+            return false;
         }
     }
 
