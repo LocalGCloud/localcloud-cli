@@ -15,6 +15,7 @@ import java.security.PublicKey;
 import java.security.spec.X509EncodedKeySpec;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Validates online license keys (lco_ prefix) against the license server.
@@ -34,8 +35,8 @@ public class OnlineKeyValidator {
     private final ObjectMapper mapper = new ObjectMapper();
     private final HttpClient httpClient;
 
-    /** Cached public key — fetched lazily from /license/public-key on first successful validation. */
-    private volatile PublicKey cachedPublicKey;
+    /** Cached public key — loaded from env var or fetched from /license/public-key on first use. */
+    private final AtomicReference<PublicKey> cachedPublicKey = new AtomicReference<>();
 
     public OnlineKeyValidator(String licenseServerUrl) {
         this.licenseServerUrl = licenseServerUrl != null ? licenseServerUrl : "none";
@@ -128,33 +129,35 @@ public class OnlineKeyValidator {
             return LicenseResult.invalid("License server unreachable at " + licenseServerUrl);
         } catch (Exception e) {
             logger.debug("Online key validation failed: {}", e.getMessage());
-            return LicenseResult.invalid("License server unreachable — " + e.getMessage());
+            return LicenseResult.invalid("License server temporarily unavailable. Check your network connection.");
         }
     }
 
     /**
      * Returns the RS256 public key for JWT verification.
      * Priority:
-     * 1. LOCALCLOUD_LICENSE_PUBLIC_KEY env var (base64 DER X.509)
-     * 2. Fetched from licenseServerUrl + "/license/public-key" (cached after first fetch)
+     * 1. Cached value (from any prior successful load — env var or network fetch)
+     * 2. LOCALCLOUD_LICENSE_PUBLIC_KEY env var (base64 DER X.509) — cached on success
+     * 3. Fetched from licenseServerUrl + "/license/public-key" — cached on success
      * Returns null if neither source is available.
      */
     PublicKey getPublicKey() {
-        // Check env var first
+        // Fast path: already loaded on a prior call
+        PublicKey cached = cachedPublicKey.get();
+        if (cached != null) return cached;
+
+        // Try env var
         String envKey = System.getenv("LOCALCLOUD_LICENSE_PUBLIC_KEY");
         if (envKey != null && !envKey.isBlank()) {
             try {
                 byte[] der = Base64.getDecoder().decode(envKey.strip());
                 KeyFactory kf = KeyFactory.getInstance("RSA");
-                return kf.generatePublic(new X509EncodedKeySpec(der));
+                PublicKey key = kf.generatePublic(new X509EncodedKeySpec(der));
+                cachedPublicKey.compareAndSet(null, key);
+                return cachedPublicKey.get();
             } catch (Exception e) {
-                logger.warn("Failed to parse LOCALCLOUD_LICENSE_PUBLIC_KEY: {}", e.getMessage());
+                logger.warn("Invalid LOCALCLOUD_LICENSE_PUBLIC_KEY: {}", e.getMessage());
             }
-        }
-
-        // Return cached key if already fetched
-        if (cachedPublicKey != null) {
-            return cachedPublicKey;
         }
 
         // Fetch from license server
@@ -171,10 +174,11 @@ public class OnlineKeyValidator {
                     String keyB64 = json.path("key").asText();
                     byte[] der = Base64.getDecoder().decode(keyB64);
                     KeyFactory kf = KeyFactory.getInstance("RSA");
-                    cachedPublicKey = kf.generatePublic(new X509EncodedKeySpec(der));
+                    PublicKey key = kf.generatePublic(new X509EncodedKeySpec(der));
+                    cachedPublicKey.compareAndSet(null, key);
                     logger.info("Fetched and cached license server public key from {}/license/public-key",
                             licenseServerUrl);
-                    return cachedPublicKey;
+                    return cachedPublicKey.get();
                 }
             } catch (Exception e) {
                 logger.warn("Failed to fetch public key from license server: {}", e.getMessage());

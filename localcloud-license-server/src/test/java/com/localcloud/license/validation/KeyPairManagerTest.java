@@ -38,6 +38,16 @@ class KeyPairManagerTest {
     }
 
     @Test
+    void malformedEnvVarThrowsIllegalStateException() {
+        // Pass garbage base64-looking bytes that aren't a valid PKCS8 key
+        String notAKey = java.util.Base64.getEncoder().encodeToString("this-is-not-a-key".getBytes());
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+            () -> new KeyPairManager(notAKey));
+        assertTrue(ex.getMessage().contains("LOCALCLOUD_LICENSE_PRIVATE_KEY"),
+            "Exception should mention the env var name, got: " + ex.getMessage());
+    }
+
+    @Test
     void publicKeyBase64IsX509EncodedFormat() throws Exception {
         KeyPairManager manager = new KeyPairManager();
         byte[] der = Base64.getDecoder().decode(manager.getPublicKeyBase64());

@@ -5,11 +5,15 @@ import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
 import com.linecorp.armeria.server.annotation.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 
 @ProducesJson
 public class LicenseValidationHandler {
+
+    private static final Logger logger = LoggerFactory.getLogger(LicenseValidationHandler.class);
 
     private final LicenseValidator validator;
     private final JwtSigner signer;
@@ -40,7 +44,10 @@ public class LicenseValidationHandler {
                     deviceId != null ? deviceId : "", result.expiresEpoch());
             return HttpResponse.of(HttpStatus.OK, MediaType.JSON_UTF_8,
                 mapper.writeValueAsString(Map.of("token", jwt)));
-        } catch (Exception e) { return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR); }
+        } catch (Exception e) {
+            logger.error("JWT signing failed for key {}: {}", key, e.getMessage(), e);
+            return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
 
     /** GET /license/public-key — returns the RS256 public key used to verify validation tokens. */

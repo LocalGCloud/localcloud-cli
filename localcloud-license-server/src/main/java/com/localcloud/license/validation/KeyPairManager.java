@@ -12,8 +12,8 @@ import java.util.Base64;
  * Manages the RSA key pair used to sign license validation JWTs.
  *
  * Priority order for private key:
- * 1. LOCALCLOUD_LICENSE_PRIVATE_KEY env var (base64-encoded DER PKCS8)
- * 2. Generate a new RSA-2048 key pair at startup (ephemeral — log a warning)
+ * 1. LOCALCLOUD_LICENSE_PRIVATE_KEY env var (base64-encoded DER PKCS8) — throws if set but malformed
+ * 2. Generate a new RSA-2048 key pair at startup (ephemeral — log a warning, only when env var is absent)
  *
  * The public key is exposed via getPublicKeyBase64() for the /license/public-key endpoint.
  */
@@ -23,11 +23,15 @@ public final class KeyPairManager {
     private final KeyPair keyPair;
 
     public KeyPairManager() {
-        this.keyPair = loadOrGenerate();
+        this.keyPair = loadOrGenerate(System.getenv("LOCALCLOUD_LICENSE_PRIVATE_KEY"));
     }
 
-    private KeyPair loadOrGenerate() {
-        String privateKeyB64 = System.getenv("LOCALCLOUD_LICENSE_PRIVATE_KEY");
+    /** Package-private constructor for testing — accepts the key material directly. */
+    KeyPairManager(String privateKeyB64) {
+        this.keyPair = loadOrGenerate(privateKeyB64);
+    }
+
+    private KeyPair loadOrGenerate(String privateKeyB64) {
         if (privateKeyB64 != null && !privateKeyB64.isBlank()) {
             try {
                 byte[] der = Base64.getDecoder().decode(privateKeyB64.strip());
@@ -40,7 +44,8 @@ public final class KeyPairManager {
                 logger.info("License signing key loaded from LOCALCLOUD_LICENSE_PRIVATE_KEY");
                 return new KeyPair(publicKey, privateKey);
             } catch (Exception e) {
-                logger.error("Failed to load LOCALCLOUD_LICENSE_PRIVATE_KEY: {}. Generating ephemeral key.", e.getMessage());
+                throw new IllegalStateException(
+                    "LOCALCLOUD_LICENSE_PRIVATE_KEY is set but could not be parsed as RSA PKCS8 key: " + e.getMessage(), e);
             }
         }
         logger.warn("LOCALCLOUD_LICENSE_PRIVATE_KEY not set — generating ephemeral RSA-2048 key pair. " +

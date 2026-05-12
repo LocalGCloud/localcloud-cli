@@ -43,6 +43,10 @@ class JwtSignerTest {
         // Expiry should be within 1 second of what we set
         long actualExpires = claims.getExpiration().toInstant().getEpochSecond();
         assertEquals(expiresEpoch, actualExpires, 1L);
+        // iat (issued-at) must be present and not in the future
+        assertNotNull(claims.getIssuedAt(), "iat claim must be present");
+        assertTrue(claims.getIssuedAt().getTime() <= System.currentTimeMillis() + 1000,
+            "iat must not be in the future");
     }
 
     @Test

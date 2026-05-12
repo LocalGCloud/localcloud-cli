@@ -15,12 +15,13 @@ public final class JwtSigner {
 
     /**
      * Signs a license validation JWT.
-     * Claims: iss=localcloud-license, sub=email, tier, device_id, exp=expiresEpoch
+     * Claims: iss=localcloud-license, sub=email, iat=now, tier, device_id, exp=expiresEpoch
      */
     public String sign(String tier, String email, String deviceId, long expiresEpoch) {
         return Jwts.builder()
             .issuer("localcloud-license")
             .subject(email != null ? email : "unknown")
+            .issuedAt(new Date())
             .claim("tier", tier)
             .claim("device_id", deviceId != null ? deviceId : "")
             .expiration(new Date(expiresEpoch * 1000L))
