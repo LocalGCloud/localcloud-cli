@@ -18,6 +18,8 @@ import com.localcloud.license.keys.ApiKeyRepository;
 import com.localcloud.license.trial.TrialHandler;
 import com.localcloud.license.trial.TrialRepository;
 import com.localcloud.license.validation.DeviceTracker;
+import com.localcloud.license.validation.JwtSigner;
+import com.localcloud.license.validation.KeyPairManager;
 import com.localcloud.license.validation.LicenseValidationHandler;
 import com.localcloud.license.validation.LicenseValidator;
 import org.slf4j.Logger;
@@ -41,6 +43,8 @@ public class LicenseServerApplication {
         var deviceTracker = new DeviceTracker(db.getDataSource());
         var licenseValidator = new LicenseValidator(keyRepo, authRepo, deviceTracker);
         var trialRepo = new TrialRepository(db.getDataSource(), config.getTrialDays());
+        var keyPairManager = new KeyPairManager();
+        var jwtSigner = new JwtSigner(keyPairManager.getPrivateKey());
 
         ServerBuilder sb = Server.builder();
         sb.http(config.getPort());
@@ -48,7 +52,7 @@ public class LicenseServerApplication {
         sb.annotatedService("/auth", new AuthHandler(authRepo, otpService, emailService, sessionRepo));
         sb.annotatedService("/keys", new ApiKeyHandler(keyRepo),
             new SessionAuthDecorator(sessionRepo));
-        sb.annotatedService("/license", new LicenseValidationHandler(licenseValidator));
+        sb.annotatedService("/license", new LicenseValidationHandler(licenseValidator, jwtSigner, keyPairManager));
         sb.annotatedService("/trial", new TrialHandler(trialRepo, authRepo, keyRepo));
 
         sb.service("/health", (ctx, req) ->
