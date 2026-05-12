@@ -42,9 +42,13 @@ class SessionRepositoryTest {
     void expireSession_thenValidate_returnsNull() throws Exception {
         UUID userId = authRepo.createUser("expire_test@example.com");
         String token = sessionRepo.createSession(userId);
-        sessionRepo.expireSession(token);
-        UUID resolved = sessionRepo.validateSession(token);
-        assertNull(resolved);
+        assertTrue(sessionRepo.expireSession(token));
+        assertNull(sessionRepo.validateSession(token));
+    }
+
+    @Test
+    void expireSession_nonExistentToken_returnsFalse() throws Exception {
+        assertFalse(sessionRepo.expireSession(UUID.randomUUID().toString()));
     }
 
     @Test

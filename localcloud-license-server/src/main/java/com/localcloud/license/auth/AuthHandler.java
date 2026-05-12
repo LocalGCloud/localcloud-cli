@@ -61,11 +61,12 @@ public class AuthHandler {
             if (!valid) return error(HttpStatus.UNAUTHORIZED, "Invalid or expired verification code");
             authRepo.markEmailVerified(email);
             UUID userId = authRepo.getUserId(email);
+            if (userId == null) return error(HttpStatus.INTERNAL_SERVER_ERROR, "User not found after verification");
             String sessionToken = sessionRepo.createSession(userId);
             return ok(Map.of(
                 "message", "Email verified successfully",
                 "session_token", sessionToken,
-                "expires_in_seconds", 3600
+                "expires_in_seconds", SessionRepository.SESSION_HOURS * 3600
             ));
         } catch (Exception e) {
             logger.error("Verification failed for {}: {}", email, e.getMessage());

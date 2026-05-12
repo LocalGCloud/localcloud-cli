@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 @ProducesJson
@@ -28,8 +29,8 @@ public class ApiKeyHandler {
     /** POST /keys/generate — body: {tier} (optional) */
     @Post("/generate")
     public HttpResponse generate(ServiceRequestContext ctx, @RequestObject Map<String, String> body) {
-        UUID userId = ctx.attr(SessionAuthDecorator.USER_ID_KEY);
-        if (userId == null) return error(HttpStatus.UNAUTHORIZED, "Authentication required");
+        UUID userId = Objects.requireNonNull(ctx.attr(SessionAuthDecorator.USER_ID_KEY),
+            "USER_ID_KEY not set — SessionAuthDecorator missing from route");
         String tier = body.getOrDefault("tier", "community");
         try {
             String rawKey = keyRepo.generateOnlineKey(userId, tier);
@@ -45,8 +46,8 @@ public class ApiKeyHandler {
     /** GET /keys/list */
     @Get("/list")
     public HttpResponse list(ServiceRequestContext ctx) {
-        UUID userId = ctx.attr(SessionAuthDecorator.USER_ID_KEY);
-        if (userId == null) return error(HttpStatus.UNAUTHORIZED, "Authentication required");
+        UUID userId = Objects.requireNonNull(ctx.attr(SessionAuthDecorator.USER_ID_KEY),
+            "USER_ID_KEY not set — SessionAuthDecorator missing from route");
         try {
             List<ApiKeyRepository.KeyInfo> keys = keyRepo.listUserKeys(userId);
             var result = keys.stream().map(k -> Map.of(
@@ -64,8 +65,8 @@ public class ApiKeyHandler {
     /** POST /keys/revoke — body: {key_id} */
     @Post("/revoke")
     public HttpResponse revoke(ServiceRequestContext ctx, @RequestObject Map<String, String> body) {
-        UUID userId = ctx.attr(SessionAuthDecorator.USER_ID_KEY);
-        if (userId == null) return error(HttpStatus.UNAUTHORIZED, "Authentication required");
+        UUID userId = Objects.requireNonNull(ctx.attr(SessionAuthDecorator.USER_ID_KEY),
+            "USER_ID_KEY not set — SessionAuthDecorator missing from route");
         String keyId = body.get("key_id");
         if (keyId == null) return error(HttpStatus.BAD_REQUEST, "key_id required");
         try {

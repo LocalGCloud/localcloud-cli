@@ -7,7 +7,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 public class SessionRepository {
-    private static final int SESSION_HOURS = 1;
+    static final int SESSION_HOURS = 1;
     private final DataSource dataSource;
 
     public SessionRepository(DataSource dataSource) {
@@ -43,13 +43,13 @@ public class SessionRepository {
         }
     }
 
-    /** Deletes the session (logout). */
-    public void expireSession(String token) throws SQLException {
+    /** Deletes the session (logout). Returns true if a session was actually deleted. */
+    public boolean expireSession(String token) throws SQLException {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
                  "DELETE FROM sessions WHERE token = ?")) {
             ps.setString(1, token);
-            ps.executeUpdate();
+            return ps.executeUpdate() > 0;
         }
     }
 }

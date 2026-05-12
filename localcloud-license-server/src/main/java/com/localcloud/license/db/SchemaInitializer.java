@@ -78,7 +78,7 @@ public class SchemaInitializer {
 
             stmt.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (
-                    token      VARCHAR(64) PRIMARY KEY,
+                    token      VARCHAR(512) PRIMARY KEY,
                     user_id    UUID NOT NULL,
                     created_at TIMESTAMP DEFAULT NOW(),
                     expires_at TIMESTAMP NOT NULL
