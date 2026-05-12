@@ -38,18 +38,20 @@ public class ApiKeyRepository {
     public List<KeyInfo> listUserKeys(UUID userId) throws SQLException {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                 "SELECT id, key_prefix, tier, mode, created_at, revoked_at " +
+                 "SELECT id, key_prefix, tier, mode, created_at, revoked_at, expires_at " +
                  "FROM api_keys WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC")) {
             ps.setString(1, userId.toString());
             try (ResultSet rs = ps.executeQuery()) {
                 List<KeyInfo> keys = new ArrayList<>();
                 while (rs.next()) {
+                    Timestamp expiresAtTs = rs.getTimestamp(7);
+                    Long expiresAt = expiresAtTs != null ? expiresAtTs.toInstant().getEpochSecond() : null;
                     keys.add(new KeyInfo(
                         UUID.fromString(rs.getString(1)),
                         rs.getString(2), rs.getString(3), rs.getString(4),
                         rs.getTimestamp(5) != null ? rs.getTimestamp(5).toInstant() : null,
                         rs.getTimestamp(6) != null ? rs.getTimestamp(6).toInstant() : null,
-                        null, null, null));
+                        null, null, expiresAt));
                 }
                 return keys;
             }

@@ -86,6 +86,7 @@ public class SchemaInitializer {
                 )
                 """);
 
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_trials_user ON trials(user_id)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)");
 
             logger.info("License server database schema initialized");

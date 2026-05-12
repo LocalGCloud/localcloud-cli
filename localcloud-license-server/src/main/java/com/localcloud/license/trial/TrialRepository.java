@@ -37,7 +37,7 @@ public class TrialRepository {
     public TrialInfo getTrialInfo(UUID userId) throws SQLException {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                 "SELECT started_at, expires_at FROM trials WHERE user_id = ? LIMIT 1")) {
+                 "SELECT started_at, expires_at FROM trials WHERE user_id = ? ORDER BY started_at DESC LIMIT 1")) {
             ps.setString(1, userId.toString());
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) return null;

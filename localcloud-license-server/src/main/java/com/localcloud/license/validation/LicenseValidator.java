@@ -35,17 +35,19 @@ public class LicenseValidator {
             ApiKeyRepository.KeyInfo keyInfo = keyRepo.findActiveKeyByHash(rawKey);
             if (keyInfo == null) return ValidationResult.invalid("Unknown or revoked key");
 
+            long nowEpoch = Instant.now().getEpochSecond();
+
             // Enforce trial expiry
             if ("trial".equals(keyInfo.tier())) {
                 TrialRepository.TrialInfo trial = trialRepo.getTrialInfo(keyInfo.userId());
-                if (trial == null || trial.expiresAt() < Instant.now().getEpochSecond()) {
+                if (trial == null || trial.expiresAt() < nowEpoch) {
                     return ValidationResult.invalid(
                         "Trial expired. Upgrade at https://localcloud.dev/pricing");
                 }
             }
 
             // Enforce subscription/key-level expiry
-            if (keyInfo.expiresAt() != null && keyInfo.expiresAt() < Instant.now().getEpochSecond()) {
+            if (keyInfo.expiresAt() != null && keyInfo.expiresAt() < nowEpoch) {
                 return ValidationResult.invalid(
                     "License expired. Renew at https://localcloud.dev/pricing");
             }
