@@ -68,14 +68,32 @@ Java 21 (LTS, primary): Follow standard conventions
 - Phase 1 Terraform resources verified: google_storage_bucket, google_pubsub_topic/subscription, google_bigquery_dataset/table, google_spanner_instance/database
 
 ## Recent Changes
+- 2026-05-11 licensing-security: Container preflight gate (license-gate.sh), session-based key management (SessionAuthDecorator), RS256 JWT signing (JwtSigner/KeyPairManager), BUILD_MODE production/dev switch, trial expiry enforcement (LicenseValidator), license-tier service gating (AdminApiService + LicenseTierProvider). See `docs/licensing-security.md`.
+
 - 002-memorystore-emulator: Added Java 21 LTS (primary) + Netty codec-redis (RESP2 parser), Armeria (lifecycle), HikariCP (PostgreSQL pool), Jackson (JSONB)
 
 - 001-gcp-local-emulator: Java 21 + Armeria (API gateway, gRPC+REST, console static files), PostgreSQL (persistence), proto-google-cloud-* (gRPC stubs), HikariCP, Solid.js (web console). 14 GCP services emulated (GCS, Pub/Sub, Firestore, BigQuery, Secret Manager, Cloud Tasks, Spanner, Bigtable, Logging, Monitoring, GKE, Compute Engine, Cloud Run, Memorystore).
 
 ## Test Counts
 
-- Java server: 187 unit tests (JUnit 5 + Mockito)
+- Java server (`localcloud-server`): 930 unit tests (JUnit 5 + Mockito)
+- License server (`localcloud-license-server`): 47 unit tests (JUnit 5)
 - Console: esbuild (no test suite)
+
+### Licensing Security Test Coverage (added 2026-05-11)
+
+| Test Class | Module | Tests | What it covers |
+|---|---|---|---|
+| `LicenseGateMainTest` | server | 2 | Container preflight gate: dev bypass exit-0, bad key format exit-1 |
+| `ProductionModeTest` | server | 8 | BUILD_MODE file: missing→dev, "production"→enforced, bypass blocked in prod |
+| `OnlineKeyValidatorTest` | server | 12 | JWT accept/reject, tampered/expired/wrong-key, tier parsing, public-key cache |
+| `AdminServiceTierGatingTest` | server | 8 | Community blocked from pro services, PRO/Enterprise allowed, disable always allowed |
+| `LicenseTierTest` | server | 10 | `includes()` ordinal comparisons across all tier pairs |
+| `SessionRepositoryTest` | license-server | 6 | Create/validate/expire session tokens, null/blank/invalid token rejection |
+| `SessionAuthDecoratorTest` | license-server | 4 | Missing header→401, invalid token→401, valid token sets context, DB error→500 |
+| `JwtSignerTest` | license-server | 6 | RS256 sign/verify roundtrip, wrong key rejected, null fields, expired, issuer claim |
+| `KeyPairManagerTest` | license-server | 5 | Ephemeral generation, base64 output, malformed env throws, X.509 format |
+| `LicenseValidatorExpiryTest` | license-server | 6 | Trial expiry, active trial, no trial record, subscription expiry, perpetual key |
 
 <!-- MANUAL ADDITIONS START -->
 

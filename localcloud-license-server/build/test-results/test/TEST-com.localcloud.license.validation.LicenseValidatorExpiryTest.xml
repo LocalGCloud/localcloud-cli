@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.localcloud.license.validation.LicenseValidatorExpiryTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-05-12T02:43:28.765Z" hostname="LM-SJN-40043519" time="0.045">
+  <properties/>
+  <testcase name="nonTrialKey_noExpiryCheck()" classname="com.localcloud.license.validation.LicenseValidatorExpiryTest" time="0.003"/>
+  <testcase name="activeSubscriptionKey_perpetual_returnsValid()" classname="com.localcloud.license.validation.LicenseValidatorExpiryTest" time="0.003"/>
+  <testcase name="expiredSubscriptionKey_returnsInvalid()" classname="com.localcloud.license.validation.LicenseValidatorExpiryTest" time="0.003"/>
+  <testcase name="expiredTrial_returnsInvalid()" classname="com.localcloud.license.validation.LicenseValidatorExpiryTest" time="0.003"/>
+  <testcase name="trialKeyNoTrialRecord_returnsInvalid()" classname="com.localcloud.license.validation.LicenseValidatorExpiryTest" time="0.003"/>
+  <testcase name="activeTrial_returnsValid()" classname="com.localcloud.license.validation.LicenseValidatorExpiryTest" time="0.028"/>
+  <system-out><![CDATA[19:43:28.767 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+19:43:28.770 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+19:43:28.774 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+19:43:28.777 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+19:43:28.780 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+19:43:28.807 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

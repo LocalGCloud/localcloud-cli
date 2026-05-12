@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.localcloud.license.trial.TrialRepositoryTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-05-11T18:13:46.160Z" hostname="LM-SJN-40043519" time="0.039">
+<testsuite name="com.localcloud.license.trial.TrialRepositoryTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-05-12T02:43:27.542Z" hostname="LM-SJN-40043519" time="0.015">
   <properties/>
-  <testcase name="deviceHasUsedTrialDetectsExistingTrial()" classname="com.localcloud.license.trial.TrialRepositoryTest" time="0.016"/>
-  <testcase name="firstTrialStartsSuccessfully()" classname="com.localcloud.license.trial.TrialRepositoryTest" time="0.004"/>
+  <testcase name="deviceHasUsedTrialDetectsExistingTrial()" classname="com.localcloud.license.trial.TrialRepositoryTest" time="0.003"/>
+  <testcase name="firstTrialStartsSuccessfully()" classname="com.localcloud.license.trial.TrialRepositoryTest" time="0.003"/>
   <testcase name="trialExpiryIsApproximately14Days()" classname="com.localcloud.license.trial.TrialRepositoryTest" time="0.004"/>
-  <testcase name="sameDeviceCannotStartSecondTrial()" classname="com.localcloud.license.trial.TrialRepositoryTest" time="0.013"/>
-  <system-out><![CDATA[11:13:46.171 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
-11:13:46.179 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
-11:13:46.183 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
-11:13:46.197 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+  <testcase name="sameDeviceCannotStartSecondTrial()" classname="com.localcloud.license.trial.TrialRepositoryTest" time="0.004"/>
+  <system-out><![CDATA[19:43:27.544 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+19:43:27.548 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+19:43:27.552 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
+19:43:27.556 [Test worker] INFO  c.l.license.db.SchemaInitializer - License server database schema initialized
 ]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>
