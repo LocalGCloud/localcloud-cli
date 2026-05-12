@@ -43,7 +43,17 @@ localcloud-data/
 
 # Specify
 
+# AI
+.claude/
+.cursor/
+.gemini/
+.kiro/
+.opencode/
+.codex/
+.agents
 
 # LocalCloud data
 /var/lib/localcloud/
 .design-extract/
+
+
