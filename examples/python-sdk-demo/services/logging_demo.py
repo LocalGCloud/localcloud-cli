@@ -4,21 +4,7 @@ import uuid
 
 import grpc
 from google.auth.credentials import AnonymousCredentials
-from google.cloud.logging_v2.services.logging_service_v2 import LoggingServiceV2Client
-
-
-def _make_client() -> LoggingServiceV2Client:
-    """Create a Logging client pointing at LocalCloud."""
-    import os
-
-    host = os.environ.get("CLOUD_LOGGING_EMULATOR_HOST", "localhost:8080")
-    channel = grpc.insecure_channel(host)
-    transport = LoggingServiceV2Client.get_transport_class("grpc")(
-        host=f"http://{host}",
-        credentials=AnonymousCredentials(),
-        channel=channel,
-    )
-    return LoggingServiceV2Client(transport=transport)
+return LoggingServiceV2Client(transport=transport)
 
 
 def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:

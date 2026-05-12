@@ -4,13 +4,13 @@
 
 **Goal:** Rebuild the LocalCloud web console with a Google Cloud Console-inspired UI, replace CLI-based backend with direct Admin API proxy, and implement functional data browsing.
 
-**Architecture:** Flask backend becomes a thin proxy to LocalCloud Admin API (port 8080) and emulator-specific APIs (GCS on 4443, etc). Frontend is a Solid.js SPA with GCP-style layout (sidebar nav, top bar, service health grid, request logs table, data browser with service-specific views).
+**Architecture:** Armeria gateway becomes a thin proxy to LocalCloud Admin API (port 8080) and emulator-specific APIs (GCS on 4443, etc). Frontend is a Solid.js SPA with GCP-style layout (sidebar nav, top bar, service health grid, request logs table, data browser with service-specific views).
 
-**Tech Stack:** Solid.js 1.8, esbuild, Flask 3.0, Python requests library
+**Tech Stack:** Solid.js 1.8, esbuild, Armeria Java gateway
 
 ---
 
-### Task 1: Rewrite Flask backend — remove CLI, proxy-only
+### Task 1: Rewrite Armeria backend — remove CLI, proxy-only
 
 **Files:**
 - Delete: `localcloud-console/backend/cli_runner.py`

@@ -16,23 +16,23 @@ Additionally, the UI uses a custom dark theme that doesn't match the Google Clou
 
 ### Before (Broken)
 ```
-Browser → Flask → cli_runner.py (subprocess: localcloud CLI) → Docker container
+Browser → Armeria → cli_runner.py (subprocess: localcloud CLI) → Docker container
                 → proxy.py → /_localcloud/health (only endpoint used)
 ```
 
 ### After
 ```
-Browser → Flask (9090) → LocalCloud Admin API (8080/_localcloud/*)
+Browser → Armeria (8080) → LocalCloud Admin API (8080/_localcloud/*)
                         → Browse API (8080/_localcloud/browse/*)
 ```
 
-Flask becomes a thin JSON proxy. No CLI dependency. No subprocess calls.
+Armeria becomes a thin JSON proxy. No CLI dependency. No subprocess calls.
 
 ## Backend API Design
 
-### Flask Routes → Admin API Mapping
+### Armeria Routes → Admin API Mapping
 
-| Flask Route | Method | Proxies To | Purpose |
+| Armeria Route | Method | Proxies To | Purpose |
 |---|---|---|---|
 | `/api/health` | GET | `/_localcloud/health` | Dashboard status + service health |
 | `/api/services` | GET | `/_localcloud/health` → extract services | Service list with status |

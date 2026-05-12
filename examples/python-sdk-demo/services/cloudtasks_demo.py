@@ -7,21 +7,7 @@ import uuid
 import grpc
 from google.auth.credentials import AnonymousCredentials
 from google.cloud import tasks_v2
-from google.protobuf import timestamp_pb2
-
-
-def _make_client() -> tasks_v2.CloudTasksClient:
-    """Create a Cloud Tasks client pointing at LocalCloud."""
-    import os
-
-    host = os.environ.get("CLOUD_TASKS_EMULATOR_HOST", "localhost:8080")
-    channel = grpc.insecure_channel(host)
-    transport = tasks_v2.CloudTasksClient.get_transport_class("grpc")(
-        host=f"http://{host}",
-        credentials=AnonymousCredentials(),
-        channel=channel,
-    )
-    return tasks_v2.CloudTasksClient(transport=transport)
+return tasks_v2.CloudTasksClient(transport=transport)
 
 
 def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:

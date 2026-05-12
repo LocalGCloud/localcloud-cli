@@ -8,7 +8,7 @@
 
 ## Overview
 
-A web-based console for managing LocalCloud services (start/stop/status), viewing logs, and browsing datastore contents. Built with Solid.js for minimal footprint (~8KB), served by a lightweight Flask backend that orchestrates CLI calls for control operations and REST proxies for data reads.
+A web-based console for managing LocalCloud services (start/stop/status), viewing logs, and browsing datastore contents. Built with Solid.js for minimal footprint (~8KB), served by a lightweight Armeria gateway that orchestrates CLI calls for control operations and REST proxies for data reads.
 
 ---
 

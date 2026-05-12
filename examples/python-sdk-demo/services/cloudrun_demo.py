@@ -39,12 +39,6 @@ def _make_revisions_client() -> RevisionsClient:
     return RevisionsClient(transport=transport)
 
 
-def _create_or_update_service_raw(channel, request_bytes, method):
-    """Call CreateService or UpdateService via raw gRPC to avoid LRO polling issues."""
-    stub = channel.unary_unary(method)
-    return stub(request_bytes, timeout=30)
-
-
 def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
     """Run Cloud Run demo operations. Returns list of (operation, success, detail)."""
     results = []

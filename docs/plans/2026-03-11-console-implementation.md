@@ -2,11 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Build a lightweight web-based console (Solid.js + Flask) for managing LocalCloud services, viewing logs, and browsing datastore contents.
-
-**Architecture:** Single-page Solid.js app served by Python Flask backend. Hybrid approach: CLI subprocess calls for control ops (start/stop), REST calls to LocalCloud backend port 8080 for read-heavy operations (status, logs, data preview).
-
-**Tech Stack:** Solid.js (~8KB), Flask, vanilla CSS, existing LocalCloud admin APIs.
+**Goal:** Build a lightweight web-based console (Solid.js + Armeria) for managing LocalCloud services, viewing logs, and browsing datastore contents.
+**Architecture:** Single-page Solid.js app served by Armeria Java gateway. Hybrid approach: CLI subprocess calls for control ops (start/stop), REST calls to LocalCloud backend port 8080 for read-heavy operations (status, logs, data preview).
+**Tech Stack:** Solid.js (~8KB), Armeria, vanilla CSS, existing LocalCloud admin APIs.
 
 ---
 

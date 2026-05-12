@@ -21,12 +21,6 @@ def _patch_ssl_for_self_signed_cert():
 
     _orig_init = AuthorizedSession.__init__
 
-    def _new_init(self, *a, **kw):
-        _orig_init(self, *a, **kw)
-        self.verify = False
-        self.mount("https://", _NoVerifyAdapter())
-
-    AuthorizedSession.__init__ = _new_init
     warnings.filterwarnings("ignore", category=urllib3.exceptions.InsecureRequestWarning)
 
 

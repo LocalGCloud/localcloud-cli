@@ -8,22 +8,6 @@ from google.cloud.compute_v1.services.instances import InstancesClient
 from google.api_core.client_options import ClientOptions
 
 
-def _make_client() -> InstancesClient:
-    """Create a Compute Engine client pointing at LocalCloud."""
-    host = os.environ.get("COMPUTE_EMULATOR_HOST", "http://localhost:8080")
-    # Strip trailing slash
-    host = host.rstrip("/")
-    # Ensure it's a full URL for REST transport
-    if not host.startswith("http"):
-        host = f"http://{host}"
-
-    options = ClientOptions(api_endpoint=host)
-    return InstancesClient(
-        credentials=AnonymousCredentials(),
-        client_options=options,
-    )
-
-
 def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
     """Run Compute Engine demo operations. Returns list of (operation, success, detail)."""
     results = []

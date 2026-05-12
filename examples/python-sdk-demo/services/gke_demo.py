@@ -5,19 +5,7 @@ import uuid
 
 import grpc
 from google.auth.credentials import AnonymousCredentials
-from google.cloud.container_v1.services.cluster_manager import ClusterManagerClient
-
-
-def _make_client() -> ClusterManagerClient:
-    """Create a GKE ClusterManager client pointing at LocalCloud."""
-    host = os.environ.get("GKE_EMULATOR_HOST", "localhost:8080")
-    channel = grpc.insecure_channel(host)
-    transport = ClusterManagerClient.get_transport_class("grpc")(
-        host=f"http://{host}",
-        credentials=AnonymousCredentials(),
-        channel=channel,
-    )
-    return ClusterManagerClient(transport=transport)
+return ClusterManagerClient(transport=transport)
 
 
 def run(project_id: str, keep_data: bool = False) -> list[tuple[str, bool, str]]:
