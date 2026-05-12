@@ -44,13 +44,13 @@ localcloud-data/
 # Specify
 
 # AI
-.claude/
+#.claude/
 .cursor/
-.gemini/
+#.gemini/
 .kiro/
-.opencode/
-.codex/
-.agents
+#.opencode/
+#.codex/
+#.agents
 
 # LocalCloud data
 /var/lib/localcloud/
