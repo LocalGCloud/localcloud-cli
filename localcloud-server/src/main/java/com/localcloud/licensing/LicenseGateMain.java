@@ -11,36 +11,37 @@ import java.security.PublicKey;
  * exits 1 on failure. On success, writes the tier string to the --out file.
  *
  * Usage:
- *   java -cp localcloud.jar com.localcloud.licensing.LicenseGateMain \
+ *   java -cp server.jar com.localcloud.licensing.LicenseGateMain \
  *       --key <api_key> \
  *       --server <url_or_none> \
- *       --device-id <id> \
  *       --out <filepath>
  *
  * All args are optional; missing --key and --server=none triggers bypass mode.
+ * The device fingerprint is computed internally by LicenseManager.
  */
-public class LicenseGateMain {
+public final class LicenseGateMain {
 
-    public static void main(String[] args) {
+    /**
+     * Package-private entry point that returns an exit code instead of calling
+     * System.exit(), making it directly testable without SecurityManager tricks.
+     */
+    static int run(String[] args) {
         String apiKey = null;
         String licenseServer = "none";
-        String deviceIdOverride = null;
         String outFile = "/tmp/localcloud-tier";
 
         // Parse CLI args
         for (int i = 0; i < args.length - 1; i++) {
             switch (args[i]) {
-                case "--key"       -> apiKey = args[++i];
-                case "--server"    -> licenseServer = args[++i];
-                case "--device-id" -> deviceIdOverride = args[++i];
-                case "--out"       -> outFile = args[++i];
-                default            -> { /* ignore unknown args */ }
+                case "--key"    -> apiKey = args[++i];
+                case "--server" -> licenseServer = args[++i];
+                case "--out"    -> outFile = args[++i];
+                default         -> { /* ignore unknown args */ }
             }
         }
 
         // Blank/empty strings treated as absent
         if (apiKey != null && apiKey.isBlank()) apiKey = null;
-        if (deviceIdOverride != null && deviceIdOverride.isBlank()) deviceIdOverride = null;
 
         // Determine data dir — use /var/lib/localcloud if writable, else /tmp/localcloud-gate
         Path dataDir = Path.of("/var/lib/localcloud");
@@ -77,7 +78,7 @@ public class LicenseGateMain {
         if (!result.isValid()) {
             System.err.println("ERROR: License validation failed: " + result.errorMessage());
             System.err.println("       Set LOCALCLOUD_API_KEY or get a key at https://localcloud.dev");
-            System.exit(1);
+            return 1;
         }
 
         // Write tier to output file so entrypoint and server can read it
@@ -91,6 +92,10 @@ public class LicenseGateMain {
 
         System.out.println("License: valid — tier=" + tierName
                 + (result.email() != null ? ", email=" + result.email() : ""));
-        System.exit(0);
+        return 0;
+    }
+
+    public static void main(String[] args) {
+        System.exit(run(args));
     }
 }
