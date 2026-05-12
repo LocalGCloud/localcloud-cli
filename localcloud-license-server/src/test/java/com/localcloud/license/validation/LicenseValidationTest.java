@@ -3,6 +3,7 @@ package com.localcloud.license.validation;
 import com.localcloud.license.auth.AuthRepository;
 import com.localcloud.license.db.SchemaInitializer;
 import com.localcloud.license.keys.ApiKeyRepository;
+import com.localcloud.license.trial.TrialRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -28,7 +29,8 @@ class LicenseValidationTest {
         var authRepo = new AuthRepository(ds);
         var keyRepo = new ApiKeyRepository(ds);
         var deviceTracker = new DeviceTracker(ds);
-        this.validator = new LicenseValidator(keyRepo, authRepo, deviceTracker);
+        var trialRepo = new TrialRepository(ds, 14);
+        this.validator = new LicenseValidator(keyRepo, authRepo, deviceTracker, trialRepo);
         this.userId = authRepo.createUser("validator@example.com");
         authRepo.markEmailVerified("validator@example.com");
         this.activeKey = keyRepo.generateOnlineKey(userId, "pro");

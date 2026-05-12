@@ -41,8 +41,8 @@ public class LicenseServerApplication {
         var sessionRepo = new SessionRepository(db.getDataSource());
         var keyRepo = new ApiKeyRepository(db.getDataSource());
         var deviceTracker = new DeviceTracker(db.getDataSource());
-        var licenseValidator = new LicenseValidator(keyRepo, authRepo, deviceTracker);
         var trialRepo = new TrialRepository(db.getDataSource(), config.getTrialDays());
+        var licenseValidator = new LicenseValidator(keyRepo, authRepo, deviceTracker, trialRepo);
         var keyPairManager = new KeyPairManager();
         var jwtSigner = new JwtSigner(keyPairManager.getPrivateKey());
 

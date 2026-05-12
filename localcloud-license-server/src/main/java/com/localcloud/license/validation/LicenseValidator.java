@@ -2,6 +2,7 @@ package com.localcloud.license.validation;
 
 import com.localcloud.license.auth.AuthRepository;
 import com.localcloud.license.keys.ApiKeyRepository;
+import com.localcloud.license.trial.TrialRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,11 +17,14 @@ public class LicenseValidator {
     private final ApiKeyRepository keyRepo;
     private final AuthRepository authRepo;
     private final DeviceTracker deviceTracker;
+    private final TrialRepository trialRepo;
 
-    public LicenseValidator(ApiKeyRepository keyRepo, AuthRepository authRepo, DeviceTracker deviceTracker) {
+    public LicenseValidator(ApiKeyRepository keyRepo, AuthRepository authRepo,
+                            DeviceTracker deviceTracker, TrialRepository trialRepo) {
         this.keyRepo = keyRepo;
         this.authRepo = authRepo;
         this.deviceTracker = deviceTracker;
+        this.trialRepo = trialRepo;
     }
 
     public ValidationResult validate(String rawKey, String deviceId) {
@@ -30,6 +34,21 @@ public class LicenseValidator {
         try {
             ApiKeyRepository.KeyInfo keyInfo = keyRepo.findActiveKeyByHash(rawKey);
             if (keyInfo == null) return ValidationResult.invalid("Unknown or revoked key");
+
+            // Enforce trial expiry
+            if ("trial".equals(keyInfo.tier())) {
+                TrialRepository.TrialInfo trial = trialRepo.getTrialInfo(keyInfo.userId());
+                if (trial == null || trial.expiresAt() < Instant.now().getEpochSecond()) {
+                    return ValidationResult.invalid(
+                        "Trial expired. Upgrade at https://localcloud.dev/pricing");
+                }
+            }
+
+            // Enforce subscription/key-level expiry
+            if (keyInfo.expiresAt() != null && keyInfo.expiresAt() < Instant.now().getEpochSecond()) {
+                return ValidationResult.invalid(
+                    "License expired. Renew at https://localcloud.dev/pricing");
+            }
 
             // Track device
             if (deviceId != null && !deviceId.isBlank() && keyInfo.userId() != null) {

@@ -49,7 +49,7 @@ public class ApiKeyRepository {
                         rs.getString(2), rs.getString(3), rs.getString(4),
                         rs.getTimestamp(5) != null ? rs.getTimestamp(5).toInstant() : null,
                         rs.getTimestamp(6) != null ? rs.getTimestamp(6).toInstant() : null,
-                        null, null));
+                        null, null, null));
                 }
                 return keys;
             }
@@ -71,18 +71,20 @@ public class ApiKeyRepository {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
                  "SELECT k.id, k.key_prefix, k.tier, k.mode, k.created_at, k.revoked_at, " +
-                 "       k.user_id, u.email " +
+                 "       k.user_id, u.email, k.expires_at " +
                  "FROM api_keys k JOIN users u ON k.user_id = u.id " +
                  "WHERE k.key_hash = ? AND k.revoked_at IS NULL")) {
             ps.setString(1, hash);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) return null;
+                Timestamp expiresAtTs = rs.getTimestamp(9);
+                Long expiresAt = expiresAtTs != null ? expiresAtTs.toInstant().getEpochSecond() : null;
                 return new KeyInfo(
                     UUID.fromString(rs.getString(1)),
                     rs.getString(2), rs.getString(3), rs.getString(4),
                     rs.getTimestamp(5) != null ? rs.getTimestamp(5).toInstant() : null,
                     rs.getTimestamp(6) != null ? rs.getTimestamp(6).toInstant() : null,
-                    UUID.fromString(rs.getString(7)), rs.getString(8));
+                    UUID.fromString(rs.getString(7)), rs.getString(8), expiresAt);
             }
         }
     }
@@ -94,10 +96,11 @@ public class ApiKeyRepository {
     }
 
     public record KeyInfo(UUID id, String prefix, String tier, String mode,
-                          Instant createdAt, Instant revokedAt, UUID userId, String userEmail) {
+                          Instant createdAt, Instant revokedAt, UUID userId, String userEmail,
+                          Long expiresAt) {
         public KeyInfo(UUID id, String prefix, String tier, String mode,
                        Instant createdAt, Instant revokedAt) {
-            this(id, prefix, tier, mode, createdAt, revokedAt, null, null);
+            this(id, prefix, tier, mode, createdAt, revokedAt, null, null, null);
         }
     }
 }

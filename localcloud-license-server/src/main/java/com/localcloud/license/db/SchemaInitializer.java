@@ -51,7 +51,8 @@ public class SchemaInitializer {
                     tier       VARCHAR(50) NOT NULL DEFAULT 'community',
                     mode       VARCHAR(20) NOT NULL DEFAULT 'online',
                     created_at TIMESTAMP DEFAULT NOW(),
-                    revoked_at TIMESTAMP
+                    revoked_at TIMESTAMP,
+                    expires_at TIMESTAMP DEFAULT NULL
                 )
                 """);
 
