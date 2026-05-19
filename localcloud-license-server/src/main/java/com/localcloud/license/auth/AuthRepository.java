@@ -12,12 +12,16 @@ public class AuthRepository {
         this.dataSource = dataSource;
     }
 
-    public UUID createUser(String email) throws SQLException {
+    public record CreateResult(UUID userId, boolean created) {}
+
+    public CreateResult createUser(String email) throws SQLException {
+        boolean created = false;
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
                  "INSERT INTO users (email) VALUES (?)")) {
             ps.setString(1, email.toLowerCase().trim());
             ps.executeUpdate();
+            created = true;
         } catch (SQLException e) {
             // SQLState 23xxx = integrity constraint violation (duplicate key)
             // This is expected when email already exists — treat as upsert
@@ -25,7 +29,7 @@ public class AuthRepository {
                 throw e;
             }
         }
-        return getUserId(email);
+        return new CreateResult(getUserId(email), created);
     }
 
     public UUID getUserId(String email) throws SQLException {

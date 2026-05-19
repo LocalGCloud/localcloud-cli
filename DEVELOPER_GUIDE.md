@@ -57,6 +57,26 @@ docker logs -f localcloud       # Follow logs
 curl localhost:8080/_localcloud/health | jq   # Health check
 ```
 
+### Custom Builds
+
+```bash
+# Build without license enforcement (default — no license key needed)
+docker build -t localcloud/localcloud:dev .                              # ENFORCE_LICENSE=false
+
+# Build with license enforcement (requires LOCALCLOUD_API_KEY at runtime)
+docker build -t localcloud/localcloud:prod --build-arg ENFORCE_LICENSE=true .
+
+# With a custom license server public key
+docker build -t localcloud/localcloud:prod \
+  --build-arg ENFORCE_LICENSE=true \
+  --build-arg LICENSE_PUBLIC_KEY="$(cat my-pubkey.pem)" \
+  .
+```
+
+When `ENFORCE_LICENSE=false` (default), the container starts without checking for any license key, API key, or license server. The web console shows "PRO" tier. Suitable for local development, CI/CD, and demos.
+
+When `ENFORCE_LICENSE=true`, the container enforces full license validation at startup. A valid `LOCALCLOUD_API_KEY` environment variable or connection to a license server is required or the container exits immediately.
+
 ---
 
 ## Connecting Your Application

@@ -388,7 +388,20 @@ if [ "${LOCALCLOUD_SKIP_UPDATE_CHECK}" != "true" ]; then
     ) &
 fi
 
-# --- License status banner ---
+# License enforcement toggle — if disabled, skip all checks
+ENFORCE_LICENSE=$(cat /opt/localcloud/ENFORCE_LICENSE 2>/dev/null || echo "true")
+if [ "$ENFORCE_LICENSE" = "false" ]; then
+    echo "License enforcement disabled — bypassing all license checks"
+    echo "development" > /tmp/localcloud-tier
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════════╗"
+    echo "║  License enforcement is DISABLED.                               ║"
+    echo "║  Build with --build-arg ENFORCE_LICENSE=true to enforce.        ║"
+    echo "╚══════════════════════════════════════════════════════════════════╝"
+    skip_license_gate=true
+fi
+
+# License status banner
 echo ""
 if [ -n "$LOCALCLOUD_API_KEY" ]; then
     case "$LOCALCLOUD_API_KEY" in
@@ -406,14 +419,16 @@ fi
 echo ""
 
 # License preflight gate — must pass before supervisord starts external emulators
-echo "Checking license..."
-if ! bash /opt/localcloud/license-gate.sh; then
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║  License validation failed. Container will not start.           ║"
-    echo "║  Set LOCALCLOUD_API_KEY or get a key at https://localcloud.dev  ║"
-    echo "╚══════════════════════════════════════════════════════════════════╝"
-    exit 1
+if [ "${skip_license_gate:-false}" != "true" ]; then
+    echo "Checking license..."
+    if ! bash /opt/localcloud/license-gate.sh; then
+        echo ""
+        echo "╔══════════════════════════════════════════════════════════════════╗"
+        echo "║  License validation failed. Container will not start.           ║"
+        echo "║  Set LOCALCLOUD_API_KEY or get a key at https://localcloud.dev  ║"
+        echo "╚══════════════════════════════════════════════════════════════════╝"
+        exit 1
+    fi
 fi
 
 # Drop privileges: run CMD as the runtime user

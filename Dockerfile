@@ -318,6 +318,11 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/wait-for-pg.sh /
 ARG BUILD_MODE=development
 RUN echo "${BUILD_MODE}" > /opt/localcloud/BUILD_MODE
 
+# License enforcement: set to "false" (default) to skip all license checks.
+# Pass --build-arg ENFORCE_LICENSE=true to require a valid LOCALCLOUD_API_KEY.
+ARG ENFORCE_LICENSE=false
+RUN echo "${ENFORCE_LICENSE}" > /opt/localcloud/ENFORCE_LICENSE
+
 # 7. Metadata and versioning (ARGs late for cache optimization)
 ARG VERSION_VAL=0.0.0
 ARG BUILD_HASH=unknown

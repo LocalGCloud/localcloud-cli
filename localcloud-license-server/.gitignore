@@ -1,0 +1,7 @@
+build/
+.gradle/
+src/main/resources/admin/node_modules/
+src/main/resources/admin/dist/
+src/main/resources/app.conf
+*.iml
+.idea/

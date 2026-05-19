@@ -1,0 +1,2602 @@
+{
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/gradlew": {
+    "mtime": 1778652990.8868291,
+    "hash": "266606e78242737ef3da02a80ea0564d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/test/java/com/localcloud/license/auth/AuthRepositoryTest.java": {
+    "mtime": 1778563680.2695575,
+    "hash": "5ca1f568ec299c15242046efee2c71e9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/test/java/com/localcloud/license/auth/SessionAuthDecoratorTest.java": {
+    "mtime": 1778563681.128517,
+    "hash": "cb0d57e63f6537b71a07bd18a65f79a4"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/test/java/com/localcloud/license/auth/SessionRepositoryTest.java": {
+    "mtime": 1778563681.1927118,
+    "hash": "d47e327af9f1859d6bd758970e4ff4a3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/test/java/com/localcloud/license/trial/TrialRepositoryTest.java": {
+    "mtime": 1778689226.5436008,
+    "hash": "8950c89d946b60f555e3d3eb3a05f9a6"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/test/java/com/localcloud/license/db/SchemaInitializerTest.java": {
+    "mtime": 1778563680.2697163,
+    "hash": "20be581375d1b7cfb079c7446b6e44f2"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/test/java/com/localcloud/license/keys/ApiKeyRepositoryTest.java": {
+    "mtime": 1778563680.3626902,
+    "hash": "356a4519becf20b1d5bec2cb67d4b990"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/test/java/com/localcloud/license/validation/LicenseValidationTest.java": {
+    "mtime": 1778563681.564574,
+    "hash": "f7102ba50563ccde95093b1d1b2d4e7e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/test/java/com/localcloud/license/validation/LicenseValidatorExpiryTest.java": {
+    "mtime": 1778689226.543735,
+    "hash": "496d617675e0213c9266ead2726420ab"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/test/java/com/localcloud/license/validation/KeyPairManagerTest.java": {
+    "mtime": 1778563681.3416426,
+    "hash": "5975923c861693347e9e2db522765b0f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/test/java/com/localcloud/license/validation/JwtSignerTest.java": {
+    "mtime": 1778563681.3413825,
+    "hash": "9bc474edbec832104b07af9d3cb4443e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/resources/admin/build.js": {
+    "mtime": 1778801844.7736902,
+    "hash": "637d6f8113154d4b4bb889e987e2da3d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/resources/admin/src/app.jsx": {
+    "mtime": 1778801866.897858,
+    "hash": "86f4a67620c45ed78c3f5dd177b5925b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/resources/admin/src/api.js": {
+    "mtime": 1778801864.0086036,
+    "hash": "1c3931c477353b4eb1208e47ea2e43e8"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/resources/admin/src/pages/Users.jsx": {
+    "mtime": 1778801881.3464837,
+    "hash": "c7fb6bc3ce74716ab38f280e46c43f8b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/resources/admin/src/pages/Trials.jsx": {
+    "mtime": 1778801893.3854785,
+    "hash": "6ad9e3aa9e5b67deae212b33a1133372"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/resources/admin/src/pages/Dashboard.jsx": {
+    "mtime": 1778801874.4521856,
+    "hash": "73f76cd0e8e31631808f20f1ae5eeaa0"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/resources/admin/src/pages/Login.jsx": {
+    "mtime": 1778801871.5403056,
+    "hash": "e2696f59edc869ff6f85c6dfabc86855"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/resources/admin/src/pages/Keys.jsx": {
+    "mtime": 1778801891.1436331,
+    "hash": "6d004db7bf715882f3f80805a7115216"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/resources/admin/src/pages/Settings.jsx": {
+    "mtime": 1778801897.619781,
+    "hash": "9d138bba49ab760c17d9a6c08ac5f9ca"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/resources/admin/src/pages/Devices.jsx": {
+    "mtime": 1778801895.2809737,
+    "hash": "08a7ee214d211527086102792003e756"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/LicenseServerApplication.java": {
+    "mtime": 1778801830.61982,
+    "hash": "c235ebce0a55b10145ef4dc110a9488a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/LicenseServerConfig.java": {
+    "mtime": 1778801803.719185,
+    "hash": "e069c5599e2bd57b4401824364bb1104"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/util/HttpUtils.java": {
+    "mtime": 1778652759.1769056,
+    "hash": "3203a308f04f9ee999d5d498471ba190"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/auth/AuthHandler.java": {
+    "mtime": 1778689226.5415504,
+    "hash": "fd73c3f3f16445a38da79428ecf6828d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/auth/OtpService.java": {
+    "mtime": 1778689226.542122,
+    "hash": "15278531eb756d1ef358cc726b659229"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/auth/AuthRepository.java": {
+    "mtime": 1778689226.5418022,
+    "hash": "424c88346b910f50cb4409dcb5994af0"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/auth/SessionRepository.java": {
+    "mtime": 1778563681.1923034,
+    "hash": "0c901c2cf0091b18e30228952409f836"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/auth/SessionAuthDecorator.java": {
+    "mtime": 1778689226.5422828,
+    "hash": "3c87d26b92de0aaada48177440fd5205"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/trial/TrialRepository.java": {
+    "mtime": 1778689226.5429347,
+    "hash": "0d78819471e7d5a08b2c534bcd9f881c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/trial/TrialHandler.java": {
+    "mtime": 1778689226.5428252,
+    "hash": "dcbc9512d8d9be83cb922d71323c36e2"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/admin/AdminStatsRepository.java": {
+    "mtime": 1778801960.1398835,
+    "hash": "58c054d07d6f29c21545eda6ca4ab40d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/admin/AdminHandler.java": {
+    "mtime": 1778801951.2785735,
+    "hash": "9cfda84d13723d306683e4fab461611f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/admin/AdminSessionStore.java": {
+    "mtime": 1778801765.1573477,
+    "hash": "0b517dc702d4aacd4ef1cb21fd4d1547"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/admin/AdminSessionDecorator.java": {
+    "mtime": 1778801826.7051623,
+    "hash": "5ec0b6aa1b96158afd00142deed9526b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/ratelimit/RateLimiter.java": {
+    "mtime": 1778652809.4548383,
+    "hash": "4fed8483b67c57e633e950d602d19e39"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/db/SchemaInitializer.java": {
+    "mtime": 1778689226.5424223,
+    "hash": "44a9ec9de4ff471dfbca4af32268f3b4"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/db/LicenseDatabase.java": {
+    "mtime": 1778563680.2673285,
+    "hash": "5734a9ee2ce36a2c7ab598a2ec4435ec"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/keys/ApiKeyRepository.java": {
+    "mtime": 1778689226.5426934,
+    "hash": "92636c531fe18c7e1c4ffb6f7b70539d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/keys/ApiKeyHandler.java": {
+    "mtime": 1778689226.5425572,
+    "hash": "8581feb405e190751e74099631efa22d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/email/EmailService.java": {
+    "mtime": 1778563680.2676167,
+    "hash": "9ad8d666d054a425837119dd388e5a27"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/validation/LicenseValidator.java": {
+    "mtime": 1778563681.6581752,
+    "hash": "4a8ee02b5eea30f9b9cee2d9c4009516"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/validation/DeviceTracker.java": {
+    "mtime": 1778689226.5432537,
+    "hash": "3e2db9ade8e0763e5e4325df1daf9a53"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/validation/KeyPairManager.java": {
+    "mtime": 1778563681.3407893,
+    "hash": "0d10ba2107eac6021ab710a9f79ee3f6"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/validation/LicenseValidationHandler.java": {
+    "mtime": 1778689226.5434468,
+    "hash": "6eb700eb52d573cd68b5d1f77844c7ff"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/java/com/localcloud/license/validation/JwtSigner.java": {
+    "mtime": 1778563681.3405674,
+    "hash": "ec48b658b4802d838cfaa4ef0cf80125"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/gradlew": {
+    "mtime": 1775933359.9657366,
+    "hash": "266606e78242737ef3da02a80ea0564d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/config/LocalCloudConfigTest.java": {
+    "mtime": 1778563680.4736152,
+    "hash": "cccb7d68583c578c6a37df2b6d825b95"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/integration/GrpcTranscodingIntegrationTest.java": {
+    "mtime": 1775928344.8323908,
+    "hash": "f3ea5febb6e574f162bcfa1cf234d787"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/integration/CloudTasksIntegrationTest.java": {
+    "mtime": 1775928344.8322177,
+    "hash": "1fcee642bb0e8e9859b33d996d5026dd"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/integration/TestDataSource.java": {
+    "mtime": 1778743054.7560494,
+    "hash": "1c9de13c36aa02a60e73914bd4672d9d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/admin/ServiceRoutingRepositoryTest.java": {
+    "mtime": 1776210959.6578321,
+    "hash": "70268d97a7b724da3401c7b145069ab3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/admin/AdminServiceTierGatingTest.java": {
+    "mtime": 1778563681.8099835,
+    "hash": "ef4f13e725c9d466faa9002b0e88cbf1"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/admin/AdminApiServiceTerraformTest.java": {
+    "mtime": 1778563681.7330992,
+    "hash": "a1c597636df76b2e1bb68eff0f2f8b71"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/admin/bigtablesql/SqlParserTest.java": {
+    "mtime": 1777422056.9695325,
+    "hash": "76b343c1a3ed05b03db870a42545b679"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/AbstractEmulatorTest.java": {
+    "mtime": 1775928344.8304305,
+    "hash": "68dc6276ac33d03a5a20c0f8821e4651"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/ComputeRestServiceTest.java": {
+    "mtime": 1775928344.8305938,
+    "hash": "6ae356acf143437777a4b171d05d1ef5"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/kms/KmsRestServiceTest.java": {
+    "mtime": 1778563680.4744213,
+    "hash": "90e07fc4238519ba10c9cc9ec9b26c61"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/workflows/WorkflowUrlRewriterTest.java": {
+    "mtime": 1776405791.3103623,
+    "hash": "2f6336b39d288934e6fb091bbcb32b9f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/workflows/WorkflowsStoreTest.java": {
+    "mtime": 1776384216.5409298,
+    "hash": "3a6b6a9222e9679fd79fefe8e45df7e7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/workflows/WorkflowsServiceImplTest.java": {
+    "mtime": 1777422056.9700742,
+    "hash": "55470f855bfc35a15c0fb926240acd07"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/workflows/BugfixRegressionTest.java": {
+    "mtime": 1776384216.5406635,
+    "hash": "30c875f1b5ba5790ec887e654ba5ef18"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/workflows/SysFunctionsEnvVarsTest.java": {
+    "mtime": 1776405791.3101306,
+    "hash": "f20f9aee424f4642101279fa11a1dc62"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/workflows/connector/ConnectorRegistryTest.java": {
+    "mtime": 1777422056.9703095,
+    "hash": "6a69da5386f481a5a073d855920eaa18"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/workflows/stdlib/SysFunctionsTest.java": {
+    "mtime": 1777149517.7376702,
+    "hash": "c62f106d683a699046e19462ac546b7c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/workflows/stdlib/StdlibRegistryTest.java": {
+    "mtime": 1777422056.9711998,
+    "hash": "0b4c5dd1ff6fa8e8473b6b4876c79832"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/workflows/expression/ExpressionEvaluatorTest.java": {
+    "mtime": 1777422056.9710014,
+    "hash": "7cf6a0db93db6c8aed3556157d915de5"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/workflows/engine/ExecutionContextTest.java": {
+    "mtime": 1777149517.737585,
+    "hash": "5f4991b67d5a1230c2973cc1959a26ad"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/workflows/engine/WorkflowExecutorTest.java": {
+    "mtime": 1777422056.9705975,
+    "hash": "4984828eef17faa11a1b0571c23c3b42"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/workflows/engine/CallbackManagerTest.java": {
+    "mtime": 1777149517.7375135,
+    "hash": "0f522db62b2450ec1fcadb8f63358bb9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/vertexai/VertexAiRestServiceTest.java": {
+    "mtime": 1778563680.4746478,
+    "hash": "aa6cb0e3c6e93fcbcfe03c0be7eed9ba"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/gke/K3dManagerTest.java": {
+    "mtime": 1775928344.8310401,
+    "hash": "32b4b30e0f505da4d3ba4cfeda6500d7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/cloudsql/CloudSqlRestServiceTest.java": {
+    "mtime": 1778743065.2585065,
+    "hash": "f2eadae6ff5d3df8c523d94318b30cd1"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/cloudtasks/CloudTasksRestServiceTest.java": {
+    "mtime": 1777069890.4384027,
+    "hash": "b52c5779d8347bb35ae07bb59eafaf3a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/cloudtasks/CloudTasksStoreTest.java": {
+    "mtime": 1775928344.8308232,
+    "hash": "ee49a694ff60129f416c67efff797ac9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/pubsub/PubSubEmulatorTest.java": {
+    "mtime": 1778741451.8852806,
+    "hash": "69b61056309d5220625b7a45aa35e2f5"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/emulators/pubsub/PubSubStoreTest.java": {
+    "mtime": 1778743537.5768712,
+    "hash": "d4e44f5be69386732a6ad8e86b0c7ee6"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/persistence/SchemaManagerSyncTablesTest.java": {
+    "mtime": 1777149517.7378387,
+    "hash": "e242cd553e420130b9dad00881bdb3fc"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/licensing/LicenseIntegrationTest.java": {
+    "mtime": 1778563681.8117366,
+    "hash": "d6f45b6679051700655b5b2c812a5a88"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/licensing/OnlineKeyValidatorTest.java": {
+    "mtime": 1778743759.2580943,
+    "hash": "0e6373c3be67626174034031e84107de"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/licensing/KeyGeneratorTest.java": {
+    "mtime": 1778563679.70074,
+    "hash": "ca761a42020d881ffd0286055001ab4a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/licensing/LicenseManagerTest.java": {
+    "mtime": 1778563679.6327322,
+    "hash": "7bbf40969f60d0d83edf17e0359340f4"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/licensing/LicenseTierTest.java": {
+    "mtime": 1778563681.8120186,
+    "hash": "dc621dab23bec36771c6b1a48ec76f08"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/licensing/LicenseCacheTest.java": {
+    "mtime": 1778563679.537696,
+    "hash": "6f45c2f399028bd100dcc12c06be1880"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/licensing/ProductionModeTest.java": {
+    "mtime": 1778563681.4915595,
+    "hash": "2a68981a4b841578656d77cdbf8a8272"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/licensing/ClockTamperDetectionTest.java": {
+    "mtime": 1778563680.1828456,
+    "hash": "aa167ccc0e98f4a311a49bc74baac660"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/licensing/LicenseGateMainTest.java": {
+    "mtime": 1778563681.0618908,
+    "hash": "697b604d56b4f13751b94519c713f424"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/licensing/DeviceFingerprintTest.java": {
+    "mtime": 1778563680.1446407,
+    "hash": "fa0b3dcc3561a12616bc5d244a28797f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/licensing/OfflineKeyValidatorTest.java": {
+    "mtime": 1778563680.1090837,
+    "hash": "27eddd7cfef12636c4f0231c9e0addd2"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/sync/SyncIntegrationTest.java": {
+    "mtime": 1777149517.7384868,
+    "hash": "8811b8d29d31852aee95e9d38876fdbd"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/sync/SyncOAuthFlowTest.java": {
+    "mtime": 1777149517.7386868,
+    "hash": "6961ddcd35478e5b71255cdaffa36d06"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/sync/SyncServiceTest.java": {
+    "mtime": 1777149517.7388182,
+    "hash": "a30c927cfdf6bc23a21f5016ea58f884"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/sync/SyncApiServiceTest.java": {
+    "mtime": 1777149517.7380364,
+    "hash": "4d05c83c18e2f1ae64077b395d68d746"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/sync/SyncFilterValidatorTest.java": {
+    "mtime": 1777149517.7383626,
+    "hash": "35de00225c0eca69a6bf5ee8ec952a1e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/sync/SyncCancelResumeTest.java": {
+    "mtime": 1777149517.7381558,
+    "hash": "d3341b5d6b93f16b64486796fed58737"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/sync/SyncManifestRepositoryTest.java": {
+    "mtime": 1777149517.7386131,
+    "hash": "34d718b4840f37e8ffd515b14f39c777"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/sync/adapters/GcsSyncAdapterTest.java": {
+    "mtime": 1777149517.7393706,
+    "hash": "4098171f242de577037346d03933a03b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/sync/adapters/BigtableSyncAdapterTest.java": {
+    "mtime": 1777149517.739127,
+    "hash": "544b98c9fa6fa0d00f2b96c944601f01"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/sync/adapters/SpannerSyncAdapterTest.java": {
+    "mtime": 1777149517.7395523,
+    "hash": "24c967e093efd1b422d7365865974dc0"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/sync/adapters/BigQuerySyncAdapterTest.java": {
+    "mtime": 1777149517.738994,
+    "hash": "9f8ab7e00e9f7234bbaad188655514fb"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/sync/adapters/RetryableHttpClientTest.java": {
+    "mtime": 1777149517.7394352,
+    "hash": "bbf9f84db098de88d7f90321a3dc412e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/sync/adapters/FirestoreSyncAdapterTest.java": {
+    "mtime": 1777149517.7392557,
+    "hash": "dcf3de49fab051550f95d4fe40d25e41"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/events/EventBusTest.java": {
+    "mtime": 1775928344.831511,
+    "hash": "571c3569206d1a430ee3bdb46d8f39cc"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/gateway/ServiceGatingDecoratorTest.java": {
+    "mtime": 1778563680.4752493,
+    "hash": "07b43edc8214d3af35956c2fb0fcb208"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/gateway/RequestLoggerTest.java": {
+    "mtime": 1775928344.8320074,
+    "hash": "2942038310a0667ee0a1140e21792c2c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/gateway/IamMiddlewareTest.java": {
+    "mtime": 1775928344.8318834,
+    "hash": "477217e96f4e9ca0307d872087db57cb"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/test/java/com/localcloud/gateway/ApiGatewayTest.java": {
+    "mtime": 1775928344.8317533,
+    "hash": "5a5e660b279eb71a1be725924f44e738"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/resources/dashboard/app.js": {
+    "mtime": 1775928344.8294444,
+    "hash": "37d5da88d6930606e1b79be55f90878f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/LocalCloudApplication.java": {
+    "mtime": 1778737979.4106586,
+    "hash": "f42325d611ae48184d126c60e284839e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/docker/DockerClientProvider.java": {
+    "mtime": 1775928344.8242874,
+    "hash": "4f33f2e49da47e60e93089587e2931d7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/docker/ContainerManager.java": {
+    "mtime": 1776210959.6560447,
+    "hash": "3cdfbeba63a00d3f082fab6cb4944358"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/util/HttpUtil.java": {
+    "mtime": 1778689313.5085747,
+    "hash": "fe03eab6989d9c94b7eb5ba9688a9fe8"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/config/LocalCloudConfig.java": {
+    "mtime": 1778563679.7555172,
+    "hash": "b33cd031eac3a390039d12ac0f6532b0"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/config/ServiceRegistry.java": {
+    "mtime": 1778563681.732389,
+    "hash": "c664163246cbddd1f4e2e9587149ea5e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/MutateService.java": {
+    "mtime": 1778689650.029234,
+    "hash": "e39f4c6e7c6d7fc26e0ee328125a2a91"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/SpannerDdlParser.java": {
+    "mtime": 1777762391.1770263,
+    "hash": "bf0eec1f6b5131c975b9cb1c7b70aa2c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/UsageMetricsRepository.java": {
+    "mtime": 1776210959.6556823,
+    "hash": "ceef7539b6acf9eaab5b92a63182005f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/ServiceConfigRepository.java": {
+    "mtime": 1776586809.1366923,
+    "hash": "552bd748dd5e15f8d38c5ddd34f453bb"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/SeedService.java": {
+    "mtime": 1778689752.178068,
+    "hash": "02bdd0b333add686d09c819cc719a3ee"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/RemoteProxyService.java": {
+    "mtime": 1776210959.6549435,
+    "hash": "0f9680ec819f00766bc50ecd5c63e4e0"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/SupervisorClient.java": {
+    "mtime": 1776210959.6555846,
+    "hash": "8a98708b876e1c1ce3adb4a3a6a7faa7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/BigtableGrpcClient.java": {
+    "mtime": 1777422056.9596138,
+    "hash": "4c1b95d9f631aafaece44d7cf5cf3bf3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/ServiceRoutingRepository.java": {
+    "mtime": 1776210959.6554801,
+    "hash": "fdd4e0313c8ffe008845fb66b5311482"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/ProjectService.java": {
+    "mtime": 1778689226.544358,
+    "hash": "803a3a0c7eea92c42149186c9fceef3b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/QueryService.java": {
+    "mtime": 1778563680.4688008,
+    "hash": "02ce05be904910f30aa4c249e8c937ac"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/BrowseService.java": {
+    "mtime": 1778689444.2294297,
+    "hash": "678caeb0c0f96cf920e37816c9b0a082"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/AdminApiService.java": {
+    "mtime": 1778689368.2358038,
+    "hash": "a0aa2fef53235ac5f26cdf1956d1efa6"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/ExportService.java": {
+    "mtime": 1778689483.9423766,
+    "hash": "11c4d71863db15a2fb6e45232055de7d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/TelemetryService.java": {
+    "mtime": 1776795278.6512146,
+    "hash": "2777c51b3d52518ee187888387edcdf9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/bigtablesql/BigtableSqlExecutor.java": {
+    "mtime": 1777422056.9629738,
+    "hash": "5b18bea33030e04387f53a6e7093d18b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/bigtablesql/SqlTypes.java": {
+    "mtime": 1777422056.9638526,
+    "hash": "2aa5ae69945abb8966a253a105f718c7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/bigtablesql/SqlAstNode.java": {
+    "mtime": 1777422056.963197,
+    "hash": "c1dd246c2f7879a9abbc25ea3a3038d8"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/bigtablesql/BigtableSqlException.java": {
+    "mtime": 1777422056.9628732,
+    "hash": "1bda1b927cb0f3eee2347e744364873b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/bigtablesql/SqlAggregator.java": {
+    "mtime": 1777422056.9630919,
+    "hash": "6aac3511ae00ce84e2c8b02cb96d1e55"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/bigtablesql/SqlParser.java": {
+    "mtime": 1777422056.963401,
+    "hash": "36abb6cbbf8010785051afe89a0ba2a9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/admin/bigtablesql/SqlFunctions.java": {
+    "mtime": 1777422056.9632838,
+    "hash": "b0f7f1fb53241191442a388be215f27e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/AbstractEmulator.java": {
+    "mtime": 1776210959.6561975,
+    "hash": "b9a973dfe9bbb89184259c1f5cbc2ace"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/EmulatorBase.java": {
+    "mtime": 1776210959.6563802,
+    "hash": "39bc5f93ef8bb20d812cff3373b1c57e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/kms/KmsEmulator.java": {
+    "mtime": 1778563680.4712844,
+    "hash": "40368d2ef8cbdf1e00db3d13194e9e2d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/kms/KmsStore.java": {
+    "mtime": 1778563680.471961,
+    "hash": "21fec8d89f05fcc039eb4902ec3f678b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/kms/KmsRestService.java": {
+    "mtime": 1778563680.4716418,
+    "hash": "6f2c4640ef73414f6265ddbb4b5b5c59"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/WorkflowEnvVarsService.java": {
+    "mtime": 1776405791.3082576,
+    "hash": "8276728aa000a5bd3461022de9abb0ce"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/ExecutionsGrpcServiceImpl.java": {
+    "mtime": 1777422056.9643955,
+    "hash": "d7e69af961a7ff256e8f4b03d80e065b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/WorkflowsRestService.java": {
+    "mtime": 1777422056.9650612,
+    "hash": "74f9db5e9bdcbbbab3a28040b5d1e2b1"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/WorkflowConnectorService.java": {
+    "mtime": 1776405791.3077848,
+    "hash": "1ae31d574d5ece3580df602e84a96996"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/WorkflowUrlRewriter.java": {
+    "mtime": 1776405791.308475,
+    "hash": "697be20396dac150eefa1bf87b4a00b5"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/WorkflowEnvVarsRepository.java": {
+    "mtime": 1776405791.3080273,
+    "hash": "b116c4d4b466b5060be332b002bb9b10"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/WorkflowFileWatcher.java": {
+    "mtime": 1777069890.4351482,
+    "hash": "e28462d4aeceb8172a3b43963fc113da"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/WorkflowsEmulator.java": {
+    "mtime": 1777069890.4354208,
+    "hash": "8d4f21391b7e423e807bcc0749e18eb0"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/WorkflowsServiceImpl.java": {
+    "mtime": 1778037093.7455187,
+    "hash": "ddcffa1491407ab07018da884a012ec0"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/RemoteSourceClient.java": {
+    "mtime": 1776405791.3075633,
+    "hash": "9fe5ea2bdf881a4fe429e5ef4fabbd7c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/WorkflowsStore.java": {
+    "mtime": 1777422056.9657087,
+    "hash": "40b17272dc0dfa17ee956f2764fcc969"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/WorkflowsGrpcServiceImpl.java": {
+    "mtime": 1777422056.9649029,
+    "hash": "99031f18d3b7af7c080a9dd021708eff"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/ExecutionsServiceImpl.java": {
+    "mtime": 1776384216.5341377,
+    "hash": "774f35a29f03ee153862bf1ee59935c7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/WorkflowsCallbackService.java": {
+    "mtime": 1776384216.5342295,
+    "hash": "048e1a903151935da98830627066640e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/connector/ConnectorRegistry.java": {
+    "mtime": 1777422056.9658775,
+    "hash": "7eb0fd3e5971b036995a6fcb5c841232"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/UuidFunctions.java": {
+    "mtime": 1777422056.9690144,
+    "hash": "9190631362854e51d7b087419b49a57f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/StdlibRegistry.java": {
+    "mtime": 1777422056.9684434,
+    "hash": "1f5b7b4212379a8ba04afe8c78adf48b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/JsonFunctions.java": {
+    "mtime": 1777422056.967775,
+    "hash": "f0f0c4fada42402e235c5af8de843ba9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/RetryFunctions.java": {
+    "mtime": 1777422056.9679883,
+    "hash": "15af285417de2f260aad7755769fe860"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/MapFunctions.java": {
+    "mtime": 1777422056.9679186,
+    "hash": "787d39fc7bcf9375efb733c0855a73a6"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/EventsFunctions.java": {
+    "mtime": 1777149517.7344341,
+    "hash": "103311ac69dce0451834a7f3040a53e6"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/SysFunctions.java": {
+    "mtime": 1777422056.9686782,
+    "hash": "447c38d31b3f5d1ede3d902d9be981fc"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/HashFunctions.java": {
+    "mtime": 1777069890.4375896,
+    "hash": "b2a2b09d53980f45f279f92c3db80ccb"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/ExpressionFunctions.java": {
+    "mtime": 1777422056.9674504,
+    "hash": "884cee8ba7d3468d3123b5ddf123956b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/TimeFunctions.java": {
+    "mtime": 1777069890.438053,
+    "hash": "25e9c051703f568ea0a1422b622a2337"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/ListFunctions.java": {
+    "mtime": 1776384216.5372264,
+    "hash": "e83a65ea21cc86f6c6f51ec0de75fe1b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/TextFunctions.java": {
+    "mtime": 1777422056.9689195,
+    "hash": "2f4e27c1fe38f103d2a906599101c629"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/HttpFunctions.java": {
+    "mtime": 1777422056.9676557,
+    "hash": "7237edbc773403966a7850c3f6a61291"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/Base64Functions.java": {
+    "mtime": 1776384216.536846,
+    "hash": "791e96a46ca05fb5fac03e9f4c1a797d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/TypeCastFunctions.java": {
+    "mtime": 1776384216.5378408,
+    "hash": "ca86cb3d856b9dd3e67dfde6d37a24b7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/stdlib/MathFunctions.java": {
+    "mtime": 1776384216.5374508,
+    "hash": "9e371a62583e989f5f19fea657ca3b62"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/expression/ExpressionEvaluator.java": {
+    "mtime": 1776384216.5362895,
+    "hash": "9803f8012c7f7f95d06488f66c9d877b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/expression/ExpressionParser.java": {
+    "mtime": 1777422056.966875,
+    "hash": "e240ea7c782bb8f24cc6d91a512b7766"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/expression/AstNode.java": {
+    "mtime": 1776384216.5361614,
+    "hash": "61234a882a65c339940cb31ed2d7ec5f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/expression/ExpressionException.java": {
+    "mtime": 1776384216.5363672,
+    "hash": "078156dd290e99e9493f8974ef7a455d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/engine/WorkflowLimits.java": {
+    "mtime": 1777069890.4375079,
+    "hash": "8aca9b6f8c83c6a589fd230eecc082b7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/engine/WorkflowException.java": {
+    "mtime": 1777069890.437189,
+    "hash": "bd0f47f65466a39d2db789d6ba96f899"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/engine/ExecutionContext.java": {
+    "mtime": 1777422056.9662127,
+    "hash": "bb1b626c30c2e57bca69ac2f765d0ceb"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/engine/WorkflowDefinition.java": {
+    "mtime": 1776384216.5357492,
+    "hash": "fb70c5288ccf9dee27ba3fcc28b39c0d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/engine/NextStepException.java": {
+    "mtime": 1776384216.5355349,
+    "hash": "1707878449ab250bdcf32f3980d72c54"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/engine/WorkflowParser.java": {
+    "mtime": 1776384216.5360029,
+    "hash": "d0309b566c39f51940be8d3fea0f45a5"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/engine/ReturnException.java": {
+    "mtime": 1776384216.5356698,
+    "hash": "6f9fe79c972b5479137999c2f574383e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/engine/CallbackManager.java": {
+    "mtime": 1777149517.7335951,
+    "hash": "b2917734a9c58fccc462d7ed7a7ea15a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/workflows/engine/WorkflowExecutor.java": {
+    "mtime": 1778036998.932658,
+    "hash": "a7df675e44ea9c3a7f6ea8597cb9bd27"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/cloudrun/CloudRunStore.java": {
+    "mtime": 1775928344.825343,
+    "hash": "3ce1231662e722ce512ef6383248d487"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/cloudrun/CloudRunEmulator.java": {
+    "mtime": 1776210959.6565638,
+    "hash": "d514fa9180bb8f8305261ea6388d53bd"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/vertexai/VertexAiStore.java": {
+    "mtime": 1778563680.4726012,
+    "hash": "987fae53d405817c0ff797bb8e5cc566"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/vertexai/VertexAiRestService.java": {
+    "mtime": 1778563680.4724016,
+    "hash": "ef2769fdea6fef62ed5a4274ed666c15"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/vertexai/VertexAiEmulator.java": {
+    "mtime": 1778563680.4722006,
+    "hash": "5204334ad67d374d597b2eeb2c773141"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/gke/K3dManager.java": {
+    "mtime": 1776210959.6571825,
+    "hash": "bb81e88e5a8dd4e74b4b44b96c57f411"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/gke/GkeEmulator.java": {
+    "mtime": 1775928344.826456,
+    "hash": "4c9ecd2486a9be30087bd827c784c35c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/gke/GkeStore.java": {
+    "mtime": 1775928344.8266246,
+    "hash": "4ff6f42db3a6a0093d81874ac302e799"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/compute/ComputeStore.java": {
+    "mtime": 1775928344.8262672,
+    "hash": "1584fac3bb301c6ecd74e0cc4e1c5cd9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/compute/ComputeRestService.java": {
+    "mtime": 1776210959.6570117,
+    "hash": "1cd886561c8bfc67eb19db16d1d13d13"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/compute/ComputeEmulator.java": {
+    "mtime": 1776210959.656742,
+    "hash": "86d51dfe7b01cb57553a0147539c7d5e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/cloudsql/CloudSqlEmulator.java": {
+    "mtime": 1778563680.4693723,
+    "hash": "916de1ae934476fdf0816bf4a5074524"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/cloudsql/CloudSqlStore.java": {
+    "mtime": 1778563680.5751605,
+    "hash": "7d78b78e41863052709fb566a5f66e9b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/cloudsql/CloudSqlRestService.java": {
+    "mtime": 1778563680.4704533,
+    "hash": "191ccd6f73f4f1cee05a95e411fb419f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/cloudtasks/TaskDispatcher.java": {
+    "mtime": 1775928344.8257885,
+    "hash": "e1fea493d295b8d7ed46f63c6c0fa7e1"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/cloudtasks/CloudTasksStore.java": {
+    "mtime": 1775928344.8256326,
+    "hash": "74ddf34d1ee4ab7b807c007b66381ab9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/cloudtasks/CloudTasksEmulator.java": {
+    "mtime": 1777069890.4344046,
+    "hash": "30dbf7248025335af5c3495993bfcc37"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/cloudtasks/CloudTasksRestService.java": {
+    "mtime": 1777069890.4346383,
+    "hash": "ea9e3edf5b531f0352cca6a792fe0826"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/pubsub/PubSubEmulator.java": {
+    "mtime": 1778741388.3579307,
+    "hash": "5a71f5f393ccfc19c04075c386f75e47"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/pubsub/PubSubStore.java": {
+    "mtime": 1778741620.1105716,
+    "hash": "5fcbd0a1d3ceea4079ad60becd6d4737"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/monitoring/MonitoringEmulator.java": {
+    "mtime": 1775928344.8276403,
+    "hash": "bf108d528d08e95d65054bd4cd48b9a1"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/emulators/logging/LoggingEmulator.java": {
+    "mtime": 1775928344.8270502,
+    "hash": "b773c231ccb708caddbecc1ef9c571ef"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/persistence/SchemaManager.java": {
+    "mtime": 1778741406.5093794,
+    "hash": "6d17faacd30399be1e6c9e4bbf9a1a9a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/persistence/PostgresDataSource.java": {
+    "mtime": 1775928344.8289921,
+    "hash": "951441b8dd03e3e1fe48af581ede2847"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/licensing/KeyGenerator.java": {
+    "mtime": 1778563679.7005615,
+    "hash": "6885e1edf60d8a17815cfc67966b2793"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/licensing/LicenseManager.java": {
+    "mtime": 1778563681.491201,
+    "hash": "8fe197689fbb42b497000b35dea0cb21"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/licensing/OnlineKeyValidator.java": {
+    "mtime": 1778743736.1490319,
+    "hash": "fa5d95e9eda14ce55976e8836ee964a2"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/licensing/LicenseTier.java": {
+    "mtime": 1778563681.8090389,
+    "hash": "33b622930949903f9016eb593fca38a5"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/licensing/DeviceFingerprint.java": {
+    "mtime": 1778689226.5449612,
+    "hash": "de77dc3b219d2aebc944e74c849eb1f0"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/licensing/LicenseGateMain.java": {
+    "mtime": 1778563681.060896,
+    "hash": "ea06eeaac2cf125548969414692e9976"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/licensing/OfflineKeyValidator.java": {
+    "mtime": 1778563680.1087348,
+    "hash": "f5781faccb6a1758cd97578087171f65"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/licensing/LicenseCache.java": {
+    "mtime": 1778563680.1817791,
+    "hash": "c65cd32beb1316b0b4468e62b984e308"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/licensing/LicenseTierProvider.java": {
+    "mtime": 1778563681.7326994,
+    "hash": "70d180ab3e0d895cfbb10e3d2a2e8a81"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/licensing/LicenseResult.java": {
+    "mtime": 1778563679.4088411,
+    "hash": "3a33ed32cef84d563f5be450a5de6575"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/licensing/StaticLicenseTierProvider.java": {
+    "mtime": 1778563681.8097124,
+    "hash": "2358c0731b9e8a7f3489ac01761ccbc2"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/SyncApiService.java": {
+    "mtime": 1777149517.7352428,
+    "hash": "2a92a29bcf14e552581112c1f5dc3333"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/PreviewResult.java": {
+    "mtime": 1777149517.7350724,
+    "hash": "b8e85418517449b6830fa743495160f1"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/SyncResult.java": {
+    "mtime": 1777149517.7358534,
+    "hash": "d83c455d0f5b8766f2800d6dbcbb7c33"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/SyncManifest.java": {
+    "mtime": 1777149517.7356086,
+    "hash": "2b687ca40c9a915b4a8879367e5b9952"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/SyncFilter.java": {
+    "mtime": 1777149517.7354815,
+    "hash": "5a64e299aea004ef0efd4a830fcfa9c5"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/CostEstimate.java": {
+    "mtime": 1777149517.7349257,
+    "hash": "c92274fc956fdf7373cdb5f9e125135d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/BrowseResult.java": {
+    "mtime": 1777149517.734852,
+    "hash": "8a6914c9fe2aa3801926dda4b252d170"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/SyncManifestRepository.java": {
+    "mtime": 1777149517.7357144,
+    "hash": "82ca2cf4c8134fbf32acd59a742aac10"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/SyncFilterValidator.java": {
+    "mtime": 1777149517.7355435,
+    "hash": "9a4bfa972340bfcb86f65600045a0a60"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/SyncService.java": {
+    "mtime": 1777149517.735945,
+    "hash": "5d028144c5782c79374fa4e7757053fc"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/SyncProgressCallback.java": {
+    "mtime": 1777149517.735784,
+    "hash": "409e7f34e869881d29c45208af036fb0"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/SyncAdapter.java": {
+    "mtime": 1777149517.7351408,
+    "hash": "01d78c79cb517b4a625635af27e2d13a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/adapters/RetryableHttpClient.java": {
+    "mtime": 1777149517.7369766,
+    "hash": "ed21533640acada35b76a12f74b50420"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/adapters/FirestoreSyncAdapter.java": {
+    "mtime": 1777149517.7366862,
+    "hash": "dcb03684568ff91150cf0fcf839236aa"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/adapters/SpannerSyncAdapter.java": {
+    "mtime": 1777149517.7370756,
+    "hash": "02bacbb4d2b9e0a01d4ffa67ca28974b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/adapters/GcsSyncAdapter.java": {
+    "mtime": 1777149517.7368157,
+    "hash": "fccd77ba1fb03344ca8378703936eacf"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/adapters/BigtableSyncAdapter.java": {
+    "mtime": 1777149517.7365153,
+    "hash": "f7f0bd05989890a9ff00eaa6247c2d34"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/sync/adapters/BigQuerySyncAdapter.java": {
+    "mtime": 1777149517.7361927,
+    "hash": "cd0b2132be989f0bb7c2360d01dd7cfd"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/events/EventBus.java": {
+    "mtime": 1775928344.8281317,
+    "hash": "e81e900aac904a6769d605260570df7e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/gateway/IamMiddleware.java": {
+    "mtime": 1775928344.8285124,
+    "hash": "e38cad3d56db68194b5dcc1fbeb7e18c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/gateway/ApiGateway.java": {
+    "mtime": 1775928344.828265,
+    "hash": "db6ab3c75a0240d3735bebbfc89d973a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/gateway/RequestLogger.java": {
+    "mtime": 1777760139.6824412,
+    "hash": "f2486caa2b175fdeffbf1cae57f0d2d8"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/gateway/HealthCheckService.java": {
+    "mtime": 1777676876.4167721,
+    "hash": "20807a5da78ee972e2fda54d42208fe3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/gateway/ServiceGatingDecorator.java": {
+    "mtime": 1778738012.833014,
+    "hash": "d233009776d6d60909d59ed7cea7dae9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/java/com/localcloud/gateway/ProcessHealthChecker.java": {
+    "mtime": 1775928344.8286746,
+    "hash": "3bd4badbe05ed5dbdbda1ad618fe0a1d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/build.js": {
+    "mtime": 1776384216.0,
+    "hash": "aef9cfd88308108026ac573a3cb19722"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/dev.js": {
+    "mtime": 1777688499.5979908,
+    "hash": "bf1f64f070dd208d25282edefec955d4"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/app.jsx": {
+    "mtime": 1778689226.5207229,
+    "hash": "90978bd5d7b9a791b4847ef3a5e7f6c3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/api.js": {
+    "mtime": 1778689244.3743389,
+    "hash": "b732492b9948f54f004d481637be0646"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/utils/a11y.js": {
+    "mtime": 1778563679.1763697,
+    "hash": "dcd70d90af80f7a3b2ac24d9323f93bf"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/components/RemoteSyncPanel.jsx": {
+    "mtime": 1778689226.5210617,
+    "hash": "eda9b0defa169424c81c4d9242a99999"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/components/DataBreadcrumb.jsx": {
+    "mtime": 1778563679.1599367,
+    "hash": "b50425f5f26996bb32adc1f393d743b2"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/components/CodeEditor.jsx": {
+    "mtime": 1778222215.624084,
+    "hash": "12e2dbad81f34267f047615bc81b9533"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/components/TreeIcons.jsx": {
+    "mtime": 1778563679.1645765,
+    "hash": "bb679b9cbfa7f753310f4372879a8717"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/components/CsvImportWizard.jsx": {
+    "mtime": 1778563679.1594348,
+    "hash": "ec33b6f6725b2aba6a89dd5c5a08804a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/components/SchemaExplorer.jsx": {
+    "mtime": 1778689226.5213253,
+    "hash": "5b6a824e8746f7e91ea712916feb7920"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/components/SyncFilterBuilder.jsx": {
+    "mtime": 1778563679.1640007,
+    "hash": "f7f9e1dfebaa41d68750b91c64c5497f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/data/compatibility.js": {
+    "mtime": 1776795278.0,
+    "hash": "5c0c3ad7fc6b6c5e206815451f319ca8"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/pages/Usage.jsx": {
+    "mtime": 1778563679.1685586,
+    "hash": "6e092e4429c6e05b75e707fe0d945ec9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/pages/DataBrowser.jsx": {
+    "mtime": 1778689230.7378857,
+    "hash": "744099dbf1b1e948eb0e0cc40825c839"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/pages/Dashboard.jsx": {
+    "mtime": 1778563680.466153,
+    "hash": "5f9f7ed1500ce8a414606ece82f66d84"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/pages/ServiceExplorer.jsx": {
+    "mtime": 1778689226.5222738,
+    "hash": "6730cd2bd9e1c01010a2d1bb48366f2b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/pages/Workflows.jsx": {
+    "mtime": 1778689226.5226407,
+    "hash": "cbeef8ed440b06457385580be156a25a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/pages/Settings.jsx": {
+    "mtime": 1778563679.1679971,
+    "hash": "b309343d8c2805a553f6f6513462e50d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/pages/Logs.jsx": {
+    "mtime": 1778563679.166468,
+    "hash": "ce136598affc971c6ce986a8bed2dbab"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/pages/settings-data.js": {
+    "mtime": 1778563679.171252,
+    "hash": "cd95ed611d5b1678365584259d4f1afc"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/run_demo.py": {
+    "mtime": 1775928344.808972,
+    "hash": "09d0601a24b2bb1676da24b437ad004e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/test_spanner_persistence.py": {
+    "mtime": 1775928344.8130352,
+    "hash": "49dd7187c322eb60b01052ff32d3c48c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/services/cloudtasks_demo.py": {
+    "mtime": 1778563683.1247504,
+    "hash": "a4522bf13d82e4f9097a12b7988a4069"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/services/spanner_demo.py": {
+    "mtime": 1775928344.8110158,
+    "hash": "1f7ea01bedc91d882e21400fc029a9a3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/services/firestore_demo.py": {
+    "mtime": 1775928344.810011,
+    "hash": "6c8c84b6d18643ebad5ad4a97eef0739"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/services/gke_demo.py": {
+    "mtime": 1778563683.1265492,
+    "hash": "0da1905a3c95d9f04991c28096bb420e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/services/__init__.py": {
+    "mtime": 1775928344.8090677,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/services/gcs_demo.py": {
+    "mtime": 1778563683.125947,
+    "hash": "8b5c8531344c9c0fed5c68b5aea45635"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/services/compute_demo.py": {
+    "mtime": 1778563683.1255188,
+    "hash": "6bbe6fa3ff0c15ec009cb6f116f08937"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/services/bigtable_demo.py": {
+    "mtime": 1777422056.9575849,
+    "hash": "ec905110ceb76eaf13e5ed54d6268ecb"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/services/cloudrun_demo.py": {
+    "mtime": 1778563683.1228137,
+    "hash": "d52f60c0d31a4d542b484cfc094181a7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/services/bigquery_demo.py": {
+    "mtime": 1775928344.809229,
+    "hash": "30bc9798b56b895427c509dd5aacafd3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/services/monitoring_demo.py": {
+    "mtime": 1775928344.810604,
+    "hash": "ea16726661c7874d35c26a63982ab7ce"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/services/logging_demo.py": {
+    "mtime": 1778563683.1271002,
+    "hash": "ca8565115423b146fb709413ad00d11d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/services/pubsub_demo.py": {
+    "mtime": 1775928344.8107305,
+    "hash": "ed16191f920b33b1f45abce13f0b6138"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/src/app.jsx": {
+    "mtime": 1775928344.8113878,
+    "hash": "75975c38744fe21ee93145881fdc477d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/src/api.js": {
+    "mtime": 1775928344.8112235,
+    "hash": "7968eacac494ed04b3450c12f0002297"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/src/components/Header.jsx": {
+    "mtime": 1775928344.811702,
+    "hash": "308539cd511fdc34734c76399c971349"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/src/components/StatusBadge.jsx": {
+    "mtime": 1775928344.8120909,
+    "hash": "9944d5112fab53361deaaf222925ec45"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/src/components/ServiceCard.jsx": {
+    "mtime": 1775928344.8118799,
+    "hash": "374f3c52668cc5920253623602e194b7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/src/components/Sidebar.jsx": {
+    "mtime": 1775928344.811988,
+    "hash": "fb7373fa830fe9c6d7794948d3b12076"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/src/pages/DataBrowser.jsx": {
+    "mtime": 1775928344.8124163,
+    "hash": "aeb533c7163103dfcfcf31938deb990e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/src/pages/Dashboard.jsx": {
+    "mtime": 1775928344.8122606,
+    "hash": "fa9f1e778feee321cf31ec5cac30c150"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/src/pages/Settings.jsx": {
+    "mtime": 1775928344.812909,
+    "hash": "5a5606f69323d60434d8c22067ea4c0d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/src/pages/Logs.jsx": {
+    "mtime": 1775928344.812598,
+    "hash": "fdce3e2419004fff791d2744966ff6de"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/src/pages/Services.jsx": {
+    "mtime": 1775928344.8127708,
+    "hash": "13380227c72edc460a3f949f6867c640"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/build.js": {
+    "mtime": 1776384216.53003,
+    "hash": "aef9cfd88308108026ac573a3cb19722"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/dev.js": {
+    "mtime": 1777149517.7281034,
+    "hash": "c007ae1f00f19c965da858c19f779d05"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/app.jsx": {
+    "mtime": 1777676876.4134984,
+    "hash": "059dad40ea4468e4a9797d948920fa8e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/api.js": {
+    "mtime": 1777149517.7291653,
+    "hash": "ec8aea24396fb34b9cc834c6542e1868"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/components/RemoteSyncPanel.jsx": {
+    "mtime": 1777149517.7293596,
+    "hash": "6d98c7988c0fb60a9680ebd53f8c7d00"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/components/CodeEditor.jsx": {
+    "mtime": 1777422056.9578056,
+    "hash": "f002d884a3bd3c85c3b16580e9a409f0"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/components/TreeIcons.jsx": {
+    "mtime": 1777149517.729733,
+    "hash": "4aa8e3660e6a95e204d50a29df28ce05"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/components/SchemaExplorer.jsx": {
+    "mtime": 1777149517.7295456,
+    "hash": "d05ed42c7091b24cb4a117b49e2f5472"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/components/SyncFilterBuilder.jsx": {
+    "mtime": 1777149517.729663,
+    "hash": "354edfdf156f94739fbadbc91818125f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/data/compatibility.js": {
+    "mtime": 1776795278.6506383,
+    "hash": "5c0c3ad7fc6b6c5e206815451f319ca8"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/pages/Usage.jsx": {
+    "mtime": 1777676876.4152513,
+    "hash": "cd47022f320d2e00b7632cf208a7fcfa"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/pages/DataBrowser.jsx": {
+    "mtime": 1777676876.414109,
+    "hash": "c8f484736f04bcb452b5220bb1c3d8b5"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/pages/Dashboard.jsx": {
+    "mtime": 1776720705.4286532,
+    "hash": "cddbf7058a2a071d6837a506f4e942d1"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/pages/ServiceExplorer.jsx": {
+    "mtime": 1777676876.4145455,
+    "hash": "feec77eb3b2cfae772fb4156ced1f96b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/pages/Workflows.jsx": {
+    "mtime": 1777149517.7309935,
+    "hash": "51397efbb082b332337d8ad4bfed43fd"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/pages/Settings.jsx": {
+    "mtime": 1778048942.0263677,
+    "hash": "4f84108d7a4146cf3fc0bd7995d6ffbd"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/pages/Logs.jsx": {
+    "mtime": 1776210959.652067,
+    "hash": "392aac5c5d24e5a5aa4d46253fee6f70"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/pages/Services.jsx": {
+    "mtime": 1776720705.4288938,
+    "hash": "683a9b7b130b77010bf7244c97dc505d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/pages/settings-data.js": {
+    "mtime": 1777676876.4157588,
+    "hash": "237bb628153db8c5a8cc62ebff65d56b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/DELTIO_EVALUATION.md": {
+    "mtime": 1778731202.1762633,
+    "hash": "8035bbc9157aeea6bbf7bced0b86d252"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/services.yaml": {
+    "mtime": 1778738014.3038712,
+    "hash": "01a668a85eabeaf323ad2c7e7ded206d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/CONVENTIONS.md": {
+    "mtime": 1778731357.407099,
+    "hash": "010f71938f6687a73fe2b8f2cbeaead4"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/README.md": {
+    "mtime": 1778048930.0304723,
+    "hash": "78793a85b4f70ed4930a31d1893bd5ac"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/TECH_DEBT.md": {
+    "mtime": 1777762563.2541041,
+    "hash": "d1a347678a1bb4f2f4fddd9b222fba88"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/REMAINING_CRITICAL_PLAN.md": {
+    "mtime": 1778689955.7630785,
+    "hash": "2fbe562c7e37c31dc9d2b757132c4c8a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/DEVELOPER_GUIDE.md": {
+    "mtime": 1777676876.4117887,
+    "hash": "0e7d6b5172690bd7373558bf9ee5c5ae"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/GEMINI.md": {
+    "mtime": 1778731357.4095786,
+    "hash": "625d030e5cde0b6bf27f1bce86e9d03e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/AGENTS.md": {
+    "mtime": 1778745398.8201177,
+    "hash": "34d1a0d122e2526d15f7f894e26e71d4"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/DESIGN-airtable.md": {
+    "mtime": 1777149517.7258387,
+    "hash": "d6530f2bf58725fa5c13644bf33a7ddc"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/seed.yaml": {
+    "mtime": 1776384216.5629613,
+    "hash": "97aa0d98df3ac4d4b0cd0794b0d502a5"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/CLAUDE.md": {
+    "mtime": 1778731357.3997095,
+    "hash": "534f5a88d1a47afa76de391ae9fa51d5"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/CONSOLE_QUICKSTART.md": {
+    "mtime": 1777676876.4115453,
+    "hash": "16a638d2a58d4ac648023f1da238e0fc"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-site/README.md": {
+    "mtime": 1776498665.4518268,
+    "hash": "fd08b54683a570c32aa3171e9f98e8dd"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-site/docs/index.md": {
+    "mtime": 1776498614.5892372,
+    "hash": "aaf1b7cc23d47e7299321ac603fbd8b6"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-site/docs/guide/getting-started.md": {
+    "mtime": 1776498642.8523507,
+    "hash": "ff0f75df9ca30cf7ab40947c73b46eb9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/terraform/COMPATIBILITY.md": {
+    "mtime": 1777069890.4408019,
+    "hash": "d74ac089ba9194ffd3fd3ff26f2377f5"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/terraform/examples/ci-github-actions.yml": {
+    "mtime": 1777069890.4410233,
+    "hash": "18ba2180c4473694548142ca89704baf"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-license-server/src/main/resources/admin/src/index.html": {
+    "mtime": 1778801848.619895,
+    "hash": "f50380a9b4d83bcfc69e85264527ca64"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/pp/localcloud-blog-post.md": {
+    "mtime": 1776586809.1416519,
+    "hash": "b49fd54c030052370f6c98a4257401dd"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/pp/localcloud-sharepoint-blog.html": {
+    "mtime": 1776586809.1420605,
+    "hash": "3eb9dfd330703ad2fbd77b3fd04a6ea4"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/pp/localcloud-business-case.md": {
+    "mtime": 1776586809.141834,
+    "hash": "bdf962cd62033985e3d463fbe75b19ab"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/003-spanner-storage-extensibility/integration.md": {
+    "mtime": 1775928344.8628163,
+    "hash": "f7d6c55abe94578a3101704b79ce0303"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/003-spanner-storage-extensibility/tasks.md": {
+    "mtime": 1775928344.8632157,
+    "hash": "af1a86540b1e90fb348f7fc6c7744725"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/003-spanner-storage-extensibility/plan.md": {
+    "mtime": 1775928344.8629696,
+    "hash": "c0aa3a4abbf564fdaf0734471480ed25"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/003-spanner-storage-extensibility/spec.md": {
+    "mtime": 1775928344.8630798,
+    "hash": "4164356f4b2e0bfa34170506e3f6d433"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/003-spanner-storage-extensibility/bug-leveldb-mkdir.md": {
+    "mtime": 1775928344.8625376,
+    "hash": "938dc32850cf7796d82ccf0288a8e0c1"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/003-spanner-storage-extensibility/checklists/requirements.md": {
+    "mtime": 1775928344.8626711,
+    "hash": "ef4c67ae5520755f0b2fa29335c91ad2"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/001-gcp-local-emulator/quickstart.md": {
+    "mtime": 1777676876.41713,
+    "hash": "6faa33a08fcd8b9138202287ef0e0b77"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/001-gcp-local-emulator/tasks.md": {
+    "mtime": 1775928344.8612425,
+    "hash": "ae0e7b37b6c89c8cbd69d77e85e4e79d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/001-gcp-local-emulator/research.md": {
+    "mtime": 1775928344.8610103,
+    "hash": "7e19e77caf652c7893d940dab8788eff"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/001-gcp-local-emulator/data-model.md": {
+    "mtime": 1775928344.860638,
+    "hash": "9367966982732dc41a75005e7e823616"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/001-gcp-local-emulator/plan.md": {
+    "mtime": 1775928344.8607538,
+    "hash": "fa99b3025178a967788610ca378816ba"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/001-gcp-local-emulator/spec.md": {
+    "mtime": 1775928344.8611205,
+    "hash": "2b0a71982290d36a6c6e12ffed13f4b7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/001-gcp-local-emulator/checklists/requirements.md": {
+    "mtime": 1775928344.8600388,
+    "hash": "e21d05761384d423c88ab9604d3ab3f6"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/001-gcp-local-emulator/contracts/cli-commands.md": {
+    "mtime": 1775928344.8603804,
+    "hash": "85bb0cb9164e55fd644295b6130f5d7f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/001-gcp-local-emulator/contracts/admin-api.md": {
+    "mtime": 1775928344.8602324,
+    "hash": "70b31047a3fc223585189c4724ebd545"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/001-gcp-local-emulator/contracts/emulated-services.md": {
+    "mtime": 1775928344.8605015,
+    "hash": "fa1167e6c9f4686ba10580043d10486c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/002-memorystore-emulator/quickstart.md": {
+    "mtime": 1777676876.417493,
+    "hash": "a815237ac0b94d442f4eba628819dde2"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/002-memorystore-emulator/tasks.md": {
+    "mtime": 1775928344.8623447,
+    "hash": "70f534ddd8be1b2059286a3e7eeb0481"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/002-memorystore-emulator/research.md": {
+    "mtime": 1775928344.8620775,
+    "hash": "268bf299629a1e2b07f4599426803cbf"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/002-memorystore-emulator/data-model.md": {
+    "mtime": 1775928344.8617074,
+    "hash": "63a3d0f50b7cbf3cdf1ec5820822ef2f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/002-memorystore-emulator/plan.md": {
+    "mtime": 1775928344.8618505,
+    "hash": "9f2143b81541195b39d80f49c0952ca6"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/002-memorystore-emulator/spec.md": {
+    "mtime": 1775928344.8622015,
+    "hash": "e67899e5db8894456ed9a5923b731a99"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/002-memorystore-emulator/checklists/requirements.md": {
+    "mtime": 1775928344.861433,
+    "hash": "91e0214e1bc311d2207a29a0aac311a4"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/specs/002-memorystore-emulator/contracts/memorystore-commands.md": {
+    "mtime": 1775928344.861623,
+    "hash": "a704dd226510de7d6ea87f0d18a151a7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/resources/application.yaml": {
+    "mtime": 1775928344.829249,
+    "hash": "a7f40d3f29e88050f06acaec41e273e6"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-server/src/main/resources/dashboard/index.html": {
+    "mtime": 1775928344.8295395,
+    "hash": "774a365a357f47a8262f19350ffa90f0"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/things done.txt": {
+    "mtime": 1777069890.432346,
+    "hash": "21bb04643d05afd070468904066ca20f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/bigtable-feature-coverage.md": {
+    "mtime": 1777422056.957197,
+    "hash": "b60eadafd7838f7b58eb3d5fab514a7d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/pubsub-comparison.md": {
+    "mtime": 1778740693.3509598,
+    "hash": "b3ccf39ea812e3fb0b72c0a6f123501f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/bigquery-feature-comparison.md": {
+    "mtime": 1776795278.6496408,
+    "hash": "4bb206ae3b8748386b3036dec3831255"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/licensing-security.md": {
+    "mtime": 1778563681.887041,
+    "hash": "a4f1952e6c631ab079c44d75e104d1d7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/bigquery-coverage-gaps.md": {
+    "mtime": 1776795278.649465,
+    "hash": "6dab13b90aed98b1b90c82bab09ccbb9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-03-31-console-redesign.md": {
+    "mtime": 1778563683.122446,
+    "hash": "08f5ca2d2e329a934161cf840f9e2ec6"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-03-09-orchestrator-architecture-design.md": {
+    "mtime": 1775928344.8069491,
+    "hash": "abf3a6e06149df14ce26b62635bff0af"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-05-10-api-key-licensing-phase1-plan.md": {
+    "mtime": 1778563680.4652991,
+    "hash": "03efaf86a71336642cdee7edf77fb889"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-04-24-data-mirror-implementation.md": {
+    "mtime": 1777149517.7279534,
+    "hash": "8281f3d9a98ea45164fc0267adcb0e6c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-04-22-workflows-gap-closure-design.md": {
+    "mtime": 1777069890.4320898,
+    "hash": "b6627233a57e28ba8ecdd169cb14cf5f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-03-31-console-redesign-design.md": {
+    "mtime": 1778563683.1220565,
+    "hash": "bdb30d09fb2b25915f09f9748fbab8fd"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-04-24-data-mirror-design.md": {
+    "mtime": 1777149517.7277493,
+    "hash": "154958701352be52bcfc9c401cddfca4"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-05-08-valkey-migration-design.md": {
+    "mtime": 1778563678.8749118,
+    "hash": "c3deab9494af90eb1d3e49be5667a9aa"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-05-11-vertex-kms-cloudsql-emulation-plan.md": {
+    "mtime": 1778563680.4654553,
+    "hash": "a2405b580c6303e41b4a75968d795534"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-04-18-anonymous-telemetry-design.md": {
+    "mtime": 1776586809.133838,
+    "hash": "0b4decd5bceb00783fa68cd90bede897"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-04-20-sql-compatibility-warnings-design.md": {
+    "mtime": 1776795278.6498184,
+    "hash": "2786408465978f72125125d39bf189d7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-05-10-api-key-licensing-design.md": {
+    "mtime": 1778563680.4651043,
+    "hash": "382173f1774a1f79b9245c29c7ef69d3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-03-11-console-ui-design.md": {
+    "mtime": 1778563683.1216698,
+    "hash": "7571f251d644f11e50005787f582cb46"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-03-09-orchestrator-implementation.md": {
+    "mtime": 1775928344.8070827,
+    "hash": "1d2dcfbebd7ae79470bfa1ef65cef939"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-04-23-workflows-cancellation-project-awareness.md": {
+    "mtime": 1777149517.727552,
+    "hash": "94683db447adf250876f1ffdf270c50b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-05-11-phase1-fixes-and-hardening-plan.md": {
+    "mtime": 1778563680.0334606,
+    "hash": "ac0f926fbf565182c4e675f0b0728e03"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-05-13-pubsub-facade-plan.md": {
+    "mtime": 1778736872.202135,
+    "hash": "07baa82d78e65c5f3cc0cc0a9e77b0ba"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-04-11-bigquery-emulator-analysis.md": {
+    "mtime": 1775941469.6209192,
+    "hash": "bbc88a94ffc70e6b066045f6a6e728ef"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-05-08-valkey-migration-plan.md": {
+    "mtime": 1778563678.8757513,
+    "hash": "b20ff576f80d21b057c5b1e06c0a8296"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-05-11-phase2-license-server-plan.md": {
+    "mtime": 1778563680.0338938,
+    "hash": "9c4118741dcd991ea871453dea027da4"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-04-19-docker-ux-smart-defaults.md": {
+    "mtime": 1776586809.133975,
+    "hash": "21740e3b80a0052be448c29f6e6b4c1d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-04-23-workflows-cancellation-project-awareness-design.md": {
+    "mtime": 1777149517.7274103,
+    "hash": "b0f1368832ea654ee581434dfb68f7e3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-04-22-workflows-gap-closure.md": {
+    "mtime": 1777069890.4322333,
+    "hash": "18ffd57fe0c51281783ce8aa25d80b4a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-03-11-console-implementation.md": {
+    "mtime": 1778563683.121306,
+    "hash": "8b9f60020bb1f29e3faf1d626ebd5560"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/docs/plans/2026-04-16-capsule-migration-design.md": {
+    "mtime": 1776384216.5292118,
+    "hash": "40e1664cf221c762b89725037dd97618"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/requirements.txt": {
+    "mtime": 1775928344.0,
+    "hash": "394d98e97590f9e80e257430780b6ffa"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/README.md": {
+    "mtime": 1778048932.614285,
+    "hash": "7d9c67022dfc3dbbed4d0005def16645"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/index.html": {
+    "mtime": 1778052993.1373215,
+    "hash": "b291cf5dfcf3addb219e05b3951f6bd6"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/requirements.txt": {
+    "mtime": 1775928344.80879,
+    "hash": "5b798e85498fa408b86bcaa5fc5baff2"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/examples/python-sdk-demo/SOLID_APP_STRUCTURE.md": {
+    "mtime": 1775928344.8080971,
+    "hash": "d0f47638a8eab60835e71ac7cc5b7c67"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/config.yaml": {
+    "mtime": 1775928344.8402054,
+    "hash": "9e3e7672b387a282583011181ab35f9a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/sql-compatibility-warnings/tasks.md": {
+    "mtime": 1776795278.6528385,
+    "hash": "7749d5dc2c8a9ef6351698680ed83312"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/sql-compatibility-warnings/design.md": {
+    "mtime": 1776795278.6516187,
+    "hash": "f81cff0b96cb9bcfb0882398b9f65fcc"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/sql-compatibility-warnings/proposal.md": {
+    "mtime": 1776795278.651772,
+    "hash": "d6f9953030e838ef7707fe871c5177a6"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/sql-compatibility-warnings/specs/sql-compatibility-data/spec.md": {
+    "mtime": 1776795278.652234,
+    "hash": "ec48b35c7be3263f1fdb0b8d038194c8"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/sql-compatibility-warnings/specs/sql-error-enrichment/spec.md": {
+    "mtime": 1776795278.652436,
+    "hash": "14ac6445bc450d608d41601482950b01"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/sql-compatibility-warnings/specs/sql-live-linting/spec.md": {
+    "mtime": 1776795278.6526818,
+    "hash": "5efdc55b806f412351b455f3bf21c893"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/hybrid-cloud-connectivity/tasks.md": {
+    "mtime": 1776210959.6601138,
+    "hash": "ce40be09d4de71cebe25083df4b143b9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/hybrid-cloud-connectivity/design.md": {
+    "mtime": 1776210959.6590855,
+    "hash": "6702324e99b1e54b2376f180d62034ee"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/hybrid-cloud-connectivity/proposal.md": {
+    "mtime": 1776210959.6591892,
+    "hash": "3872e4b0e9de497d003160291d092ec3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/hybrid-cloud-connectivity/specs/credential-bridging/spec.md": {
+    "mtime": 1776210959.6593764,
+    "hash": "fefd72f2d07737d3b26d287fac3ac38c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/hybrid-cloud-connectivity/specs/service-enable-disable/spec.md": {
+    "mtime": 1776210959.659647,
+    "hash": "afbbe32181f43eb1c10875cc1a85f12c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/hybrid-cloud-connectivity/specs/service-routing-indicator-ui/spec.md": {
+    "mtime": 1776210959.6599135,
+    "hash": "9075122351acb7c82af93e37608741ae"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/hybrid-cloud-connectivity/specs/remote-service-proxy/spec.md": {
+    "mtime": 1776210959.6595101,
+    "hash": "a9fcc014ab18951f506647a097e78082"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/hybrid-cloud-connectivity/specs/service-routing-detection/spec.md": {
+    "mtime": 1776210959.6597834,
+    "hash": "b2d82f1bb062bca02823ec5fc9be630d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/gcp-workflow-migration/tasks.md": {
+    "mtime": 1776405791.3121924,
+    "hash": "a60f5173a32dd2235faa5e16a76f0015"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/gcp-workflow-migration/design.md": {
+    "mtime": 1776405791.3107383,
+    "hash": "40e1664cf221c762b89725037dd97618"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/gcp-workflow-migration/proposal.md": {
+    "mtime": 1776405791.3109055,
+    "hash": "da2bf10b088e4abc9cab0cf059b8f880"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/gcp-workflow-migration/specs/workflow-env-vars/spec.md": {
+    "mtime": 1776405791.311928,
+    "hash": "2ec652f7463b0c60508d9786895be83d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/gcp-workflow-migration/specs/env-vars-ui/spec.md": {
+    "mtime": 1776405791.31177,
+    "hash": "1bc1e790d34b5821c7d24cc3a6c64450"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/gcp-workflow-migration/specs/workflow-url-rewriter/spec.md": {
+    "mtime": 1776405791.3120532,
+    "hash": "6a435f13d1cfed0795421b204b4fa148"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/gcp-workflow-migration/specs/capsule-import-ui/spec.md": {
+    "mtime": 1776405791.3114066,
+    "hash": "669ef1ccb12ac7fe1fd2161c833a4091"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/gcp-workflow-migration/specs/capsule-connector/spec.md": {
+    "mtime": 1776405791.311185,
+    "hash": "2f27497eacb1fb8b9e6401ca90af7f09"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/gcp-workflow-migration/specs/env-var-presets/spec.md": {
+    "mtime": 1776405791.3116279,
+    "hash": "8be7030238ccfaff17341225fa25300f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/configurable-spanner-emulator/tasks.md": {
+    "mtime": 1775941469.6217713,
+    "hash": "c7b363c7b62491885042708a22ffd66a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/configurable-spanner-emulator/design.md": {
+    "mtime": 1775941469.6212552,
+    "hash": "c9d7a6aa9e7199a8cec224f8590fbdac"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/configurable-spanner-emulator/proposal.md": {
+    "mtime": 1775941469.6213968,
+    "hash": "b8d2c404a0e041b02f5475034db5162e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/configurable-spanner-emulator/specs/configurable-spanner-emulator/spec.md": {
+    "mtime": 1775941469.621634,
+    "hash": "e36adfcbd9874098bc5360a74354739f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-spanner-fulltext-emulation/proposal.md": {
+    "mtime": 1778563678.891233,
+    "hash": "b312bfb7d3fb00a3958a9dfec2b6adba"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-remote-cloud-browser/tasks.md": {
+    "mtime": 1776532285.864641,
+    "hash": "59cccd004909ffe99c78fcc61ca4a996"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-remote-cloud-browser/design.md": {
+    "mtime": 1776532285.8633158,
+    "hash": "33baaa9c0c10321076a31ab2553cf84e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-remote-cloud-browser/proposal.md": {
+    "mtime": 1776532285.8635132,
+    "hash": "62559dad19e3488b8e1f672ec2dbaf5e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-remote-cloud-browser/specs/remote-data-browse/spec.md": {
+    "mtime": 1776532285.8642638,
+    "hash": "b45cdf019340200bb72b8a72aad0b194"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-remote-cloud-browser/specs/credential-token-refresh/spec.md": {
+    "mtime": 1776532285.8637917,
+    "hash": "91883ec404953f37d358d41c33143174"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-remote-cloud-browser/specs/service-routing-detection/spec.md": {
+    "mtime": 1776532285.8644702,
+    "hash": "a119de8aede0c957e62e79221a3c141f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-remote-cloud-browser/specs/gcp-project-discovery/spec.md": {
+    "mtime": 1776532285.8640268,
+    "hash": "824985e648565c8587f96a0a85759619"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-spanner-metadata-persistence/tasks.md": {
+    "mtime": 1775928344.8401244,
+    "hash": "b6285cda9f7b3ddcf6c3a5270e8bee09"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-spanner-metadata-persistence/design.md": {
+    "mtime": 1775928344.8396506,
+    "hash": "d45d96fc74b3322c18e8f0620f02b610"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-spanner-metadata-persistence/proposal.md": {
+    "mtime": 1775928344.8397326,
+    "hash": "e976af9a337cfe3cde7172418aa93efb"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-spanner-metadata-persistence/specs/spanner-metadata-persistence/spec.md": {
+    "mtime": 1775928344.8399744,
+    "hash": "c4991e041a23ee1112d878fea20de218"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-developer-experience-console/tasks.md": {
+    "mtime": 1775928344.8361359,
+    "hash": "0623a52c04a6c09928383d85d1ee9c6b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-developer-experience-console/design.md": {
+    "mtime": 1777754039.0938249,
+    "hash": "6615fcef8ff014c6bb0f055ffbf37e85"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-developer-experience-console/proposal.md": {
+    "mtime": 1775928344.8346717,
+    "hash": "9a5a1871135c3b306ca79f718af2e129"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-developer-experience-console/specs/service-topology/spec.md": {
+    "mtime": 1775928344.8358521,
+    "hash": "7779c01504cb421cad2a1a40991b5438"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-developer-experience-console/specs/developer-onboarding/spec.md": {
+    "mtime": 1775928344.8353374,
+    "hash": "a4a9221efe84d80a728cb723f3ad63e2"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-developer-experience-console/specs/cross-service-tracing/spec.md": {
+    "mtime": 1775928344.8351977,
+    "hash": "d05fd64031f730dbea9a013840f47aad"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-developer-experience-console/specs/request-inspector/spec.md": {
+    "mtime": 1775928344.8357277,
+    "hash": "16c23f7fa91e258db69a33fcbd9139e9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-developer-experience-console/specs/change-diff-view/spec.md": {
+    "mtime": 1775928344.8350499,
+    "hash": "0d55b0ed2aca8b207a0c6b2c4aa8f209"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-developer-experience-console/specs/event-replay-and-chaos/spec.md": {
+    "mtime": 1775928344.83547,
+    "hash": "08e3623c3c2ae331c86b790e6a1b6f67"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-developer-experience-console/specs/interactive-query-consoles/spec.md": {
+    "mtime": 1775928344.8355958,
+    "hash": "b3574cf4f62d03e290fdf302abe971e9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-developer-experience-console/specs/structured-log-explorer/spec.md": {
+    "mtime": 1775928344.83598,
+    "hash": "0785f7a04d93ed45344600549156ca76"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-service-routing-indicator/tasks.md": {
+    "mtime": 1776210959.6609604,
+    "hash": "6b2696825b6f0179df06e92e641d208d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-service-routing-indicator/design.md": {
+    "mtime": 1776210959.660355,
+    "hash": "ba7d9576ef887b4d024251bc6cb53301"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-service-routing-indicator/proposal.md": {
+    "mtime": 1776210959.660469,
+    "hash": "95f2d0e224fbef1c69b37d891cc9101e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-service-routing-indicator/specs/service-enable-disable/spec.md": {
+    "mtime": 1776210959.6606472,
+    "hash": "afbbe32181f43eb1c10875cc1a85f12c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-service-routing-indicator/specs/service-routing-indicator-ui/spec.md": {
+    "mtime": 1776210959.6608827,
+    "hash": "9075122351acb7c82af93e37608741ae"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/archive/2026-05-11-service-routing-indicator/specs/service-routing-detection/spec.md": {
+    "mtime": 1776210959.6607661,
+    "hash": "d4a79fd6278897b39bff0d5416ff126d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/databrowser-sidebar-navigation/tasks.md": {
+    "mtime": 1775928344.8341763,
+    "hash": "5dd6ff5921b5f6dbd69b934834386307"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/databrowser-sidebar-navigation/design.md": {
+    "mtime": 1775928344.8337755,
+    "hash": "886cf2ab6b5f0d4953ac496f3b918c47"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/databrowser-sidebar-navigation/proposal.md": {
+    "mtime": 1775928344.8338673,
+    "hash": "0a86b5d1ddc3d9e0e996114498fe7d08"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/databrowser-sidebar-navigation/specs/sidebar-service-navigation/spec.md": {
+    "mtime": 1775928344.8340716,
+    "hash": "ceb2e65eda90f22194068fce6a68ea7c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/gcs-sql-query/tasks.md": {
+    "mtime": 1776210959.6588554,
+    "hash": "692b2b3f55596218e373a83c453460fe"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/gcs-sql-query/design.md": {
+    "mtime": 1776210959.6583514,
+    "hash": "11b791978bbf2b69b5dac33b2b645dc1"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/gcs-sql-query/proposal.md": {
+    "mtime": 1776210959.658433,
+    "hash": "a7655ace41771885072841f4eccf031f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/gcs-sql-query/specs/gcs-file-schema/spec.md": {
+    "mtime": 1776210959.6587632,
+    "hash": "130c9e0febcee5efb499d64939c1165d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/gcs-sql-query/specs/gcs-file-query/spec.md": {
+    "mtime": 1776210959.6586313,
+    "hash": "11e588285ac99b56aea7d193f1223fe5"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/fix-data-browser-per-service/tasks.md": {
+    "mtime": 1775928344.837675,
+    "hash": "339663c62d224a1652236bbd90d13686"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/fix-data-browser-per-service/design.md": {
+    "mtime": 1775928344.8371856,
+    "hash": "609486e4b699a287f987ff36d61e1291"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/fix-data-browser-per-service/proposal.md": {
+    "mtime": 1775928344.8372753,
+    "hash": "9efb6fd25f7f5d9472a0f63e3ab28a98"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/fix-data-browser-per-service/specs/pubsub-message-browsing/spec.md": {
+    "mtime": 1775928344.8375242,
+    "hash": "6df2fc7ab2281ed20dc82f5b5d569598"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/seed-data-and-data-browser-crud/tasks.md": {
+    "mtime": 1775928344.839359,
+    "hash": "e36d9e540e5f22d51e1018cd1ddfdb0f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/seed-data-and-data-browser-crud/design.md": {
+    "mtime": 1775935514.990105,
+    "hash": "61bf75d425c6d4ac76d71084a8006ca8"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/seed-data-and-data-browser-crud/proposal.md": {
+    "mtime": 1775928344.8388336,
+    "hash": "ca1e3c764ebb6bb6c1801837c1ccea9e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/seed-data-and-data-browser-crud/specs/data-browser-crud/spec.md": {
+    "mtime": 1775928344.8390832,
+    "hash": "fe9cb274b2a1fbe7c1f93e2d781a6908"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/terraform-integration/tasks.md": {
+    "mtime": 1777069890.4402378,
+    "hash": "c6be334666950982cb50be98922e9f2b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/terraform-integration/design.md": {
+    "mtime": 1777069890.4397116,
+    "hash": "dc6cefee47fc1057d0d48c6c07984835"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/terraform-integration/proposal.md": {
+    "mtime": 1777069890.4397817,
+    "hash": "6d7ec0d1b868fe9bd437cf06e0aa58ef"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/terraform-integration/specs/terraform-env-export/spec.md": {
+    "mtime": 1777069890.4401646,
+    "hash": "625b24595b1ce0ad70aada8ba6e0be43"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/terraform-integration/specs/terraform-docs/spec.md": {
+    "mtime": 1777069890.440047,
+    "hash": "a5fc590bd24262a66da71f9054a8901c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/terraform-integration/specs/terraform-api-compat/spec.md": {
+    "mtime": 1777069890.439934,
+    "hash": "ed8e8cf1760644e8b3a4939836978f1b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/multi-project-support/tasks.md": {
+    "mtime": 1775928344.8384786,
+    "hash": "5eff5456a4852042ebd95365f8e4c2fe"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/multi-project-support/design.md": {
+    "mtime": 1775928344.8379433,
+    "hash": "439b6b745fde43cbfa1de372fddbccf8"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/multi-project-support/proposal.md": {
+    "mtime": 1775928344.8380256,
+    "hash": "e056e44fa745d9860ce03e7483617e12"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/multi-project-support/specs/project-management/spec.md": {
+    "mtime": 1775928344.838393,
+    "hash": "d4644041fd9c3940fa46af03eeb52ab9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/multi-project-support/specs/console-project-switcher/spec.md": {
+    "mtime": 1775928344.8381948,
+    "hash": "7e00255742c55dc8ffe81aaffa02258e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/emulator-persistence-firestore-pubsub-bigtable/tasks.md": {
+    "mtime": 1778690120.7670882,
+    "hash": "6afb075283997dd180e86e1005b3098d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/emulator-persistence-firestore-pubsub-bigtable/design.md": {
+    "mtime": 1775928344.8363247,
+    "hash": "6d35b6fe0b908c2b63df99a9df79c4dc"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/emulator-persistence-firestore-pubsub-bigtable/proposal.md": {
+    "mtime": 1775928344.8364437,
+    "hash": "aaf6ec34b81b4d81203ebe0efc1c057d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/emulator-persistence-firestore-pubsub-bigtable/specs/pubsub-persistence/spec.md": {
+    "mtime": 1775928344.8368924,
+    "hash": "9ba0dddb42b56f60d6fd6677bd68a363"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/emulator-persistence-firestore-pubsub-bigtable/specs/bigtable-persistence/spec.md": {
+    "mtime": 1775928344.8366249,
+    "hash": "88c7a0c85fc749a89adbab88d84e5ee4"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/emulator-persistence-firestore-pubsub-bigtable/specs/firestore-persistence/spec.md": {
+    "mtime": 1775928344.8367565,
+    "hash": "2297a3ec7326a340253cc2dd57de31fa"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/settings-env-categorization/tasks.md": {
+    "mtime": 1776210959.6620178,
+    "hash": "cdff3d59b4898ec26d9814154afede29"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/settings-env-categorization/design.md": {
+    "mtime": 1776210959.661688,
+    "hash": "be041a778fa7cf4cf9ba35581d814b0f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/settings-env-categorization/proposal.md": {
+    "mtime": 1776210959.6617599,
+    "hash": "c2aa894473fccd6bd1aac47f74724630"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/settings-env-categorization/specs/categorized-env-display/spec.md": {
+    "mtime": 1776210959.6619399,
+    "hash": "8671ac8e8485aaa83cd6b897b53975d6"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/settings-tabbed-layout/tasks.md": {
+    "mtime": 1776210959.6625333,
+    "hash": "3ddfcae49e5b573aab0e98d86b98202b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/settings-tabbed-layout/design.md": {
+    "mtime": 1776210959.6622088,
+    "hash": "53edec32bc5d598e12f23f6293abcb72"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/settings-tabbed-layout/proposal.md": {
+    "mtime": 1776210959.6622818,
+    "hash": "2f8592a3be4a0102bcf3e68e6f65e848"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/settings-tabbed-layout/specs/settings-tabbed-navigation/spec.md": {
+    "mtime": 1776210959.6624506,
+    "hash": "c64339d0fbecb88d40e87ca6232de88b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/telemetry-persistent-queue/tasks.md": {
+    "mtime": 1776586809.1384037,
+    "hash": "77552f40932229bb6eaebbf7b54587da"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/telemetry-persistent-queue/design.md": {
+    "mtime": 1776586809.1379032,
+    "hash": "9eafacaeac675fb60ab2002275ba37f7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/telemetry-persistent-queue/proposal.md": {
+    "mtime": 1776586809.1380382,
+    "hash": "d66e6e4f6558515f4ece0e01c5c21dae"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/telemetry-persistent-queue/specs/telemetry-queue/spec.md": {
+    "mtime": 1776586809.138257,
+    "hash": "ec97c863a9899307ae15c33b9ec9cc94"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/service-toggle-ui/tasks.md": {
+    "mtime": 1776532285.8660026,
+    "hash": "93d7c7c6e84c1bcd1d034a144ec6dd1b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/service-toggle-ui/design.md": {
+    "mtime": 1776532285.8650892,
+    "hash": "27b7a2a7dfb9e2feb08bc3bb9153ff0e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/service-toggle-ui/proposal.md": {
+    "mtime": 1776532285.8652437,
+    "hash": "1377407572d95b61fa7bcce2faabbed8"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/service-toggle-ui/specs/service-toggle-persistence/spec.md": {
+    "mtime": 1776532285.8658578,
+    "hash": "2d311f5f57524e957b476f8c26b1a8e6"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/service-toggle-ui/specs/service-toggle-console-ui/spec.md": {
+    "mtime": 1776532285.8656666,
+    "hash": "68dbce194c86564c46e1ae49791479f5"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/service-toggle-ui/specs/service-enable-disable/spec.md": {
+    "mtime": 1776532285.8654795,
+    "hash": "5a02e0bc4f3148fadaa7a136705d037b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/cloud-workflows-emulator/tasks.md": {
+    "mtime": 1776384216.5460408,
+    "hash": "2cbfe162b2b6da829dd084d7f4313e6f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/cloud-workflows-emulator/design.md": {
+    "mtime": 1776384216.5440853,
+    "hash": "e343a2ddbbb1109e4a3a27e3bfca0434"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/cloud-workflows-emulator/proposal.md": {
+    "mtime": 1776384216.5442214,
+    "hash": "80a2bcff902e5666dfdc62dc704dacf2"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/cloud-workflows-emulator/specs/workflows-execution-api/spec.md": {
+    "mtime": 1776384216.544947,
+    "hash": "5c5c2e8e7f30f2f1778e7c867c6a750a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/cloud-workflows-emulator/specs/workflows-console/spec.md": {
+    "mtime": 1776384216.5447652,
+    "hash": "6c8939e1b333abfb8ed924d58c268d5d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/cloud-workflows-emulator/specs/workflows-stdlib/spec.md": {
+    "mtime": 1776384216.5459034,
+    "hash": "1d6e110ae5d637d6c5f254243da22b4d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/cloud-workflows-emulator/specs/workflows-management-api/spec.md": {
+    "mtime": 1776384216.5454392,
+    "hash": "8d9f4c2c6ccbdf5f351196c2841939c0"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/cloud-workflows-emulator/specs/workflows-expression-evaluator/spec.md": {
+    "mtime": 1776384216.5452921,
+    "hash": "eef7e30432257b3be07126ee8fd18177"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/cloud-workflows-emulator/specs/workflows-seed/spec.md": {
+    "mtime": 1776384216.5455847,
+    "hash": "d13465fa8a6440ca331a3e1bbdec12dd"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/cloud-workflows-emulator/specs/workflows-execution-engine/spec.md": {
+    "mtime": 1776384216.5451417,
+    "hash": "a84455846ee0ee1cef3090bba08c4e6c"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/cloud-workflows-emulator/specs/workflows-connectors/spec.md": {
+    "mtime": 1776384216.5446033,
+    "hash": "b0b5fe9b33ae38c142c29ac041f99d62"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/cloud-workflows-emulator/specs/workflows-callbacks/spec.md": {
+    "mtime": 1776384216.5444007,
+    "hash": "e2af9538a2edbb19a6a9000bcbe696de"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/settings-content-cleanup/tasks.md": {
+    "mtime": 1776210959.6614869,
+    "hash": "1d33ba8270bc0c87bbc24eb1ef1b2029"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/settings-content-cleanup/design.md": {
+    "mtime": 1776210959.6611488,
+    "hash": "41bd3026c1870403eee51e47401d8094"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/settings-content-cleanup/proposal.md": {
+    "mtime": 1776210959.661227,
+    "hash": "5ad95c88905f9a386e009745d6004f87"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/settings-content-cleanup/specs/settings-content-dedup/spec.md": {
+    "mtime": 1776210959.661402,
+    "hash": "4d9f47ad38ef86cc6a914c52bdac3cb5"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/spanner-fixes/tasks.md": {
+    "mtime": 1776384216.5469143,
+    "hash": "1bfc4a4fb29570325e9fae52601bb75e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/spanner-fixes/design.md": {
+    "mtime": 1776384216.5462317,
+    "hash": "ba4cf7b3c21b8d8d02e4aa533edc9a85"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/spanner-fixes/proposal.md": {
+    "mtime": 1776384216.5462968,
+    "hash": "0784007a1f119deb89ae76b7b75d092e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/spanner-fixes/specs/spanner-console-create/spec.md": {
+    "mtime": 1776384216.5464833,
+    "hash": "a10d13820fe2cd5fbbf658c72c49d6db"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/spanner-fixes/specs/spanner-ddl-operations/spec.md": {
+    "mtime": 1776384216.5466225,
+    "hash": "f0c06605d001899a83a4886c8f4e2832"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/spanner-fixes/specs/spanner-schema/spec.md": {
+    "mtime": 1776384216.5467415,
+    "hash": "2415e98d9810b2f2e7f9b94464f4396f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/spanner-fixes/specs/spanner-sql-editor/spec.md": {
+    "mtime": 1776384216.546846,
+    "hash": "e3471f114abc2d6ac832235ad64f2e41"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/data-browser-workflow-reliability/tasks.md": {
+    "mtime": 1775928344.8335135,
+    "hash": "391ca1623b25730fbfaf712b41a3e474"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/data-browser-workflow-reliability/design.md": {
+    "mtime": 1775928344.832917,
+    "hash": "42c8acf2bdf575047386a7bf862af7c2"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/data-browser-workflow-reliability/proposal.md": {
+    "mtime": 1775928344.8330152,
+    "hash": "b31a0432a288c66447ce7515b5a7d7e7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/openspec/changes/data-browser-workflow-reliability/specs/data-browser-reliability/spec.md": {
+    "mtime": 1775928344.8334005,
+    "hash": "a1e187d2cdede83744363299c074510e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/requirements.txt": {
+    "mtime": 1775928344.818322,
+    "hash": "394d98e97590f9e80e257430780b6ffa"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/README.md": {
+    "mtime": 1778048935.6340463,
+    "hash": "25fdffcca8146b58f0fcd9710effc992"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/index.html": {
+    "mtime": 1777520093.3046536,
+    "hash": "573ec7e6739ee56ce16a953e05040b5b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/pp/research-env-coptr-cost-analysis.png": {
+    "mtime": 1776586809.1475248,
+    "hash": "99d2dcc652cd31885e65fbd2a308b356"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/pp/prod-env-coptr-cost-analysis.png": {
+    "mtime": 1776586809.1447735,
+    "hash": "c63b97253a289ec4ffc46d62973f1853"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/pp/dev-env-coptr-cost-analysis.png": {
+    "mtime": 1776586809.1411366,
+    "hash": "de080ad4d1bee5d6947dc9f9d78af435"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/dark-settings.png": {
+    "mtime": 1776384216.551602,
+    "hash": "6aac0d177b0c7fc9e6e683c4597e2bfc"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/final-3-back.png": {
+    "mtime": 1776210959.666605,
+    "hash": "8ed8220f32eb25bb00d8f96565313750"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/dark-dashboard.png": {
+    "mtime": 1776384216.5499551,
+    "hash": "a5c8677c17c2805da95c6b3a69181951"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sql-editor-resizable.png": {
+    "mtime": 1776384216.560842,
+    "hash": "8a330df80bb57216d4c40d08ef89ed2e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sp-step6-before-save.png": {
+    "mtime": 1776384216.5594895,
+    "hash": "56aae80fd9e74a2fafdb3196076612bd"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-gcs-file-clicked.png": {
+    "mtime": 1776210959.6734076,
+    "hash": "e0971fca45f18df3e0bf4c3d5161f422"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/compare-services.png": {
+    "mtime": 1776384216.5486062,
+    "hash": "e77402ab2f109912e3419c9a145ef27e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/dashboard.png": {
+    "mtime": 1776210959.6643171,
+    "hash": "8896b9ac5f0db0a69f05c3f3c1840a4f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/dark-explorer-gcs.png": {
+    "mtime": 1776384216.5502827,
+    "hash": "2cfae742661910ba3650a885e59da350"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/compare-usage.png": {
+    "mtime": 1776384216.5496156,
+    "hash": "5fffc44a172f7e8682535707403ba716"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-bigquery-fixed.png": {
+    "mtime": 1776210959.6707077,
+    "hash": "9fb05470a9747e159b4be69191ab448a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/gcs-no-buckets-bug.png": {
+    "mtime": 1776210959.6687353,
+    "hash": "4646c8551197b9411f6ba99b5403f2fd"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/console-offline.png": {
+    "mtime": 1776210959.6628866,
+    "hash": "fc3126653e1df40125b4b66f62348d82"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/workflows-detail.png": {
+    "mtime": 1776384216.5614798,
+    "hash": "e78b1810e458f96047f9fcfdb338c03e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/test-2-project2.png": {
+    "mtime": 1776210959.6844895,
+    "hash": "1e28eadaa8efd213ef4ae52d54a2ad45"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/settings.png": {
+    "mtime": 1776210959.682511,
+    "hash": "2ff8fa10a35908fc5be311fc5903462b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-gcs-sql-editor.png": {
+    "mtime": 1776210959.676987,
+    "hash": "7d56304951080210d04554941863ca3d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/final-2-project2.png": {
+    "mtime": 1776210959.6655593,
+    "hash": "bc1b2d439e5ed269e8e7fd4f0944479d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-bigquery-dynamic-placeholder.png": {
+    "mtime": 1776210959.6696162,
+    "hash": "b583e8236b8e08f834e52c15765ba037"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sp-step5-intro.png": {
+    "mtime": 1776384216.5586975,
+    "hash": "a8beebe11744bf3a7262ac5fc5b63ce9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-gcs-local-path-query.png": {
+    "mtime": 1776210959.674097,
+    "hash": "28c18c85c85ec6386d54e94300229caf"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sp-step4-title.png": {
+    "mtime": 1776384216.5578966,
+    "hash": "d4f3703b9c70fc2586904282b50071ef"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/logs.png": {
+    "mtime": 1776210959.6692932,
+    "hash": "c0c8c3c223c217330fc01351893e9c48"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/test-project2-final.png": {
+    "mtime": 1776210959.6873124,
+    "hash": "e911873f4c39596511249a31c874ecf8"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/services.png": {
+    "mtime": 1776210959.6812036,
+    "hash": "66e88e27958de9023d383737fb39b98f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/compare-logs.png": {
+    "mtime": 1776384216.5480459,
+    "hash": "12fc1b0438301b502235299418ad82f5"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-bigquery-sql-fixed.png": {
+    "mtime": 1776210959.6715326,
+    "hash": "d38f82774c7de298a6cc2b10dfe36258"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/dashboard-light.png": {
+    "mtime": 1776210959.6639192,
+    "hash": "eb87ab75f0414d00159baa70ce32a193"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/workflows-list-fixed.png": {
+    "mtime": 1776384216.5621164,
+    "hash": "04d4a8da47b3c6fef500e46812ebae6a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-gcs-sql-not-available.png": {
+    "mtime": 1776210959.6777847,
+    "hash": "a9d5621f2e19d1580c85b90a78374e37"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-bigquery-explorer.png": {
+    "mtime": 1776210959.6704035,
+    "hash": "bee92dac33ce1c0080ca61e78ea64c2e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/gcs-cold-load-fix.png": {
+    "mtime": 1776210959.6670005,
+    "hash": "0e869ce1ee5670dc31e5fd7d8929e22e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sp-final.png": {
+    "mtime": 1776384216.5535192,
+    "hash": "f35b9bbaa54b8a43da5b1f288c2b150e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sp-step1.png": {
+    "mtime": 1776384216.5556273,
+    "hash": "9a2d9d798e4edba6e4d14e9d0aba3587"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-spanner-sql.png": {
+    "mtime": 1776210959.6800644,
+    "hash": "c2d91f47603c841fd1c6715bbe838965"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/dark-services.png": {
+    "mtime": 1776384216.5508583,
+    "hash": "a1d1750d3dc22366e529f608fb2283b8"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-gcs-schema-detected.png": {
+    "mtime": 1776210959.675923,
+    "hash": "1f3645da586cd4d7428b5f6c3be0b7d4"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/compare-settings.png": {
+    "mtime": 1776384216.5489845,
+    "hash": "84d3de127401b8398186938f86185bd4"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sp-landing.png": {
+    "mtime": 1776384216.5544615,
+    "hash": "13380b6bd3a1ea83504d71ee48ef1181"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/workflows-list-v2.png": {
+    "mtime": 1776384216.5627372,
+    "hash": "04d4a8da47b3c6fef500e46812ebae6a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sp-edit-loaded.png": {
+    "mtime": 1776384216.5525658,
+    "hash": "f35b9bbaa54b8a43da5b1f288c2b150e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/compare-explorer-gcs.png": {
+    "mtime": 1776384216.5478752,
+    "hash": "89c6552b5287a34a022432a7af290a00"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sql-editor.png": {
+    "mtime": 1776210959.6830964,
+    "hash": "8bbd543d38f275fd564cc5b934e45cae"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-memorystore-filtered.png": {
+    "mtime": 1776210959.6780734,
+    "hash": "cee640e6cc29b2a5546c37aba7d24b06"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-gcs-debug.png": {
+    "mtime": 1776210959.6721523,
+    "hash": "504a255d9ada2aedb9cddbabab89a9d7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-gcs-expanded-files.png": {
+    "mtime": 1776210959.6729412,
+    "hash": "96cf79fb820ae49c6628be76de40318e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/final-1-initial.png": {
+    "mtime": 1776210959.6649513,
+    "hash": "bc1b2d439e5ed269e8e7fd4f0944479d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-gcs-sql-fallback.png": {
+    "mtime": 1776210959.677258,
+    "hash": "a9d5621f2e19d1580c85b90a78374e37"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/service-explorer-bigquery.png": {
+    "mtime": 1776210959.6803463,
+    "hash": "cf3fe2e440f837f174df1a08b7f4a157"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/compare-explorer-bigquery.png": {
+    "mtime": 1776384216.5475495,
+    "hash": "c1b5dd8dd9e5ebe1de361a515d7fd06f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-gcs-after-reload.png": {
+    "mtime": 1776210959.6717849,
+    "hash": "7d56304951080210d04554941863ca3d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/test-1-initial.png": {
+    "mtime": 1776210959.6837134,
+    "hash": "1e28eadaa8efd213ef4ae52d54a2ad45"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sp-step7-saved.png": {
+    "mtime": 1776384216.5604005,
+    "hash": "f000ca460b0501b5d7149fc278027bdf"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-gcs-query-result.png": {
+    "mtime": 1776210959.6746309,
+    "hash": "0cdf71ce47bb9c6e24f6e532cfeb17bd"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/gcs-fix-test2.png": {
+    "mtime": 1776210959.6683843,
+    "hash": "406beb01366561883e573a45ee9a72fa"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sp-step2-new-post.png": {
+    "mtime": 1776384216.5563183,
+    "hash": "339621a918be09c64592c9ada4654cf9"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/gcs-project2-isolation.png": {
+    "mtime": 1776210959.6690881,
+    "hash": "050abf7b3cc412cafed77e68da80321f"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/workflows-list-final.png": {
+    "mtime": 1776384216.5617692,
+    "hash": "883526dd66e828fe0e2f24c57d43a78e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-gcs-sql-file-explorer.png": {
+    "mtime": 1776210959.6775236,
+    "hash": "a9d5621f2e19d1580c85b90a78374e37"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/gcs-fix-rapid-nav.png": {
+    "mtime": 1776210959.6673725,
+    "hash": "406beb01366561883e573a45ee9a72fa"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/usage.png": {
+    "mtime": 1776210959.6888127,
+    "hash": "cf527f48fdb2ab83f20f376dbf6f1ab4"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-bigquery-expanded.png": {
+    "mtime": 1776210959.6701305,
+    "hash": "16930729b002ce2778646674f671bd4a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/gcs-fix-test1.png": {
+    "mtime": 1776210959.667704,
+    "hash": "406beb01366561883e573a45ee9a72fa"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/service-explorer-gcs.png": {
+    "mtime": 1776210959.680645,
+    "hash": "3a27f9368c6c825fd1ab4f02695a4e36"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sp-step3-editor.png": {
+    "mtime": 1776384216.5571117,
+    "hash": "21b3b79237dc05db1028b8e3cad377de"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/dark-usage.png": {
+    "mtime": 1776384216.5522768,
+    "hash": "eb3efe04ece9136768f632738cadb111"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/compare-dashboard.png": {
+    "mtime": 1776384216.5472596,
+    "hash": "a5aaa6979c17cbfc60b11d8855202182"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/console-online.png": {
+    "mtime": 1776210959.6631958,
+    "hash": "720d688903e0c015949fa8566b8ba3ad"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sp-new-editor.png": {
+    "mtime": 1776384216.5552783,
+    "hash": "33a916495ec45d1f17891c3354ccd801"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-gcs-query-success.png": {
+    "mtime": 1776210959.6753821,
+    "hash": "79c0ee3d3b9a1e34d2247ac581be28d1"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sp-title-set.png": {
+    "mtime": 1776384216.5605443,
+    "hash": "f35b9bbaa54b8a43da5b1f288c2b150e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/test-3-back.png": {
+    "mtime": 1776210959.6866887,
+    "hash": "592d82b30ac144170d56c2c1e4864f2d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-bigquery-sql-editor.png": {
+    "mtime": 1776210959.6712399,
+    "hash": "21e1f3c2133afbe26ad42d35a0d067f7"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sp-after-auth.png": {
+    "mtime": 1776384216.5524423,
+    "hash": "87c184d6ca001fecc2c609b072d4c197"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/console-recovered.png": {
+    "mtime": 1776210959.6635265,
+    "hash": "e756713c1ae6dfb7d24426d4bceeef4d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/workflows-current.png": {
+    "mtime": 1776384216.5611281,
+    "hash": "883526dd66e828fe0e2f24c57d43a78e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-gcs-sql-attempt2.png": {
+    "mtime": 1776210959.6767344,
+    "hash": "68ed32c8c001949a1e4b029aecb1ad94"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/se-memorystore-sql.png": {
+    "mtime": 1776210959.6784558,
+    "hash": "48fa22ea1da0adef5d2ca91aee978578"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/workflows-list-reloaded.png": {
+    "mtime": 1776384216.5624042,
+    "hash": "883526dd66e828fe0e2f24c57d43a78e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/screenshots/sp-error2.png": {
+    "mtime": 1776384216.5533974,
+    "hash": "d323dc980af0e43b7d090c73c2651a76"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/vertexai.svg": {
+    "mtime": 1778563680.4659724,
+    "hash": "8263b6a52138c263228977522193af98"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/kms.svg": {
+    "mtime": 1778563680.4658847,
+    "hash": "b2f003d60e5a9bac56b1f7d220eeea4a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/monitoring.svg": {
+    "mtime": 1775928344.0,
+    "hash": "d84927624fdc5c277f8b4db68ce246d3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/firestore.svg": {
+    "mtime": 1775928344.0,
+    "hash": "ad8a0b4798ce8763ecd4ca3e65d76f09"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/gcs.svg": {
+    "mtime": 1775928344.0,
+    "hash": "9b92ad267f64d98f22f8fa1fd698f9a3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/cloudsql.svg": {
+    "mtime": 1778563680.4657917,
+    "hash": "e394335fb2789424708822cc79034de0"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/memorystore.svg": {
+    "mtime": 1775928344.0,
+    "hash": "25e6b2a38b0ea91c9e2c2f7b9460456a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/workflows.svg": {
+    "mtime": 1778563678.963642,
+    "hash": "dfeadd637de302596692358f89e647ed"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/compute.svg": {
+    "mtime": 1775928344.0,
+    "hash": "da26c1e5f59e417b6d1654689bc27b9b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/localcloud-mark.svg": {
+    "mtime": 1777676876.0,
+    "hash": "1b6d1007920a7e9d516b14f600fd98b3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/spanner.svg": {
+    "mtime": 1775928344.0,
+    "hash": "a92c69a2d36392fb20600df7fd4ddc8b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/logging.svg": {
+    "mtime": 1775928344.0,
+    "hash": "7e58f71b81416b6b2842d44dbd455ebc"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/cloudrun.svg": {
+    "mtime": 1775928344.0,
+    "hash": "e2a6d849f216a0e2bd2b2d41af7a1e3e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/pubsub.svg": {
+    "mtime": 1775928344.0,
+    "hash": "56957ffb4a379fd7175dc5db70bb106e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/cloudtasks.svg": {
+    "mtime": 1775928344.0,
+    "hash": "4edb1fd0bfec4fe84861f286bf2c3916"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/gke.svg": {
+    "mtime": 1775928344.0,
+    "hash": "45baaa2a1683bbb6d6ddf7e02254e461"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/bigquery.svg": {
+    "mtime": 1775928344.0,
+    "hash": "5566e400b51639cacacf4732aa32274d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console/src/icons/bigtable.svg": {
+    "mtime": 1775928344.0,
+    "hash": "05fd36123e7af9969205676482117b87"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/icons/monitoring.svg": {
+    "mtime": 1775928344.8196309,
+    "hash": "d84927624fdc5c277f8b4db68ce246d3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/icons/firestore.svg": {
+    "mtime": 1775928344.8191946,
+    "hash": "ad8a0b4798ce8763ecd4ca3e65d76f09"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/icons/gcs.svg": {
+    "mtime": 1775928344.8192766,
+    "hash": "9b92ad267f64d98f22f8fa1fd698f9a3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/icons/memorystore.svg": {
+    "mtime": 1775928344.8195457,
+    "hash": "25e6b2a38b0ea91c9e2c2f7b9460456a"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/icons/workflows.svg": {
+    "mtime": 1776384216.530678,
+    "hash": "5d836f7e3a35c1b6ffa42f865fe5f47b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/icons/compute.svg": {
+    "mtime": 1775928344.8191135,
+    "hash": "da26c1e5f59e417b6d1654689bc27b9b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/icons/localcloud-mark.svg": {
+    "mtime": 1777676876.4136603,
+    "hash": "1b6d1007920a7e9d516b14f600fd98b3"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/icons/spanner.svg": {
+    "mtime": 1775928344.819884,
+    "hash": "a92c69a2d36392fb20600df7fd4ddc8b"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/icons/logging.svg": {
+    "mtime": 1775928344.8194613,
+    "hash": "7e58f71b81416b6b2842d44dbd455ebc"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/icons/cloudrun.svg": {
+    "mtime": 1775928344.8189433,
+    "hash": "e2a6d849f216a0e2bd2b2d41af7a1e3e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/icons/pubsub.svg": {
+    "mtime": 1775928344.8197162,
+    "hash": "56957ffb4a379fd7175dc5db70bb106e"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/icons/cloudtasks.svg": {
+    "mtime": 1775928344.8190289,
+    "hash": "4edb1fd0bfec4fe84861f286bf2c3916"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/icons/gke.svg": {
+    "mtime": 1775928344.8193665,
+    "hash": "45baaa2a1683bbb6d6ddf7e02254e461"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/icons/bigquery.svg": {
+    "mtime": 1775928344.8187644,
+    "hash": "5566e400b51639cacacf4732aa32274d"
+  },
+  "/Users/jsenjaliya/src/AI/localcloud/localcloud-console-old/src/icons/bigtable.svg": {
+    "mtime": 1775928344.818858,
+    "hash": "05fd36123e7af9969205676482117b87"
+  }
+}

@@ -70,6 +70,10 @@ dependencies {
     implementation 'com.google.api.grpc:proto-google-cloud-bigtable-admin-v2:2.70.0'
     implementation 'com.google.api.grpc:grpc-google-cloud-bigtable-admin-v2:2.70.0'
 
+    // Pub/Sub gRPC stubs (for PubSubEmulator)
+    implementation 'com.google.api.grpc:proto-google-cloud-pubsub-v1:1.132.2'
+    implementation 'com.google.api.grpc:grpc-google-cloud-pubsub-v1:1.132.2'
+
     // Docker Java client
     implementation 'com.github.docker-java:docker-java-core:3.3.6'
     implementation 'com.github.docker-java:docker-java-transport-httpclient5:3.3.6'

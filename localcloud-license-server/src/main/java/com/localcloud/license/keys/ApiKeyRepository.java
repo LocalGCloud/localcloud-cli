@@ -35,6 +35,21 @@ public class ApiKeyRepository {
         return rawKey;
     }
 
+    public void insertOfflineKey(UUID userId, String tier, String rawKey, long expiresAt) throws Exception {
+        String keyHash = sha256(rawKey);
+        String prefix = rawKey.substring(4, 12);
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "INSERT INTO api_keys (user_id, key_hash, key_prefix, tier, mode, expires_at) VALUES (?, ?, ?, ?, 'offline', to_timestamp(?))")) {
+            ps.setString(1, userId.toString());
+            ps.setString(2, keyHash);
+            ps.setString(3, prefix);
+            ps.setString(4, tier);
+            ps.setLong(5, expiresAt);
+            ps.executeUpdate();
+        }
+    }
+
     public List<KeyInfo> listUserKeys(UUID userId) throws SQLException {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(

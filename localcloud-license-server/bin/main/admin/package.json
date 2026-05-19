@@ -1,0 +1,15 @@
+{
+  "name": "localcloud-license-admin",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "solid-js": "^1.8.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0",
+    "esbuild-plugin-solid": "^0.6.0"
+  },
+  "scripts": {
+    "build": "node build.js"
+  }
+}

@@ -1,0 +1,41 @@
+# Reference configuration for LocalCloud server.
+# NOTE: This file is NOT automatically loaded by LocalCloudConfig.
+# Configuration is read from environment variables (see LocalCloudConfig.java).
+# This file serves as documentation of available settings and their defaults.
+localcloud:
+  project: ${LOCALCLOUD_PROJECT:local-project}
+  gateway:
+    port: ${LOCALCLOUD_PORT:8080}
+  postgres:
+    host: ${LOCALCLOUD_PG_HOST:localhost}
+    port: ${LOCALCLOUD_PG_PORT:5432}
+    database: ${LOCALCLOUD_PG_DATABASE:localcloud}
+    user: ${LOCALCLOUD_PG_USER:localcloud}
+    password: ${LOCALCLOUD_PG_PASSWORD:localcloud}
+  emulators:
+    gcs:
+      host: localhost
+      port: 4443
+      env-var: STORAGE_EMULATOR_HOST
+    pubsub:
+      host: localhost
+      port: 8085
+      env-var: PUBSUB_EMULATOR_HOST
+    firestore:
+      host: localhost
+      port: 8086
+      env-var: FIRESTORE_EMULATOR_HOST
+    bigtable:
+      host: localhost
+      port: 8087
+      env-var: BIGTABLE_EMULATOR_HOST
+    spanner:
+      host: localhost
+      grpc-port: 9010
+      rest-port: 9020
+      env-var: SPANNER_EMULATOR_HOST
+    bigquery:
+      host: localhost
+      rest-port: 9050
+      grpc-port: 9060
+      env-var: BIGQUERY_EMULATOR_HOST

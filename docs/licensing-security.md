@@ -39,6 +39,31 @@ docker run ...
 Key file: `license-gate.sh` (repo root, copied to `/opt/localcloud/license-gate.sh`)
 Key class: `com.localcloud.licensing.LicenseGateMain`
 
+### Configurable Enforcement (Phase 7)
+
+A single `ENFORCE_LICENSE` build arg controls whether license validation runs at all. This lets developers build images without any license requirement while production builds can enable enforcement.
+
+```
+docker build --build-arg ENFORCE_LICENSE=false .   # Default — no checks, no key required
+docker build --build-arg ENFORCE_LICENSE=true .    # Enforce: LOCALCLOUD_API_KEY required
+```
+
+Flow:
+```
+Dockerfile: ARG ENFORCE_LICENSE → /opt/localcloud/ENFORCE_LICENSE
+   │
+   ▼
+docker-entrypoint.sh reads ENFORCE_LICENSE
+   ├─ "false" → write "development" tier → skip license-gate.sh → supervisord
+   └─ "true"  → run license-gate.sh (original Phase 1 behavior)
+
+Java side (LicenseManager constructor → isEnforceLicense()):
+   ├─ ENFORCE_LICENSE=false → validate() returns PRO tier immediately
+   └─ ENFORCE_LICENSE=true  → normal validation via clock check → cache → bypass → key
+```
+
+The `ENFORCE_LICENSE` toggle is orthogonal to `BUILD_MODE` (production vs development) and `bypassMode`. Even in production builds, if `ENFORCE_LICENSE=false` the container will run without a license key.
+
 ### Session-Based Key Management (Phase 2)
 
 ```

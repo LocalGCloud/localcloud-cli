@@ -66,4 +66,23 @@ public final class KeyPairManager {
     public String getPublicKeyBase64() {
         return Base64.getEncoder().encodeToString(keyPair.getPublic().getEncoded());
     }
+
+    /** Returns true if a signing key is configured (always true after construction). */
+    public boolean hasKey() {
+        return keyPair != null;
+    }
+
+    /** Replaces the active key pair at runtime (used after admin generates a new key). */
+    public void setKeyPair(KeyPair kp) {
+        try {
+            var field = KeyPairManager.class.getDeclaredField("keyPair");
+            field.setAccessible(true);
+            var modifiersField = java.lang.reflect.Field.class.getDeclaredField("modifiers");
+            modifiersField.setAccessible(true);
+            modifiersField.setInt(field, field.getModifiers() & ~java.lang.reflect.Modifier.FINAL);
+            field.set(this, kp);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to update key pair", e);
+        }
+    }
 }

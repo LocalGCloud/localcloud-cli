@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LocalCloud Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>LocalCloud Dashboard</h1>
+        <span id="project-id" class="project-badge"></span>
+    </header>
+
+    <nav class="tabs">
+        <button class="tab active" data-tab="status">Status</button>
+        <button class="tab" data-tab="browser">Data Browser</button>
+        <button class="tab" data-tab="requests">Request Log</button>
+    </nav>
+
+    <main>
+        <!-- Status Tab -->
+        <section id="tab-status" class="tab-content active">
+            <div class="status-bar">
+                <span id="server-status" class="status-indicator"></span>
+                <span id="uptime"></span>
+                <span class="auto-refresh">Auto-refresh: 5s</span>
+            </div>
+            <div id="service-cards" class="card-grid"></div>
+        </section>
+
+        <!-- Data Browser Tab -->
+        <section id="tab-browser" class="tab-content">
+            <div class="browser-nav">
+                <label for="service-select">Service:</label>
+                <select id="service-select">
+                    <option value="gcs">Cloud Storage</option>
+                    <option value="pubsub">Pub/Sub</option>
+                    <option value="firestore">Firestore</option>
+                    <option value="bigquery">BigQuery</option>
+                    <option value="secretmanager">Secret Manager</option>
+                    <option value="cloudtasks">Cloud Tasks</option>
+                    <option value="logging">Logging</option>
+                    <option value="monitoring">Monitoring</option>
+                </select>
+                <button id="browse-btn" class="btn">Browse</button>
+            </div>
+            <div id="browse-result" class="data-panel"></div>
+        </section>
+
+        <!-- Request Log Tab -->
+        <section id="tab-requests" class="tab-content">
+            <div class="log-controls">
+                <label for="log-limit">Limit:</label>
+                <select id="log-limit">
+                    <option value="25">25</option>
+                    <option value="50" selected>50</option>
+                    <option value="100">100</option>
+                </select>
+                <button id="refresh-log-btn" class="btn">Refresh</button>
+            </div>
+            <table id="request-log" class="log-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Service</th>
+                        <th>Method</th>
+                        <th>Path</th>
+                        <th>Status</th>
+                        <th>Duration</th>
+                    </tr>
+                </thead>
+                <tbody id="log-body"></tbody>
+            </table>
+            <div id="log-empty" class="empty-state">No requests logged yet.</div>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

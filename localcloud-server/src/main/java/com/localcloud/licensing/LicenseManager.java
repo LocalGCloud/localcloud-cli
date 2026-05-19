@@ -11,12 +11,20 @@ import java.security.PublicKey;
 /**
  * Orchestrates license validation.
  *
- * Routes to OfflineKeyValidator (lck_ prefix) or OnlineKeyValidator (lco_ prefix),
- * manages the license cache for offline grace periods, and returns the final tier.
+ * Routes to OfflineKeyValidator (lc_of_ prefix) or OnlineKeyValidator (lc_on_
+ * prefix),
+ * manages the license cache for offline grace periods, and returns the final
+ * tier.
+ *
+ * When ENFORCE_LICENSE is false (via /opt/localcloud/ENFORCE_LICENSE), all
+ * validation
+ * is skipped and PRO tier is returned immediately. This is the default for dev
+ * Docker images.
  *
  * When no API key is set AND license server is "none", operates in bypass mode
  * (all services unlocked as PRO). This is the default for development/testing.
- * In production builds (BUILD_MODE file contains "production"), bypass mode is disabled.
+ * In production builds (BUILD_MODE file contains "production"), bypass mode is
+ * disabled.
  */
 public class LicenseManager {
 
@@ -31,9 +39,15 @@ public class LicenseManager {
     private static final String DEFAULT_BUILD_MODE_PATH = "/opt/localcloud/BUILD_MODE";
 
     /**
-     * Returns true if this is a production build (BUILD_MODE file contains "production").
-     * Reads the file on every call — no static caching — so tests can override the
-     * system property {@code localcloud.buildModePath} before calling.
+     * Path to the ENFORCE_LICENSE flag.
+     * Overridable via system property for testing.
+     */
+    static final String ENFORCE_LICENSE_PATH_PROPERTY = "localcloud.enforceLicensePath";
+    private static final String DEFAULT_ENFORCE_LICENSE_PATH = "/opt/localcloud/ENFORCE_LICENSE";
+
+    /**
+     * Returns true if this is a production build (BUILD_MODE file contains
+     * "production").
      */
     public static boolean isProductionBuild() {
         String path = System.getProperty(BUILD_MODE_PATH_PROPERTY, DEFAULT_BUILD_MODE_PATH);
@@ -41,11 +55,30 @@ public class LicenseManager {
             String mode = Files.readString(Path.of(path)).strip();
             return "production".equalsIgnoreCase(mode);
         } catch (NoSuchFileException e) {
-            return false; // file missing = dev build (expected)
+            return false;
         } catch (Exception e) {
             logger.warn("Could not read BUILD_MODE file at '{}': {} — defaulting to dev build",
                     path, e.getMessage());
             return false;
+        }
+    }
+
+    /**
+     * Returns true if license enforcement is enabled.
+     * Reads /opt/localcloud/ENFORCE_LICENSE — if file is missing, defaults to true
+     * (safe).
+     */
+    public static boolean isEnforceLicense() {
+        String path = System.getProperty(ENFORCE_LICENSE_PATH_PROPERTY, DEFAULT_ENFORCE_LICENSE_PATH);
+        try {
+            String value = Files.readString(Path.of(path)).strip();
+            return "true".equalsIgnoreCase(value);
+        } catch (NoSuchFileException e) {
+            return true;
+        } catch (Exception e) {
+            logger.warn("Could not read ENFORCE_LICENSE file at '{}': {} — defaulting to enforced",
+                    path, e.getMessage());
+            return true;
         }
     }
 
@@ -65,6 +98,7 @@ public class LicenseManager {
     private final OnlineKeyValidator onlineValidator;
     private final LicenseCache cache;
     private final boolean bypassMode;
+    private final boolean enforceLicense;
 
     public LicenseManager(String apiKey, String licenseServerUrl, Path dataDir, PublicKey offlinePublicKey) {
         this.apiKey = apiKey;
@@ -73,11 +107,12 @@ public class LicenseManager {
         this.onlineValidator = new OnlineKeyValidator(licenseServerUrl);
         this.cache = new LicenseCache(dataDir, deviceId);
 
-        // Bypass mode: no key AND no server configured AND not a production build
+        this.enforceLicense = isEnforceLicense();
+
         this.bypassMode = !isProductionBuild()
                 && (apiKey == null || apiKey.isBlank())
                 && (licenseServerUrl == null || licenseServerUrl.isBlank()
-                    || "none".equalsIgnoreCase(licenseServerUrl));
+                        || "none".equalsIgnoreCase(licenseServerUrl));
     }
 
     /**
@@ -85,35 +120,42 @@ public class LicenseManager {
      * Call once at startup.
      */
     public LicenseResult validate() {
+        if (!enforceLicense) {
+            logger.info("License enforcement disabled — granting PRO tier");
+            LicenseResult result = LicenseResult.valid(LicenseTier.PRO, "dev@local.cloud", deviceId, Long.MAX_VALUE);
+            cache.write(result);
+            return result;
+        }
+
         // Clock tamper detection
         long now = java.time.Instant.now().getEpochSecond();
         if (now < BUILD_TIMESTAMP_FLOOR) {
             return LicenseResult.invalid(
-                "System clock appears to be set before build date. " +
-                "Please set the correct system time.");
+                    "System clock appears to be set before build date. " +
+                            "Please set the correct system time.");
         }
         if (cache.detectClockRollback()) {
             return LicenseResult.invalid(
-                "System clock was rolled back since last run. " +
-                "Clock manipulation is not permitted. Please set the correct system time.");
+                    "System clock was rolled back since last run. " +
+                            "Clock manipulation is not permitted. Please set the correct system time.");
         }
 
         if (bypassMode) {
             logger.info("License bypass mode — no API key required (development mode)");
-            LicenseResult result = LicenseResult.valid(LicenseTier.PRO, "dev@localcloud.dev", deviceId, Long.MAX_VALUE);
+            LicenseResult result = LicenseResult.valid(LicenseTier.PRO, "dev@local.cloud", deviceId, Long.MAX_VALUE);
             cache.write(result);
             return result;
         }
 
         if (apiKey == null || apiKey.isBlank()) {
-            return checkCacheGrace("No API key provided. Set LOCALCLOUD_API_KEY or get a key at https://localcloud.dev");
+            return checkCacheGrace("No API key provided. Set LOCALCLOUD_API_KEY or get a key at https://local.cloud");
         }
 
         LicenseResult result;
 
-        if (apiKey.startsWith("lck_")) {
+        if (apiKey.startsWith("lc_of_")) {
             result = offlineValidator.validate(apiKey, deviceId);
-        } else if (apiKey.startsWith("lco_")) {
+        } else if (apiKey.startsWith("lc_on_")) {
             result = onlineValidator.validate(apiKey, deviceId);
             if (!result.isValid() && result.errorMessage() != null
                     && result.errorMessage().contains("unreachable")) {
@@ -121,7 +163,7 @@ public class LicenseManager {
             }
         } else {
             result = LicenseResult.invalid(
-                    "Unknown key format. Keys must start with 'lco_' (online) or 'lck_' (offline)");
+                    "Unknown key format. Keys start with 'lc_on_' (online) or 'lc_of_' (offline)");
         }
 
         if (result.isValid()) {
