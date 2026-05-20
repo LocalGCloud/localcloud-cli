@@ -44,7 +44,7 @@ function categorizeEnvVars(vars) {
     const sdk = {};
     const gcloud = {};
     for (const [k, v] of Object.entries(vars)) {
-        if (k === 'GOOGLE_CLOUD_PROJECT' || k === 'GCLOUD_PROJECT') {
+        if (k === 'GOOGLE_CLOUD_PROJECT' || k === 'GCLOUD_PROJECT' || k === 'CLOUDSDK_AUTH_ACCESS_TOKEN') {
             common[k] = v;
         } else if (k.startsWith('CLOUDSDK_')) {
             gcloud[k] = v;
@@ -248,31 +248,14 @@ function EnvTabs(props) {
                         Copy and paste these export statements into your terminal. All Google Cloud SDKs will route to LocalCloud.
                     </p>
 
-                    {/* All-in-one block */}
-                    <div class="code-block-header">
-                        <span style={{ "font-size": "12px", "font-weight": "600", color: "var(--text-secondary)" }}>All Variables</span>
-                        <button class="btn btn-secondary" style={{ height: "28px", "font-size": "11px", padding: "0 10px" }}
-                            onClick={() => handleCopyBlock('all', allExports())}>
-                            <Show when={copiedBlock() === 'all'} fallback={<><CopyIcon /> Copy All</>}>
-                                <CheckIcon /> Copied!
-                            </Show>
-                        </button>
-                    </div>
-                    <CopyableCodeBlock style={{ "margin-bottom": "16px" }}>
-                        {allExports()}
-                    </CopyableCodeBlock>
-
                     {/* Per-category blocks */}
                     <Show when={Object.keys(props.categorized().common).length > 0}>
-                        <div class="code-block-header">
-                            <span style={{ "font-size": "12px", "font-weight": "600", color: "var(--text-secondary)" }}>Project</span>
-                            <button class="btn btn-secondary" style={{ height: "28px", "font-size": "11px", padding: "0 10px" }}
-                                onClick={() => handleCopyBlock('common', shellBlock(props.categorized().common))}>
-                                <Show when={copiedBlock() === 'common'} fallback={<><CopyIcon /> Copy</>}>
-                                    <CheckIcon /> Copied!
-                                </Show>
-                            </button>
+                        <div class="code-block-header" style={{ "margin-bottom": "4px" }}>
+                            <span style={{ "font-size": "12px", "font-weight": "600", color: "var(--text-secondary)" }}>Project & Auth Setup</span>
                         </div>
+                        <p style={{ "margin-top": "0", "margin-bottom": "8px", "font-size": "12px", color: "var(--text-tertiary)" }}>
+                            Set this for all technology emulator usage.
+                        </p>
                         <CopyableCodeBlock style={{ "margin-bottom": "16px" }}>
                             {shellBlock(props.categorized().common)}
                         </CopyableCodeBlock>
@@ -281,12 +264,6 @@ function EnvTabs(props) {
                     <Show when={Object.keys(props.categorized().sdk).length > 0}>
                         <div class="code-block-header">
                             <span style={{ "font-size": "12px", "font-weight": "600", color: "var(--text-secondary)" }}>SDK Emulator Hosts</span>
-                            <button class="btn btn-secondary" style={{ height: "28px", "font-size": "11px", padding: "0 10px" }}
-                                onClick={() => handleCopyBlock('sdk', shellBlock(props.categorized().sdk))}>
-                                <Show when={copiedBlock() === 'sdk'} fallback={<><CopyIcon /> Copy</>}>
-                                    <CheckIcon /> Copied!
-                                </Show>
-                            </button>
                         </div>
                         <CopyableCodeBlock style={{ "margin-bottom": "16px" }}>
                             {shellBlock(props.categorized().sdk)}
@@ -296,12 +273,6 @@ function EnvTabs(props) {
                     <Show when={Object.keys(props.categorized().gcloud).length > 0}>
                         <div class="code-block-header">
                             <span style={{ "font-size": "12px", "font-weight": "600", color: "var(--text-secondary)" }}>gcloud CLI Overrides</span>
-                            <button class="btn btn-secondary" style={{ height: "28px", "font-size": "11px", padding: "0 10px" }}
-                                onClick={() => handleCopyBlock('gcloud', shellBlock(props.categorized().gcloud))}>
-                                <Show when={copiedBlock() === 'gcloud'} fallback={<><CopyIcon /> Copy</>}>
-                                    <CheckIcon /> Copied!
-                                </Show>
-                            </button>
                         </div>
                         <CopyableCodeBlock>
                             {shellBlock(props.categorized().gcloud)}
@@ -345,12 +316,6 @@ function EnvTabs(props) {
                                             </Show>
                                             <div class="code-block-header" style={{ "margin-bottom": "0" }}>
                                                 <span style={{ "font-size": "11px", color: "var(--text-tertiary)" }}>Commands</span>
-                                                <button class="btn btn-secondary" style={{ height: "24px", "font-size": "10px", padding: "0 8px" }}
-                                                    onClick={() => handleCopyBlock(`cli-${svcId}`, svc.commands)}>
-                                                    <Show when={copiedBlock() === `cli-${svcId}`} fallback={<><CopyIcon /> Copy</>}>
-                                                        <CheckIcon /> Copied!
-                                                    </Show>
-                                                </button>
                                             </div>
                                             <CopyableCodeBlock style={{ "border-top-left-radius": "0", "border-top-right-radius": "0" }}>
                                                 {svc.commands}
@@ -408,12 +373,6 @@ function EnvTabs(props) {
                                                 </CopyableCodeBlock>
                                                 <div class="code-block-header" style={{ "margin-bottom": "0" }}>
                                                     <span style={{ "font-size": "11px", color: "var(--text-tertiary)" }}>Sample Code</span>
-                                                    <button class="btn btn-secondary" style={{ height: "24px", "font-size": "10px", padding: "0 8px" }}
-                                                        onClick={() => handleCopyBlock(`sdk-${svc.id}`, `export ${svc.envKey}="${svc.value}"\n\n${snippet()}`)}>
-                                                        <Show when={copiedBlock() === `sdk-${svc.id}`} fallback={<><CopyIcon /> Copy</>}>
-                                                            <CheckIcon /> Copied!
-                                                        </Show>
-                                                    </button>
                                                 </div>
                                                 <CopyableCodeBlock style={{ "border-top-left-radius": "0", "border-top-right-radius": "0" }}>
                                                     {snippet()}
@@ -1543,7 +1502,7 @@ function AboutPage(props) {
                         Build and test cloud-native applications without cloud resorces, cost, internet or even access credentials.
                     </p>
                     <div style={{ display: "flex", gap: "10px", "margin-top": "20px", "flex-wrap": "wrap" }}>
-                        <a href="https://localstack-google.github.io/" target="_blank" rel="noopener noreferrer"
+                        <a href="https://localgcloud.github.io/" target="_blank" rel="noopener noreferrer"
                             style={{
                                 display: "inline-flex", "align-items": "center", gap: "6px",
                                 padding: "8px 18px", "border-radius": "8px",

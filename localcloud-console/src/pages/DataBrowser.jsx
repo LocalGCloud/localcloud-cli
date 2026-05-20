@@ -1,8 +1,88 @@
-import { createSignal, createEffect, createMemo, Show, For } from 'solid-js';
+import { createSignal, createEffect, createMemo, Show, For, untrack } from 'solid-js';
 import { api } from '../api.js';
 import CsvImportWizard from '../components/CsvImportWizard.jsx';
 import DataBreadcrumb from '../components/DataBreadcrumb.jsx';
 import { formatDateTime, onActivate } from '../utils/a11y.js';
+import CodeEditor from '../components/CodeEditor.jsx';
+import { generateMockRow } from '../utils/mockGenerator.js';
+
+function formatSqlDdl(sql) {
+    if (!sql) return '';
+
+    // Normalize newlines and spaces
+    let clean = sql.replace(/\s+/g, ' ').trim();
+
+    let formatted = '';
+    let depth = 0;
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+
+    const indent = '  ';
+
+    for (let i = 0; i < clean.length; i++) {
+        const char = clean[i];
+
+        // Handle quotes
+        if (char === "'" && !inDoubleQuote) {
+            inSingleQuote = !inSingleQuote;
+        } else if (char === '"' && !inSingleQuote) {
+            inDoubleQuote = !inDoubleQuote;
+        }
+
+        if (inSingleQuote || inDoubleQuote) {
+            formatted += char;
+            continue;
+        }
+
+        if (char === '(') {
+            depth++;
+            formatted += char;
+            // Only insert newline and indentation for the main table body opening
+            if (depth === 1) {
+                formatted += '\n' + indent;
+            }
+        } else if (char === ')') {
+            depth = Math.max(0, depth - 1);
+            if (depth === 0) {
+                formatted += '\n' + char;
+            } else {
+                formatted += char;
+            }
+        } else if (char === ',') {
+            formatted += char;
+            // Only wrap to a new line if we are at the main table body level (depth === 1)
+            if (depth === 1) {
+                formatted += '\n' + indent;
+            } else {
+                formatted += ' ';
+            }
+        } else if (char === ';') {
+            formatted += ';\n\n';
+        } else {
+            // Avoid double spaces
+            if (char === ' ' && (formatted.endsWith(' ') || formatted.endsWith('\n') || formatted.endsWith(indent))) {
+                continue;
+            }
+            formatted += char;
+        }
+    }
+
+    // Final polish: Upper-case keywords
+    const keywords = [
+        'CREATE TABLE', 'CREATE UNIQUE INDEX', 'CREATE INDEX', 'PRIMARY KEY', 'CONSTRAINT',
+        'FOREIGN KEY', 'CHECK', 'DEFAULT', 'OPTIONS', 'STORING', 'ON', 'AS', 'IN', 'AND', 'OR',
+        'NOT NULL', 'NULL', 'INT64', 'FLOAT64', 'BOOL', 'STRING', 'BYTES', 'DATE', 'TIMESTAMP',
+        'JSON', 'DESC', 'ASC', 'UNIQUE NONNULL', 'UNIQUE'
+    ];
+
+    let result = formatted.trim();
+    for (const kw of keywords) {
+        const regex = new RegExp('\\b' + kw.replace(/\s+/g, '\\s+') + '\\b', 'gi');
+        result = result.replace(regex, kw);
+    }
+
+    return result;
+}
 
 
 const TABS = [
@@ -96,7 +176,7 @@ function ConnectionInfoCard(props) {
         navigator.clipboard.writeText(text).then(() => {
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
-        }).catch(() => {});
+        }).catch(() => { });
     };
 
     return (
@@ -170,9 +250,9 @@ function GcsView(props) {
                     <h2 style="margin:0">Bucket: {selectedBucket()}</h2>
                     <Show when={props.onAdd}>
                         <button onClick={() => props.onAdd('Upload Object to ' + selectedBucket(), [
-                            {name: 'key', type: 'text'},
-                            {name: 'content', type: 'textarea'},
-                            {name: 'contentType', type: 'text', value: 'application/json'}
+                            { name: 'key', type: 'text' },
+                            { name: 'content', type: 'textarea' },
+                            { name: 'contentType', type: 'text', value: 'application/json' }
                         ], async (formData) => {
                             await api.mutate('gcs', 'objects', { bucket: selectedBucket(), ...formData });
                         })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
@@ -181,7 +261,7 @@ function GcsView(props) {
                     </Show>
                 </div>
                 <Show when={!objectsLoading()} fallback={
-	                    <div class="loading-state"><div class="loading-spinner" /> Loading objects…</div>
+                    <div class="loading-state"><div class="loading-spinner" /> Loading objects…</div>
                 }>
                     <Show when={bucketObjects() && bucketObjects().length > 0} fallback={
                         <div class="empty-state"
@@ -208,12 +288,12 @@ function GcsView(props) {
                                 }
                                 if (uploaded > 0) fetchBucketObjects(selectedBucket());
                             }}
-	                            style={{ border: '2px dashed var(--border)', 'border-radius': '8px', cursor: 'pointer', transition: 'border-color 150ms ease, background 150ms ease' }}
+                            style={{ border: '2px dashed var(--border)', 'border-radius': '8px', cursor: 'pointer', transition: 'border-color 150ms ease, background 150ms ease' }}
                         >
-	                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" aria-hidden="true" focusable="false" style={{ 'margin-bottom': '12px' }}>
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                <polyline points="17 8 12 3 7 8"/>
-                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" aria-hidden="true" focusable="false" style={{ 'margin-bottom': '12px' }}>
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="17 8 12 3 7 8" />
+                                <line x1="12" y1="3" x2="12" y2="15" />
                             </svg>
                             <div class="empty-state-title">No objects found</div>
                             <div class="empty-state-text">Drag and drop text files here to upload (JSON, CSV, TXT, YAML), or use the SDK.</div>
@@ -270,8 +350,8 @@ function GcsView(props) {
                 <div />
                 <Show when={props.onAdd}>
                     <button onClick={() => props.onAdd('Create Bucket', [
-                        {name: 'name', type: 'text'},
-                        {name: 'location', type: 'text', value: 'US'}
+                        { name: 'name', type: 'text' },
+                        { name: 'location', type: 'text', value: 'US' }
                     ], async (formData) => {
                         await api.mutate('gcs', 'buckets', formData);
                     })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
@@ -299,7 +379,7 @@ function GcsView(props) {
                         <tbody>
                             <For each={d().buckets}>
                                 {(bucket) => (
-	                                    <tr class="clickable-row" onClick={() => fetchBucketObjects(bucket.name)} onKeyDown={onActivate(() => fetchBucketObjects(bucket.name))} role="button" tabIndex="0">
+                                    <tr class="clickable-row" onClick={() => fetchBucketObjects(bucket.name)} onKeyDown={onActivate(() => fetchBucketObjects(bucket.name))} role="button" tabIndex="0">
                                         <td>{bucket.name}</td>
                                         <td>{bucket.location || '--'}</td>
                                         <td>{formatDate(bucket.timeCreated)}</td>
@@ -338,7 +418,7 @@ function PubSubView(props) {
                     <h2 style="margin:0">Topics</h2>
                     <Show when={props.onAdd}>
                         <button onClick={() => props.onAdd('Create Topic', [
-                            {name: 'name', type: 'text'},
+                            { name: 'name', type: 'text' },
                         ], async (formData) => {
                             await api.mutate('pubsub', 'topics', formData);
                         })} style="padding:6px 12px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:12px">
@@ -377,7 +457,7 @@ function PubSubView(props) {
                                                     <div style="display:flex;gap:4px;align-items:center">
                                                         <Show when={props.onAdd}>
                                                             <button onClick={() => props.onAdd('Publish Message to ' + topicName, [
-                                                                {name: 'data', type: 'textarea'},
+                                                                { name: 'data', type: 'textarea' },
                                                             ], async (formData) => {
                                                                 await api.mutate('pubsub', 'messages', { topic: topicName, ...formData });
                                                             })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text-secondary);cursor:pointer;font-size:11px" title="Publish Message">Publish</button>
@@ -441,7 +521,7 @@ function PubSubView(props) {
                 <div class="section" style={{ "margin-top": "24px" }}>
                     <h2>Messages: {selectedSub()}</h2>
                     <Show when={messagesLoading()}>
-	                        <div class="loading-state"><div class="loading-spinner" /> Loading messages…</div>
+                        <div class="loading-state"><div class="loading-spinner" /> Loading messages…</div>
                     </Show>
                     <Show when={!messagesLoading()}>
                         <Show when={pubsubMessages().length > 0} fallback={
@@ -468,7 +548,7 @@ function PubSubView(props) {
                                                     <td style={{ "font-weight": "500", "font-size": "12px" }}>{msg.messageId || msg.id || '--'}</td>
                                                     <td style={{ "font-size": "12px" }}>{formatDate(msg.publishTime)}</td>
                                                     <td style={{ "max-width": "300px", "overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "font-size": "12px" }}>
-	                                                        {msg.data ? (msg.data.length > 100 ? msg.data.substring(0, 100) + '…' : msg.data) : '--'}
+                                                        {msg.data ? (msg.data.length > 100 ? msg.data.substring(0, 100) + '…' : msg.data) : '--'}
                                                     </td>
                                                     <td style={{ "font-size": "12px", "color": "var(--text-secondary)" }}>
                                                         {msg.attributes ? (typeof msg.attributes === 'object' ? JSON.stringify(msg.attributes) : String(msg.attributes)) : '--'}
@@ -548,25 +628,39 @@ function BigQueryView(props) {
     // Restore dataset from URL subpath
     createEffect(() => {
         const sp = typeof props.subpath === 'function' ? props.subpath() : props.subpath;
-        if (!sp || sp.length === 0) return;
+        if (!sp || sp.length === 0) {
+            setSelectedDataset(null);
+            setSelectedTable(null);
+            return;
+        }
         const dsList = datasets();
         if (!dsList || dsList.length === 0) return;
         const [dsId] = sp;
-        if (dsId && !selectedDataset()) {
+        const currentDs = untrack(() => selectedDataset());
+        if (dsId && !currentDs) {
             const ds = dsList.find(d => dsName(d) === dsId);
             if (ds) selectDataset(ds);
+        } else if (!dsId && currentDs) {
+            setSelectedDataset(null);
+            setSelectedTable(null);
         }
     });
 
     // Restore table from URL subpath once tables load
     createEffect(() => {
         const sp = typeof props.subpath === 'function' ? props.subpath() : props.subpath;
-        if (!sp || sp.length < 2) return;
+        if (!sp || sp.length < 2) {
+            setSelectedTable(null);
+            return;
+        }
         const tblId = sp[1];
         const tbls = tables();
-        if (tbls.length > 0 && !selectedTable()) {
+        const currentTbl = untrack(() => selectedTable());
+        if (tbls.length > 0 && !currentTbl) {
             const tbl = tbls.find(t => (t.tableReference ? t.tableReference.tableId : (t.name || t.id)) === tblId);
             if (tbl) selectTable(tbl);
+        } else if (!tblId && currentTbl) {
+            setSelectedTable(null);
         }
     });
 
@@ -599,7 +693,7 @@ function BigQueryView(props) {
                         return (
                             <div>
                                 <button class={`data-tree-toggle ${!isOpen() ? 'collapsed' : ''}`} onClick={() => { if (isOpen()) goBackToDatasets(); else selectDataset(ds); }}>
-	                                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true" focusable="false"><path d="M3 2l4 3-4 3z"/></svg>
+                                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true" focusable="false"><path d="M3 2l4 3-4 3z" /></svg>
                                     {id}
                                 </button>
                                 <Show when={isOpen()}>
@@ -609,7 +703,7 @@ function BigQueryView(props) {
                                                 const tblId = tbl.tableReference ? tbl.tableReference.tableId : (tbl.name || tbl.id);
                                                 return (
                                                     <button class={`data-tree-item ${selectedTable() === tblId ? 'active' : ''}`} onClick={() => selectTable(tbl)}>
-	                                                        <svg class="data-tree-item-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M2 3h12v2H2zm0 4h12v2H2zm0 4h12v2H2z"/></svg>
+                                                        <svg class="data-tree-item-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M2 3h12v2H2zm0 4h12v2H2zm0 4h12v2H2z" /></svg>
                                                         {tblId}
                                                     </button>
                                                 );
@@ -629,7 +723,7 @@ function BigQueryView(props) {
     const ContentArea = () => (
         <div class="data-tree-content">
             <Show when={subLoading()}>
-	                <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
+                <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
             </Show>
             <Show when={!subLoading()}>
                 {/* Table data */}
@@ -639,13 +733,13 @@ function BigQueryView(props) {
                         <Show when={props.onAdd && tableData() && tableData().columns}>
                             <div style="display:flex;gap:6px">
                                 <button onClick={() => setShowCsvImport(true)}
-	                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
-                                    onMouseEnter={e => e.currentTarget.style.borderColor='var(--primary)'}
-                                    onMouseLeave={e => e.currentTarget.style.borderColor='var(--border)'}>
+                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
+                                    onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
+                                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
                                     {'\u2191'} Import CSV
                                 </button>
                                 <button onClick={() => props.onAdd('Add BigQuery Row',
-                                    tableData().columns.map(c => ({name: c, type: 'text'})),
+                                    tableData().columns.map(c => ({ name: c, type: 'text' })),
                                     async (formData) => {
                                         await api.mutate('bigquery', 'rows', { dataset: selectedDataset(), table: selectedTable(), row: formData });
                                     }
@@ -725,7 +819,7 @@ function BigQueryView(props) {
                                         {(tbl) => {
                                             const tblId = tbl.tableReference ? tbl.tableReference.tableId : (tbl.name || tbl.id);
                                             return (
-	                                                <tr class="clickable-row" onClick={() => selectTable(tbl)} onKeyDown={onActivate(() => selectTable(tbl))} role="button" tabIndex="0">
+                                                <tr class="clickable-row" onClick={() => selectTable(tbl)} onKeyDown={onActivate(() => selectTable(tbl))} role="button" tabIndex="0">
                                                     <td style={{ "font-weight": "500" }}>{tblId}</td>
                                                     <td>{tbl.kind || 'table'}</td>
                                                     <td>{tbl.type || '--'}</td>
@@ -754,7 +848,7 @@ function BigQueryView(props) {
                                 <tbody>
                                     <For each={datasets()}>
                                         {(ds) => (
-	                                            <tr class="clickable-row" onClick={() => selectDataset(ds)} onKeyDown={onActivate(() => selectDataset(ds))} role="button" tabIndex="0">
+                                            <tr class="clickable-row" onClick={() => selectDataset(ds)} onKeyDown={onActivate(() => selectDataset(ds))} role="button" tabIndex="0">
                                                 <td style={{ "font-weight": "500" }}>{dsName(ds)}</td>
                                                 <td>{ds.kind || 'dataset'}</td>
                                                 <td>{ds.location || '--'}</td>
@@ -788,7 +882,7 @@ function BigQueryView(props) {
                 columns={tableData()?.columns || []}
                 serviceName="BigQuery"
                 onImportRow={bqImportRow}
-                onImportDone={() => selectTable({tableReference: {tableId: selectedTable()}})}
+                onImportDone={() => selectTable({ tableReference: { tableId: selectedTable() } })}
             />
         </div>
     );
@@ -803,8 +897,8 @@ function SecretManagerView(props) {
                 <div />
                 <Show when={props.onAdd}>
                     <button onClick={() => props.onAdd('Create Secret', [
-                        {name: 'name', type: 'text'},
-                        {name: 'value', type: 'textarea'}
+                        { name: 'name', type: 'text' },
+                        { name: 'value', type: 'textarea' }
                     ], async (formData) => {
                         await api.mutate('secretmanager', 'secrets', formData);
                     })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
@@ -879,7 +973,7 @@ function CloudTasksView(props) {
                 <div />
                 <Show when={props.onAdd}>
                     <button onClick={() => props.onAdd('Create Queue', [
-                        {name: 'name', type: 'text'},
+                        { name: 'name', type: 'text' },
                     ], async (formData) => {
                         await api.mutate('cloudtasks', 'queues', formData);
                     })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
@@ -1060,6 +1154,220 @@ function SpannerView(props) {
     const [createError, setCreateError] = createSignal(null);
     const [creating, setCreating] = createSignal(false);
 
+    const [showDdlModal, setShowDdlModal] = createSignal(false);
+    const [ddlModalText, setDdlModalText] = createSignal('');
+    const [toast, setToast] = createSignal(null);
+
+    // Extract column definition block between first ( and its matching closing )
+    const extractColumnsDef = (stmt) => {
+        const start = stmt.indexOf('(');
+        if (start === -1) return null;
+        let depth = 0;
+        for (let i = start; i < stmt.length; i++) {
+            const ch = stmt[i];
+            if (ch === '(') depth++;
+            else if (ch === ')') {
+                depth--;
+                if (depth === 0) return stmt.substring(start + 1, i);
+            }
+        }
+        return null;
+    };
+
+    const parseColumnTypesFromDdl = (tableName) => {
+        const ddl = ddlData();
+        if (!ddl || !ddl.statements) return {};
+        for (const stmt of ddl.statements) {
+            const cleanStmt = stmt.replace(/--.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, ' ').trim();
+            const tableMatch = cleanStmt.match(new RegExp(`CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(?:\\w+\\.)?(?:["\`]?\\w+["\`]?\\.)?["\`]?${tableName}["\`]?\\b`, 'i'));
+            if (!tableMatch) continue;
+            const columnsDef = extractColumnsDef(cleanStmt);
+            if (!columnsDef) return {};
+            const types = {};
+            let depth = 0;
+            let current = '';
+            const parts = [];
+            for (let i = 0; i < columnsDef.length; i++) {
+                const char = columnsDef[i];
+                if (char === '(') depth++;
+                else if (char === ')') depth--;
+
+                if (char === ',' && depth === 0) {
+                    parts.push(current.trim());
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            if (current.trim()) parts.push(current.trim());
+
+            for (const part of parts) {
+                if (/^(?:CONSTRAINT|PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE|CHECK)\b/i.test(part)) {
+                    continue;
+                }
+                const tokens = part.split(/\s+/);
+                if (tokens.length >= 2) {
+                    const colName = tokens[0].replace(/`/g, '');
+                    const colType = tokens[1].toUpperCase();
+                    types[colName] = colType;
+                }
+            }
+            return types;
+        }
+        return {};
+    };
+
+    const getTableDdl = (tableName) => {
+        const ddl = ddlData();
+        if (!ddl || !ddl.statements) return '';
+        const matches = [];
+        const tableRegex = new RegExp(`CREATE\\s+TABLE\\s+${tableName}\\b`, 'i');
+        const indexRegex = new RegExp(`CREATE\\s+(?:UNIQUE\\s+)?(?:NULL_FILTERED\\s+)?INDEX\\s+\\w+\\s+ON\\s+${tableName}\\b`, 'i');
+
+        for (const stmt of ddl.statements) {
+            const clean = stmt.replace(/--.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+            if (tableRegex.test(clean) || indexRegex.test(clean)) {
+                matches.push(stmt.trim());
+            }
+        }
+        return matches.join(';\n\n') + (matches.length > 0 ? ';' : '');
+    };
+
+    const getTableIndexes = (tableName) => {
+        const ddl = ddlData();
+        if (!ddl || !ddl.statements) return [];
+        const indexes = [];
+        const indexRegex = new RegExp(`CREATE\\s+(?:UNIQUE\\s+)?(?:NULL_FILTERED\\s+)?INDEX\\s+(\\w+)\\s+ON\\s+${tableName}\\b`, 'i');
+        for (const stmt of ddl.statements) {
+            const clean = stmt.replace(/--.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+            const match = clean.match(indexRegex);
+            if (match) {
+                indexes.push(match[1]);
+            }
+        }
+        return indexes;
+    };
+
+    const getInterleavedChildren = (tableName) => {
+        const ddl = ddlData();
+        if (!ddl || !ddl.statements) return [];
+        const children = [];
+        const childRegex = new RegExp(`CREATE\\s+TABLE\\s+(\\w+)[^;]*?INTERLEAVE\\s+IN\\s+PARENT\\s+${tableName}\\b`, 'is');
+        for (const stmt of ddl.statements) {
+            const clean = stmt.replace(/--.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+            const match = clean.match(childRegex);
+            if (match) {
+                children.push(match[1]);
+            }
+        }
+        return children;
+    };
+
+    const handleDeleteTable = async (tableName) => {
+        if (!confirm(`Are you sure you want to delete table ${tableName}? This will drop all rows and schema definitions, and cannot be undone.`)) return;
+
+        const children = getInterleavedChildren(tableName);
+        if (children.length > 0) {
+            setToast({
+                message: `Cannot delete table "${tableName}" because it has interleaved child tables: ${children.join(', ')}. Delete those tables first.`,
+                type: 'error'
+            });
+            setTimeout(() => setToast(null), 8000);
+            return;
+        }
+
+        let intervalId;
+        let timerId;
+        const startTime = Date.now();
+
+        setToast({ message: `Deleting table "${tableName}"...`, type: 'info', elapsed: 0 });
+
+        timerId = setInterval(() => {
+            setToast(t => t ? { ...t, elapsed: (Date.now() - startTime) / 1000 } : null);
+        }, 100);
+
+        try {
+            const indexes = getTableIndexes(tableName);
+            const statements = indexes.map(idx => `DROP INDEX ${idx}`);
+            statements.push(`DROP TABLE ${tableName}`);
+
+            await api.mutate('spanner', 'ddl', {
+                instance: selectedInstance(),
+                database: selectedDatabase(),
+                statements: statements
+            });
+
+            if (selectedTable() === tableName) {
+                setSelectedTable(null);
+                updateSubpath(selectedInstance(), selectedDatabase(), null);
+            }
+
+            // Poll API to check if table is actually deleted from schema
+            const maxPollTime = 10000; // 10 seconds
+
+            intervalId = setInterval(async () => {
+                try {
+                    const result = await api.browse('spanner', 'instances/' + selectedInstance() + '/' + selectedDatabase());
+                    const currentTables = parseTables(result);
+                    if (!currentTables.includes(tableName)) {
+                        // Success! Table is gone.
+                        clearInterval(intervalId);
+                        clearInterval(timerId);
+
+                        setDdlData(result);
+                        setToast({ message: `Table "${tableName}" successfully deleted!`, type: 'success' });
+
+                        // Dismiss toast after 3 seconds
+                        setTimeout(() => setToast(null), 3000);
+                    } else if (Date.now() - startTime > maxPollTime) {
+                        // Timeout
+                        clearInterval(intervalId);
+                        clearInterval(timerId);
+                        setToast({ message: `Deletion of "${tableName}" timed out.`, type: 'error' });
+                        setTimeout(() => setToast(null), 4000);
+                    }
+                } catch (err) {
+                    clearInterval(intervalId);
+                    clearInterval(timerId);
+                    setToast({ message: `Error verifying deletion: ${err.message}`, type: 'error' });
+                    setTimeout(() => setToast(null), 4000);
+                }
+            }, 300);
+
+        } catch (e) {
+            clearInterval(intervalId);
+            clearInterval(timerId);
+            setToast({ message: `Failed to delete table: ${e.message}`, type: 'error' });
+            setTimeout(() => setToast(null), 4000);
+        }
+    };
+
+    const handleAddMockRow = async () => {
+        const cols = tableData()?.columns;
+        if (!cols) return;
+        try {
+            const typesMap = parseColumnTypesFromDdl(selectedTable());
+            const columnDefs = cols.map(colName => ({
+                name: colName,
+                type: typesMap[colName] || 'STRING'
+            }));
+
+            const mockRow = generateMockRow(columnDefs);
+
+            await api.mutate('spanner', 'rows', {
+                instance: selectedInstance(),
+                database: selectedDatabase(),
+                table: selectedTable(),
+                columns: Object.keys(mockRow),
+                values: [Object.values(mockRow)]
+            });
+
+            await selectTable(selectedTable());
+        } catch (e) {
+            alert("Failed to insert mock data: " + e.message);
+        }
+    };
+
     const handleCreateInstance = async () => {
         const name = createName().trim();
         if (!name) return;
@@ -1086,12 +1394,66 @@ function SpannerView(props) {
         finally { setCreating(false); }
     };
 
+    const parseDdlStatements = (ddlText) => {
+        // Strip block comments
+        let cleanText = ddlText.replace(/\/\*[\s\S]*?\*\//g, '');
+
+        // Strip single-line comments
+        cleanText = cleanText.split('\n')
+            .map(line => {
+                const index = line.indexOf('--');
+                if (index !== -1) {
+                    const before = line.substring(0, index);
+                    const quoteCount = (before.match(/'/g) || []).length;
+                    if (quoteCount % 2 === 0) return before;
+                }
+                const indexSlash = line.indexOf('//');
+                if (indexSlash !== -1) {
+                    const before = line.substring(0, indexSlash);
+                    const quoteCount = (before.match(/'/g) || []).length;
+                    if (quoteCount % 2 === 0) return before;
+                }
+                return line;
+            })
+            .join('\n');
+
+        const statements = [];
+        let current = '';
+        let inSingleQuote = false;
+        let inDoubleQuote = false;
+
+        for (let i = 0; i < cleanText.length; i++) {
+            const char = cleanText[i];
+            if (char === "'" && !inDoubleQuote) {
+                inSingleQuote = !inSingleQuote;
+            } else if (char === '"' && !inSingleQuote) {
+                inDoubleQuote = !inDoubleQuote;
+            }
+
+            if (char === ';' && !inSingleQuote && !inDoubleQuote) {
+                const stmt = current.trim();
+                if (stmt) statements.push(stmt);
+                current = '';
+            } else {
+                current += char;
+            }
+        }
+        const finalStmt = current.trim();
+        if (finalStmt) statements.push(finalStmt);
+
+        return statements;
+    };
+
     const handleCreateTable = async () => {
         const ddl = createDdl().trim();
         if (!ddl) return;
         setCreating(true); setCreateError(null);
         try {
-            await api.mutate('spanner', 'ddl', { instance: selectedInstance(), database: selectedDatabase(), statements: [ddl] });
+            const statements = parseDdlStatements(ddl);
+            if (statements.length === 0) {
+                throw new Error("No valid DDL statements found.");
+            }
+            await api.mutate('spanner', 'ddl', { instance: selectedInstance(), database: selectedDatabase(), statements });
             setShowCreateTable(false); setCreateDdl('');
             // Refresh tables
             const result = await api.browse('spanner', 'instances/' + selectedInstance() + '/' + selectedDatabase());
@@ -1190,28 +1552,32 @@ function SpannerView(props) {
     // Restore navigation from URL subpath on mount
     createEffect(() => {
         const sp = typeof props.subpath === 'function' ? props.subpath() : props.subpath;
-        if (!sp || sp.length === 0) return;
-        const instances = d()?.instances;
-        if (!instances || instances.length === 0) return;
+        if (!sp || sp.length === 0) {
+            setSelectedInstance(null);
+            setSelectedDatabase(null);
+            setSelectedTable(null);
+            return;
+        }
+        const insts = instances();
+        if (!insts || insts.length === 0) return;
         const [instName, dbName, tblName] = sp;
-        // Only restore if not already navigated
-        if (instName && !selectedInstance()) {
-            const inst = instances.find(i => (i.name?.split('/').pop() || i.displayName) === instName);
+        const currentInst = untrack(() => selectedInstance());
+
+        if (instName && !currentInst) {
+            const inst = insts.find(i => (i.name?.split('/').pop() || i.displayName) === instName);
             if (inst) {
                 selectInstance(inst).then(() => {
                     if (dbName) {
-                        // Wait for databases to load, then select
                         const checkDb = setInterval(() => {
-                            const dbs = databases();
+                            const dbs = untrack(() => databases());
                             if (dbs.length > 0) {
                                 clearInterval(checkDb);
                                 const db = dbs.find(d => (d.name?.split('/').pop() || d) === dbName);
                                 if (db) {
                                     selectDatabase(db).then(() => {
                                         if (tblName) {
-                                            // Wait for DDL to load, then select table
                                             const checkTbl = setInterval(() => {
-                                                const ddl = ddlData();
+                                                const ddl = untrack(() => ddlData());
                                                 if (ddl) {
                                                     clearInterval(checkTbl);
                                                     selectTable(tblName);
@@ -1226,6 +1592,46 @@ function SpannerView(props) {
                         setTimeout(() => clearInterval(checkDb), 5000);
                     }
                 });
+            }
+        } else if (!instName && currentInst) {
+            setSelectedInstance(null);
+            setSelectedDatabase(null);
+            setSelectedTable(null);
+        } else if (instName && currentInst === instName) {
+            const currentDb = untrack(() => selectedDatabase());
+            if (!dbName && currentDb) {
+                setSelectedDatabase(null);
+                setSelectedTable(null);
+            } else if (dbName && !currentDb) {
+                const checkDb = setInterval(() => {
+                    const dbs = untrack(() => databases());
+                    if (dbs.length > 0) {
+                        clearInterval(checkDb);
+                        const db = dbs.find(d => (d.name?.split('/').pop() || d) === dbName);
+                        if (db) {
+                            selectDatabase(db).then(() => {
+                                if (tblName) {
+                                    const checkTbl = setInterval(() => {
+                                        const ddl = untrack(() => ddlData());
+                                        if (ddl) {
+                                            clearInterval(checkTbl);
+                                            selectTable(tblName);
+                                        }
+                                    }, 100);
+                                    setTimeout(() => clearInterval(checkTbl), 5000);
+                                }
+                            });
+                        }
+                    }
+                }, 100);
+                setTimeout(() => clearInterval(checkDb), 5000);
+            } else if (dbName && currentDb === dbName) {
+                const currentTbl = untrack(() => selectedTable());
+                if (!tblName && currentTbl) {
+                    setSelectedTable(null);
+                } else if (tblName && !currentTbl) {
+                    selectTable(tblName);
+                }
             }
         }
     });
@@ -1337,13 +1743,13 @@ function SpannerView(props) {
     // Breadcrumb — reactive memo tracks signal changes
     const breadcrumbs = createMemo(() => {
         const crumbs = [];
-        crumbs.push({label: 'Instances', onClick: goBackToInstances, active: !selectedInstance()});
+        crumbs.push({ label: 'Instances', onClick: goBackToInstances, active: !selectedInstance() });
         if (selectedInstance()) {
-            crumbs.push({label: selectedInstance(), onClick: goBackToDatabases, active: !selectedDatabase()});
+            crumbs.push({ label: selectedInstance(), onClick: goBackToDatabases, active: !selectedDatabase() });
             if (selectedDatabase()) {
-                crumbs.push({label: selectedDatabase(), onClick: goBackToTables, active: !selectedTable()});
+                crumbs.push({ label: selectedDatabase(), onClick: goBackToTables, active: !selectedTable() });
                 if (selectedTable()) {
-                    crumbs.push({label: selectedTable(), onClick: null, active: true});
+                    crumbs.push({ label: selectedTable(), onClick: null, active: true });
                 }
             }
         }
@@ -1360,7 +1766,7 @@ function SpannerView(props) {
             </Show>
 
             <Show when={subLoading()}>
-	                <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
+                <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
             </Show>
             <Show when={!subLoading()}>
                 {/* Level 4: Table data */}
@@ -1369,14 +1775,26 @@ function SpannerView(props) {
                         <h2 style="margin:0;font-size:16px">{selectedTable()}</h2>
                         <Show when={props.onAdd && tableData() && tableData().columns}>
                             <div style="display:flex;gap:6px">
+                                <button onClick={() => { setDdlModalText(getTableDdl(selectedTable())); setShowDdlModal(true); }}
+                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
+                                    onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
+                                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                                    Show DDL
+                                </button>
                                 <button onClick={() => setShowCsvImport(true)}
-	                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
-                                    onMouseEnter={e => e.currentTarget.style.borderColor='var(--primary)'}
-                                    onMouseLeave={e => e.currentTarget.style.borderColor='var(--border)'}>
+                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
+                                    onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
+                                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
                                     {'\u2191'} Import CSV
                                 </button>
+                                <button onClick={handleAddMockRow}
+                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
+                                    onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
+                                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                                    + Add Mock Row
+                                </button>
                                 <button onClick={() => props.onAdd('Add Spanner Row',
-                                    tableData().columns.map(c => ({name: c, type: 'text'})),
+                                    tableData().columns.map(c => ({ name: c, type: 'text' })),
                                     async (formData) => {
                                         await api.mutate('spanner', 'rows', {
                                             instance: selectedInstance(),
@@ -1388,6 +1806,12 @@ function SpannerView(props) {
                                     }
                                 )} style="padding:6px 12px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:12px">
                                     + Add Row
+                                </button>
+                                <button onClick={() => handleDeleteTable(selectedTable())}
+                                    style="padding:6px 12px;border:1px solid var(--error);border-radius:4px;background:var(--surface);color:var(--error);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
+                                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(234, 67, 53, 0.08)'; }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; }}>
+                                    Delete Table
                                 </button>
                             </div>
                         </Show>
@@ -1421,7 +1845,7 @@ function SpannerView(props) {
                                                                     const columns = tableData().columns;
                                                                     return (
                                                                         <button onClick={() => props.onEdit('Edit Spanner Row',
-                                                                            columns.map(c => ({name: c, type: 'text', value: row[c] != null ? String(row[c]) : ''})),
+                                                                            columns.map(c => ({ name: c, type: 'text', value: row[c] != null ? String(row[c]) : '' })),
                                                                             async (formData) => {
                                                                                 await api.mutate('spanner', 'rows/update', {
                                                                                     instance: selectedInstance(),
@@ -1481,12 +1905,24 @@ function SpannerView(props) {
                             }>
                                 <div class="data-table-wrapper">
                                     <table class="data-table">
-                                        <thead><tr><th>Table Name</th></tr></thead>
+                                        <thead><tr><th>Table Name</th><th style="text-align:right">Actions</th></tr></thead>
                                         <tbody>
                                             <For each={tables}>
                                                 {(tbl) => (
-	                                                    <tr class="clickable-row" onClick={() => selectTable(tbl)} onKeyDown={onActivate(() => selectTable(tbl))} role="button" tabIndex="0">
+                                                    <tr class="clickable-row" onClick={() => selectTable(tbl)} onKeyDown={onActivate(() => selectTable(tbl))} role="button" tabIndex="0">
                                                         <td style={{ "font-weight": "500" }}>{tbl}</td>
+                                                        <td style="text-align:right" onClick={(e) => e.stopPropagation()}>
+                                                            <button class="btn btn-secondary"
+                                                                style="height:24px;font-size:11px;padding:0 8px;margin-right:6px"
+                                                                onClick={() => { setDdlModalText(getTableDdl(tbl)); setShowDdlModal(true); }}>
+                                                                Show DDL
+                                                            </button>
+                                                            <button class="btn btn-secondary"
+                                                                style="height:24px;font-size:11px;padding:0 8px;color:var(--error)"
+                                                                onClick={() => handleDeleteTable(tbl)}>
+                                                                Delete
+                                                            </button>
+                                                        </td>
                                                     </tr>
                                                 )}
                                             </For>
@@ -1519,7 +1955,7 @@ function SpannerView(props) {
                                         {(db) => {
                                             const dbName = db.name?.split('/').pop() || db;
                                             return (
-	                                                <tr class="clickable-row" onClick={() => selectDatabase(db)} onKeyDown={onActivate(() => selectDatabase(db))} role="button" tabIndex="0">
+                                                <tr class="clickable-row" onClick={() => selectDatabase(db)} onKeyDown={onActivate(() => selectDatabase(db))} role="button" tabIndex="0">
                                                     <td style={{ "font-weight": "500" }}>{dbName}</td>
                                                 </tr>
                                             );
@@ -1548,14 +1984,25 @@ function SpannerView(props) {
                                 <thead><tr><th>Instance</th><th>State</th><th>Nodes</th><th>Created</th></tr></thead>
                                 <tbody>
                                     <For each={instances()}>
-                                        {(inst) => (
-	                                            <tr class="clickable-row" onClick={() => selectInstance(inst)} onKeyDown={onActivate(() => selectInstance(inst))} role="button" tabIndex="0">
-                                                <td style={{ "font-weight": "500" }}>{instanceName(inst)}</td>
-                                                <td><span class={`badge ${inst.state === 'READY' ? 'badge-healthy' : 'badge-neutral'}`}>{inst.state || '--'}</span></td>
-                                                <td>{inst.nodeCount || '--'}</td>
-                                                <td>{formatDate(inst.createTime)}</td>
-                                            </tr>
-                                        )}
+                                        {(inst) => {
+                                            const instId = inst.name?.split('/').pop() || '';
+                                            const hasAlias = inst.displayName && inst.displayName !== instId;
+                                            return (
+                                                <tr class="clickable-row" onClick={() => selectInstance(inst)} onKeyDown={onActivate(() => selectInstance(inst))} role="button" tabIndex="0">
+                                                    <td style={{ "font-weight": "500" }}>
+                                                        {inst.displayName || instId || '--'}
+                                                        {hasAlias && (
+                                                            <span style="font-weight: normal; font-size: 11px; color: var(--text-secondary); margin-left: 6px">
+                                                                ({instId})
+                                                            </span>
+                                                        )}
+                                                    </td>
+                                                    <td><span class={`badge ${inst.state === 'READY' ? 'badge-healthy' : 'badge-neutral'}`}>{inst.state || '--'}</span></td>
+                                                    <td>{inst.nodeCount || '--'}</td>
+                                                    <td>{formatDate(inst.createTime)}</td>
+                                                </tr>
+                                            );
+                                        }}
                                     </For>
                                 </tbody>
                             </table>
@@ -1565,17 +2012,17 @@ function SpannerView(props) {
 
                 {/* Create Instance Modal */}
                 <Show when={showCreateInstance()}>
-	                    <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="spanner-create-instance-title" onClick={(e) => { if (e.target === e.currentTarget) setShowCreateInstance(false); }}>
-	                        <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
-	                            <h2 id="spanner-create-instance-title" style="margin-bottom:16px">Create Spanner Instance</h2>
-	                            <Show when={createError()}><div class="alert alert-error" role="alert" style="margin-bottom:12px">{createError()}</div></Show>
-	                            <div style="margin-bottom:16px">
-	                                <label class="form-label" for="spanner-instance-id">Instance ID</label>
-	                                <input id="spanner-instance-id" name="spanner-instance-id" autocomplete="off" type="text" class="form-input form-input-mono" value={createName()} onInput={(e) => setCreateName(e.currentTarget.value)} placeholder="my-instance" />
+                    <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="spanner-create-instance-title" onClick={(e) => { if (e.target === e.currentTarget) setShowCreateInstance(false); }}>
+                        <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
+                            <h2 id="spanner-create-instance-title" style="margin-bottom:16px">Create Spanner Instance</h2>
+                            <Show when={createError()}><div class="alert alert-error" role="alert" style="margin-bottom:12px">{createError()}</div></Show>
+                            <div style="margin-bottom:16px">
+                                <label class="form-label" for="spanner-instance-id">Instance ID</label>
+                                <input id="spanner-instance-id" name="spanner-instance-id" autocomplete="off" type="text" class="form-input form-input-mono" value={createName()} onInput={(e) => setCreateName(e.currentTarget.value)} placeholder="my-instance" />
                             </div>
                             <div style="display:flex;gap:8px;justify-content:flex-end">
                                 <button class="btn btn-secondary" onClick={() => setShowCreateInstance(false)}>Cancel</button>
-	                                <button class="btn btn-primary" onClick={handleCreateInstance} disabled={creating() || !createName().trim()}>{creating() ? 'Creating…' : 'Create'}</button>
+                                <button class="btn btn-primary" onClick={handleCreateInstance} disabled={creating() || !createName().trim()}>{creating() ? 'Creating…' : 'Create'}</button>
                             </div>
                         </div>
                     </div>
@@ -1583,17 +2030,17 @@ function SpannerView(props) {
 
                 {/* Create Database Modal */}
                 <Show when={showCreateDatabase()}>
-	                    <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="spanner-create-database-title" onClick={(e) => { if (e.target === e.currentTarget) setShowCreateDatabase(false); }}>
-	                        <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
-	                            <h2 id="spanner-create-database-title" style="margin-bottom:16px">Create Database in {selectedInstance()}</h2>
-	                            <Show when={createError()}><div class="alert alert-error" role="alert" style="margin-bottom:12px">{createError()}</div></Show>
-	                            <div style="margin-bottom:16px">
-	                                <label class="form-label" for="spanner-database-name">Database Name</label>
-	                                <input id="spanner-database-name" name="spanner-database-name" autocomplete="off" type="text" class="form-input form-input-mono" value={createName()} onInput={(e) => setCreateName(e.currentTarget.value)} placeholder="my-database" />
+                    <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="spanner-create-database-title" onClick={(e) => { if (e.target === e.currentTarget) setShowCreateDatabase(false); }}>
+                        <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
+                            <h2 id="spanner-create-database-title" style="margin-bottom:16px">Create Database in {selectedInstance()}</h2>
+                            <Show when={createError()}><div class="alert alert-error" role="alert" style="margin-bottom:12px">{createError()}</div></Show>
+                            <div style="margin-bottom:16px">
+                                <label class="form-label" for="spanner-database-name">Database Name</label>
+                                <input id="spanner-database-name" name="spanner-database-name" autocomplete="off" type="text" class="form-input form-input-mono" value={createName()} onInput={(e) => setCreateName(e.currentTarget.value)} placeholder="my-database" />
                             </div>
                             <div style="display:flex;gap:8px;justify-content:flex-end">
                                 <button class="btn btn-secondary" onClick={() => setShowCreateDatabase(false)}>Cancel</button>
-	                                <button class="btn btn-primary" onClick={handleCreateDatabase} disabled={creating() || !createName().trim()}>{creating() ? 'Creating…' : 'Create'}</button>
+                                <button class="btn btn-primary" onClick={handleCreateDatabase} disabled={creating() || !createName().trim()}>{creating() ? 'Creating…' : 'Create'}</button>
                             </div>
                         </div>
                     </div>
@@ -1601,19 +2048,35 @@ function SpannerView(props) {
 
                 {/* Create Table Modal */}
                 <Show when={showCreateTable()}>
-	                    <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="spanner-create-table-title" onClick={(e) => { if (e.target === e.currentTarget) setShowCreateTable(false); }}>
-	                        <div class="card modal-card" onClick={(e) => e.stopPropagation()} style="max-width:600px">
-	                            <h2 id="spanner-create-table-title" style="margin-bottom:4px">Create Table in {selectedDatabase()}</h2>
-                            <p style="font-size:12px;color:var(--text-secondary);margin-bottom:16px">Enter a Spanner DDL statement.</p>
-	                            <Show when={createError()}><div class="alert alert-error" role="alert" style="margin-bottom:12px">{createError()}</div></Show>
-	                            <div style="margin-bottom:16px">
-	                                <label class="form-label" for="spanner-ddl-statement">DDL Statement</label>
-	                                <textarea id="spanner-ddl-statement" name="spanner-ddl-statement" autocomplete="off" class="form-input form-input-mono" style="min-height:120px;resize:vertical;font-size:12px" value={createDdl()} onInput={(e) => setCreateDdl(e.currentTarget.value)}
-                                    placeholder={"CREATE TABLE MyTable (\n  Id STRING(36) NOT NULL,\n  Name STRING(100),\n  CreatedAt TIMESTAMP\n) PRIMARY KEY (Id)"} />
+                    <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="spanner-create-table-title" onClick={(e) => { if (e.target === e.currentTarget) setShowCreateTable(false); }}>
+                        <div class="card modal-card spanner-ddl-modal-card" onClick={(e) => e.stopPropagation()}>
+                            <div class="spanner-ddl-modal-header">
+                                <h2 id="spanner-create-table-title" style="margin-bottom:4px">Create Table in {selectedDatabase()}</h2>
+                                <p style="font-size:12px;color:var(--text-secondary);margin-bottom:0">Enter one or more Spanner DDL statements.</p>
                             </div>
-                            <div style="display:flex;gap:8px;justify-content:flex-end">
+                            <div class="spanner-ddl-modal-body">
+                                <Show when={createError()}><div class="alert alert-error spanner-ddl-error" role="alert">{createError()}</div></Show>
+                                <CodeEditor
+                                    value={createDdl()}
+                                    onChange={setCreateDdl}
+                                    dialect="googlesql"
+                                    lineNumbers={true}
+                                    placeholder={"CREATE TABLE MyTable (\n  Id STRING(36) NOT NULL,\n  Name STRING(100),\n  CreatedAt TIMESTAMP\n) PRIMARY KEY (Id)"}
+                                    onRun={handleCreateTable}
+                                    class="sql-editor-fill"
+                                    style={{
+                                        border: '1px solid var(--border)',
+                                        'border-radius': 'var(--radius-sm)',
+                                        overflow: 'auto',
+                                        resize: 'vertical',
+                                        'min-height': '160px',
+                                        flex: '1'
+                                    }}
+                                />
+                            </div>
+                            <div class="spanner-ddl-modal-actions">
                                 <button class="btn btn-secondary" onClick={() => setShowCreateTable(false)}>Cancel</button>
-	                                <button class="btn btn-primary" onClick={handleCreateTable} disabled={creating() || !createDdl().trim()}>{creating() ? 'Executing…' : 'Execute DDL'}</button>
+                                <button class="btn btn-primary" onClick={handleCreateTable} disabled={creating() || !createDdl().trim()}>{creating() ? 'Executing…' : 'Execute DDL'}</button>
                             </div>
                         </div>
                     </div>
@@ -1632,6 +2095,80 @@ function SpannerView(props) {
                     onImportBatch={spannerImportBatch}
                     onImportDone={() => selectTable(selectedTable())}
                 />
+
+                {/* DDL Modal */}
+                <Show when={showDdlModal()}>
+                    <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="spanner-ddl-title" onClick={(e) => { if (e.target === e.currentTarget) setShowDdlModal(false); }}>
+                        <div class="card modal-card" onClick={(e) => e.stopPropagation()} style="width:800px;max-width:90vw">
+                            <h2 id="spanner-ddl-title" style="margin-bottom:4px">Schema DDL for {selectedTable() || 'Table'}</h2>
+                            <p style="font-size:12px;color:var(--text-secondary);margin-bottom:16px">The DDL query used to define this table and its indexes.</p>
+                            <div style="border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:16px;background:var(--sql-editor-gutter)">
+                                <CodeEditor
+                                    value={ddlModalText()}
+                                    dialect="googlesql"
+                                    lineNumbers={true}
+                                    readOnly={true}
+                                    height="300px"
+                                    maxHeight="450px"
+                                />
+                            </div>
+                            <div style="display:flex;justify-content:flex-end">
+                                <button class="btn btn-secondary" onClick={() => setShowDdlModal(false)}>Close</button>
+                            </div>
+                        </div>
+                    </div>
+                </Show>
+
+                {/* Floating Toast Notification */}
+                <Show when={toast()}>
+                    <style>{`
+                        @keyframes slideIn {
+                            from { transform: translateX(120%); opacity: 0; }
+                            to { transform: translateX(0); opacity: 1; }
+                        }
+                    `}</style>
+                    <div style={{
+                        position: 'fixed',
+                        top: '24px',
+                        right: '24px',
+                        'z-index': 9999,
+                        display: 'flex',
+                        'align-items': 'center',
+                        gap: '12px',
+                        padding: '12px 18px',
+                        background: 'var(--surface-overlay, rgba(255, 255, 255, 0.95))',
+                        border: `1px solid ${toast().type === 'success' ? 'var(--success, #2e7d32)' : toast().type === 'error' ? 'var(--error, #d32f2f)' : 'var(--primary, #4285f4)'}`,
+                        'border-left': `4px solid ${toast().type === 'success' ? 'var(--success, #2e7d32)' : toast().type === 'error' ? 'var(--error, #d32f2f)' : 'var(--primary, #4285f4)'}`,
+                        'border-radius': '6px',
+                        'box-shadow': '0 4px 12px rgba(0, 0, 0, 0.15)',
+                        'backdrop-filter': 'blur(8px)',
+                        transition: 'all 0.3s ease',
+                        animation: 'slideIn 0.3s ease-out'
+                    }}>
+                        {/* Icon */}
+                        <Show when={toast().type === 'success'}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="var(--success, #2e7d32)">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                            </svg>
+                        </Show>
+                        <Show when={toast().type === 'info'}>
+                            <div class="loading-spinner" style="width:16px;height:16px;border-width:2px;margin:0" />
+                        </Show>
+                        <Show when={toast().type === 'error'}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="var(--error, #d32f2f)">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+                            </svg>
+                        </Show>
+
+                        {/* Message & Timer */}
+                        <div style="display:flex;flex-direction:column;gap:2px">
+                            <span style="font-weight:500;font-size:13px;color:var(--text)">{toast().message}</span>
+                            <Show when={toast().type === 'info' && toast().elapsed !== undefined}>
+                                <span style="font-size:11px;color:var(--text-secondary)">Elapsed: {toast().elapsed.toFixed(1)}s</span>
+                            </Show>
+                        </div>
+                    </div>
+                </Show>
             </Show>
         </div>
     );
@@ -1736,12 +2273,27 @@ function MemorystoreView(props) {
         const dbs = databases();
         if (!dbs || dbs.length === 0) return;
         const [dbPart, nsPart] = sp;
-        if (dbPart && dbPart.startsWith('db') && selectedDb() === null) {
+        const currentDb = untrack(() => selectedDb());
+        if (dbPart && dbPart.startsWith('db') && currentDb === null) {
             const idx = parseInt(dbPart.slice(2));
             if (!isNaN(idx)) {
                 selectDatabase(idx).then(() => {
                     if (nsPart) setNamespaceFilter(nsPart);
                 });
+            }
+        } else if (!dbPart && currentDb !== null) {
+            setSelectedDb(null);
+            setKeysData(null);
+            setNamespaceFilter('');
+        } else if (dbPart && dbPart.startsWith('db') && currentDb !== null) {
+            const idx = parseInt(dbPart.slice(2));
+            if (currentDb === idx) {
+                const currentNs = untrack(() => namespaceFilter());
+                if (!nsPart && currentNs) {
+                    setNamespaceFilter('');
+                } else if (nsPart && !currentNs) {
+                    setNamespaceFilter(nsPart);
+                }
             }
         }
     });
@@ -1795,8 +2347,8 @@ function MemorystoreView(props) {
                             <tbody>
                                 <For each={databases()}>
                                     {(db) => (
-	                                        <tr onClick={() => selectDatabase(db.index)} onKeyDown={onActivate(() => selectDatabase(db.index))} role="button" tabIndex="0" style={{ cursor: 'pointer' }}
-	                                            class="clickable-row">
+                                        <tr onClick={() => selectDatabase(db.index)} onKeyDown={onActivate(() => selectDatabase(db.index))} role="button" tabIndex="0" style={{ cursor: 'pointer' }}
+                                            class="clickable-row">
                                             <td style={{ "font-weight": "500" }}>
                                                 <span style="color:var(--accent, #4285f4)">db{db.index}</span>
                                             </td>
@@ -1807,10 +2359,12 @@ function MemorystoreView(props) {
                                             </td>
                                             <td>
                                                 <Show when={db.keyCount > 0 && props.onDelete}>
-                                                    <button onClick={(e) => { e.stopPropagation(); props.onDelete('Flush all keys in db' + db.index + '?', async () => {
-                                                        await api.mutate('memorystore', 'flushdb', { db: db.index });
-                                                        if (props.onRefresh) await props.onRefresh();
-                                                    }); }} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Flush DB">Flush</button>
+                                                    <button onClick={(e) => {
+                                                        e.stopPropagation(); props.onDelete('Flush all keys in db' + db.index + '?', async () => {
+                                                            await api.mutate('memorystore', 'flushdb', { db: db.index });
+                                                            if (props.onRefresh) await props.onRefresh();
+                                                        });
+                                                    }} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Flush DB">Flush</button>
                                                 </Show>
                                             </td>
                                         </tr>
@@ -1825,7 +2379,7 @@ function MemorystoreView(props) {
             <Show when={selectedDb() !== null}>
                 {/* Keys view within selected database */}
                 <Show when={subLoading()}>
-	                    <div class="loading-state"><div class="loading-spinner" /> Loading keys…</div>
+                    <div class="loading-state"><div class="loading-spinner" /> Loading keys…</div>
                 </Show>
                 <Show when={!subLoading()}>
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
@@ -1849,10 +2403,10 @@ function MemorystoreView(props) {
                         </div>
                         <Show when={props.onAdd}>
                             <button onClick={() => props.onAdd('Set Key in db' + selectedDb(), [
-                                {name: 'key', type: 'text'},
-                                {name: 'value', type: 'textarea'},
-                                {name: 'type', type: 'select', value: 'string', options: ['string', 'list', 'hash', 'set', 'zset']},
-                                {name: 'ttl', type: 'text'}
+                                { name: 'key', type: 'text' },
+                                { name: 'value', type: 'textarea' },
+                                { name: 'type', type: 'select', value: 'string', options: ['string', 'list', 'hash', 'set', 'zset'] },
+                                { name: 'ttl', type: 'text' }
                             ], async (formData) => {
                                 await api.mutate('memorystore', 'keys', { ...formData, db: selectedDb() });
                                 await refreshKeys();
@@ -1883,10 +2437,10 @@ function MemorystoreView(props) {
                                                     <div style="display:flex;gap:4px">
                                                         <Show when={props.onEdit}>
                                                             <button onClick={() => props.onEdit('Edit Key: ' + k.key, [
-                                                                {name: 'key', type: 'text', value: k.key},
-                                                                {name: 'value', type: 'textarea', value: typeof k.value === 'object' ? JSON.stringify(k.value) : (k.value || '')},
-                                                                {name: 'type', type: 'text', value: k.type || 'string'},
-                                                                {name: 'ttl', type: 'text', value: k.ttl || ''}
+                                                                { name: 'key', type: 'text', value: k.key },
+                                                                { name: 'value', type: 'textarea', value: typeof k.value === 'object' ? JSON.stringify(k.value) : (k.value || '') },
+                                                                { name: 'type', type: 'text', value: k.type || 'string' },
+                                                                { name: 'ttl', type: 'text', value: k.ttl || '' }
                                                             ], async (formData) => {
                                                                 await api.mutate('memorystore', 'keys', { ...formData, db: selectedDb(), _method: 'PUT' });
                                                                 await refreshKeys();
@@ -1951,13 +2505,21 @@ function FirestoreView(props) {
     // Restore navigation from URL subpath
     createEffect(() => {
         const sp = typeof props.subpath === 'function' ? props.subpath() : props.subpath;
-        if (!sp || sp.length === 0) return;
+        if (!sp || sp.length === 0) {
+            setSelectedCollection(null);
+            setDocuments([]);
+            return;
+        }
         const cols = collections();
         if (!cols || cols.length === 0) return;
         const [colId] = sp;
-        if (colId && !selectedCollection()) {
+        const currentCol = untrack(() => selectedCollection());
+        if (colId && !currentCol) {
             const exists = cols.find(c => colName(c) === colId);
             if (exists) selectCollection(colId);
+        } else if (!colId && currentCol) {
+            setSelectedCollection(null);
+            setDocuments([]);
         }
     });
 
@@ -1999,7 +2561,7 @@ function FirestoreView(props) {
                         const name = colName(col);
                         return (
                             <button class={`data-tree-item ${selectedCollection() === name ? 'active' : ''}`} onClick={() => selectCollection(name)}>
-	                                <svg class="data-tree-item-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M2 2h5l2 2h5v10H2V2zm1 1v10h10V5H8.5L6.5 3H3z"/></svg>
+                                <svg class="data-tree-item-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M2 2h5l2 2h5v10H2V2zm1 1v10h10V5H8.5L6.5 3H3z" /></svg>
                                 {name}
                             </button>
                         );
@@ -2013,7 +2575,7 @@ function FirestoreView(props) {
     const ContentArea = () => (
         <div class="data-tree-content">
             <Show when={subLoading()}>
-	                <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
+                <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
             </Show>
             <Show when={!subLoading()}>
                 <Show when={selectedCollection()}>
@@ -2022,14 +2584,14 @@ function FirestoreView(props) {
                         <Show when={props.onAdd}>
                             <div style="display:flex;gap:6px">
                                 <button onClick={() => setShowCsvImport(true)}
-	                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
-                                    onMouseEnter={e => e.currentTarget.style.borderColor='var(--primary)'}
-                                    onMouseLeave={e => e.currentTarget.style.borderColor='var(--border)'}>
+                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
+                                    onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
+                                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
                                     {'\u2191'} Import CSV
                                 </button>
                                 <button onClick={() => props.onAdd('Add Document to ' + selectedCollection(), [
-                                    {name: 'documentId', type: 'text'},
-                                    {name: 'fields', type: 'textarea', value: '{}'}
+                                    { name: 'documentId', type: 'text' },
+                                    { name: 'fields', type: 'textarea', value: '{}' }
                                 ], async (formData) => {
                                     let parsedFields = {};
                                     try { parsedFields = JSON.parse(formData.fields || '{}'); } catch (e) { alert('Invalid JSON in fields: ' + e.message); return; }
@@ -2071,8 +2633,8 @@ function FirestoreView(props) {
                                                                 const docData = {};
                                                                 docFields().forEach(f => { if (doc[f] != null) docData[f] = doc[f]; });
                                                                 const editFields = [
-                                                                    {name: 'documentId', type: 'text', value: doc.__id || doc.id || ''},
-                                                                    {name: 'fields', type: 'textarea', value: JSON.stringify(docData, null, 2)}
+                                                                    { name: 'documentId', type: 'text', value: doc.__id || doc.id || '' },
+                                                                    { name: 'fields', type: 'textarea', value: JSON.stringify(docData, null, 2) }
                                                                 ];
                                                                 props.onEdit('Edit Document', editFields, async (formData) => {
                                                                     let parsedFields = {};
@@ -2111,7 +2673,7 @@ function FirestoreView(props) {
                                 <tbody>
                                     <For each={collections()}>
                                         {(col) => (
-	                                            <tr class="clickable-row" onClick={() => selectCollection(colName(col))} onKeyDown={onActivate(() => selectCollection(colName(col)))} role="button" tabIndex="0">
+                                            <tr class="clickable-row" onClick={() => selectCollection(colName(col))} onKeyDown={onActivate(() => selectCollection(colName(col)))} role="button" tabIndex="0">
                                                 <td style="font-weight:500">{colName(col)}</td>
                                             </tr>
                                         )}
@@ -2212,11 +2774,18 @@ function BigtableView(props) {
     // Restore navigation from URL subpath
     createEffect(() => {
         const sp = typeof props.subpath === 'function' ? props.subpath() : props.subpath;
-        if (!sp || sp.length === 0) return;
+        if (!sp || sp.length === 0) {
+            setSelectedInstance(null);
+            setSelectedTable(null);
+            setRows([]);
+            return;
+        }
         const insts = instances();
         if (!insts || insts.length === 0) return;
         const [instId, tblId] = sp;
-        if (instId && !selectedInstance()) {
+        const currentInst = untrack(() => selectedInstance());
+        const currentTbl = untrack(() => selectedTable());
+        if (instId && !currentInst) {
             const inst = insts.find(i => i.id === instId);
             if (inst) {
                 if (tblId) {
@@ -2224,6 +2793,17 @@ function BigtableView(props) {
                 } else {
                     selectInstance(instId);
                 }
+            }
+        } else if (!instId && currentInst) {
+            setSelectedInstance(null);
+            setSelectedTable(null);
+            setRows([]);
+        } else if (instId && currentInst === instId) {
+            if (!tblId && currentTbl) {
+                setSelectedTable(null);
+                setRows([]);
+            } else if (tblId && !currentTbl) {
+                selectTable(instId, tblId);
             }
         }
     });
@@ -2273,7 +2853,7 @@ function BigtableView(props) {
                         return (
                             <div>
                                 <button class={`data-tree-toggle ${!isOpen() ? 'collapsed' : ''}`} onClick={() => { if (isOpen()) goBackToInstances(); else selectInstance(inst.id); }}>
-	                                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true" focusable="false"><path d="M3 2l4 3-4 3z"/></svg>
+                                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true" focusable="false"><path d="M3 2l4 3-4 3z" /></svg>
                                     {inst.id}
                                 </button>
                                 <Show when={isOpen()}>
@@ -2283,7 +2863,7 @@ function BigtableView(props) {
                                                 const tblId = tbl.id || tbl.name;
                                                 return (
                                                     <button class={`data-tree-item ${selectedTable() === tblId ? 'active' : ''}`} onClick={() => selectTable(inst.id, tblId)}>
-	                                                        <svg class="data-tree-item-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M2 3h12v2H2zm0 4h12v2H2zm0 4h12v2H2z"/></svg>
+                                                        <svg class="data-tree-item-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M2 3h12v2H2zm0 4h12v2H2zm0 4h12v2H2z" /></svg>
                                                         {tblId}
                                                     </button>
                                                 );
@@ -2303,7 +2883,7 @@ function BigtableView(props) {
     const ContentArea = () => (
         <div class="data-tree-content">
             <Show when={subLoading()}>
-	                <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
+                <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
             </Show>
             <Show when={!subLoading()}>
                 {/* Rows */}
@@ -2313,16 +2893,16 @@ function BigtableView(props) {
                         <Show when={props.onAdd}>
                             <div style="display:flex;gap:6px">
                                 <button onClick={() => setShowCsvImport(true)}
-	                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
-                                    onMouseEnter={e => e.currentTarget.style.borderColor='var(--primary)'}
-                                    onMouseLeave={e => e.currentTarget.style.borderColor='var(--border)'}>
+                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
+                                    onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
+                                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
                                     {'\u2191'} Import CSV
                                 </button>
                                 <button onClick={() => props.onAdd('Add Row to ' + selectedTable(), [
-                                    {name: 'rowKey', type: 'text'},
-                                    {name: 'columnFamily', type: 'text'},
-                                    {name: 'column', type: 'text'},
-                                    {name: 'value', type: 'textarea'}
+                                    { name: 'rowKey', type: 'text' },
+                                    { name: 'columnFamily', type: 'text' },
+                                    { name: 'column', type: 'text' },
+                                    { name: 'value', type: 'textarea' }
                                 ], async (formData) => {
                                     await api.mutate('bigtable', 'rows', { table: selectedInstance() + '/' + selectedTable(), ...formData });
                                 })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
@@ -2384,7 +2964,7 @@ function BigtableView(props) {
                                 <tbody>
                                     <For each={currentTables()}>
                                         {(tbl) => (
-	                                            <tr class="clickable-row" onClick={() => selectTable(selectedInstance(), tbl.id || tbl.name)} onKeyDown={onActivate(() => selectTable(selectedInstance(), tbl.id || tbl.name))} role="button" tabIndex="0">
+                                            <tr class="clickable-row" onClick={() => selectTable(selectedInstance(), tbl.id || tbl.name)} onKeyDown={onActivate(() => selectTable(selectedInstance(), tbl.id || tbl.name))} role="button" tabIndex="0">
                                                 <td style="font-weight:500">{tbl.id || tbl.name}</td>
                                                 <td style="font-size:12px;color:var(--text-secondary)">{(tbl.columnFamilies || []).join(', ') || '--'}</td>
                                             </tr>
@@ -2411,7 +2991,7 @@ function BigtableView(props) {
                                 <tbody>
                                     <For each={instances()}>
                                         {(inst) => (
-	                                            <tr class="clickable-row" onClick={() => selectInstance(inst.id)} onKeyDown={onActivate(() => selectInstance(inst.id))} role="button" tabIndex="0">
+                                            <tr class="clickable-row" onClick={() => selectInstance(inst.id)} onKeyDown={onActivate(() => selectInstance(inst.id))} role="button" tabIndex="0">
                                                 <td style="font-weight:500">{inst.id}</td>
                                                 <td style="font-size:12px;color:var(--text-secondary)">{(inst.tables || []).length} table(s)</td>
                                             </tr>
@@ -2466,33 +3046,33 @@ function CrudModal(props) {
         setFormData(prev => ({ ...prev, [name]: value }));
     };
 
-	    return (
-	        <Show when={props.show}>
-	            <div role="dialog" aria-modal="true" aria-labelledby="crud-modal-title" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;overscroll-behavior:contain">
-	                <div style="background:var(--surface);border-radius:8px;padding:24px;min-width:400px;max-width:600px;max-height:80vh;overflow-y:auto;border:1px solid var(--border)">
-	                    <h3 id="crud-modal-title" style="margin:0 0 16px 0;color:var(--text)">{props.title}</h3>
-	                    <For each={props.fields || []}>
-	                        {(field) => {
-                                const fieldId = `crud-field-${String(field.name).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
-                                return (
-                                    <div style="margin-bottom:12px">
-                                        <label for={fieldId} style="display:block;margin-bottom:4px;font-size:12px;color:var(--text-secondary)">{field.name}</label>
-                                        {field.type === 'select' ? (
-                                            <select id={fieldId} name={field.name} value={formData()[field.name] || ''} onChange={e => updateField(field.name, e.target.value)}
-                                                style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px">
-                                                <For each={field.options || []}>{opt => <option value={opt}>{opt}</option>}</For>
-                                            </select>
-                                        ) : field.type === 'textarea' ? (
-                                            <textarea id={fieldId} name={field.name} autocomplete="off" value={formData()[field.name] || ''} onInput={e => updateField(field.name, e.target.value)}
-                                                rows="4" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;font-family:monospace;resize:vertical" />
-                                        ) : (
-                                            <input id={fieldId} name={field.name} autocomplete="off" type="text" value={formData()[field.name] || ''} onInput={e => updateField(field.name, e.target.value)}
-                                                style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px" />
-                                        )}
-                                    </div>
-                                );
-                            }}
-	                    </For>
+    return (
+        <Show when={props.show}>
+            <div role="dialog" aria-modal="true" aria-labelledby="crud-modal-title" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;overscroll-behavior:contain">
+                <div style="background:var(--surface);border-radius:8px;padding:24px;min-width:400px;max-width:600px;max-height:80vh;overflow-y:auto;border:1px solid var(--border)">
+                    <h3 id="crud-modal-title" style="margin:0 0 16px 0;color:var(--text)">{props.title}</h3>
+                    <For each={props.fields || []}>
+                        {(field) => {
+                            const fieldId = `crud-field-${String(field.name).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+                            return (
+                                <div style="margin-bottom:12px">
+                                    <label for={fieldId} style="display:block;margin-bottom:4px;font-size:12px;color:var(--text-secondary)">{field.name}</label>
+                                    {field.type === 'select' ? (
+                                        <select id={fieldId} name={field.name} value={formData()[field.name] || ''} onChange={e => updateField(field.name, e.target.value)}
+                                            style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px">
+                                            <For each={field.options || []}>{opt => <option value={opt}>{opt}</option>}</For>
+                                        </select>
+                                    ) : field.type === 'textarea' ? (
+                                        <textarea id={fieldId} name={field.name} autocomplete="off" value={formData()[field.name] || ''} onInput={e => updateField(field.name, e.target.value)}
+                                            rows="4" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;font-family:monospace;resize:vertical" />
+                                    ) : (
+                                        <input id={fieldId} name={field.name} autocomplete="off" type="text" value={formData()[field.name] || ''} onInput={e => updateField(field.name, e.target.value)}
+                                            style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px" />
+                                    )}
+                                </div>
+                            );
+                        }}
+                    </For>
                     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
                         <button onClick={props.onClose} style="padding:8px 16px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);cursor:pointer">Cancel</button>
                         <button onClick={() => props.onSubmit(formData())} style="padding:8px 16px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer">{props.mode === 'edit' ? 'Save' : 'Create'}</button>
@@ -2505,11 +3085,11 @@ function CrudModal(props) {
 
 // -- Delete Confirmation Component --
 function DeleteConfirmation(props) {
-	    return (
-	        <Show when={props.show}>
-	            <div role="dialog" aria-modal="true" aria-labelledby="delete-confirm-title" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;overscroll-behavior:contain">
-	                <div style="background:var(--surface);border-radius:8px;padding:24px;min-width:350px;border:1px solid var(--border)">
-	                    <h3 id="delete-confirm-title" style="margin:0 0 8px 0;color:var(--text)">Confirm Delete</h3>
+    return (
+        <Show when={props.show}>
+            <div role="dialog" aria-modal="true" aria-labelledby="delete-confirm-title" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;overscroll-behavior:contain">
+                <div style="background:var(--surface);border-radius:8px;padding:24px;min-width:350px;border:1px solid var(--border)">
+                    <h3 id="delete-confirm-title" style="margin:0 0 8px 0;color:var(--text)">Confirm Delete</h3>
                     <p style="color:var(--text-secondary);margin:0 0 16px 0">{props.message || 'Are you sure you want to delete this item?'}</p>
                     <div style="display:flex;gap:8px;justify-content:flex-end">
                         <button onClick={props.onClose} style="padding:8px 16px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);cursor:pointer">Cancel</button>
@@ -2553,7 +3133,7 @@ export default function DataBrowser(props) {
         try {
             const data = await api.health();
             setServiceHealth(data.services || {});
-        } catch (e) {}
+        } catch (e) { }
     };
     loadHealth();
 
@@ -2688,12 +3268,12 @@ export default function DataBrowser(props) {
 
         // Fetched data services
         if (loading()) {
-	            return <div class="loading-state"><div class="loading-spinner" /> Loading…</div>;
+            return <div class="loading-state"><div class="loading-spinner" /> Loading…</div>;
         }
         if (error()) {
             return (
                 <div>
-	                    <div class="alert alert-error" role="alert">{error()}</div>
+                    <div class="alert alert-error" role="alert">{error()}</div>
                     <button class="btn btn-secondary" onClick={() => fetchData(tab)}>Retry</button>
                 </div>
             );
@@ -2721,7 +3301,7 @@ export default function DataBrowser(props) {
     };
 
     return (
-        <div>
+        <div style="padding:16px 24px;overflow-y:auto;flex:1;min-height:0;display:flex;flex-direction:column">
             {/* Service Content — full width */}
             {renderServiceView()}
 

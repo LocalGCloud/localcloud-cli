@@ -252,12 +252,13 @@ export default function CodeEditor(props) {
     onMount(() => {
         const extensions = [
             // Appearance
-            lineNumbers(),
-            highlightActiveLineGutter(),
+            // Appearance
+            props.lineNumbers !== false ? lineNumbers() : [],
+            props.lineNumbers !== false ? highlightActiveLineGutter() : [],
             highlightActiveLine(),
             drawSelection(),
             highlightSpecialChars(),
-            foldGutter(),
+            props.lineNumbers !== false ? foldGutter() : [],
             indentOnInput(),
             bracketMatching(),
             closeBrackets(),
@@ -307,7 +308,7 @@ export default function CodeEditor(props) {
             syntaxHighlighting(highlightStyle),
 
             // Compatibility linter (yellow warnings for unsupported SQL)
-            lintGutter(),
+            props.lineNumbers !== false ? lintGutter() : [],
             createCompatibilityLinter(props.dialect || 'postgresql'),
 
             // Placeholder
@@ -375,6 +376,7 @@ export default function CodeEditor(props) {
                 'min-height': props.height || '100px',
                 'max-height': props.maxHeight || 'none',
                 overflow: 'auto',
+                ...(typeof props.style === 'object' ? props.style : {})
             }}
         />
     );

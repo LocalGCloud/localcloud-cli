@@ -77,7 +77,15 @@ async function postJson(path, body) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
-    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    if (!r.ok) {
+        try {
+            const body = await r.json();
+            throw new Error(body.message || `${r.status} ${r.statusText}`);
+        } catch (e) {
+            if (e.message && !e.message.startsWith('Unexpected')) throw e;
+            throw new Error(`${r.status} ${r.statusText}`);
+        }
+    }
     return r.json();
 }
 
@@ -88,7 +96,13 @@ export const api = {
     env: () => get(appendProject('/_localcloud/env?format=json')),
     reset: () => post(appendProject('/_localcloud/reset')),
     browse: (service, sub) => get(appendProject(`/_localcloud/browse/${service}${sub ? '/' + sub : ''}`)),
-    mutate: (service, operation, data) => postJson(`/_localcloud/mutate/${service}/${operation}`, data),
+    mutate: async (service, operation, data) => {
+        const res = await postJson(`/_localcloud/mutate/${service}/${operation}`, data);
+        if (res && res.error) {
+            throw new Error(res.message || 'Mutation failed');
+        }
+        return res;
+    },
     resetService: (service, restoreSeed) => post(appendProject(`/_localcloud/reset/${service}`), { restore_seed: restoreSeed }),
     export: () => get('/_localcloud/export'),
     // Project management
