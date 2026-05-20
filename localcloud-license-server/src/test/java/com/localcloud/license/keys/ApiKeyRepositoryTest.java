@@ -27,7 +27,7 @@ class ApiKeyRepositoryTest {
         new SchemaInitializer(ds).initialize();
         this.keyRepo = new ApiKeyRepository(ds);
         this.authRepo = new AuthRepository(ds);
-        this.userId = authRepo.createUser("keyholder@example.com");
+        this.userId = authRepo.createUser("keyholder@example.com").userId();
     }
 
     @Test

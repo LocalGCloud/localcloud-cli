@@ -31,7 +31,7 @@ class LicenseValidationTest {
         var deviceTracker = new DeviceTracker(ds);
         var trialRepo = new TrialRepository(ds, 14);
         this.validator = new LicenseValidator(keyRepo, authRepo, deviceTracker, trialRepo);
-        this.userId = authRepo.createUser("validator@example.com");
+        this.userId = authRepo.createUser("validator@example.com").userId();
         authRepo.markEmailVerified("validator@example.com");
         this.activeKey = keyRepo.generateOnlineKey(userId, "pro");
     }

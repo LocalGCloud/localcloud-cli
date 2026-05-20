@@ -152,7 +152,8 @@ class AdminHandlerTest {
         var res = agg(handler.generateKey(Map.of("email", "pro@example.com", "tier", "pro")));
         assertEquals(HttpStatus.OK, res.status());
         var data = parseBody(res);
-        assertTrue(((String) data.get("key")).startsWith("lc_on_"));
+        assertTrue(((String) data.get("key")).startsWith("lco_"),
+            "Key should start with lco_, got: " + data.get("key"));
         assertEquals("pro", data.get("tier"));
         assertEquals("pro@example.com", data.get("email"));
 

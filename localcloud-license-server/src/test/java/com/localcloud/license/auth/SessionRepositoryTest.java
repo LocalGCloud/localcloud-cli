@@ -30,7 +30,7 @@ class SessionRepositoryTest {
 
     @Test
     void createAndValidate_returnsUserId() throws Exception {
-        UUID userId = authRepo.createUser("session_test@example.com");
+        UUID userId = authRepo.createUser("session_test@example.com").userId();
         String token = sessionRepo.createSession(userId);
         assertNotNull(token);
         assertFalse(token.isBlank());
@@ -40,7 +40,7 @@ class SessionRepositoryTest {
 
     @Test
     void expireSession_thenValidate_returnsNull() throws Exception {
-        UUID userId = authRepo.createUser("expire_test@example.com");
+        UUID userId = authRepo.createUser("expire_test@example.com").userId();
         String token = sessionRepo.createSession(userId);
         assertTrue(sessionRepo.expireSession(token));
         assertNull(sessionRepo.validateSession(token));

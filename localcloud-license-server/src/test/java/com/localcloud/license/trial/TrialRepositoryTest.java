@@ -24,7 +24,7 @@ class TrialRepositoryTest {
         this.ds = h2;
         new SchemaInitializer(ds).initialize();
         this.trialRepo = new TrialRepository(ds, 14);
-        this.userId = new AuthRepository(ds).createUser("trial@example.com");
+        this.userId = new AuthRepository(ds).createUser("trial@example.com").userId();
     }
 
     @Test
@@ -35,7 +35,7 @@ class TrialRepositoryTest {
     @Test
     void sameDeviceCannotStartSecondTrial() throws Exception {
         trialRepo.startTrial(userId, "device-fp-xyz");
-        UUID other = new AuthRepository(ds).createUser("other@example.com");
+        UUID other = new AuthRepository(ds).createUser("other@example.com").userId();
         assertFalse(trialRepo.startTrial(other, "device-fp-xyz"));
     }
 

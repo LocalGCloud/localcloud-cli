@@ -20,7 +20,7 @@ import java.util.Base64;
 public final class KeyPairManager {
 
     private static final Logger logger = LoggerFactory.getLogger(KeyPairManager.class);
-    private final KeyPair keyPair;
+    private KeyPair keyPair;
 
     public KeyPairManager() {
         this.keyPair = loadOrGenerate(System.getenv("LOCALCLOUD_LICENSE_PRIVATE_KEY"));
@@ -74,15 +74,6 @@ public final class KeyPairManager {
 
     /** Replaces the active key pair at runtime (used after admin generates a new key). */
     public void setKeyPair(KeyPair kp) {
-        try {
-            var field = KeyPairManager.class.getDeclaredField("keyPair");
-            field.setAccessible(true);
-            var modifiersField = java.lang.reflect.Field.class.getDeclaredField("modifiers");
-            modifiersField.setAccessible(true);
-            modifiersField.setInt(field, field.getModifiers() & ~java.lang.reflect.Modifier.FINAL);
-            field.set(this, kp);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to update key pair", e);
-        }
+        this.keyPair = kp;
     }
 }

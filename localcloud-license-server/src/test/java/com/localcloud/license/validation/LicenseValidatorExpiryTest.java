@@ -39,7 +39,7 @@ class LicenseValidatorExpiryTest {
         var deviceTracker = new DeviceTracker(ds);
         this.trialRepo = new TrialRepository(ds, 14);
         this.validator = new LicenseValidator(keyRepo, authRepo, deviceTracker, trialRepo);
-        this.userId = authRepo.createUser("expiry@example.com");
+        this.userId = authRepo.createUser("expiry@example.com").userId();
         authRepo.markEmailVerified("expiry@example.com");
     }
 
