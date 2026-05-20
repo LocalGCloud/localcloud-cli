@@ -97,27 +97,27 @@ RUN_USER="${LOCALCLOUD_USER:-localcloud}"
 RUN_UID=$(id -u "$RUN_USER" 2>/dev/null) || RUN_UID="$RUN_USER"
 RUN_GID=$(id -g "$RUN_USER" 2>/dev/null) || RUN_GID="$RUN_USER"
 
-# Ensure data directories exist (volume mounts replace build-time dirs)
-mkdir -p /var/lib/localcloud/spanner-data \
-         /var/lib/localcloud/gcs-data \
-         /var/lib/localcloud/pgdata \
-         /var/lib/localcloud/bigquery-data \
-         /var/lib/localcloud/redis-data \
-         /var/lib/localcloud/logs \
-         /var/run/postgresql
+# Ensure data directories exist (volume mounts replace build-time dirs).
+# Create data dirs under /var/lib/localcloud as the runtime user so bind-mount
+# ownership is correct from the start (macOS Docker Desktop does not support
+# chown on bind mounts — the subdirectory inherits the creator's UID).
+gosu "$RUN_USER" mkdir -p /var/lib/localcloud/spanner-data \
+                          /var/lib/localcloud/gcs-data \
+                          /var/lib/localcloud/pgdata \
+                          /var/lib/localcloud/bigquery-data \
+                          /var/lib/localcloud/redis-data \
+                          /var/lib/localcloud/logs
+
+# /var/run/postgresql is on the container filesystem (not a bind mount),
+# so root mkdir + explicit chown works fine here.
+mkdir -p /var/run/postgresql
+chown "$RUN_UID:$RUN_GID" /var/run/postgresql
 
 # Symlink logs into data dir so bind mounts expose them on host
 if [ ! -L /var/log/localcloud ]; then
     rm -rf /var/log/localcloud
     ln -sf /var/lib/localcloud/logs /var/log/localcloud
 fi
-
-# Fix ownership: try chown but don't fail — macOS Docker bind mounts don't support chown.
-# On Linux with named volumes, chown works and ensures localcloud user can write.
-# On macOS with bind mounts, Docker Desktop maps host UID transparently — chown unnecessary.
-chown -R "$RUN_UID:$RUN_GID" /var/log/localcloud \
-                              /var/run/postgresql 2>/dev/null || true
-chown -R "$RUN_UID:$RUN_GID" /var/lib/localcloud 2>/dev/null || true
 
 # Clean up stale PostgreSQL files from unclean shutdown (container kill without stop).
 # postmaster.pid prevents startup; stale sockets block connections.
@@ -141,6 +141,38 @@ if [ "${LOCALCLOUD_ENABLE_SPANNER:-true}" = "true" ]; then
             echo "WARNING: Spanner LevelDB data appears incomplete (has SST files but missing MANIFEST/CURRENT)."
             echo "This usually happens after an unclean shutdown. Data might be corrupted or lost."
             echo "Manual recovery or restore from backup may be required."
+        fi
+        # Reset ID counters in metadata.json to 0 before starting the emulator.
+        # This prevents the emulator from seeding generators to final values *before*
+        # replaying schema DDL. This ensures replayed schemas receive matching IDs (starting from 0)
+        # to correctly read existing LevelDB data, and then generators naturally end up
+        # at correct final counters.
+        METADATA_FILE="$SPANNER_DATA_DIR/metadata.json"
+        if [ -f "$METADATA_FILE" ]; then
+            echo "Resetting Spanner metadata ID counters to 0 to align schema replay..."
+            /usr/local/bin/python3.12 -c "
+import json
+try:
+    with open('$METADATA_FILE', 'r') as f:
+        data = json.load(f)
+    def reset_counters(d):
+        if isinstance(d, dict):
+            for k, v in d.items():
+                if k == 'idCounters' and isinstance(v, dict):
+                    for ck in v:
+                        v[ck] = 0
+                else:
+                    reset_counters(v)
+        elif isinstance(d, list):
+            for item in d:
+                reset_counters(item)
+    reset_counters(data)
+    with open('$METADATA_FILE', 'w') as f:
+        json.dump(data, f, indent=2)
+except Exception as e:
+    import sys
+    print('Failed to reset counters:', e, file=sys.stderr)
+" 2>/dev/null || true
         fi
     fi
 fi
