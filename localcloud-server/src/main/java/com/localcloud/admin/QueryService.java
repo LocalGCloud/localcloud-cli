@@ -951,14 +951,14 @@ public class QueryService {
                     if (errorObj instanceof Map) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> err = (Map<String, Object>) errorObj;
-                        return errorResponse(String.valueOf(err.getOrDefault("message", errorBody)));
+                        return errorResponse(MutateService.extractDdlError(String.valueOf(err.getOrDefault("message", errorBody))));
                     }
                     // Try flat {"code":N,"message":"..."}
                     if (errorResp.containsKey("message")) {
-                        return errorResponse(String.valueOf(errorResp.get("message")));
+                        return errorResponse(MutateService.extractDdlError(String.valueOf(errorResp.get("message"))));
                     }
                 } catch (Exception ignored) {}
-                return errorResponse(errorBody);
+                return errorResponse(MutateService.extractDdlError(errorBody));
             }
 
             String msg = statements.size() == 1

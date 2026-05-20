@@ -90,6 +90,83 @@ public class MutateService {
         return "http://localhost:" + def.port();
     }
 
+    /**
+     * Extract the concise error from a verbose Spanner DDL error message.
+     * The emulator returns messages like:
+     *   "Error parsing Spanner DDL statement: CREATE TABLE ... (full DDL) ... : Syntax error on line 6, column 32: ..."
+     * This extracts just the "Syntax error on line 6, column 32: ..." part.
+     */
+    static String extractDdlError(String message) {
+        if (message == null) return "DDL operation failed";
+        if (message.isBlank()) return "DDL operation failed";
+
+        String knownIssue = knownDdlIssue(message);
+        if (knownIssue != null) {
+            return "DDL error: " + knownIssue;
+        }
+
+        // Look for "Syntax error on line" — the actual error is at the end
+        int syntaxIdx = message.lastIndexOf("Syntax error on line");
+        if (syntaxIdx > 0) {
+            return "DDL " + message.substring(syntaxIdx);
+        }
+
+        // Look for other specific emulator error patterns at the end
+        // e.g., "Duplicate name in schema: TableName."
+        int dupIdx = message.lastIndexOf("Duplicate name in schema:");
+        if (dupIdx > 0) {
+            return "DDL error: " + message.substring(dupIdx);
+        }
+
+        // Avoid returning full DDL dumps when the emulator only reports its parser prefix.
+        String prefix = "Error parsing Spanner DDL statement: ";
+        if (message.startsWith(prefix)) {
+            return genericDdlParseError();
+        }
+
+        // If the message is too long (contains full DDL dump), truncate it
+        if (message.length() > 500) {
+            // Find the last ": " which typically precedes the actual error
+            int lastColon = message.lastIndexOf(": ");
+            if (lastColon > 0 && lastColon < message.length() - 5) {
+                String tail = message.substring(lastColon + 2).trim();
+                String upperTail = tail.toUpperCase();
+                if (!tail.isEmpty()
+                        && tail.length() > 5
+                        && !upperTail.startsWith("CREATE TABLE")
+                        && !upperTail.startsWith("CREATE INDEX")
+                        && !upperTail.startsWith("CREATE UNIQUE INDEX")) {
+                    return "DDL error: " + tail;
+                }
+            }
+            return genericDdlParseError();
+        }
+
+        return message;
+    }
+
+    private static String knownDdlIssue(String message) {
+        String upper = message.toUpperCase();
+        if (upper.contains("ARRAY<<")) {
+            return "ARRAY types use one '<'. Use ARRAY<STRING(MAX)> instead of ARRAY<<STRING(20)>.";
+        }
+        if (upper.matches("(?s).*\\bARRAY\\s*<\\s*STRING\\s*\\(\\s*\\d+\\s*\\)\\s*>.*")) {
+            return "Spanner array element STRING types should use STRING(MAX), for example ARRAY<STRING(MAX)>.";
+        }
+        if (upper.matches("(?s).*\\bCONSTRAINT\\s+\\S+\\s+PRIMARY\\s+KEY\\b.*")) {
+            return "named PRIMARY KEY constraints are not supported here. Put PRIMARY KEY (...) after the CREATE TABLE column list.";
+        }
+        if (upper.contains("UNIQUE NONNULL")) {
+            return "UNIQUE NONNULL is not Spanner DDL syntax. Use CREATE UNIQUE INDEX ... ON Table(Column) instead.";
+        }
+        return null;
+    }
+
+    private static String genericDdlParseError() {
+        return "Error parsing DDL statement. Check your Spanner syntax. Common issues: ARRAY<STRING> should be ARRAY<STRING(MAX)>, "
+                + "named CONSTRAINT PRIMARY KEY is not supported here, and UNIQUE NONNULL is not valid syntax.";
+    }
+
     // ========== Dispatcher endpoints ==========
 
     @Post("/{service}/{operation}")
@@ -297,6 +374,63 @@ public class MutateService {
                 .timeout(Duration.ofSeconds(30))
                 .build();
             HttpResponse<String> patchResponse = httpClient.send(patchRequest, BodyHandlers.ofString());
+
+            if (patchResponse.statusCode() >= 400) {
+                String errorBody = patchResponse.body();
+                String errorMessage;
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> errorResp = mapper.readValue(errorBody, Map.class);
+                    Object errorObj = errorResp.get("error");
+                    if (errorObj instanceof Map) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> err = (Map<String, Object>) errorObj;
+                        errorMessage = String.valueOf(err.getOrDefault("message", errorBody));
+                    } else if (errorResp.containsKey("message")) {
+                        errorMessage = String.valueOf(errorResp.get("message"));
+                    } else {
+                        errorMessage = errorBody;
+                    }
+                } catch (Exception ignored) {
+                    errorMessage = errorBody;
+                }
+                logger.warn("Spanner DDL failed (HTTP {}): {}", patchResponse.statusCode(), errorMessage);
+                return mapper.writeValueAsString(Map.of("error", true, "message", extractDdlError(errorMessage)));
+            }
+
+            // Wait for the operation to complete (Spanner emulator operations are usually fast)
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> opMap = mapper.readValue(patchResponse.body(), Map.class);
+                String opName = (String) opMap.get("name");
+                if (opName != null) {
+                    long start = System.currentTimeMillis();
+                    while (System.currentTimeMillis() - start < 5000) {
+                        HttpRequest opRequest = HttpRequest.newBuilder()
+                            .uri(URI.create(spannerBase + "/v1/" + opName))
+                            .GET()
+                            .timeout(Duration.ofSeconds(2))
+                            .build();
+                        HttpResponse<String> opResponse = httpClient.send(opRequest, BodyHandlers.ofString());
+                        if (opResponse.statusCode() == 200) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> opStatus = mapper.readValue(opResponse.body(), Map.class);
+                            if (Boolean.TRUE.equals(opStatus.get("done"))) {
+                                if (opStatus.containsKey("error")) {
+                                    @SuppressWarnings("unchecked")
+                                    Map<String, Object> err = (Map<String, Object>) opStatus.get("error");
+                                    String errMsg = String.valueOf(err.getOrDefault("message", "DDL operation failed"));
+                                    return mapper.writeValueAsString(Map.of("error", true, "message", extractDdlError(errMsg)));
+                                }
+                                break;
+                            }
+                        }
+                        Thread.sleep(100);
+                    }
+                }
+            } catch (Exception e) {
+                logger.warn("Failed to poll Spanner DDL operation status: {}", e.getMessage());
+            }
 
             return mapper.writeValueAsString(Map.of("status", "executed", "statements", statements.size(),
                 "response", mapper.readValue(patchResponse.body(), Object.class)));
