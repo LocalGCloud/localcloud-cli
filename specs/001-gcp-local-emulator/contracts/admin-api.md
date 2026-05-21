@@ -216,3 +216,111 @@ GET /_localcloud/browse/monitoring/timeseries?metric_type=custom.googleapis.com/
   ]
 }
 ```
+
+### Spanner Query History
+
+```
+GET /_localcloud/query-history?service=spanner&limit=50&offset=0
+```
+
+**Query Parameters**:
+- `service` (string, optional): Filter by service (only `spanner` currently supported)
+- `limit` (integer, default 50, max 500): Number of entries
+- `offset` (integer, default 0): Pagination offset
+
+**Response** (200 OK):
+```json
+{
+  "entries": [
+    {
+      "id": 1,
+      "sql": "SELECT * FROM Users WHERE id = @param",
+      "success": true,
+      "duration_ms": 15,
+      "row_count": 1,
+      "instance": "my-instance",
+      "database": "my-db",
+      "executed_at": "2026-05-20T10:30:00.123456Z",
+      "error_message": null
+    }
+  ],
+  "total": 42,
+  "has_more": false
+}
+```
+
+Queries are recorded automatically when executed via `POST /_localcloud/query`
+or `POST /_localcloud/query/batch`. Storage is PostgreSQL-backed via
+`QueryHistoryRepository`.
+
+### Spanner Database Stats (System Insights)
+
+```
+GET /_localcloud/browse/spanner/instances/{instance}/{database}/stats
+```
+
+**Response** (200 OK):
+```json
+{
+  "database": "my-db",
+  "instance": "my-instance",
+  "tableCount": 5,
+  "indexCount": 7,
+  "searchIndexCount": 1,
+  "vectorIndexCount": 0,
+  "totalObjects": 13,
+  "details": [
+    { "type": "TABLE", "name": "Users", "columnCount": 8, "hasInterleaved": false },
+    { "type": "INDEX", "name": "UsersByName" },
+    { "type": "SEARCH_INDEX", "name": "UsersSearchIdx" },
+    { "type": "VECTOR_INDEX", "name": "ItemsEmbeddingIdx" }
+  ]
+}
+```
+
+Stats are computed by parsing the Spanner emulator's DDL response — no
+additional storage required.
+
+### GraphQL API
+
+```
+POST /graphql
+Content-Type: application/json
+
+{
+  "query": "{ spanner { instances } }"
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "data": {
+    "spanner": {
+      "instances": [ ... ]
+    }
+  }
+}
+```
+
+The GraphQL endpoint uses `armeria-graphql` (wrapping `graphql-java`) and
+supports queries across Spanner, BigQuery, Logging, Monitoring, and Query
+History. See the GraphQL schema for available types and fields. WebSocket
+subscriptions are supported via graphql-protocol.
+
+### Spanner IAM Stubs
+
+Instance-level:
+- `POST /v1/projects/{project}/instances/{instance}:setIamPolicy`
+- `GET /v1/projects/{project}/instances/{instance}:getIamPolicy`
+- `POST /v1/projects/{project}/instances/{instance}:testIamPermissions`
+
+Database-level:
+- `POST /v1/projects/{project}/instances/{instance}/databases/{database}:setIamPolicy`
+- `GET /v1/projects/{project}/instances/{instance}/databases/{database}:getIamPolicy`
+- `POST /v1/projects/{project}/instances/{instance}/databases/{database}:testIamPermissions`
+
+All endpoints return permissive responses: `getIamPolicy` returns a default
+bindings with `roles/spanner.admin`, and `testIamPermissions` grants every
+requested permission. These stubs exist to unblock SDK code that requires IAM
+checks before accessing Spanner resources.
