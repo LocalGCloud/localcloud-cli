@@ -132,6 +132,19 @@ export const api = {
     gcsFileSchema: (bucket, object) => get(appendProject(`/_localcloud/gcs/file-schema?bucket=${encodeURIComponent(bucket)}&object=${encodeURIComponent(object)}`)),
     // Usage metrics (persistent cumulative counts)
     usage: () => get(appendProject('/_localcloud/usage')),
+    // Spanner system insights / per-database statistics
+    spannerStats: (instance, database) =>
+        get(appendProject(`/_localcloud/browse/spanner/instances/${encodeURIComponent(instance)}/${encodeURIComponent(database)}/stats`)),
+    // Query execution history
+    queryHistory: (service, limit, offset) => {
+        let url = appendProject('/_localcloud/query-history');
+        const params = [];
+        if (service) params.push(`service=${encodeURIComponent(service)}`);
+        if (limit !== undefined) params.push(`limit=${limit}`);
+        if (offset !== undefined) params.push(`offset=${offset}`);
+        if (params.length) url += (url.includes('?') ? '&' : '?') + params.join('&');
+        return get(url);
+    },
     // Workflow env vars
     workflowEnvVars: (preset) => get(appendProject(`/_localcloud/workflow-env${preset ? '?preset=' + encodeURIComponent(preset) : ''}`)),
     workflowEnvVarsAll: () => get(appendProject('/_localcloud/workflow-env?all=true')),

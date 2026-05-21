@@ -54,6 +54,7 @@ public class QueryService {
     private final LocalCloudConfig config;
     private final PostgresDataSource dataSource;
     private final UsageMetricsRepository usageMetrics;
+    private final QueryHistoryRepository queryHistoryRepository;
     private final HttpClient httpClient;
     private final ObjectMapper mapper;
 
@@ -63,10 +64,12 @@ public class QueryService {
     private final int bigtablePort;
 
     public QueryService(LocalCloudConfig config, PostgresDataSource dataSource,
-                        ServiceRegistry registry, UsageMetricsRepository usageMetrics) {
+                        ServiceRegistry registry, UsageMetricsRepository usageMetrics,
+                        QueryHistoryRepository queryHistoryRepository) {
         this.config = config;
         this.dataSource = dataSource;
         this.usageMetrics = usageMetrics;
+        this.queryHistoryRepository = queryHistoryRepository;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .version(HttpClient.Version.HTTP_1_1)
@@ -377,6 +380,10 @@ public class QueryService {
             }
 
             long elapsed = System.currentTimeMillis() - startTime;
+            String batchLabel = "Batch: " + statements.size() + " statements";
+            queryHistoryRepository.record(projectId, "spanner", batchLabel, instance, database,
+                    elapsed, statements.size(), failed == 0,
+                    failed > 0 ? failed + " of " + statements.size() + " failed" : null);
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("results", results);
             result.put("succeeded", succeeded);
@@ -388,6 +395,9 @@ public class QueryService {
 
         } catch (Exception e) {
             String errMsg = e.getMessage() != null ? e.getMessage() : "Batch execution failed";
+            queryHistoryRepository.record(projectId, "spanner",
+                    "Batch: " + statements.size() + " statements", instance, database,
+                    System.currentTimeMillis() - startTime, 0, false, errMsg);
             logger.error("Spanner batch failed: {}", errMsg, e);
             return errorResponse(enrichErrorMessage("spanner", errMsg));
         } finally {
@@ -885,6 +895,8 @@ public class QueryService {
             }
 
             long elapsed = System.currentTimeMillis() - startTime;
+            queryHistoryRepository.record(projectId, "spanner", sql, instance, database,
+                    elapsed, rows.size(), true, null);
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("columns", columns);
             result.put("rows", rows);
@@ -899,6 +911,8 @@ public class QueryService {
                     mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
 
         } catch (Exception e) {
+            queryHistoryRepository.record(projectId, "spanner", sql, instance, database,
+                    System.currentTimeMillis() - startTime, 0, false, e.getMessage());
             logger.warn("Spanner query failed: {}", e.getMessage());
             return errorResponse(enrichErrorMessage("spanner", e.getMessage()));
         } finally {
@@ -1313,6 +1327,47 @@ public class QueryService {
     }
 
     // ─── Schema endpoint ───────────────────────────────────────────────
+
+    /**
+     * Return query execution history for the SQL Editor.
+     * Supports optional service filter, pagination via limit/offset params.
+     */
+    @Get("/query-history")
+    public HttpResponse queryHistory(ServiceRequestContext ctx) {
+        try {
+            String project = ctx.queryParams().get("project");
+            String projectId = (project != null && !project.isBlank()) ? project : config.getProjectId();
+            String service = ctx.queryParams().get("service");
+            int limit = Math.min(500, Math.max(1, parseIntOrDefault(ctx.queryParams().get("limit"), 50)));
+            int offset = Math.max(0, parseIntOrDefault(ctx.queryParams().get("offset"), 0));
+
+            List<Map<String, Object>> entries = queryHistoryRepository.list(projectId, service, limit, offset);
+
+            int total = queryHistoryRepository.count(projectId, service);
+            boolean hasMore = (offset + limit) < total;
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of(
+                            "entries", entries, "total", total, "has_more", hasMore)));
+        } catch (Exception e) {
+            logger.warn("Failed to list query history: {}", e.getMessage());
+            try {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
+                        mapper.writeValueAsString(Map.of("error", "Failed to list query history: " + e.getMessage())));
+            } catch (Exception je) {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.PLAIN_TEXT_UTF_8,
+                        "Failed to list query history");
+            }
+        }
+    }
+
+    private int parseIntOrDefault(String value, int defaultVal) {
+        if (value == null || value.isBlank()) return defaultVal;
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return defaultVal;
+        }
+    }
 
     /**
      * Return table schema for a service (used by the SQL Editor for autocomplete).

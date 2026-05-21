@@ -1158,6 +1158,71 @@ function SpannerView(props) {
     const [ddlModalText, setDdlModalText] = createSignal('');
     const [toast, setToast] = createSignal(null);
 
+    // Sub-tab navigation: 'browse' | 'history' | 'stats'
+    const [activeSubTab, setActiveSubTab] = createSignal('browse');
+    const [historyEntries, setHistoryEntries] = createSignal([]);
+    const [historyLoading, setHistoryLoading] = createSignal(false);
+    const [historyOffset, setHistoryOffset] = createSignal(0);
+    const [historyTotal, setHistoryTotal] = createSignal(0);
+    const [historyHasMore, setHistoryHasMore] = createSignal(false);
+    let historyFetchId = 0;
+
+    const [statsData, setStatsData] = createSignal(null);
+    const [statsLoading, setStatsLoading] = createSignal(false);
+
+    // Auto-fetch stats when database changes to prevent stale data
+    createEffect(() => {
+        const inst = selectedInstance();
+        const db = selectedDatabase();
+        if (inst && db && activeSubTab() === 'stats') {
+            fetchSpannerStats();
+        }
+    });
+
+    const fetchSpannerStats = async () => {
+        const inst = selectedInstance();
+        const db = selectedDatabase();
+        if (!inst || !db) return;
+        setStatsLoading(true);
+        setStatsData(null);
+        try {
+            const result = await api.spannerStats(inst, db);
+            setStatsData(result);
+        } catch (e) {
+            setStatsData(null);
+        } finally {
+            setStatsLoading(false);
+        }
+    };
+
+    const fetchQueryHistory = async (offset = 0) => {
+        const id = ++historyFetchId;
+        setHistoryLoading(true);
+        try {
+            const resp = await api.queryHistory('spanner', 50, offset);
+            if (id === historyFetchId) {
+                setHistoryEntries(resp.entries || []);
+                setHistoryTotal(resp.total || 0);
+                setHistoryHasMore(resp.has_more || false);
+                setHistoryOffset(offset);
+            }
+        } catch (e) {
+            if (id === historyFetchId) {
+                setHistoryEntries([]);
+                setHistoryTotal(0);
+                setHistoryHasMore(false);
+            }
+        } finally {
+            if (id === historyFetchId) {
+                setHistoryLoading(false);
+            }
+        }
+    };
+
+    const loadMoreHistory = () => {
+        fetchQueryHistory(historyOffset() + 50);
+    };
+
     // Extract column definition block between first ( and its matching closing )
     const extractColumnsDef = (stmt) => {
         const start = stmt.indexOf('(');
@@ -1758,6 +1823,18 @@ function SpannerView(props) {
 
     const Breadcrumb = () => <DataBreadcrumb crumbs={breadcrumbs()} />;
 
+    const subTabStyle = (tab) => ({
+        padding: '6px 14px',
+        border: 'none',
+        borderRadius: '4px',
+        cursor: 'pointer',
+        fontSize: '13px',
+        fontWeight: activeSubTab() === tab ? '600' : '400',
+        background: activeSubTab() === tab ? 'var(--primary)' : 'var(--surface)',
+        color: activeSubTab() === tab ? '#fff' : 'var(--text-secondary)',
+        transition: 'background 0.15s, color 0.15s',
+    });
+
     return (
         <div>
             {/* Breadcrumb — always visible when drilled in */}
@@ -1765,6 +1842,226 @@ function SpannerView(props) {
                 <Breadcrumb />
             </Show>
 
+            {/* Sub-tab navigation */}
+            <div style="display:flex;gap:8px;margin-bottom:12px;margin-top:8px">
+                <button style={subTabStyle('browse')} onClick={() => setActiveSubTab('browse')}>Browse</button>
+                <button style={subTabStyle('history')} onClick={() => { setActiveSubTab('history'); fetchQueryHistory(); }}>History</button>
+                <button style={subTabStyle('stats')} onClick={() => { setActiveSubTab('stats'); fetchSpannerStats(); }}
+                    disabled={!selectedDatabase()}
+                    title={selectedDatabase() ? 'View database statistics' : 'Select a database first'}>Stats</button>
+            </div>
+
+            {/* Query History Panel */}
+            <Show when={activeSubTab() === 'history'}>
+                <Show when={historyLoading()}>
+                    <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
+                </Show>
+                <Show when={!historyLoading()}>
+                    <Show when={historyEntries().length === 0}>
+                        <div style="padding:24px;text-align:center;color:var(--text-secondary);font-size:14px">
+                            No query history yet. Run a Spanner SQL query to see it here.
+                        </div>
+                    </Show>
+                    <Show when={historyEntries().length > 0}>
+                        <div style="overflow-x:auto">
+                            <table style="width:100%;border-collapse:collapse;font-size:13px">
+                                <thead>
+                                    <tr style="border-bottom:2px solid var(--border)">
+                                        <th style="padding:8px 10px;text-align:left;white-space:nowrap">Time</th>
+                                        <th style="padding:8px 10px;text-align:left">SQL</th>
+                                        <th style="padding:8px 10px;text-align:left">Database</th>
+                                        <th style="padding:8px 10px;text-align:right;white-space:nowrap">Duration</th>
+                                        <th style="padding:8px 10px;text-align:right;white-space:nowrap">Rows</th>
+                                        <th style="padding:8px 10px;text-align:center;white-space:nowrap">Status</th>
+                                        <th style="padding:8px 10px;text-align:center;white-space:nowrap">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <For each={historyEntries()}>
+                                        {(entry) => (
+                                            <tr style="border-bottom:1px solid var(--border);transition:background 0.1s"
+                                                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-secondary)'}
+                                                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                                                <td style="padding:8px 10px;white-space:nowrap;color:var(--text-secondary);font-size:12px">
+                                                    {entry.executed_at ? entry.executed_at.replace('T', ' ').substring(0, 19) : ''}
+                                                </td>
+                                                <td style="padding:8px 10px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;font-size:12px">
+                                                    {entry.sql}
+                                                </td>
+                                                <td style="padding:8px 10px;white-space:nowrap;color:var(--text-secondary);font-size:12px">
+                                                    {entry.database || '-'}
+                                                </td>
+                                                <td style="padding:8px 10px;text-align:right;white-space:nowrap;font-family:monospace;font-size:12px">
+                                                    {entry.duration_ms > 1000 ? (entry.duration_ms / 1000).toFixed(1) + 's' : entry.duration_ms + 'ms'}
+                                                </td>
+                                                <td style="padding:8px 10px;text-align:right;white-space:nowrap;font-family:monospace;font-size:12px">
+                                                    {entry.row_count}
+                                                </td>
+                                                <td style="padding:8px 10px;text-align:center">
+                                                    <span style={{
+                                                        display:'inline-block',
+                                                        padding:'2px 8px',
+                                                        borderRadius:'10px',
+                                                        fontSize:'11px',
+                                                        fontWeight:'600',
+                                                        background: entry.success ? 'rgba(52,199,89,0.15)' : 'rgba(255,69,58,0.15)',
+                                                        color: entry.success ? '#34C759' : '#FF453A',
+                                                    }}>
+                                                        {entry.success ? 'OK' : 'FAIL'}
+                                                    </span>
+                                                </td>
+                                                <td style="padding:8px 10px;text-align:center">
+                                                    <Show when={entry.success && !entry.sql.startsWith('Batch:')}>
+                                                        <button onClick={() => {
+                                                            setActiveSubTab('browse');
+                                                            // Set SQL in the parent's query editor if available
+                                                            if (props.onSetQuery) props.onSetQuery(entry.sql);
+                                                        }} style={{
+                                                            padding:'4px 10px',
+                                                            border:'1px solid var(--border)',
+                                                            borderRadius:'4px',
+                                                            background:'var(--surface)',
+                                                            color:'var(--primary)',
+                                                            cursor:'pointer',
+                                                            fontSize:'11px',
+                                                            transition:'border-color 0.15s',
+                                                        }}
+                                                            onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
+                                                            onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                                                            Rerun
+                                                        </button>
+                                                    </Show>
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </For>
+                                </tbody>
+                            </table>
+                        </div>
+                        {/* Pagination controls */}
+                        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;font-size:13px;color:var(--text-secondary)">
+                            <span>Showing {historyEntries().length} of {historyTotal()} entries</span>
+                            <Show when={historyHasMore()}>
+                                <button onClick={loadMoreHistory} style={{
+                                    padding:'6px 16px',
+                                    border:'1px solid var(--border)',
+                                    borderRadius:'4px',
+                                    background:'var(--surface)',
+                                    color:'var(--primary)',
+                                    cursor:'pointer',
+                                    fontSize:'13px',
+                                    fontWeight:'500',
+                                    transition:'border-color 0.15s',
+                                }}
+                                    onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
+                                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                                    Load More
+                                </button>
+                            </Show>
+                        </div>
+                    </Show>
+                </Show>
+            </Show>
+
+            {/* Stats Panel */}
+            <Show when={activeSubTab() === 'stats'}>
+                <Show when={statsLoading()}>
+                    <div class="loading-state"><div class="loading-spinner" /> Loading stats…</div>
+                </Show>
+                <Show when={!statsLoading()}>
+                    <Show when={!statsData()}>
+                        <div style="padding:24px;text-align:center;color:var(--text-secondary);font-size:14px">
+                            Select a database and click Stats to view statistics.
+                        </div>
+                    </Show>
+                    <Show when={statsData()}>
+                        {/* Summary cards */}
+                        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:24px">
+                            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:16px;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
+                                <span style="font-size:28px;font-weight:700;color:var(--accent,#4285f4)">{statsData().tableCount}</span>
+                                <span style="font-size:12px;color:var(--text-secondary)">Tables</span>
+                            </div>
+                            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:16px;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
+                                <span style="font-size:28px;font-weight:700;color:var(--text)">{statsData().indexCount}</span>
+                                <span style="font-size:12px;color:var(--text-secondary)">Indexes</span>
+                            </div>
+                            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:16px;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
+                                <span style="font-size:28px;font-weight:700;color:#34A853">{statsData().searchIndexCount}</span>
+                                <span style="font-size:12px;color:var(--text-secondary)">Search Indexes</span>
+                            </div>
+                            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:16px;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
+                                <span style="font-size:28px;font-weight:700;color:#FBBC04">{statsData().vectorIndexCount}</span>
+                                <span style="font-size:12px;color:var(--text-secondary)">Vector Indexes</span>
+                            </div>
+                            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:16px;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
+                                <span style="font-size:28px;font-weight:700;color:var(--text)">{statsData().totalObjects}</span>
+                                <span style="font-size:12px;color:var(--text-secondary)">Total Objects</span>
+                            </div>
+                        </div>
+
+                        {/* Detail table */}
+                        <Show when={statsData().details && statsData().details.length > 0}>
+                            <h3 style="font-size:14px;margin:0 0 8px 0;color:var(--text-secondary)">Objects</h3>
+                            <div class="data-table-wrapper">
+                                <table class="data-table" style="font-size:13px">
+                                    <thead>
+                                        <tr>
+                                            <th>Type</th>
+                                            <th>Name</th>
+                                            <th style="text-align:right">Columns</th>
+                                            <th style="text-align:center">Interleaved</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <For each={statsData().details}>
+                                            {(item) => (
+                                                <tr>
+                                                    <td>
+                                                        <span style={{
+                                                            display:'inline-block',
+                                                            padding:'2px 8px',
+                                                            borderRadius:'10px',
+                                                            fontSize:'11px',
+                                                            fontWeight:'600',
+                                                            background: item.type === 'TABLE' ? 'rgba(66,133,244,0.15)' :
+                                                                item.type === 'SEARCH_INDEX' ? 'rgba(52,168,83,0.15)' :
+                                                                item.type === 'VECTOR_INDEX' ? 'rgba(251,188,4,0.15)' :
+                                                                'rgba(128,128,128,0.15)',
+                                                            color: item.type === 'TABLE' ? '#4285f4' :
+                                                                item.type === 'SEARCH_INDEX' ? '#34A853' :
+                                                                item.type === 'VECTOR_INDEX' ? '#FBBC04' :
+                                                                '#808080',
+                                                        }}>
+                                                            {item.type === 'TABLE' ? 'TABLE' :
+                                                             item.type === 'SEARCH_INDEX' ? 'SEARCH' :
+                                                             item.type === 'VECTOR_INDEX' ? 'VECTOR' :
+                                                             item.type}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{fontWeight:'500', fontFamily:'monospace', fontSize:'12px'}}>{item.name}</td>
+                                                    <td style={{textAlign:'right'}}>
+                                                        {item.columnCount != null ? item.columnCount : '-'}
+                                                    </td>
+                                                    <td style={{textAlign:'center'}}>
+                                                        {item.hasInterleaved != null
+                                                            ? (item.hasInterleaved
+                                                                ? <span style={{color:'#34A853', fontSize:'14px'}}>&#10003;</span>
+                                                                : <span style={{color:'var(--text-tertiary)', fontSize:'14px'}}>&#8212;</span>)
+                                                            : '-'}
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </For>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </Show>
+                    </Show>
+                </Show>
+            </Show>
+
+            {/* Browse Panel */}
+            <Show when={activeSubTab() === 'browse'}>
             <Show when={subLoading()}>
                 <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
             </Show>
@@ -2169,6 +2466,7 @@ function SpannerView(props) {
                         </div>
                     </div>
                 </Show>
+            </Show>
             </Show>
         </div>
     );

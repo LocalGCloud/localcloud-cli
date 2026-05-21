@@ -253,6 +253,24 @@ public class SchemaManager {
                 ")"
             );
 
+            // Query history: tracks SQL queries executed via the query console
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS query_history (" +
+                "    id BIGSERIAL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    service VARCHAR(64) NOT NULL," +
+                "    sql TEXT NOT NULL," +
+                "    instance VARCHAR(255)," +
+                "    database_name VARCHAR(255)," +
+                "    duration_ms BIGINT DEFAULT 0," +
+                "    row_count INT DEFAULT 0," +
+                "    success BOOLEAN DEFAULT TRUE," +
+                "    error_message TEXT," +
+                "    executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                ")"
+            );
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_query_history_project ON query_history (project_id, service, executed_at DESC)");
+
             // Service routing: per-service local/remote mode configuration
             stmt.execute(
                 "CREATE TABLE IF NOT EXISTS service_routing (" +

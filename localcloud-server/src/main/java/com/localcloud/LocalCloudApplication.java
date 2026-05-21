@@ -7,6 +7,7 @@ import java.util.Map;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.server.Route;
 import com.linecorp.armeria.server.Server;
 import com.linecorp.armeria.server.ServerBuilder;
 import com.linecorp.armeria.server.file.FileService;
@@ -17,6 +18,8 @@ import com.localcloud.admin.CredentialBroker;
 import com.localcloud.admin.ExportService;
 import com.localcloud.admin.MutateService;
 import com.localcloud.admin.ProjectService;
+import com.localcloud.admin.GraphQLGateway;
+import com.localcloud.admin.QueryHistoryRepository;
 import com.localcloud.admin.QueryService;
 import com.localcloud.admin.SeedService;
 import com.localcloud.admin.ServiceConfigRepository;
@@ -48,6 +51,7 @@ import com.localcloud.gateway.IamMiddleware;
 import com.localcloud.gateway.ServiceGatingDecorator;
 import com.localcloud.gateway.ProcessHealthChecker;
 import com.localcloud.gateway.RequestLogger;
+import com.localcloud.gateway.SpannerIamService;
 import com.localcloud.persistence.PostgresDataSource;
 import com.localcloud.persistence.SchemaManager;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
@@ -91,6 +95,7 @@ public class LocalCloudApplication {
     private final ExportService exportService;
     private final CredentialBroker credentialBroker;
     private final QueryService queryService;
+    private final QueryHistoryRepository queryHistoryRepo;
     private IamMiddleware iamMiddleware;
     private Server server;
 
@@ -105,6 +110,7 @@ public class LocalCloudApplication {
         this.requestLogger = new RequestLogger();
         this.processHealthChecker = new ProcessHealthChecker(config, config.getServiceRegistry());
         var usageMetrics = new UsageMetricsRepository(dataSource);
+        this.queryHistoryRepo = new QueryHistoryRepository(dataSource);
         this.healthCheckService = new HealthCheckService(config, gateway, processHealthChecker, usageMetrics);
         this.projectService = new ProjectService(dataSource);
         this.routingRepository = new ServiceRoutingRepository(dataSource);
@@ -117,7 +123,7 @@ public class LocalCloudApplication {
         var workflowsStore = new com.localcloud.emulators.workflows.WorkflowsStore(dataSource);
         this.seedService = new SeedService(config, dataSource, config.getServiceRegistry(), workflowsStore);
         this.exportService = new ExportService(config, dataSource, config.getServiceRegistry());
-        this.queryService = new QueryService(config, dataSource, config.getServiceRegistry(), usageMetrics);
+        this.queryService = new QueryService(config, dataSource, config.getServiceRegistry(), usageMetrics, queryHistoryRepo);
     }
 
     /**
@@ -221,6 +227,12 @@ public class LocalCloudApplication {
         sb.annotatedService("/_localcloud", exportService);
         sb.annotatedService("/_localcloud", queryService);
 
+        // GraphQL API gateway — exposes a unified GraphQL endpoint at /graphql
+        // that stitches together Spanner, BigQuery, Logging, Monitoring, and query history.
+        var graphQLGateway = new GraphQLGateway(config.getServiceRegistry(), dataSource, config, queryHistoryRepo);
+        sb.service("/graphql", graphQLGateway.getService());
+        logger.info("GraphQL gateway registered at /graphql");
+
         // Data Mirror sync service
         var registry = config.getServiceRegistry();
         SyncManifestRepository syncManifestRepo = new SyncManifestRepository(dataSource.getDataSource());
@@ -270,6 +282,15 @@ public class LocalCloudApplication {
 
         SyncApiService syncApiService = new SyncApiService(syncService, syncCredentialRepo, config);
         sb.annotatedService("/_localcloud/sync", syncApiService);
+
+        // Spanner IAM stubs — intercept SetIamPolicy/GetIamPolicy/TestIamPermissions
+        // before they fall through to the NOT_IMPLEMENTED handler or reach the C++ emulator.
+        sb.service(Route.builder()
+                .methods(com.linecorp.armeria.common.HttpMethod.POST, com.linecorp.armeria.common.HttpMethod.GET)
+                .path("regex:/v1/projects/(?<project>[^/]+)/instances/(?<instance>[^/]+)(?:/databases/(?<database>[^/]+))?:(?:setIamPolicy|getIamPolicy|testIamPermissions)")
+                .build(),
+                new SpannerIamService());
+        logger.info("Spanner IAM stubs registered (permissive mode)");
 
         // Dashboard static files (served from classpath resources)
         sb.serviceUnder("/_localcloud/dashboard/",

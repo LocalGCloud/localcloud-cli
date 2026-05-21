@@ -124,6 +124,16 @@ public class BrowseService {
         return browseService4(service, a, b, c, resolveProject(ctx));
     }
 
+    @Get("/{service}/{a}/{b}/{c}/{d}")
+    public HttpResponse browse5(ServiceRequestContext ctx,
+                                @Param("service") String service,
+                                @Param("a") String a,
+                                @Param("b") String b,
+                                @Param("c") String c,
+                                @Param("d") String d) {
+        return browseService5(service, a, b, c, d, resolveProject(ctx));
+    }
+
     @Get("/{service}/{a}/{b}/{c}/{d}/{e}")
     public HttpResponse browse6(ServiceRequestContext ctx,
                                 @Param("service") String service,
@@ -191,6 +201,28 @@ public class BrowseService {
             return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
         } catch (Exception e) {
             logger.warn("Browse4 error for {}: {}", service, e.getMessage());
+            try {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
+                        mapper.writeValueAsString(Map.of("error", true, "message", e.getMessage())));
+            } catch (Exception ex) {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR,
+                        MediaType.PLAIN_TEXT_UTF_8, "Browse error");
+            }
+        }
+    }
+
+    private HttpResponse browseService5(String service, String a, String b, String c, String d, String projectId) {
+        try {
+            usageMetrics.incrementCount(projectId, service, 1);
+            String json = switch (service) {
+                case "spanner" -> browseSpannerStats(a, b, c, d, projectId);
+                default -> mapper.writeValueAsString(Map.of(
+                        "error", true,
+                        "message", "Unsupported 5-segment browse for service: " + service));
+            };
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
+        } catch (Exception e) {
+            logger.warn("Browse5 error for {}: {}", service, e.getMessage());
             try {
                 return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
                         mapper.writeValueAsString(Map.of("error", true, "message", e.getMessage())));
@@ -688,6 +720,101 @@ public class BrowseService {
         }
         String url = spannerBase + "/v1/projects/" + projectId + "/instances/" + b + "/databases/" + c + "/ddl";
         return proxyGet(url);
+    }
+
+    /**
+     * Compute database statistics from DDL for the System Insights panel.
+     * Path: spanner/instances/{instance}/{database}/stats
+     * Returns table count, index count, search/vector index count, and per-table breakdown.
+     */
+    @SuppressWarnings("unchecked")
+    private String browseSpannerStats(String a, String b, String c, String d, String projectId) throws Exception {
+        if (!"instances".equals(a) || !"stats".equals(d)) {
+            return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid stats path. Expected: /browse/spanner/instances/{instance}/{database}/stats"));
+        }
+        String instance = b;
+        String database = c;
+        if (instance == null || instance.isBlank() || database == null || database.isBlank()) {
+            return mapper.writeValueAsString(Map.of("error", true, "message", "Instance and database name are required"));
+        }
+
+        String url = spannerBase + "/v1/projects/" + projectId + "/instances/" + instance
+                + "/databases/" + database + "/ddl";
+        String ddlBody = proxyGet(url);
+        Map<String, Object> ddlResp = mapper.readValue(ddlBody, Map.class);
+        List<String> statements = (List<String>) ddlResp.getOrDefault("statements", List.of());
+
+        int tableCount = 0;
+        int indexCount = 0;
+        int searchIndexCount = 0;
+        int vectorIndexCount = 0;
+        List<Map<String, Object>> tableDetails = new ArrayList<>();
+
+        for (String stmt : statements) {
+            String trimmed = stmt.trim();
+            String upper = trimmed.toUpperCase();
+            if (upper.startsWith("CREATE TABLE")) {
+                tableCount++;
+                Map<String, Object> detail = new LinkedHashMap<>();
+                detail.put("type", "TABLE");
+                // Extract table name
+                java.util.regex.Matcher nameM = java.util.regex.Pattern.compile(
+                        "(?i)CREATE\\s+TABLE\\s+(\\S+)").matcher(trimmed);
+                if (nameM.find()) detail.put("name", nameM.group(1));
+                // Count columns
+                int colStart = trimmed.indexOf('(');
+                if (colStart >= 0) {
+                    int depth = 0, colEnd = -1;
+                    for (int i = colStart; i < trimmed.length(); i++) {
+                        char ch = trimmed.charAt(i);
+                        if (ch == '(') depth++;
+                        else if (ch == ')') { depth--; if (depth == 0) { colEnd = i; break; } }
+                    }
+                    if (colEnd > colStart) {
+                        String cols = trimmed.substring(colStart + 1, colEnd);
+                        List<String> parts = splitTopLevel(cols);
+                        int realCols = 0;
+                        for (String col : parts) {
+                            if (col.isEmpty()) continue;
+                            if (col.toUpperCase().startsWith("INTERLEAVE") ||
+                                col.toUpperCase().startsWith("CONSTRAINT") ||
+                                col.toUpperCase().startsWith("PRIMARY KEY")) continue;
+                            realCols++;
+                        }
+                        detail.put("columnCount", realCols);
+                    }
+                }
+                detail.put("hasInterleaved", upper.contains("INTERLEAVE IN PARENT"));
+                tableDetails.add(detail);
+            } else if (upper.startsWith("CREATE INDEX") && !upper.contains("SEARCH") && !upper.contains("VECTOR")) {
+                indexCount++;
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                        "(?i)CREATE(?:\\s+UNIQUE)?\\s+INDEX\\s+(\\S+)").matcher(trimmed);
+                if (m.find()) tableDetails.add(Map.of("type", "INDEX", "name", m.group(1)));
+            } else if (upper.startsWith("CREATE SEARCH INDEX")) {
+                searchIndexCount++;
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                        "(?i)CREATE\\s+SEARCH\\s+INDEX\\s+(\\S+)").matcher(trimmed);
+                if (m.find()) tableDetails.add(Map.of("type", "SEARCH_INDEX", "name", m.group(1)));
+            } else if (upper.startsWith("CREATE VECTOR INDEX")) {
+                vectorIndexCount++;
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                        "(?i)CREATE\\s+VECTOR\\s+INDEX\\s+(\\S+)").matcher(trimmed);
+                if (m.find()) tableDetails.add(Map.of("type", "VECTOR_INDEX", "name", m.group(1)));
+            }
+        }
+
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("database", database);
+        stats.put("instance", instance);
+        stats.put("tableCount", tableCount);
+        stats.put("indexCount", indexCount);
+        stats.put("searchIndexCount", searchIndexCount);
+        stats.put("vectorIndexCount", vectorIndexCount);
+        stats.put("totalObjects", tableCount + indexCount + searchIndexCount + vectorIndexCount);
+        stats.put("details", tableDetails);
+
+        return mapper.writerWithDefaultPrettyPrinter().writeValueAsString(stats);
     }
 
     // ========== Spanner table data (proxy to Spanner REST API) ==========
@@ -1214,4 +1341,24 @@ public class BrowseService {
 
         httpClient.send(request, BodyHandlers.ofString());
     }
+
+    private List<String> splitTopLevel(String s) {
+        List<String> parts = new ArrayList<>();
+        int depth = 0, start = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '(') depth++;
+            else if (c == ')') depth--;
+            else if (c == ',' && depth == 0) {
+                parts.add(s.substring(start, i).trim());
+                start = i + 1;
+            }
+        }
+        if (start < s.length()) {
+            String last = s.substring(start).trim();
+            if (!last.isEmpty()) parts.add(last);
+        }
+        return parts;
+    }
+
 }
