@@ -44,15 +44,16 @@ class TrialHandlerTest {
         when(authRepo.isEmailVerified(email)).thenReturn(true);
         when(authRepo.getUserId(email)).thenReturn(userId);
         
-        // Mock that a trial already exists
-        when(trialRepo.getTrialInfo(userId)).thenReturn(new TrialRepository.TrialInfo(100L, 200L));
+        // Handler calls startTrial() which returns false when trial already exists
+        when(trialRepo.startTrial(eq(userId), any())).thenReturn(false);
 
         Map<String, String> body = Map.of("email", email, "device_id", "device123");
         AggregatedHttpResponse response = trialHandler.start(body).aggregate().join();
 
-        assertEquals(HttpStatus.FORBIDDEN, response.status());
+        assertEquals(HttpStatus.CONFLICT, response.status());
         JsonNode json = mapper.readTree(response.contentUtf8());
-        assertEquals("Trial already exists for this account.", json.get("error").asText());
+        assertEquals("Trial already used on this device. Visit https://localcloud.dev/pricing for a license.",
+                json.get("error").asText());
     }
 
     @Test
@@ -63,9 +64,9 @@ class TrialHandlerTest {
         when(authRepo.isEmailVerified(email)).thenReturn(true);
         when(authRepo.getUserId(email)).thenReturn(userId);
         
-        // Mock no existing trial
-        when(trialRepo.getTrialInfo(userId)).thenReturn(null);
         when(trialRepo.startTrial(eq(userId), any())).thenReturn(true);
+        // keyRepo.generateOnlineKey must return non-null (Map.of rejects null values)
+        when(keyRepo.generateOnlineKey(eq(userId), eq("trial"))).thenReturn("trial-key-abc123");
 
         Map<String, String> body = Map.of("email", email, "device_id", "device123");
         AggregatedHttpResponse response = trialHandler.start(body).aggregate().join();
