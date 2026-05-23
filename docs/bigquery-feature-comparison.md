@@ -192,14 +192,14 @@ Legend: **Y** = Supported | **P** = Partial | **N** = Not Supported | **—** = 
 
 | View | Production BQ | Go Emulator | Python Rewrite |
 |---------|:---:|:---:|:---:|
-| TABLES | **Y** | **P** (basic, limited schema) | **P** (planned P0; synthesize from catalog) |
-| COLUMNS | **Y** | **P** (basic) | **P** (planned P0; synthesize) |
-| SCHEMATA | **Y** | **P** | **P** (planned P0) |
-| PARTITIONS | **Y** | **N** | **P** (planned P0; from partition metadata) |
-| ROUTINES / PARAMETERS | **Y** | **N** | **P** (planned P1) |
-| TABLE_STORAGE | **Y** | **N** | **P** (planned P2) |
+| TABLES | **Y** | **P** (basic, limited schema) | **P** (DuckDB-backed emulator view) |
+| COLUMNS | **Y** | **P** (basic) | **P** (DuckDB-backed emulator view) |
+| SCHEMATA | **Y** | **P** | **P** (DuckDB-backed emulator view) |
+| PARTITIONS | **Y** | **N** | **P** (metadata view) |
+| ROUTINES / PARAMETERS | **Y** | **N** | **P** (ROUTINES view; PARAMETERS remains limited) |
+| TABLE_STORAGE | **Y** | **N** | **P** (metadata view) |
 | JOBS / JOBS_BY_USER | **Y** | **N** | **P** (planned P2; from job log) |
-| VIEWS | **Y** | **N** | **P** (planned P1) |
+| VIEWS | **Y** | **N** | **P** (DuckDB-backed emulator view) |
 | OBJECT_PRIVILEGES | **Y** | **N** | **N** (stub) |
 | SEARCH_INDEXES / VECTOR_INDEXES | **Y** | **N** | **N** (stub) |
 | RESERVATIONS / BI_CAPACITIES | **Y** | **N** | **N** (not applicable) |
@@ -302,7 +302,7 @@ Legend: **Y** = Supported | **P** = Partial | **N** = Not Supported | **—** = 
 | **Recursive CTEs** | N | Y | Python |
 | **Window functions** | P (NULL crash) | Y | Python |
 | **Scripting** | N (~0%) | P (requires interpreter) | Python |
-| **INFORMATION_SCHEMA** | P (minimal) | P (synthesized, more planned) | Python |
+| **INFORMATION_SCHEMA** | P (minimal) | P (DuckDB-backed emulator views, more planned) | Python |
 | **Math/String/Date functions** | Y | Y | Tie |
 | **JSON functions** | P (multiple bugs) | Y | Python |
 | **Array/Struct operations** | P (encoding bugs) | Y | Python |
@@ -331,4 +331,4 @@ Legend: **Y** = Supported | **P** = Partial | **N** = Not Supported | **—** = 
 
 The **Go emulator** has a working REST API and covers some niche function categories (NET, HLL sketches, wildcards) that the Python rewrite will need to build. However, it has fundamental structural limitations — x86-64 only, SQLite blob encoding causing type bugs, broken MERGE/UPDATE, no ALTER TABLE, no partitioning, no scripting, broken gRPC Write API.
 
-The **Python rewrite** gains significant ground on SQL correctness (DuckDB's native columnar types vs SQLite blob encoding), modern SQL features (recursive CTEs, correlated subqueries), and ARM64 support. Its main gaps are features that need custom emulator-layer implementation: scripting interpreter, INFORMATION_SCHEMA synthesis, wildcard tables, SAFE.* prefix, and NET.* functions.
+The **Python rewrite** gains significant ground on SQL correctness (DuckDB's native columnar types vs SQLite blob encoding), modern SQL features (recursive CTEs, correlated subqueries), and ARM64 support. Its main gaps are features that need custom emulator-layer implementation: scripting interpreter, long-tail INFORMATION_SCHEMA views, wildcard tables, SAFE.* prefix, and NET.* functions.

@@ -52,4 +52,5 @@ docker run -d --name localcloud \
   localcloud/localcloud:latest
 
 echo "LocalCloud running at http://localhost:8080"
-echo "Health: curl http://localhost:8080/_localcloud/health"
+echo "Health: curl http://localhost:8080/health"
+echo "cloud.localhost: add -p 80:80 to enable no-port-number URL"

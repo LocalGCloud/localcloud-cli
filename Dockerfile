@@ -14,7 +14,10 @@
 #     localcloud/localcloud:latest
 #
 #   Console: http://localhost:8080
-#   Health:  curl http://localhost:8080/_localcloud/health
+#   Health:  curl http://localhost:8080/health
+#
+#   Caddy reverse proxy (enabled by default, add -p 80:80 for cloud.localhost):
+#     docker run -d --name localcloud ... -p 80:80 ...
 #
 # PORTS
 # -----
@@ -71,7 +74,7 @@
 #       gcs-data/        Cloud Storage blobs
 #       spanner-data/    Spanner persistence
 #       bigquery-data/   BigQuery DuckDB files
-#       logs/            All service logs (supervisord, emulators, gateway)
+#       logs/            Service logs (on container filesystem, not bind mount)
 #
 #     First run auto-creates subdirectories and sets ownership.
 #     Use bind mount when you need to inspect, backup, or share data.
@@ -157,7 +160,7 @@ FROM ${GCLOUD_SDK_IMAGE} AS gcloud-sdk
 FROM ${GO_BASE_IMAGE} AS bigtable-build
 WORKDIR /src
 RUN sed -i 's/https:/http:/' /etc/apk/repositories \
-    && apk add --no-cache gcc musl-dev git
+    && apk add --no-cache gcc=15.2.0-r2 musl-dev=1.2.5-r23 git=2.52.0-r0
 ARG LITTLE_BIGTABLE_VERSION=v0.0.1
 ENV GOPRIVATE=github.com/jhsenjaliya/* \
     GIT_SSL_NO_VERIFY=1 \
@@ -188,17 +191,7 @@ java.scripting,java.rmi,jdk.httpserver,jdk.localedata,jdk.zipfs \
 
 # --- Cleanup BigQuery Emulator (Reduce image size by ~100MB) ---
 FROM bq-emulator AS bq-cleaned
-RUN rm -rf \
-    /usr/local/lib/python3.12/test \
-    /usr/local/lib/python3.12/idlelib \
-    /usr/local/lib/python3.12/tkinter \
-    /usr/local/lib/python3.12/turtledemo \
-    /usr/local/lib/python3.12/ensurepip \
-    /usr/local/lib/python3.12/lib2to3 \
-    /usr/local/lib/python3.12/distutils \
-    /usr/local/lib/python3.12/pydoc_data \
-    /usr/local/lib/python3.12/unittest/test \
-    && find /opt/bqenv -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null \
+RUN find /opt/bqenv -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null \
     && find /opt/bqenv -name "*.pyc" -delete 2>/dev/null || true
 
 # --- Artifact Collector (Consolidates 20+ layers into 1, scoped to /out) ---
@@ -215,16 +208,12 @@ COPY --from=gcloud-sdk /google-cloud-sdk/platform/cloud-firestore-emulator/cloud
 COPY --from=gcloud-sdk /google-cloud-sdk/platform/pubsub-emulator/lib/ /out/opt/emulators/pubsub-lib/
 COPY --chmod=755 --from=bigtable-build /out/localcloud-bigtable-emulator /out/usr/local/bin/localcloud-bigtable-emulator
 # BigQuery
-COPY --from=bq-cleaned /usr/local/bin/python3.12 /out/usr/local/bin/python3.12
-COPY --from=bq-cleaned /usr/local/lib/libpython3.12.so.1.0 /out/usr/local/lib/libpython3.12.so.1.0
-COPY --from=bq-cleaned /usr/local/lib/python3.12/ /out/usr/local/lib/python3.12/
 COPY --from=bq-cleaned /opt/bqenv /out/opt/bqenv
 # Spanner
 COPY --from=spanner-emulator /gateway_main /out/usr/local/bin/spanner-gateway
 COPY --from=spanner-emulator /emulator_main /out/usr/local/bin/spanner-emulator-main
 # Valkey
-COPY --from=valkey-build /usr/local/bin/valkey-server /out/usr/local/bin/valkey-server
-COPY --from=valkey-build /usr/local/bin/valkey-cli /out/usr/local/bin/valkey-cli
+COPY --from=valkey-build /usr/local/bin/valkey-server /usr/local/bin/valkey-cli /out/usr/local/bin/
 
 # --- Runtime stage ---
 FROM debian:trixie-slim
@@ -242,36 +231,46 @@ RUN rm -f /etc/apt/apt.conf.d/docker-clean; \
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-        postgresql-17 \
-        supervisor \
-        curl \
-        ca-certificates \
-        openssl \
-        gosu \
+        postgresql-17=17.10-0+deb13u1 \
+        python3 \
+        curl=8.14.1-2+deb13u3 \
+        ca-certificates=20250419 \
+        openssl=3.5.6-1~deb13u1 \
+        gosu=1.17-3+b4 \
+        caddy=2.6.2-12+b3 \
     && apt-get remove -y --purge postgresql-17-jit 2>/dev/null || true \
     && apt-get autoremove -y --purge \
     && rm -rf /usr/lib/postgresql/17/lib/bitcode \
               /usr/lib/postgresql/17/lib/llvmjit*.so \
-              /usr/lib/postgresql/17/lib/llvmjit_types.bc
+              /usr/lib/postgresql/17/lib/llvmjit_types.bc \
+              /usr/share/doc /usr/share/man /usr/share/locale \
+              /usr/lib/python3.*/idlelib \
+              /usr/lib/python3.*/test \
+              /usr/lib/python3.*/tkinter \
+              /usr/lib/python3.*/ensurepip \
+              /usr/lib/python3.*/pydoc_data \
+              /usr/lib/python3.*/lib2to3
 
 # 1. Bring in all artifacts in ONE layer (SAFE: only from /out)
 COPY --from=artifact-collector /out/ /
 
 # 2. Environment and PATH setup
 ENV JAVA_HOME=/opt/java \
-    PATH="/opt/java/bin:${PATH}"
+    PATH="/opt/bqenv/bin:/opt/java/bin:${PATH}"
 
 # 3. Install k3d
 ARG INCLUDE_K3D=true
 ARG K3D_VERSION=v5.8.3
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN if [ "$INCLUDE_K3D" = "true" ]; then \
       ARCH=$(uname -m | sed "s/aarch64/arm64/" | sed "s/x86_64/amd64/") && \
       curl -fsSLk -o /usr/local/bin/k3d "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-${ARCH}" && \
       chmod +x /usr/local/bin/k3d; \
     fi
+SHELL ["/bin/sh", "-c"]
 
 # 4. System setup (Users, Dirs, Links)
-RUN groupadd -r localcloud && useradd -r -g localcloud -m localcloud \
+RUN groupadd -g 1001 localcloud && useradd -g localcloud -m -u 1001 localcloud \
     && mkdir -p /var/lib/localcloud/pgdata \
                 /var/lib/localcloud/gcs-data \
                 /var/lib/localcloud/spanner-data \
@@ -286,12 +285,13 @@ RUN groupadd -r localcloud && useradd -r -g localcloud -m localcloud \
                                       /opt/localcloud \
                                       /var/run/postgresql \
                                       /credentials \
-    && ln -sf /usr/local/lib/libpython3.12.so.1.0 /usr/local/lib/libpython3.12.so \
-    && ln -sf /usr/local/lib/libpython3.12.so.1.0 /usr/local/lib/libpython3.so \
-    && ldconfig \
-    && ln -sf /usr/local/bin/python3.12 /opt/bqenv/bin/python3 \
-    && ln -sf /usr/local/bin/python3.12 /opt/bqenv/bin/python \
+    && ln -sf /usr/bin/python3 /opt/bqenv/bin/python3 \
+    && ln -sf /usr/bin/python3 /opt/bqenv/bin/python \
     && ln -sf /opt/bqenv/bin/bigquery-emulator /usr/local/bin/bigquery-emulator \
+    && ln -sf /opt/bqenv/bin/supervisord /usr/bin/supervisord \
+    && ln -sf /opt/bqenv/bin/supervisord /usr/local/bin/supervisord \
+    && ln -sf /opt/bqenv/bin/supervisorctl /usr/bin/supervisorctl \
+    && ln -sf /opt/bqenv/bin/supervisorctl /usr/local/bin/supervisorctl \
     && printf "#!/bin/bash\nexec /usr/local/bin/spanner-emulator-main --data_dir=/var/lib/localcloud/spanner-data \"\$@\"\n" > /usr/local/bin/spanner-emulator-wrapper \
     && chmod +x /usr/local/bin/spanner-emulator-wrapper
 
@@ -308,6 +308,7 @@ COPY --chown=localcloud:localcloud services.yaml seed.yaml /etc/localcloud/
 COPY --chown=localcloud:localcloud localcloud-server/build/libs/localcloud-server-*-all.jar /opt/localcloud/server.jar
 COPY --chown=localcloud:localcloud localcloud-console/dist/ /opt/localcloud/console/dist/
 COPY supervisord.conf /etc/supervisor/conf.d/localcloud.conf
+COPY Caddyfile /etc/caddy/Caddyfile
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY wait-for-pg.sh /usr/local/bin/wait-for-pg.sh
 COPY license-gate.sh /opt/localcloud/license-gate.sh
@@ -354,6 +355,7 @@ ENV JAVA_OPTS="-Xmx512m -Xms128m -XX:+UseZGC -Xss256k -XX:MaxMetaspaceSize=96m -
     LOCALCLOUD_ENABLE_VERTEXAI="false" \
     LOCALCLOUD_ENABLE_KMS="false" \
     LOCALCLOUD_ENABLE_CLOUDSQL="false" \
+    LOCALCLOUD_ENABLE_LOCAL_PROXY="true" \
     LOCALCLOUD_TELEMETRY="true"
 
 VOLUME /var/lib/localcloud
@@ -362,6 +364,6 @@ VOLUME /var/lib/localcloud
 EXPOSE 8080 3306 4443 5432 6379 6443 8085 8086 8087 9010 9020 9050 9060
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
-  CMD curl -f http://localhost:8080/_localcloud/health || exit 1
+  CMD curl -sf http://localhost:8080/health || exit 1
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/localcloud.conf"]
+CMD ["/opt/bqenv/bin/supervisord", "-c", "/etc/supervisor/conf.d/localcloud.conf"]

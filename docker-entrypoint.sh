@@ -80,44 +80,35 @@ if [ "$ca_imported" -gt 0 ]; then
     echo "Imported $ca_imported CA certificate(s) into Java truststore and system bundle"
 fi
 
-# Resolve runtime user. For bind mounts, the data dir UID may differ from the
-# container's localcloud user (e.g. macOS maps host UID 502 into the container).
-# Detect actual data dir owner and use that UID for PostgreSQL compatibility.
-DATA_DIR_UID=$(stat -c '%u' /var/lib/localcloud 2>/dev/null || echo "")
-LOCALCLOUD_UID=$(id -u localcloud 2>/dev/null || echo "999")
-
-if [ -n "$DATA_DIR_UID" ] && [ "$DATA_DIR_UID" != "0" ] && [ "$DATA_DIR_UID" != "$LOCALCLOUD_UID" ]; then
-    # Bind mount detected: data dir owned by host UID, not localcloud user.
-    # Re-map localcloud user to match the bind mount UID so PostgreSQL ownership check passes.
-    usermod -u "$DATA_DIR_UID" localcloud 2>/dev/null || true
-    echo "Remapped localcloud user to UID $DATA_DIR_UID (bind mount owner)"
-fi
-
+# localcloud has a fixed UID 1001 (set in Dockerfile).
+# No usermod needed — UID is stable across image builds regardless of
+# Debian package system user additions (which use UIDs 100-999).
 RUN_USER="${LOCALCLOUD_USER:-localcloud}"
 RUN_UID=$(id -u "$RUN_USER" 2>/dev/null) || RUN_UID="$RUN_USER"
 RUN_GID=$(id -g "$RUN_USER" 2>/dev/null) || RUN_GID="$RUN_USER"
 
-# Ensure data directories exist (volume mounts replace build-time dirs).
-# Create data dirs under /var/lib/localcloud as the runtime user so bind-mount
-# ownership is correct from the start (macOS Docker Desktop does not support
-# chown on bind mounts — the subdirectory inherits the creator's UID).
-gosu "$RUN_USER" mkdir -p /var/lib/localcloud/spanner-data \
-                          /var/lib/localcloud/gcs-data \
-                          /var/lib/localcloud/pgdata \
-                          /var/lib/localcloud/bigquery-data \
-                          /var/lib/localcloud/redis-data \
-                          /var/lib/localcloud/logs
+# Ensure data directories exist and are owned by the runtime user.
+# This runs as root (entrypoint has full privileges), so chown works
+# on Docker volumes and fails gracefully on macOS bind mounts.
+mkdir -p /var/lib/localcloud/spanner-data \
+         /var/lib/localcloud/gcs-data \
+         /var/lib/localcloud/pgdata \
+         /var/lib/localcloud/bigquery-data \
+         /var/lib/localcloud/bigquery-data/tmp \
+         /var/lib/localcloud/redis-data
+
+# Fix ownership (works on Docker volumes; silently no-op on macOS bind mounts)
+chown -R "$RUN_USER:$RUN_GID" /var/lib/localcloud/*/ 2>/dev/null || true
 
 # /var/run/postgresql is on the container filesystem (not a bind mount),
 # so root mkdir + explicit chown works fine here.
 mkdir -p /var/run/postgresql
 chown "$RUN_UID:$RUN_GID" /var/run/postgresql
 
-# Symlink logs into data dir so bind mounts expose them on host
-if [ ! -L /var/log/localcloud ]; then
-    rm -rf /var/log/localcloud
-    ln -sf /var/lib/localcloud/logs /var/log/localcloud
-fi
+# Keep /var/log/localcloud on the container filesystem (not symlinked into
+# the bind mount) so file permissions always work regardless of UID remapping.
+mkdir -p /var/log/localcloud
+chmod 1777 /var/log/localcloud
 
 # Clean up stale PostgreSQL files from unclean shutdown (container kill without stop).
 # postmaster.pid prevents startup; stale sockets block connections.
@@ -150,7 +141,7 @@ if [ "${LOCALCLOUD_ENABLE_SPANNER:-true}" = "true" ]; then
         METADATA_FILE="$SPANNER_DATA_DIR/metadata.json"
         if [ -f "$METADATA_FILE" ]; then
             echo "Resetting Spanner metadata ID counters to 0 to align schema replay..."
-            /usr/local/bin/python3.12 -c "
+            python3 -c "
 import json
 try:
     with open('$METADATA_FILE', 'r') as f:
@@ -251,10 +242,12 @@ fi
 SEED_FILE="${LOCALCLOUD_SEED_FILE:-/etc/localcloud/seed.yaml}"
 if [ -f "$SEED_FILE" ]; then
     (
-        echo "Auto-seed: waiting for gateway..."
+        SECONDS=0
+        seed_log() { echo "Auto-seed [${SECONDS}s]: $*"; }
+        seed_log "waiting for gateway..."
         for i in $(seq 1 60); do
-            if curl -sf http://localhost:8080/_localcloud/health >/dev/null 2>&1; then
-                echo "Auto-seed: gateway healthy"
+            if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
+                seed_log "gateway healthy"
 
                 # Check if this is a first run or a restart.
                 # PostgreSQL data persists across restarts; check if seed data already exists.
@@ -262,11 +255,11 @@ if [ -f "$SEED_FILE" ]; then
 
                 if [ "$HAS_DATA" = "yes" ] && [ "${LOCALCLOUD_FORCE_SEED}" != "true" ]; then
                     # RESTART: Seed volatile (in-memory) services immediately.
-                    echo "Auto-seed: restart detected — seeding volatile services (Pub/Sub, Firestore, Bigtable)..."
+                    seed_log "restart detected — seeding volatile services (Pub/Sub, Firestore, Bigtable)..."
                     sleep 2
                     RESULT=$(curl -s -X POST "http://localhost:8080/_localcloud/seed?mode=volatile" \
                         -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" 2>&1)
-                    echo "Auto-seed: volatile seed done: $RESULT"
+                    seed_log "volatile seed done: $RESULT"
 
                     # Also check if BigQuery lost data (DuckDB may have been wiped by older entrypoint).
                     # If BigQuery has zero datasets, re-seed it in background.
@@ -277,17 +270,18 @@ if [ -f "$SEED_FILE" ]; then
                     # Check if datasets already exist before re-seeding.
                     if [ "${LOCALCLOUD_ENABLE_BIGQUERY:-true}" = "true" ]; then
                         (
+                            SECONDS=0; seed_log() { echo "Auto-seed [${SECONDS}s]: $*"; }
                             set +e
                             for j in $(seq 1 45); do
                                 BQ_RESP=$(curl -sf "http://localhost:9050/bigquery/v2/projects/${LOCALCLOUD_PROJECT:-local-project}/datasets" 2>/dev/null)
                                 if [ $? -eq 0 ] && [ -n "$BQ_RESP" ]; then
                                     if echo "$BQ_RESP" | grep -q '"datasetId"'; then
-                                        echo "Auto-seed: BigQuery has persistent data, skipping"
+                                        seed_log "BigQuery has persistent data, skipping"
                                     else
-                                        echo "Auto-seed: BigQuery has no data, seeding..."
+                                        seed_log "BigQuery has no data, seeding..."
                                         curl -s -X POST http://localhost:8080/_localcloud/seed \
                                             -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" >/dev/null 2>&1
-                                        echo "Auto-seed: BigQuery seed complete"
+                                        seed_log "BigQuery seed complete"
                                     fi
                                     break
                                 fi
@@ -298,20 +292,21 @@ if [ -f "$SEED_FILE" ]; then
                 else
                     # FIRST RUN: Seed everything.
                     sleep 2
-                    echo "Auto-seed: first run — loading all seed data..."
+                    seed_log "first run — loading all seed data..."
                     RESULT=$(curl -s -X POST http://localhost:8080/_localcloud/seed \
                         -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" 2>&1)
-                    echo "Auto-seed: phase 1 done: $RESULT"
+                    seed_log "phase 1 done: $RESULT"
 
                     # Wait for slow emulators (BigQuery, Spanner) in parallel, re-seed when ready.
                     if [ "${LOCALCLOUD_ENABLE_SPANNER:-true}" = "true" ]; then
                         (
+                            SECONDS=0; seed_log() { echo "Auto-seed [${SECONDS}s]: $*"; }
                             for j in $(seq 1 30); do
                                 if curl -sf http://localhost:9020/v1/projects/local-project/instances >/dev/null 2>&1; then
-                                    echo "Auto-seed: Spanner ready, seeding..."
+                                    seed_log "Spanner ready, seeding..."
                                     curl -s -X POST http://localhost:8080/_localcloud/seed \
                                         -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" >/dev/null 2>&1
-                                    echo "Auto-seed: Spanner seed complete"
+                                    seed_log "Spanner seed complete"
                                     break
                                 fi
                                 sleep 2
@@ -321,12 +316,13 @@ if [ -f "$SEED_FILE" ]; then
 
                     if [ "${LOCALCLOUD_ENABLE_BIGQUERY:-true}" = "true" ]; then
                         (
+                            SECONDS=0; seed_log() { echo "Auto-seed [${SECONDS}s]: $*"; }
                             for j in $(seq 1 45); do
                                 if curl -sf "http://localhost:9050/bigquery/v2/projects/${LOCALCLOUD_PROJECT:-local-project}/datasets" >/dev/null 2>&1; then
-                                    echo "Auto-seed: BigQuery ready, seeding..."
+                                    seed_log "BigQuery ready, seeding..."
                                     curl -s -X POST http://localhost:8080/_localcloud/seed \
                                         -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" >/dev/null 2>&1
-                                    echo "Auto-seed: BigQuery seed complete"
+                                    seed_log "BigQuery seed complete"
                                     break
                                 fi
                                 sleep 2
@@ -335,7 +331,7 @@ if [ -f "$SEED_FILE" ]; then
                     fi
 
                     wait
-                    echo "Auto-seed: all phases complete"
+                    seed_log "all phases complete"
                 fi
                 break
             fi
@@ -423,13 +419,7 @@ fi
 # License enforcement toggle — if disabled, skip all checks
 ENFORCE_LICENSE=$(cat /opt/localcloud/ENFORCE_LICENSE 2>/dev/null || echo "true")
 if [ "$ENFORCE_LICENSE" = "false" ]; then
-    echo "License enforcement disabled — bypassing all license checks"
     echo "development" > /tmp/localcloud-tier
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║  License enforcement is DISABLED.                               ║"
-    echo "║  Build with --build-arg ENFORCE_LICENSE=true to enforce.        ║"
-    echo "╚══════════════════════════════════════════════════════════════════╝"
     skip_license_gate=true
 fi
 
@@ -463,5 +453,74 @@ if [ "${skip_license_gate:-false}" != "true" ]; then
     fi
 fi
 
-# Drop privileges: run CMD as the runtime user
-exec gosu "$RUN_USER" "$@"
+# ─── Graceful Shutdown ─────────────────────────────────────────────
+# Instead of exec-ing supervisord directly, we run it in the background
+# with a signal handler so we can perform a structured, orderly shutdown.
+# This ensures all emulators get proper stop signals and users see clean
+# visual output in Docker logs.
+
+SUPERVISORD_CONFIG="/etc/supervisor/conf.d/localcloud.conf"
+
+shutdown_handler() {
+    local GREEN='\033[32m'
+    local RED='\033[31m'
+    local YELLOW='\033[33m'
+    local CYAN='\033[36m'
+    local RESET='\033[0m'
+
+    printf "\n  ${CYAN}┌──────────────────────────────────────────────────────────────┐${RESET}\n"
+    printf "  ${CYAN}│${RESET}                  ${YELLOW}Shutting Down LocalCloud...${RESET}                 ${CYAN}│${RESET}\n"
+    printf "  ${CYAN}└──────────────────────────────────────────────────────────────┘${RESET}\n"
+    printf "\n"
+
+    local running
+    running=$(/opt/bqenv/bin/supervisorctl -c "$SUPERVISORD_CONFIG" status 2>/dev/null | grep RUNNING | awk '{print $1}' || true)
+    if [ -n "$running" ]; then
+        printf "  ${YELLOW}●${RESET} Stopping services...\n"
+
+        # Calculate alignment width from longest service name
+        local max_len=0
+        local svc
+        while IFS= read -r svc; do
+            [ ${#svc} -gt $max_len ] && max_len=${#svc}
+        done <<< "$running"
+        local pad=$((max_len + 2))
+
+        # Stop all services in parallel
+        /opt/bqenv/bin/supervisorctl -c "$SUPERVISORD_CONFIG" stop all >/dev/null 2>&1
+
+        # Wait for each service to actually stop (avoid double-kill race)
+        while IFS= read -r svc; do
+            [ -z "$svc" ] && continue
+            for i in $(seq 1 30); do
+                if /opt/bqenv/bin/supervisorctl -c "$SUPERVISORD_CONFIG" status "$svc" 2>/dev/null | grep -q "STOPPED"; then
+                    printf "    %-${pad}s ${GREEN}[STOPPED]${RESET}\n" "$svc"
+                    break
+                fi
+                sleep 1
+            done
+            if ! /opt/bqenv/bin/supervisorctl -c "$SUPERVISORD_CONFIG" status "$svc" 2>/dev/null | grep -q "STOPPED"; then
+                printf "    %-${pad}s ${RED}[FAILURE]${RESET}\n" "$svc"
+            fi
+        done <<< "$running"
+        printf "\n"
+    fi
+
+    # All children confirmed stopped — safe to signal supervisord to exit
+    # (no double-stop since no children remain RUNNING)
+    kill "$SUPERVISOR_PID" 2>/dev/null || true
+    wait "$SUPERVISOR_PID" 2>/dev/null || true
+
+    printf "  ${CYAN}┌──────────────────────────────────────────────────────────────┐${RESET}\n"
+    printf "  ${CYAN}│${RESET}              ${GREEN}LocalCloud shutdown complete. Goodbye!${RESET}          ${CYAN}│${RESET}\n"
+    printf "  ${CYAN}└──────────────────────────────────────────────────────────────┘${RESET}\n"
+    printf "\n"
+    exit 0
+}
+
+trap shutdown_handler SIGTERM SIGINT
+
+/opt/bqenv/bin/supervisord -c "$SUPERVISORD_CONFIG" -n &
+SUPERVISOR_PID=$!
+
+wait "$SUPERVISOR_PID" 2>/dev/null

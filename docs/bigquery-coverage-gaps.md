@@ -159,9 +159,10 @@ Even with perfect transpilation, DuckDB cannot execute these.
 
 #### INFORMATION_SCHEMA
 - BQ has **50+ views**, DuckDB has **8**
-- Missing: `PARTITIONS`, `ROUTINES`, `PARAMETERS`, `JOBS`, `JOBS_BY_USER`, `TABLE_STORAGE`, `OBJECT_PRIVILEGES`, `SEARCH_INDEXES`, `VECTOR_INDEXES`, `STREAMING_TIMELINE`, `RESERVATIONS`, `BI_CAPACITIES`, and ~35 more
-- Existing views (`TABLES`, `COLUMNS`) have different schemas — BQ adds `is_partitioning_column`, `clustering_ordinal_position`, `creation_time`, `row_count`, `size_bytes`
-- **Workaround:** Synthesize all views from emulator metadata catalog
+- The DuckDB-backed BigQuery emulator exposes BigQuery-shaped core views over DuckDB and emulator metadata: `TABLES`, `COLUMNS`, `SCHEMATA`, `VIEWS`, `ROUTINES`, `PARTITIONS`, and `TABLE_STORAGE`
+- Missing or limited: `PARAMETERS`, `JOBS`, `JOBS_BY_USER`, `OBJECT_PRIVILEGES`, `SEARCH_INDEXES`, `VECTOR_INDEXES`, `STREAMING_TIMELINE`, `RESERVATIONS`, `BI_CAPACITIES`, and ~35 more
+- Existing coverage is intentionally local-dev oriented and is queried through the emulator SQL API; LocalCloud PostgreSQL is not a BigQuery metadata mirror
+- **Workaround:** Extend emulator views from DuckDB native metadata, job history, and emulator metadata catalogs as workflows need them
 
 ### 4b. High-Impact Gaps
 
