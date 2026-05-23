@@ -1,0 +1,65 @@
+import json
+import urllib.request
+
+# The user's original DDL with the ARRAY<<STRING(20)> typo
+sql = """CREATE TABLE Transactions (
+  ShardId STRING(2) NOT NULL,
+  CustomerId STRING(36) NOT NULL,
+  TransactionId STRING(36) NOT NULL,
+  TransactionRef STRING(64) NOT NULL,
+  YearMonth STRING(6) NOT NULL,
+  RevTimestamp TIMESTAMP NOT NULL,
+  CommitTimestamp TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true),
+  Type STRING(20) NOT NULL,
+  Direction STRING(10) NOT NULL,
+  Status STRING(20) NOT NULL,
+  Amount NUMERIC NOT NULL,
+  Currency STRING(3) NOT NULL,
+  FeeAmount NUMERIC NOT NULL DEFAULT (0),
+  TaxAmount NUMERIC NOT NULL DEFAULT (0),
+  NetAmount NUMERIC NOT NULL,
+  CounterpartyType STRING(20),
+  CounterpartyId STRING(36),
+  CounterpartyName STRING(200),
+  SourceAccountId STRING(36),
+  DestinationAccountId STRING(36),
+  Description STRING(500),
+  MerchantCategory STRING(4),
+  GeoLocation STRING(50),
+  DeviceFingerprint STRING(100),
+  IpAddress STRING(45),
+  RiskScore FLOAT64,
+  ComplianceFlags ARRAY<STRING>,
+  ApprovalStatus STRING(20),
+  InitiatedBy STRING(36),
+  InitiatorType STRING(20),
+  IsReversible BOOL NOT NULL DEFAULT (true),
+  ReversedByTxId STRING(36),
+  ReversalReason STRING(200),
+  Metadata JSON,
+  SpannerCommitTS TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)
+) PRIMARY KEY (ShardId, CustomerId, YearMonth, RevTimestamp, TransactionId),
+  INTERLEAVE IN PARENT Customers ON DELETE CASCADE"""
+
+payload = {
+    "instance": "test-instance",
+    "database": "complex_demo",
+    "statements": [sql]
+}
+
+req = urllib.request.Request(
+    'http://localhost:8080/_localcloud/mutate/spanner/ddl',
+    data=json.dumps(payload).encode('utf-8'),
+    headers={'Content-Type': 'application/json'},
+    method='POST'
+)
+
+try:
+    with urllib.request.urlopen(req) as res:
+        result = json.loads(res.read().decode('utf-8'))
+        print("Result:", json.dumps(result, indent=2))
+except urllib.error.HTTPError as e:
+    print(f"HTTP Error {e.code}:")
+    print(json.dumps(json.loads(e.read().decode('utf-8')), indent=2))
+except Exception as e:
+    print(f"Error: {e}")

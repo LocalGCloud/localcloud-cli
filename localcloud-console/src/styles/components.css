@@ -661,12 +661,24 @@ button,
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px;
+  padding: 10px 14px;
   transition: border-color var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 56px;
 }
 
 .stat-card:hover {
   border-color: var(--text-tertiary);
+}
+
+.stat-card-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
 }
 
 .stat-card-label {
@@ -675,14 +687,22 @@ button,
   color: var(--text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  margin-bottom: 8px;
+  margin-bottom: 2px;
 }
 
 .stat-card-value {
   font-family: var(--font-display);
-  font-size: var(--font-size-2xl);
+  font-size: var(--font-size-xl);
   font-weight: 600;
   color: var(--text);
+  line-height: 1.2;
+}
+
+.stat-card-sublabel {
+  font-size: var(--font-size-2xs);
+  color: var(--text-tertiary);
+  margin-top: 2px;
+  letter-spacing: 0.02em;
 }
 
 /* Hero stat card (for primary metric) */
@@ -698,24 +718,23 @@ button,
 /* ---------- Summary Bar ---------- */
 .summary-bar {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
   margin-bottom: 24px;
 }
 
 @media (max-width: 500px) {
   .summary-bar {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: 1fr;
   }
 }
 
 /* Sparkline inline chart in stat cards */
 .sparkline {
   display: block;
-  margin-top: 8px;
-  width: 100%;
-  max-width: 80px;
-  height: 24px;
+  flex-shrink: 0;
+  width: 72px;
+  height: 22px;
 }
 
 .sparkline polyline {
@@ -2919,4 +2938,359 @@ input:checked + .toggle-slider::before {
   font-size: var(--font-size-sm);
   z-index: 1000;
   animation: fadeIn 0.2s ease-out;
+}
+
+/* ============================================================
+   Dashboard — Mission Control Cards
+   ============================================================ */
+
+/* ── CSS custom props (scoped) ── */
+.dashboard {
+  --dash-accent: #38bdf8;
+  --dash-accent-dim: rgba(56, 189, 248, 0.12);
+  --dash-warning: #fbbf24;
+  --dash-danger: #f87171;
+}
+
+/* ── Page header ── */
+.dash-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+/* ── Metric cards grid ── */
+.dash-grid {
+  display: grid;
+  grid-template-columns: 1fr 2fr 2fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 1100px) {
+  .dash-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 600px) {
+  .dash-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Base dash-card ── */
+.dash-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color var(--transition), box-shadow var(--transition);
+  min-height: 80px;
+  animation: dash-card-enter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes dash-card-enter {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.dash-grid > :nth-child(1) { animation-delay: 0ms; }
+.dash-grid > :nth-child(2) { animation-delay: 70ms; }
+.dash-grid > :nth-child(3) { animation-delay: 140ms; }
+.dash-grid > :nth-child(4) { animation-delay: 210ms; }
+
+.dash-card:hover {
+  border-color: var(--text-tertiary);
+  box-shadow: var(--shadow-hover);
+}
+
+/* ── Status card ── */
+.dash-card-status {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 14px 16px;
+  gap: 12px;
+  background: var(--surface);
+}
+
+.dash-card-status.is-healthy {
+  border-color: rgba(55, 211, 153, 0.25);
+  background: linear-gradient(135deg, rgba(55, 211, 153, 0.08) 0%, transparent 80%);
+}
+
+.dash-card-status.is-degraded {
+  border-color: rgba(248, 113, 113, 0.25);
+  background: linear-gradient(135deg, rgba(248, 113, 113, 0.08) 0%, transparent 80%);
+}
+
+.dash-card-status.is-healthy:hover {
+  border-color: var(--success);
+  box-shadow: 0 0 24px -8px rgba(55, 211, 153, 0.18), var(--shadow-hover);
+}
+
+.dash-status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dash-status-pulse {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.dash-status-dot {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.is-degraded .dash-status-dot {
+  background: var(--error);
+}
+
+.dash-status-pulse::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: var(--success);
+  opacity: 0;
+  animation: dash-pulse 2.2s ease-in-out infinite;
+}
+
+.is-degraded .dash-status-pulse::before {
+  background: var(--error);
+}
+
+@keyframes dash-pulse {
+  0%   { transform: scale(1); opacity: 0.5; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+.dash-status-label {
+  font-family: var(--font-display);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--success);
+}
+
+.is-degraded .dash-status-label {
+  color: var(--error);
+}
+
+.dash-status-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  padding: 0;
+}
+
+.dash-status-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dash-status-meta-val {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+  min-width: 28px;
+}
+
+.dash-status-meta-val.active {
+  color: var(--success);
+}
+
+.dash-status-meta-val.inactive {
+  color: var(--text-tertiary);
+}
+
+.dash-status-meta-val.unhealthy {
+  color: var(--error);
+}
+
+.dash-status-meta-lbl {
+  font-size: var(--font-size-2xs);
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ── Chart cards (CPU / Memory) ── */
+.dash-card-chart {
+  padding: 0;
+  position: relative;
+  min-height: 80px;
+}
+
+.dash-chart-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: auto;
+  z-index: 1;
+}
+
+.dash-card-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 12px 14px;
+  gap: 2px;
+  pointer-events: none;
+  height: 100%;
+  min-height: 80px;
+}
+
+.dash-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dash-card-label {
+  font-size: var(--font-size-2xs);
+  font-weight: 700;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  flex-shrink: 0;
+}
+
+.dash-card-value {
+  font-family: var(--font-display);
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  line-height: 1.1;
+  text-align: right;
+  transition: color 0.4s ease;
+  letter-spacing: -0.02em;
+}
+
+.dash-card-extra {
+  font-size: var(--font-size-2xs);
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-align: right;
+  letter-spacing: 0.02em;
+}
+
+/* ── Chart hover tooltip ── */
+.dash-chart-tip {
+  position: absolute;
+  bottom: 8px;
+  z-index: 5;
+  transform: translateX(-50%);
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: var(--surface-active);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  animation: dash-fade-in 100ms ease;
+}
+
+.dash-chart-tip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 4px solid var(--surface-active);
+}
+
+@keyframes dash-fade-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* ── Uptime card ── */
+.dash-card-uptime {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: space-between;
+  padding: 12px 16px;
+  gap: 16px;
+}
+
+.dash-uptime-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.dash-uptime-col:last-child {
+  align-items: flex-end;
+  text-align: right;
+  border-left: 1px solid var(--border-subtle);
+  padding-left: 16px;
+}
+
+.dash-uptime-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  margin-bottom: 2px;
+}
+
+.dash-uptime-value {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-base);
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.dash-uptime-since {
+  font-size: var(--font-size-2xs);
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+/* ── Section header ── */
+.dash-section-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+/* ── Slightly tighter table for dashboard ── */
+.dash-table .data-table thead th {
+  padding: 6px 10px;
+  font-size: var(--font-size-2xs);
+}
+
+.dash-table .data-table tbody td {
+  padding: 6px 10px;
+  font-size: var(--font-size-2xs);
 }
