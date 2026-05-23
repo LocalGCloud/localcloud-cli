@@ -227,6 +227,13 @@ public class LocalCloudApplication {
         sb.annotatedService("/_localcloud", exportService);
         sb.annotatedService("/_localcloud", queryService);
 
+        // Root-level aliases for developer-facing admin endpoints.
+        // Armeria matches most-specific routes first, so these take priority
+        // over the console's serviceUnder("/"). The /_localcloud originals
+        // remain for backward compatibility.
+        sb.annotatedService("/", healthCheckService);
+        sb.annotatedService("/", exportService);
+
         // GraphQL API gateway — exposes a unified GraphQL endpoint at /graphql
         // that stitches together Spanner, BigQuery, Logging, Monitoring, and query history.
         var graphQLGateway = new GraphQLGateway(config.getServiceRegistry(), dataSource, config, queryHistoryRepo);
@@ -522,45 +529,79 @@ public class LocalCloudApplication {
 
         // Register shutdown hook
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            logger.info("Shutdown signal received, stopping LocalCloud...");
             stop();
         }, "localcloud-shutdown"));
     }
 
+    private static final String GREEN = "\033[32m";
+    private static final String RED = "\033[31m";
+    private static final String RESET = "\033[0m";
+
+    private static String padRight(String s, int n) {
+        return String.format("%-" + n + "s", s);
+    }
+
+    private static String stopped() {
+        return " " + GREEN + "[STOPPED]" + RESET;
+    }
+
+    private static String failure() {
+        return " " + RED + "[FAILURE]" + RESET;
+    }
+
     /**
-     * Gracefully stop the server and release resources.
+     * Gracefully stop the server and release all resources.
      */
     public void stop() {
-        // Stop Armeria server first (stop accepting new requests)
+        logger.info("");
+        logger.info("═══════════════════════════════════════════════════════════════");
+        logger.info("  ✕ Shutting Down LocalCloud...");
+        logger.info("═══════════════════════════════════════════════════════════════");
+        logger.info("");
+
+        // Stop Armeria server first (drain in-flight requests)
         if (server != null) {
             server.stop().join();
-            logger.info("LocalCloud server stopped");
+            logger.info("  {}{}", padRight("Gateway", 28), stopped());
         }
 
-        // Stop telemetry scheduler
+        // Stop telemetry scheduler & drain queued events
         telemetryService.stop();
+        logger.info("  {}{}", padRight("Telemetry", 28), stopped());
 
-        // Flush usage metrics before stopping emulators
+        // Flush usage metrics from memory to PostgreSQL
         healthCheckService.shutdown();
+        logger.info("  {}{}", padRight("Usage metrics", 28), stopped());
 
-        // Stop all registered emulators (facade services)
+        // Stop all registered facade emulators (in-process services)
+        int stopped = 0;
         for (var emulator : gateway.getEmulators()) {
             try {
                 emulator.stop();
+                stopped++;
             } catch (Exception e) {
-                logger.warn("Error stopping emulator {}: {}", emulator.getName(), e.getMessage());
+                logger.warn("  {}{}", padRight(emulator.getDisplayName(), 28), failure());
             }
         }
+        logger.info("  {}{}", padRight(stopped + " emulator(s)", 28), stopped());
 
-        // Close HTTP clients
+        // Close HTTP client connections
         processHealthChecker.close();
         if (iamMiddleware != null) {
             iamMiddleware.close();
         }
         seedService.close();
+        logger.info("  {}{}", padRight("Client connections", 28), stopped());
 
-        // Close database last
+        // Close database connection pool last
         dataSource.close();
+        logger.info("  {}{}", padRight("Database pool", 28), stopped());
+
+        logger.info("");
+        logger.info("═══════════════════════════════════════════════════════════════");
+        logger.info("  ✓ LocalCloud shutdown complete");
+        logger.info("═══════════════════════════════════════════════════════════════");
+        logger.info("");
     }
 
     // --- Accessors for components ---

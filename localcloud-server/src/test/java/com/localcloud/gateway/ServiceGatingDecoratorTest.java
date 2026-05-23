@@ -105,6 +105,17 @@ class ServiceGatingDecoratorTest {
     }
 
     @Test
+    void resolveService_rootAdminPaths_returnNull() {
+        // Root-level admin endpoints are not service paths
+        assertNull(ServiceGatingDecorator.resolveService("/health"));
+        assertNull(ServiceGatingDecorator.resolveService("/health/localcloud-server"));
+        assertNull(ServiceGatingDecorator.resolveService("/services"));
+        assertNull(ServiceGatingDecorator.resolveService("/usage"));
+        assertNull(ServiceGatingDecorator.resolveService("/export"));
+        assertNull(ServiceGatingDecorator.resolveService("/export?format=shell"));
+    }
+
+    @Test
     void resolveService_emptyPath_returnsNull() {
         assertNull(ServiceGatingDecorator.resolveService(""));
     }

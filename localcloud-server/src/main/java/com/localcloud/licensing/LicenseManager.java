@@ -11,7 +11,7 @@ import java.security.PublicKey;
 /**
  * Orchestrates license validation.
  *
- * Routes to OfflineKeyValidator (lc_of_ prefix) or OnlineKeyValidator (lc_on_
+ * Routes to OfflineKeyValidator (lck_ prefix) or OnlineKeyValidator (lco_
  * prefix),
  * manages the license cache for offline grace periods, and returns the final
  * tier.
@@ -153,9 +153,9 @@ public class LicenseManager {
 
         LicenseResult result;
 
-        if (apiKey.startsWith("lc_of_")) {
+        if (apiKey.startsWith("lck_")) {
             result = offlineValidator.validate(apiKey, deviceId);
-        } else if (apiKey.startsWith("lc_on_")) {
+        } else if (apiKey.startsWith("lco_")) {
             result = onlineValidator.validate(apiKey, deviceId);
             if (!result.isValid() && result.errorMessage() != null
                     && result.errorMessage().contains("unreachable")) {
@@ -163,7 +163,7 @@ public class LicenseManager {
             }
         } else {
             result = LicenseResult.invalid(
-                    "Unknown key format. Keys start with 'lc_on_' (online) or 'lc_of_' (offline)");
+                    "Unknown key format. Keys start with 'lco_' (online) or 'lck_' (offline)");
         }
 
         if (result.isValid()) {

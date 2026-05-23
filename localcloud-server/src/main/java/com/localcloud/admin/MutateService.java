@@ -584,6 +584,93 @@ public class MutateService {
     private String mutateBigQuery(String operation, String subOp, Map<String, Object> json) throws Exception {
         String projectId = config.getProjectId();
 
+        if ("datasets".equals(operation) && subOp == null) {
+            // Create dataset
+            String datasetId = (String) json.get("datasetId");
+            if (datasetId == null || datasetId.isBlank()) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "Missing datasetId"));
+            }
+            String description = (String) json.getOrDefault("description", "");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> labels = (Map<String, Object>) json.getOrDefault("labels", Map.of());
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            Map<String, Object> ref = new LinkedHashMap<>();
+            ref.put("projectId", projectId);
+            ref.put("datasetId", datasetId);
+            body.put("datasetReference", ref);
+            if (!description.isEmpty()) body.put("description", description);
+            if (!labels.isEmpty()) body.put("labels", labels);
+
+            String url = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/datasets";
+            httpPostAndReturn(url, mapper.writeValueAsString(body), "application/json");
+            logger.info("Created BigQuery dataset: {}", datasetId);
+            return mapper.writeValueAsString(Map.of("status", "created", "dataset", datasetId));
+        }
+        if ("datasets".equals(operation) && "delete".equals(subOp)) {
+            // Delete dataset (and optionally its tables)
+            String datasetId = (String) json.get("datasetId");
+            boolean deleteContents = Boolean.TRUE.equals(json.get("deleteContents"));
+            String url = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/datasets/" + datasetId;
+            if (deleteContents) url += "?deleteContents=true";
+            httpDelete(url);
+            logger.info("Deleted BigQuery dataset: {}", datasetId);
+            return mapper.writeValueAsString(Map.of("status", "deleted", "dataset", datasetId));
+        }
+        if ("tables".equals(operation) && subOp == null) {
+            // Create table
+            String datasetId = (String) json.get("datasetId");
+            String tableId = (String) json.get("tableId");
+            if (datasetId == null || tableId == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "Missing datasetId or tableId"));
+            }
+            String description = (String) json.getOrDefault("description", "");
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> schemaFields = (List<Map<String, Object>>) json.get("schema");
+            String tableType = (String) json.getOrDefault("tableType", "TABLE");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> timePartitioning = (Map<String, Object>) json.get("timePartitioning");
+            @SuppressWarnings("unchecked")
+            List<String> clustering = (List<String>) json.get("clustering");
+            String viewQuery = (String) json.get("viewQuery");
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            Map<String, Object> ref = new LinkedHashMap<>();
+            ref.put("projectId", projectId);
+            ref.put("datasetId", datasetId);
+            ref.put("tableId", tableId);
+            body.put("tableReference", ref);
+
+            if ("VIEW".equals(tableType)) {
+                Map<String, Object> view = new LinkedHashMap<>();
+                view.put("query", viewQuery != null ? viewQuery : "SELECT 1");
+                view.put("useLegacySql", false);
+                body.put("view", view);
+            } else {
+                if (schemaFields != null && !schemaFields.isEmpty()) {
+                    Map<String, Object> schema = new LinkedHashMap<>();
+                    schema.put("fields", schemaFields);
+                    body.put("schema", schema);
+                }
+                if (timePartitioning != null) body.put("timePartitioning", timePartitioning);
+                if (clustering != null && !clustering.isEmpty()) body.put("clustering", Map.of("fields", clustering));
+            }
+            if (!description.isEmpty()) body.put("description", description);
+
+            String url = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/datasets/" + datasetId + "/tables";
+            httpPostAndReturn(url, mapper.writeValueAsString(body), "application/json");
+            logger.info("Created BigQuery {}: {}.{}", tableType, datasetId, tableId);
+            return mapper.writeValueAsString(Map.of("status", "created", "dataset", datasetId, "table", tableId, "type", tableType));
+        }
+        if ("tables".equals(operation) && "delete".equals(subOp)) {
+            // Delete table
+            String datasetId = (String) json.get("datasetId");
+            String tableId = (String) json.get("tableId");
+            String url = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/datasets/" + datasetId + "/tables/" + tableId;
+            httpDelete(url);
+            logger.info("Deleted BigQuery table: {}.{}", datasetId, tableId);
+            return mapper.writeValueAsString(Map.of("status", "deleted", "dataset", datasetId, "table", tableId));
+        }
         if ("rows".equals(operation) && subOp == null) {
             // Insert row via insertAll API
             String dataset = (String) json.get("dataset");
@@ -626,6 +713,102 @@ public class MutateService {
 
             logger.debug("Deleted rows from BigQuery {}.{} where {}", dataset, table, whereClause);
             return mapper.writeValueAsString(Map.of("status", "deleted", "dataset", dataset, "table", table));
+        }
+        if ("rows".equals(operation) && "update".equals(subOp)) {
+            // Update rows via DML query
+            String dataset = (String) json.get("dataset");
+            String table = (String) json.get("table");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> setValues = (Map<String, Object>) json.get("setValues");
+            String whereClause = (String) json.get("whereClause");
+
+            if (setValues == null || setValues.isEmpty()) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "Missing setValues"));
+            }
+
+            // Build SET clause
+            StringBuilder setClause = new StringBuilder();
+            boolean first = true;
+            for (Map.Entry<String, Object> entry : setValues.entrySet()) {
+                if (!first) setClause.append(", ");
+                String col = entry.getKey();
+                Object val = entry.getValue();
+                setClause.append(col).append(" = ");
+                if (val == null) {
+                    setClause.append("NULL");
+                } else if (val instanceof Number) {
+                    setClause.append(val);
+                } else if (val instanceof Boolean) {
+                    setClause.append(val);
+                } else {
+                    setClause.append("'").append(val.toString().replace("'", "''")).append("'");
+                }
+                first = false;
+            }
+
+            String dml = "UPDATE `" + dataset + "." + table + "` SET " + setClause;
+            if (whereClause != null && !whereClause.isBlank()) {
+                dml += " WHERE " + whereClause;
+            }
+
+            Map<String, Object> queryBody = new LinkedHashMap<>();
+            queryBody.put("query", dml);
+            queryBody.put("useLegacySql", false);
+
+            String url = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/queries";
+            httpPostAndReturn(url, mapper.writeValueAsString(queryBody), "application/json");
+
+            logger.debug("Updated rows in BigQuery {}.{} with SET {}", dataset, table, setClause);
+            return mapper.writeValueAsString(Map.of("status", "updated", "dataset", dataset, "table", table));
+        }
+        if ("merge".equals(operation)) {
+            // MERGE statement for upsert operations
+            String dataset = (String) json.get("dataset");
+            String table = (String) json.get("table");
+            String sourceQuery = (String) json.get("sourceQuery");
+            String mergeCondition = (String) json.get("mergeCondition");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> updateSet = (Map<String, Object>) json.get("updateSet");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> insertValues = (Map<String, Object>) json.get("insertValues");
+
+            if (sourceQuery == null || mergeCondition == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "Missing sourceQuery or mergeCondition"));
+            }
+
+            StringBuilder mergeSql = new StringBuilder();
+            mergeSql.append("MERGE `").append(dataset).append(".").append(table).append("` T\n");
+            mergeSql.append("USING (").append(sourceQuery).append(") S\n");
+            mergeSql.append("ON (").append(mergeCondition).append(")\n");
+
+            if (updateSet != null && !updateSet.isEmpty()) {
+                mergeSql.append("WHEN MATCHED THEN UPDATE SET ");
+                boolean first = true;
+                for (Map.Entry<String, Object> entry : updateSet.entrySet()) {
+                    if (!first) mergeSql.append(", ");
+                    mergeSql.append("T.").append(entry.getKey()).append(" = S.").append(entry.getValue());
+                    first = false;
+                }
+                mergeSql.append("\n");
+            }
+
+            if (insertValues != null && !insertValues.isEmpty()) {
+                mergeSql.append("WHEN NOT MATCHED THEN INSERT (");
+                mergeSql.append(String.join(", ", insertValues.keySet()));
+                mergeSql.append(") VALUES (");
+                mergeSql.append(String.join(", ", insertValues.values().stream().map(v -> "S." + v).toList()));
+                mergeSql.append(")\n");
+            }
+
+            Map<String, Object> queryBody = new LinkedHashMap<>();
+            queryBody.put("query", mergeSql.toString());
+            queryBody.put("useLegacySql", false);
+
+            String url = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/queries";
+            httpPostAndReturn(url, mapper.writeValueAsString(queryBody), "application/json");
+
+            logger.debug("Executed MERGE on BigQuery {}.{}", dataset, table);
+            return mapper.writeValueAsString(Map.of("status", "merged", "dataset", dataset, "table", table));
         }
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid BigQuery operation: " + operation));
     }

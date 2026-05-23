@@ -232,7 +232,7 @@ public class SeedService {
                                         Map<String, Object> results, boolean volatileOnly) {
         // Persistent services — data survives container restarts (filesystem, DuckDB, LevelDB, PostgreSQL).
         // Skip these on restart (volatileOnly=true) since their data is already on the persistent volume.
-        // Volatile services — in-memory emulators that lose data on restart (gcloud Pub/Sub, Firestore, Bigtable).
+        // Volatile services — in-memory emulators that lose data on restart (gcloud Pub/Sub, Bigtable).
         // These must always be re-seeded.
         //
         // Service storage map:
@@ -246,8 +246,8 @@ public class SeedService {
         //   Logging:        PostgreSQL                                    → persistent
         //   Monitoring:     PostgreSQL                                    → persistent
         //   Pub/Sub:        in-memory (gcloud emulator)                   → volatile
-        //   Firestore:      in-memory (gcloud emulator)                   → volatile
         //   Bigtable:       in-memory (gcloud emulator)                   → volatile
+        //   Firestore:      NOT IMPLEMENTED — emulator starts but seeding is disabled
 
         int totalSeeded = 0;
 
@@ -257,10 +257,10 @@ public class SeedService {
             results.put("pubsub", results.containsKey("pubsub") ? ((int) results.get("pubsub")) + count : count);
             totalSeeded += count;
         }
+        // Firestore emulator is not fully implemented — skip seeding to avoid
+        // blocking on an unresponsive emulator process.
         if (seedData.containsKey("firestore")) {
-            int count = seedFirestore(seedData.get("firestore"));
-            results.put("firestore", results.containsKey("firestore") ? ((int) results.get("firestore")) + count : count);
-            totalSeeded += count;
+            logger.info("Skipping Firestore seed — emulator not yet implemented");
         }
         if (seedData.containsKey("bigtable")) {
             int count = seedBigtable(seedData.get("bigtable"));
@@ -371,7 +371,7 @@ public class SeedService {
                 if (seedData.containsKey("secretmanager")) totalSeeded += seedSecretManager(seedData.get("secretmanager"));
                 if (seedData.containsKey("memorystore")) totalSeeded += seedMemorystore(seedData.get("memorystore"));
                 if (seedData.containsKey("spanner")) totalSeeded += seedSpanner(seedData.get("spanner"));
-                if (seedData.containsKey("firestore")) totalSeeded += seedFirestore(seedData.get("firestore"));
+                // Firestore emulator not implemented — skip
                 if (seedData.containsKey("bigtable")) totalSeeded += seedBigtable(seedData.get("bigtable"));
                 if (seedData.containsKey("cloudtasks")) totalSeeded += seedCloudTasks(seedData.get("cloudtasks"));
                 if (seedData.containsKey("workflows")) totalSeeded += seedWorkflows(seedData.get("workflows"), projectId);
@@ -473,7 +473,10 @@ public class SeedService {
                             case "secretmanager" -> seedSecretManager(seedData.get("secretmanager"));
                             case "memorystore" -> seedMemorystore(seedData.get("memorystore"));
                             case "spanner" -> seedSpanner(seedData.get("spanner"));
-                            case "firestore" -> seedFirestore(seedData.get("firestore"));
+                            case "firestore" -> {
+                                logger.info("Skipping Firestore seed — emulator not yet implemented");
+                                yield 0;
+                            }
                             case "bigtable" -> seedBigtable(seedData.get("bigtable"));
                             case "cloudtasks" -> seedCloudTasks(seedData.get("cloudtasks"));
                             case "workflows" -> seedWorkflows(seedData.get("workflows"), config.getProjectId());
@@ -1364,6 +1367,12 @@ public class SeedService {
     private int seedSpanner(Object spannerData) {
         if (!(spannerData instanceof Map)) return 0;
         Map<String, Object> spanner = (Map<String, Object>) spannerData;
+
+        List<Map<String, Object>> instances = (List<Map<String, Object>>) spanner.get("instances");
+        if (instances == null || instances.isEmpty()) {
+            return 0;
+        }
+
         int count = 0;
         String projectId = config.getProjectId();
         String spannerBase = "http://localhost:" + spannerRestPort;
@@ -1390,15 +1399,15 @@ public class SeedService {
                     }
                 } catch (Exception ignored) {}
                 logger.info("Waiting for Spanner emulator to be ready (attempt {}/15)...", attempt + 1);
-                try { Thread.sleep(2000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); return 0; }
+                try { Thread.sleep(1000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); return 0; }
             }
         }
         if (!spannerReady) {
-            logger.warn("Spanner emulator not ready after 30s, skipping seed");
+            logger.warn("Spanner emulator not ready after 15s, skipping seed");
             return 0;
         }
 
-        List<Map<String, Object>> instances = (List<Map<String, Object>>) spanner.get("instances");
+        instances = (List<Map<String, Object>>) spanner.get("instances");
         if (instances != null) {
             for (Map<String, Object> instance : instances) {
                 try {
@@ -1557,21 +1566,27 @@ public class SeedService {
     private int seedFirestore(Object fsData) {
         if (!(fsData instanceof Map)) return 0;
         Map<String, Object> fs = (Map<String, Object>) fsData;
+
+        List<Map<String, Object>> collections = (List<Map<String, Object>>) fs.get("collections");
+        if (collections == null || collections.isEmpty()) {
+            return 0;
+        }
+
         int count = 0;
         String projectId = config.getProjectId();
         String firestoreBase = "http://localhost:" + firestorePort;
 
         // Wait for Firestore emulator to be ready (it starts slower than the gateway)
         boolean firestoreReady = false;
-        for (int attempt = 0; attempt < 10; attempt++) {
+        for (int attempt = 0; attempt < 15; attempt++) {
             try {
                 String checkUrl = firestoreBase + "/v1/projects/" + projectId + "/databases/(default)/documents";
                 httpGet(checkUrl);
                 firestoreReady = true;
                 break;
             } catch (Exception e) {
-                logger.info("Waiting for Firestore emulator to be ready (attempt {}/10)...", attempt + 1);
-                try { Thread.sleep(1000L * (attempt + 1)); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); return 0; }
+                logger.info("Waiting for Firestore emulator to be ready (attempt {}/15)...", attempt + 1);
+                try { Thread.sleep(1000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); return 0; }
             }
         }
         if (!firestoreReady) {
@@ -1579,7 +1594,7 @@ public class SeedService {
             return 0;
         }
 
-        List<Map<String, Object>> collections = (List<Map<String, Object>>) fs.get("collections");
+        collections = (List<Map<String, Object>>) fs.get("collections");
         if (collections != null) {
             for (Map<String, Object> coll : collections) {
                 String collName = (String) coll.get("name");

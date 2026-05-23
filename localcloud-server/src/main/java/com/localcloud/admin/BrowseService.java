@@ -63,6 +63,12 @@ public class BrowseService {
 
     public BrowseService(LocalCloudConfig config, PostgresDataSource dataSource,
                          ServiceRegistry registry, UsageMetricsRepository usageMetrics) {
+        this(config, dataSource, registry, usageMetrics, null);
+    }
+
+    BrowseService(LocalCloudConfig config, PostgresDataSource dataSource,
+                  ServiceRegistry registry, UsageMetricsRepository usageMetrics,
+                  String bigqueryBaseOverride) {
         this.config = config;
         this.dataSource = dataSource;
         this.registry = registry;
@@ -75,7 +81,9 @@ public class BrowseService {
         // Compute base URLs from registry definitions
         this.gcsBase = baseUrl(registry.getService("gcs"));
         this.pubsubBase = baseUrl(registry.getService("pubsub"));
-        this.bigqueryBase = baseUrl(registry.getService("bigquery"));
+        this.bigqueryBase = bigqueryBaseOverride != null
+                ? bigqueryBaseOverride
+                : baseUrl(registry.getService("bigquery"));
 
         ServiceDefinition spannerDef = registry.getService("spanner");
         int spannerRestPort = spannerDef != null && spannerDef.additionalPorts().containsKey("rest")
@@ -457,7 +465,179 @@ public class BrowseService {
                     + "/datasets/" + resourceId + "/tables";
             return proxyGet(url);
         }
+        if ("information_schema".equals(resourceType)) {
+            return browseBigQueryInformationSchema(resourceId, projectId);
+        }
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid BigQuery browse path"));
+    }
+
+    /**
+     * Browse BigQuery INFORMATION_SCHEMA views by asking the BigQuery emulator
+     * to execute DuckDB-backed INFORMATION_SCHEMA SQL. LocalCloud keeps only
+     * control-plane data in PostgreSQL; BigQuery metadata stays in the emulator.
+     */
+    String browseBigQueryInformationSchema(String viewType, String projectId) throws Exception {
+        String view = viewType != null ? viewType : "tables";
+        String sqlView = bigQueryInformationSchemaSqlView(view);
+        if (sqlView == null) {
+            return mapper.writeValueAsString(Map.of(
+                    "error", true,
+                    "message", "Unknown INFORMATION_SCHEMA view: " + view));
+        }
+
+        List<String> datasets = listBigQueryDatasetIds(projectId);
+        if (datasets.isEmpty()) {
+            List<String> columns = fallbackInfoSchemaColumns(sqlView);
+            return mapper.writeValueAsString(Map.of(
+                    "columns", columns,
+                    "rows", List.of(),
+                    "rowCount", 0));
+        }
+
+        List<String> columns = new ArrayList<>();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (String datasetId : datasets) {
+            try {
+                Map<String, Object> queryResp = queryBigQueryInformationSchema(projectId, datasetId, sqlView);
+                if (columns.isEmpty()) {
+                    columns.addAll(extractBigQueryColumns(queryResp));
+                }
+                rows.addAll(extractBigQueryRows(queryResp, columns));
+            } catch (Exception e) {
+                logger.warn("BigQuery INFORMATION_SCHEMA query failed for dataset {} (view={}): {}",
+                        datasetId, sqlView, e.getMessage());
+            }
+        }
+
+        if (columns.isEmpty()) {
+            columns.addAll(fallbackInfoSchemaColumns(sqlView));
+        }
+
+        return mapper.writeValueAsString(Map.of(
+            "columns", columns,
+            "rows", rows, "rowCount", rows.size()));
+    }
+
+    private String bigQueryInformationSchemaSqlView(String view) {
+        return switch (view) {
+            case "tables" -> "TABLES";
+            case "columns" -> "COLUMNS";
+            case "schemata" -> "SCHEMATA";
+            case "views" -> "VIEWS";
+            case "routines" -> "ROUTINES";
+            case "partitions" -> "PARTITIONS";
+            case "table_storage" -> "TABLE_STORAGE";
+            default -> null;
+        };
+    }
+
+    private List<String> listBigQueryDatasetIds(String projectId) throws Exception {
+        String url = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/datasets";
+        @SuppressWarnings("unchecked")
+        Map<String, Object> resp = mapper.readValue(proxyGet(url), Map.class);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> datasets = (List<Map<String, Object>>) resp.getOrDefault("datasets", List.of());
+        List<String> datasetIds = new ArrayList<>();
+        for (Map<String, Object> dataset : datasets) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> ref = (Map<String, Object>) dataset.get("datasetReference");
+            Object id = ref != null ? ref.get("datasetId") : dataset.get("id");
+            if (id == null) {
+                continue;
+            }
+            String datasetId = String.valueOf(id);
+            int projectSeparator = datasetId.indexOf(':');
+            if (projectSeparator >= 0 && projectSeparator + 1 < datasetId.length()) {
+                datasetId = datasetId.substring(projectSeparator + 1);
+            }
+            if (!datasetId.isBlank()) {
+                datasetIds.add(datasetId);
+            }
+        }
+        return datasetIds;
+    }
+
+    private Map<String, Object> queryBigQueryInformationSchema(
+            String projectId, String datasetId, String sqlView) throws Exception {
+        String queryUrl = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/queries";
+        String queryPayload = mapper.writeValueAsString(Map.of(
+                "query", "SELECT * FROM INFORMATION_SCHEMA." + sqlView,
+                "useLegacySql", false,
+                "defaultDataset", Map.of(
+                        "projectId", projectId,
+                        "datasetId", datasetId)));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> queryResp = mapper.readValue(proxyPost(queryUrl, queryPayload), Map.class);
+        if (queryResp.containsKey("error")) {
+            throw new IllegalStateException("BigQuery INFORMATION_SCHEMA query failed for dataset "
+                    + datasetId + ": " + queryResp.get("error"));
+        }
+        return queryResp;
+    }
+
+    private List<String> extractBigQueryColumns(Map<String, Object> queryResp) {
+        List<String> columns = new ArrayList<>();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> schema = (Map<String, Object>) queryResp.get("schema");
+        if (schema == null) {
+            return columns;
+        }
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> fields = (List<Map<String, Object>>) schema.get("fields");
+        if (fields == null) {
+            return columns;
+        }
+        for (Map<String, Object> field : fields) {
+            Object name = field.get("name");
+            if (name != null) {
+                columns.add(String.valueOf(name));
+            }
+        }
+        return columns;
+    }
+
+    private List<Map<String, Object>> extractBigQueryRows(Map<String, Object> queryResp, List<String> columns) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rawRows = (List<Map<String, Object>>) queryResp.get("rows");
+        if (rawRows == null) {
+            return rows;
+        }
+        for (Map<String, Object> rawRow : rawRows) {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> cells = (List<Map<String, Object>>) rawRow.get("f");
+            Map<String, Object> row = new LinkedHashMap<>();
+            if (cells != null) {
+                for (int i = 0; i < columns.size() && i < cells.size(); i++) {
+                    row.put(columns.get(i), cells.get(i).get("v"));
+                }
+            }
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    private List<String> fallbackInfoSchemaColumns(String sqlView) {
+        return switch (sqlView) {
+            case "TABLES" -> List.of("table_catalog", "table_schema", "table_name", "table_type",
+                    "creation_time", "ddl", "row_count", "size_bytes");
+            case "COLUMNS" -> List.of("table_catalog", "table_schema", "table_name", "column_name",
+                    "ordinal_position", "data_type", "is_nullable", "is_partitioning_column",
+                    "clustering_ordinal_position");
+            case "SCHEMATA" -> List.of("catalog_name", "schema_name", "schema_owner",
+                    "creation_time", "last_modified_time", "location");
+            case "VIEWS" -> List.of("table_catalog", "table_schema", "table_name",
+                    "view_definition", "check_option", "use_standard_sql");
+            case "ROUTINES" -> List.of("routine_name", "routine_catalog", "routine_schema",
+                    "routine_type", "routine_definition", "created", "last_altered");
+            case "PARTITIONS" -> List.of("table_catalog", "table_schema", "table_name",
+                    "partition_id", "last_modified_time", "total_rows", "total_logical_bytes",
+                    "total_billable_bytes");
+            case "TABLE_STORAGE" -> List.of("table_catalog", "table_schema", "table_name",
+                    "total_rows", "total_logical_bytes", "active_logical_bytes",
+                    "total_physical_bytes", "last_modified_time");
+            default -> List.of();
+        };
     }
 
     /**

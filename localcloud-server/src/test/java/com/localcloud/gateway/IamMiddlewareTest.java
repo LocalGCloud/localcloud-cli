@@ -133,6 +133,72 @@ class IamMiddlewareTest {
     }
 
     @Test
+    void rootLevelHealthEndpointBypassesIamInStrictMode() throws Exception {
+        middleware = new IamMiddleware(mockConfig("strict"));
+
+        setupRequest("/health");
+        HttpResponse expected = HttpResponse.of(HttpStatus.OK);
+        when(delegate.serve(ctx, req)).thenReturn(expected);
+
+        HttpResponse result = middleware.serve(delegate, ctx, req);
+
+        assertSame(expected, result);
+        verify(delegate).serve(ctx, req);
+    }
+
+    @Test
+    void rootLevelHealthNestedEndpointBypassesIam() throws Exception {
+        middleware = new IamMiddleware(mockConfig("strict"));
+
+        setupRequest("/health/localcloud-server");
+        HttpResponse expected = HttpResponse.of(HttpStatus.OK);
+        when(delegate.serve(ctx, req)).thenReturn(expected);
+
+        HttpResponse result = middleware.serve(delegate, ctx, req);
+
+        assertSame(expected, result);
+    }
+
+    @Test
+    void rootLevelServicesEndpointBypassesIam() throws Exception {
+        middleware = new IamMiddleware(mockConfig("strict"));
+
+        setupRequest("/services");
+        HttpResponse expected = HttpResponse.of(HttpStatus.OK);
+        when(delegate.serve(ctx, req)).thenReturn(expected);
+
+        HttpResponse result = middleware.serve(delegate, ctx, req);
+
+        assertSame(expected, result);
+    }
+
+    @Test
+    void rootLevelUsageEndpointBypassesIam() throws Exception {
+        middleware = new IamMiddleware(mockConfig("strict"));
+
+        setupRequest("/usage");
+        HttpResponse expected = HttpResponse.of(HttpStatus.OK);
+        when(delegate.serve(ctx, req)).thenReturn(expected);
+
+        HttpResponse result = middleware.serve(delegate, ctx, req);
+
+        assertSame(expected, result);
+    }
+
+    @Test
+    void rootLevelExportEndpointBypassesIam() throws Exception {
+        middleware = new IamMiddleware(mockConfig("strict"));
+
+        setupRequest("/export?format=shell");
+        HttpResponse expected = HttpResponse.of(HttpStatus.OK);
+        when(delegate.serve(ctx, req)).thenReturn(expected);
+
+        HttpResponse result = middleware.serve(delegate, ctx, req);
+
+        assertSame(expected, result);
+    }
+
+    @Test
     void adminEndpointNestedPathBypassesIam() throws Exception {
         middleware = new IamMiddleware(mockConfig("strict"));
 

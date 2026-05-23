@@ -278,7 +278,7 @@ public final class TestDataSource {
                 "    instance_id VARCHAR(255) NOT NULL," +
                 "    database_name VARCHAR(255) NOT NULL," +
                 "    charset VARCHAR(64) DEFAULT 'UTF8'," +
-                "    collation VARCHAR(128) DEFAULT ''," +
+                "    \"collation\" VARCHAR(128) DEFAULT ''," +
                 "    physical_name VARCHAR(255)," +
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
                 "    PRIMARY KEY (project_id, instance_id, database_name)" +

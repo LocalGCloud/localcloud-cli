@@ -1,5 +1,8 @@
 package com.localcloud.gateway;
 
+import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryMXBean;
+import java.lang.management.MemoryUsage;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -97,6 +100,73 @@ public class HealthCheckService {
         flushMetrics(); // final flush
     }
 
+    /**
+     * Collect current JVM process CPU load and memory usage metrics.
+     * Returns a map suitable for inclusion in the health response.
+     */
+    static Map<String, Object> collectSystemMetrics() {
+        Map<String, Object> result = new LinkedHashMap<>();
+
+        // CPU metrics via OperatingSystemMXBean (com.sun.management extension)
+        try {
+            var osBean = (com.sun.management.OperatingSystemMXBean)
+                    ManagementFactory.getOperatingSystemMXBean();
+
+            double processLoad = osBean.getProcessCpuLoad();
+            double systemLoad = osBean.getSystemCpuLoad();
+
+            Map<String, Object> cpu = new LinkedHashMap<>();
+            // getProcessCpuLoad returns -1 if not available (first call, etc.)
+            cpu.put("process_load", processLoad >= 0 ? Math.round(processLoad * 1000.0) / 10.0 : 0.0);
+            cpu.put("system_load", systemLoad >= 0 ? Math.round(systemLoad * 1000.0) / 10.0 : 0.0);
+            cpu.put("available_processors", Runtime.getRuntime().availableProcessors());
+            result.put("cpu", cpu);
+        } catch (Exception e) {
+            // Fallback: no CPU data available
+        }
+
+        // Memory metrics
+        try {
+            MemoryMXBean memBean = ManagementFactory.getMemoryMXBean();
+            MemoryUsage heap = memBean.getHeapMemoryUsage();
+
+            Runtime runtime = Runtime.getRuntime();
+            long maxMem = runtime.maxMemory();
+            long totalMem = runtime.totalMemory();
+            long freeMem = runtime.freeMemory();
+            long usedMem = totalMem - freeMem;
+
+            // Try system-level physical memory from OS MXBean
+            long totalPhysicalMb = 0;
+            long freePhysicalMb = 0;
+            try {
+                var osBean = (com.sun.management.OperatingSystemMXBean)
+                        ManagementFactory.getOperatingSystemMXBean();
+                totalPhysicalMb = osBean.getTotalMemorySize() / (1024 * 1024);
+                freePhysicalMb = osBean.getFreeMemorySize() / (1024 * 1024);
+            } catch (Exception ignored) {}
+
+            // Non-heap memory
+            MemoryUsage nonHeap = memBean.getNonHeapMemoryUsage();
+
+            Map<String, Object> memory = new LinkedHashMap<>();
+            memory.put("heap_used_mb", usedMem / (1024 * 1024));
+            memory.put("heap_max_mb", maxMem > 0 ? maxMem / (1024 * 1024) : 0);
+            memory.put("heap_committed_mb", totalMem / (1024 * 1024));
+            memory.put("heap_usage_pct", maxMem > 0
+                    ? Math.round((double) usedMem / maxMem * 1000.0) / 10.0
+                    : 0.0);
+            memory.put("non_heap_used_mb", nonHeap.getUsed() / (1024 * 1024));
+            memory.put("total_physical_mb", totalPhysicalMb);
+            memory.put("free_physical_mb", freePhysicalMb);
+            result.put("memory", memory);
+        } catch (Exception e) {
+            // Fallback: no memory data available
+        }
+
+        return result;
+    }
+
     @Get("/health")
     public HttpResponse health() {
         return HttpResponse.of(CompletableFuture.supplyAsync(() -> {
@@ -148,6 +218,11 @@ public class HealthCheckService {
                     if (java.nio.file.Files.exists(displayFile)) {
                         response.put("version_display", java.nio.file.Files.readString(displayFile).trim());
                     }
+                } catch (Exception ignored) {}
+
+                // System metrics (CPU + memory)
+                try {
+                    response.putAll(collectSystemMetrics());
                 } catch (Exception ignored) {}
 
                 // Update availability (written by entrypoint background check)

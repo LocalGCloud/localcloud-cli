@@ -147,6 +147,82 @@ public class QueryService {
         }
     }
 
+    /**
+     * Dry-run a BigQuery SQL query to estimate bytes processed and cost.
+     * <p>
+     * Request body:
+     * <pre>
+     * {
+     *   "sql": "SELECT * FROM `dataset.table` LIMIT 10"
+     * }
+     * </pre>
+     * Response:
+     * <pre>
+     * {
+     *   "totalBytesProcessed": 1234567,
+     *   "estimatedCostUsd": 0.0000,
+     *   "valid": true
+     * }
+     * </pre>
+     */
+    @Post("/query/dryrun")
+    public HttpResponse dryRun(ServiceRequestContext ctx, AggregatedHttpRequest httpRequest) {
+        try {
+            String body = httpRequest.contentUtf8();
+            @SuppressWarnings("unchecked")
+            Map<String, Object> request = mapper.readValue(body, Map.class);
+
+            String sql = (String) request.get("sql");
+            if (sql == null || sql.isBlank()) {
+                return errorResponse("Missing required field: sql");
+            }
+
+            String project = ctx.queryParams().get("project");
+            String projectId = (project != null && !project.isBlank()) ? project : config.getProjectId();
+
+            String queryUrl = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/queries";
+            String queryPayload = mapper.writeValueAsString(Map.of(
+                    "query", sql,
+                    "useLegacySql", false,
+                    "dryRun", true));
+            String responseBody = proxyPost(queryUrl, queryPayload);
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> queryResp = mapper.readValue(responseBody, Map.class);
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> error = (Map<String, Object>) queryResp.get("error");
+            if (error != null) {
+                return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                        mapper.writeValueAsString(Map.of(
+                                "valid", false,
+                                "error", String.valueOf(error.get("message")),
+                                "totalBytesProcessed", 0L,
+                                "estimatedCostUsd", 0.0)));
+            }
+
+            long totalBytes = 0L;
+            Object bytesObj = queryResp.get("totalBytesProcessed");
+            if (bytesObj instanceof Number) {
+                totalBytes = ((Number) bytesObj).longValue();
+            } else if (bytesObj instanceof String) {
+                try { totalBytes = Long.parseLong((String) bytesObj); } catch (NumberFormatException nfe) { totalBytes = 0L; }
+            }
+            double costPerTb = 5.0;
+            double estimatedCost = costPerTb * totalBytes / (1024.0 * 1024.0 * 1024.0 * 1024.0);
+
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writeValueAsString(Map.of(
+                            "valid", true,
+                            "totalBytesProcessed", totalBytes,
+                            "estimatedCostUsd", estimatedCost)));
+
+        } catch (Exception e) {
+            logger.warn("Dry-run failed: {}", e.getMessage());
+            return errorResponse("Dry-run failed: " + e.getMessage());
+        }
+    }
+
     // ─── Spanner Batch DML (CSV import) ────────────────────────────────
 
     /**
@@ -1506,7 +1582,7 @@ public class QueryService {
                     String tableId = tblRef != null ? (String) tblRef.get("tableId") : null;
                     if (tableId == null) continue;
 
-                    // Get table schema
+                    // Get table schema and metadata
                     String schemaUrl = bigqueryBase + "/bigquery/v2/projects/" + projectId
                             + "/datasets/" + datasetId + "/tables/" + tableId;
                     try {
@@ -1524,13 +1600,52 @@ public class QueryService {
                                 for (Map<String, Object> field : fields) {
                                     columns.add(Map.of(
                                             "name", (String) field.get("name"),
-                                            "type", (String) field.getOrDefault("type", "STRING")
+                                            "type", (String) field.getOrDefault("type", "STRING"),
+                                            "mode", (String) field.getOrDefault("mode", "NULLABLE")
                                     ));
                                 }
                             }
                         }
-                        String qualifiedName = datasetId + "." + tableId;
-                        allTables.add(Map.of("name", qualifiedName, "columns", columns));
+
+                        // Extract table metadata
+                        String tableType = (String) schemaResp.getOrDefault("type", "TABLE");
+                        String description = (String) schemaResp.get("description");
+                        String creationTime = (String) schemaResp.get("creationTime");
+                        String lastModifiedTime = (String) schemaResp.get("lastModifiedTime");
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> tableLabels = (Map<String, Object>) schemaResp.get("labels");
+
+                        // Row and byte counts
+                        long numRows = 0;
+                        long numBytes = 0;
+                        Object numRowsObj = schemaResp.get("numRows");
+                        Object numBytesObj = schemaResp.get("numBytes");
+                        if (numRowsObj != null) numRows = ((Number) numRowsObj).longValue();
+                        if (numBytesObj != null) numBytes = ((Number) numBytesObj).longValue();
+
+                        // Partitioning info
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> timePartitioning = (Map<String, Object>) schemaResp.get("timePartitioning");
+                        @SuppressWarnings("unchecked")
+                        List<String> clustering = (List<String>) schemaResp.get("clustering");
+
+                        Map<String, Object> tableMeta = new LinkedHashMap<>();
+                        tableMeta.put("name", datasetId + "." + tableId);
+                        tableMeta.put("columns", columns);
+                        tableMeta.put("type", tableType);
+                        tableMeta.put("numRows", numRows);
+                        tableMeta.put("numBytes", numBytes);
+                        tableMeta.put("description", description != null ? description : "");
+                        tableMeta.put("creationTime", creationTime != null ? creationTime : "");
+                        tableMeta.put("lastModifiedTime", lastModifiedTime != null ? lastModifiedTime : "");
+                        tableMeta.put("labels", tableLabels != null ? tableLabels : Map.of());
+                        if (timePartitioning != null) {
+                            tableMeta.put("timePartitioning", timePartitioning);
+                        }
+                        if (clustering != null && !clustering.isEmpty()) {
+                            tableMeta.put("clustering", clustering);
+                        }
+                        allTables.add(tableMeta);
                     } catch (Exception e) {
                         // Skip tables we can't get schema for
                         allTables.add(Map.of("name", datasetId + "." + tableId, "columns", List.of()));

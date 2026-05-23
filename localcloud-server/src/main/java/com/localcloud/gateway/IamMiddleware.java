@@ -85,8 +85,10 @@ public class IamMiddleware implements DecoratingHttpServiceFunction {
     @Override
     public HttpResponse serve(HttpService delegate, ServiceRequestContext ctx,
                               HttpRequest req) throws Exception {
-        // Admin endpoints are always accessible regardless of IAM mode
-        if (ctx.path().startsWith("/_localcloud")) {
+        // Admin and developer-facing endpoints are always accessible regardless of IAM mode
+        if (ctx.path().startsWith("/_localcloud") || ctx.path().equals("/health") ||
+            ctx.path().startsWith("/health/") || ctx.path().startsWith("/export") ||
+            ctx.path().equals("/services") || ctx.path().equals("/usage")) {
             return delegate.serve(ctx, req);
         }
 

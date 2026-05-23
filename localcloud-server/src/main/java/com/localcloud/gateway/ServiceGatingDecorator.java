@@ -47,7 +47,9 @@ public class ServiceGatingDecorator implements DecoratingHttpServiceFunction {
         String path = ctx.path();
 
         // Admin endpoints are always accessible
-        if (path.startsWith("/_localcloud") || path.startsWith("/icons") || path.equals("/")) {
+        if (path.startsWith("/_localcloud") || path.startsWith("/icons") || path.equals("/") ||
+            path.equals("/health") || path.equals("/services") || path.equals("/usage") ||
+            path.startsWith("/export") || path.startsWith("/health/")) {
             return delegate.serve(ctx, req);
         }
 
