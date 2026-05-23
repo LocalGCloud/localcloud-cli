@@ -103,6 +103,20 @@ export const api = {
         }
         return res;
     },
+    mutateSub: async (service, operation, subOp, data) => {
+        const res = await postJson(`/_localcloud/mutate/${service}/${operation}/${subOp}`, data);
+        if (res && res.error) {
+            throw new Error(res.message || 'Mutation failed');
+        }
+        return res;
+    },
+    merge: async (service, data) => {
+        const res = await postJson(`/_localcloud/mutate/${service}/merge`, data);
+        if (res && res.error) {
+            throw new Error(res.message || 'Merge failed');
+        }
+        return res;
+    },
     resetService: (service, restoreSeed) => post(appendProject(`/_localcloud/reset/${service}`), { restore_seed: restoreSeed }),
     export: () => get('/_localcloud/export'),
     // Project management
@@ -119,6 +133,7 @@ export const api = {
     // SQL query execution
     query: (service, sql, params) => postJson(appendProject('/_localcloud/query'), { ...params, service, sql }),
     queryBatch: (service, statements, params) => postJson(appendProject('/_localcloud/query/batch'), { ...params, service, statements }),
+    queryDryRun: (sql) => postJson(appendProject('/_localcloud/query/dryrun'), { sql }),
     // Schema info
     schema: (service, params) => {
         let url = appendProject(`/_localcloud/schema/${encodeURIComponent(service)}`);
@@ -128,6 +143,8 @@ export const api = {
         }
         return get(url);
     },
+    // BigQuery INFORMATION_SCHEMA browsing
+    bigqueryInfoSchema: (viewType) => get(appendProject(`/_localcloud/browse/bigquery/information_schema${viewType ? '/' + encodeURIComponent(viewType) : ''}`)),
     // GCS file schema detection
     gcsFileSchema: (bucket, object) => get(appendProject(`/_localcloud/gcs/file-schema?bucket=${encodeURIComponent(bucket)}&object=${encodeURIComponent(object)}`)),
     // Usage metrics (persistent cumulative counts)

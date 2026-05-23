@@ -27,7 +27,7 @@
 
 .topbar-logo {
   font-family: var(--font-display);
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 500;
   color: var(--text);
   display: flex;
@@ -63,7 +63,7 @@
   background: var(--surface-variant);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--text);
   cursor: pointer;
@@ -91,7 +91,7 @@
   border-radius: 50%;
   cursor: pointer;
   color: var(--text-secondary);
-  font-size: 18px;
+  font-size: 20px;
   padding: 0;
   transition: background var(--transition);
 }
@@ -118,7 +118,7 @@
 
 .sidebar-section-label {
   padding: 16px 24px 4px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);;
   font-weight: 500;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -134,7 +134,7 @@
   width: 100%;
   cursor: pointer;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-sm);;
   font-weight: 500;
   font-family: var(--font-body);
   background: none;
@@ -195,7 +195,7 @@
   width: 100%;
   cursor: pointer;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-sm);;
   font-weight: 400;
   font-family: var(--font-body);
   background: none;
@@ -281,7 +281,7 @@
 
 .project-dropdown-label {
   padding: 8px 16px 4px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);;
   font-weight: 500;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -294,7 +294,7 @@
   justify-content: space-between;
   width: 100%;
   padding: 8px 16px;
-  font-size: 13px;
+  font-size: var(--font-size-sm);;
   font-weight: 400;
   font-family: var(--font-body);
   color: var(--text);
@@ -345,7 +345,7 @@
 }
 
 .page-header-subtitle {
-  font-size: 13px;
+  font-size: var(--font-size-sm);;
   color: var(--text-secondary);
 }
 
@@ -373,7 +373,7 @@
 }
 
 .env-var-text {
-  font-size: 11px;
+  font-size: var(--font-size-xs);;
   color: var(--text-secondary);
   font-family: var(--font-mono);
 }
@@ -499,7 +499,7 @@
   gap: 12px;
   color: #fff;
   background: linear-gradient(90deg, #1f6feb, #238636);
-  font-size: 12px;
+  font-size: var(--font-size-xs);;
   font-weight: 600;
 }
 
@@ -577,7 +577,7 @@
   align-items: center;
   gap: 5px;
   width: fit-content;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);;
   font-weight: 700;
   color: var(--primary);
   text-transform: uppercase;
@@ -603,7 +603,7 @@
 
 .aura-global-search {
   width: min(540px, 34vw);
-  height: 40px;
+  height: 44px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -634,7 +634,7 @@
   border-radius: 6px;
   background: var(--surface);
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);;
   font-family: var(--font-mono);
 }
 
@@ -667,14 +667,14 @@
 .aura-connection-led.offline { background: var(--error); }
 
 .aura-project-main {
-  font-size: 12px;
+  font-size: var(--font-size-xs);;
   font-weight: 700;
   color: var(--text);
   white-space: nowrap;
 }
 
 .aura-project-sub {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);;
   color: var(--text-tertiary);
   white-space: nowrap;
 }
@@ -772,7 +772,7 @@
   background: transparent;
   color: var(--text-secondary);
   font-family: var(--font-body);
-  font-size: 13px;
+  font-size: var(--font-size-sm);;
   font-weight: 600;
   cursor: pointer;
   transition: background var(--transition), color var(--transition);
@@ -835,7 +835,7 @@
   padding: 6px 10px;
   background: var(--surface-active);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--font-size-xs);;
   font-weight: 500;
   border-radius: 6px;
   box-shadow: var(--shadow);
@@ -919,7 +919,7 @@
   background: var(--surface-variant);
   color: var(--text-secondary);
   font-family: var(--font-body);
-  font-size: 11px;
+  font-size: var(--font-size-xs);;
   font-weight: 800;
   text-transform: uppercase;
   cursor: pointer;
@@ -1021,7 +1021,7 @@
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 15px;
+  font-size: var(--font-size-md);;
 }
 
 .aura-command-list {
@@ -1111,7 +1111,7 @@
   justify-content: space-between;
   padding: 7px 0;
   border-top: 1px solid var(--border-subtle);
-  font-size: 12px;
+  font-size: var(--font-size-xs);;
 }
 
 .modal-actions {

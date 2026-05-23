@@ -567,6 +567,53 @@ function PubSubView(props) {
     );
 }
 
+// -- BigQuery INFORMATION_SCHEMA Browser --
+function InfoSchemaBrowser(props) {
+    const VIEWS = ['tables', 'columns', 'schemata', 'views', 'routines', 'partitions', 'table_storage'];
+    const viewLabels = { tables: 'TABLES', columns: 'COLUMNS', schemata: 'SCHEMATA', views: 'VIEWS', routines: 'ROUTINES', partitions: 'PARTITIONS', table_storage: 'TABLE_STORAGE' };
+    return (
+        <div style="margin-bottom:20px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface-variant);border-bottom:1px solid var(--border)">
+                <div style="display:flex;align-items:center;gap:8px">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                    <span style="font-size:13px;font-weight:600">INFORMATION_SCHEMA</span>
+                </div>
+                <button onClick={props.onClose} style="padding:2px 8px;border:none;background:none;color:var(--text-tertiary);cursor:pointer;font-size:16px;line-height:1">&times;</button>
+            </div>
+            <div style="display:flex;gap:2px;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--border);overflow-x:auto">
+                {VIEWS.map(v => (
+                    <button onClick={() => props.onSelectView(v)} style={{
+                        padding: '5px 12px', border: 'none', borderRadius: '5px', cursor: 'pointer',
+                        fontSize: '11px', fontWeight: props.view === v ? 600 : 400,
+                        background: props.view === v ? 'var(--primary)' : 'transparent',
+                        color: props.view === v ? '#fff' : 'var(--text-secondary)',
+                        transition: 'all 0.15s', whiteSpace: 'nowrap'
+                    }}>{viewLabels[v]}</button>
+                ))}
+            </div>
+            <div style="max-height:400px;overflow:auto;padding:12px 14px;background:var(--bg)">
+                <Show when={!props.loading && props.data} fallback={
+                    <Show when={props.loading} fallback={
+                        <div class="empty-state" style="padding:24px;text-align:center;color:var(--text-tertiary);font-size:13px">Select a view above to browse system metadata</div>
+                    }>
+                        <div class="loading-state" style="padding:24px"><div class="loading-spinner" /> Loading…</div>
+                    </Show>
+                }>
+                    <table class="data-table" style="font-size:12px">
+                        <thead><tr><For each={(props.data?.columns || [])}>{(col) => <th style="position:sticky;top:0;background:var(--bg)">{col}</th>}</For></tr></thead>
+                        <tbody>
+                            <For each={(props.data?.rows || [])}>{(row) => (
+                                <tr><For each={(props.data?.columns || [])}>{(col) => <td style="font-family:var(--font-mono);font-size:11px">{row[col] != null ? String(row[col]) : <span style="color:var(--text-tertiary);font-style:italic">NULL</span>}</td>}</For></tr>
+                            )}</For>
+                        </tbody>
+                    </table>
+                    <div style="padding:6px 0;font-size:10px;color:var(--text-tertiary)">{(props.data?.rows || []).length} rows</div>
+                </Show>
+            </div>
+        </div>
+    );
+}
+
 // -- BigQuery View (drill-down: datasets -> tables -> data) --
 function BigQueryView(props) {
     const d = () => props.data();
@@ -575,6 +622,15 @@ function BigQueryView(props) {
     const [tables, setTables] = createSignal([]);
     const [tableData, setTableData] = createSignal(null);
     const [subLoading, setSubLoading] = createSignal(false);
+    const [showCreateDataset, setShowCreateDataset] = createSignal(false);
+    const [showCreateTable, setShowCreateTable] = createSignal(false);
+    const [showEditRow, setShowEditRow] = createSignal(false);
+    const [editingRow, setEditingRow] = createSignal(null);
+    const [bqActionLoading, setBqActionLoading] = createSignal(false);
+    const [showInfoSchema, setShowInfoSchema] = createSignal(false);
+    const [infoSchemaView, setInfoSchemaView] = createSignal('tables');
+    const [infoSchemaData, setInfoSchemaData] = createSignal(null);
+    const [showMerge, setShowMerge] = createSignal(false);
 
     const datasets = () => {
         const raw = d();
@@ -624,6 +680,126 @@ function BigQueryView(props) {
 
     const goBackToDatasets = () => { setSelectedDataset(null); setSelectedTable(null); updateSubpath(null, null); };
     const goBackToTables = () => { setSelectedTable(null); updateSubpath(selectedDataset(), null); };
+
+    const handleCreateDataset = async (formData) => {
+        setBqActionLoading(true);
+        try {
+            await api.mutate('bigquery', 'datasets', { datasetId: formData.datasetId, description: formData.description || '' });
+            setShowCreateDataset(false);
+            if (props.onRefresh) props.onRefresh();
+        } catch (e) { alert('Failed to create dataset: ' + e.message); }
+        finally { setBqActionLoading(false); }
+    };
+
+    const handleDeleteDataset = async (dsId) => {
+        if (!confirm(`Delete dataset "${dsId}" and all its tables?`)) return;
+        setBqActionLoading(true);
+        try {
+            await api.mutateSub('bigquery', 'datasets', 'delete', { datasetId: dsId, deleteContents: true });
+            if (selectedDataset() === dsId) goBackToDatasets();
+            if (props.onRefresh) props.onRefresh();
+        } catch (e) { alert('Failed to delete dataset: ' + e.message); }
+        finally { setBqActionLoading(false); }
+    };
+
+    const handleCreateTable = async (formData) => {
+        setBqActionLoading(true);
+        try {
+            const schema = formData.columns ? formData.columns.split('\n').filter(l => l.trim()).map(line => {
+                const parts = line.trim().split(':').map(s => s.trim());
+                return { name: parts[0], type: parts[1]?.toUpperCase() || 'STRING', mode: parts[2]?.toUpperCase() || 'NULLABLE' };
+            }) : [];
+            const payload = {
+                datasetId: selectedDataset(),
+                tableId: formData.tableId,
+                schema,
+                description: formData.description || '',
+                tableType: formData.tableType || 'TABLE',
+                viewQuery: formData.tableType === 'VIEW' ? formData.viewQuery : undefined
+            };
+            if (formData.partitionType) {
+                payload.timePartitioning = { type: formData.partitionType };
+                if (formData.partitionField) payload.timePartitioning.field = formData.partitionField;
+            }
+            if (formData.clusteringFields) {
+                payload.clustering = formData.clusteringFields.split(',').map(s => s.trim()).filter(Boolean);
+            }
+            await api.mutate('bigquery', 'tables', payload);
+            setShowCreateTable(false);
+            const result = await api.browse('bigquery', 'datasets/' + selectedDataset());
+            setTables(result.tables || result.items || []);
+        } catch (e) { alert('Failed to create table: ' + e.message); }
+        finally { setBqActionLoading(false); }
+    };
+
+    const handleDeleteTable = async (tblId) => {
+        if (!confirm(`Delete table "${selectedDataset()}.${tblId}"?`)) return;
+        setBqActionLoading(true);
+        try {
+            await api.mutateSub('bigquery', 'tables', 'delete', { datasetId: selectedDataset(), tableId: tblId });
+            if (selectedTable() === tblId) goBackToTables();
+            const result = await api.browse('bigquery', 'datasets/' + selectedDataset());
+            setTables(result.tables || result.items || []);
+        } catch (e) { alert('Failed to delete table: ' + e.message); }
+        finally { setBqActionLoading(false); }
+    };
+
+    const handleUpdateRow = async (formData) => {
+        setBqActionLoading(true);
+        try {
+            const origRow = editingRow();
+            const columns = tableData().columns;
+            const firstCol = columns[0];
+            const whereClause = `${firstCol} = '${String(origRow[firstCol]).replace(/'/g, "''")}'`;
+            await api.mutateSub('bigquery', 'rows', 'update', {
+                dataset: selectedDataset(),
+                table: selectedTable(),
+                setValues: formData,
+                whereClause
+            });
+            setShowEditRow(false);
+            setEditingRow(null);
+            const result = await api.browse('bigquery', 'datasets/' + selectedDataset() + '/tables/' + selectedTable() + '/data');
+            setTableData(result);
+        } catch (e) { alert('Failed to update row: ' + e.message); }
+        finally { setBqActionLoading(false); }
+    };
+
+    const loadInfoSchema = async (viewName) => {
+        const vn = viewName || infoSchemaView() || 'tables';
+        setInfoSchemaView(vn);
+        setBqActionLoading(true);
+        try {
+            const data = await api.bigqueryInfoSchema(vn);
+            setInfoSchemaData(data);
+        } catch (e) { alert('Failed to load INFORMATION_SCHEMA: ' + e.message); }
+        finally { setBqActionLoading(false); }
+    };
+
+    const handleMerge = async (formData) => {
+        setBqActionLoading(true);
+        try {
+            const updateSet = {}, insertValues = {};
+            if (formData.updateSet) formData.updateSet.split(',').filter(Boolean).forEach(pair => {
+                const [col, val] = pair.trim().split('=').map(s => s.trim());
+                if (col && val) updateSet[col] = val;
+            });
+            if (formData.insertValues) formData.insertValues.split(',').filter(Boolean).forEach(pair => {
+                const [col, val] = pair.trim().split('=').map(s => s.trim());
+                if (col && val) insertValues[col] = val;
+            });
+            await api.merge('bigquery', {
+                dataset: selectedDataset(), table: selectedTable(),
+                sourceQuery: formData.sourceQuery, mergeCondition: formData.mergeCondition,
+                updateSet: Object.keys(updateSet).length > 0 ? updateSet : null,
+                insertValues: Object.keys(insertValues).length > 0 ? insertValues : null
+            });
+            setShowMerge(false);
+            const result = await api.browse('bigquery', 'datasets/' + selectedDataset() + '/tables/' + selectedTable() + '/data');
+            setTableData(result);
+        } catch (e) { alert('Merge failed: ' + e.message); }
+        finally { setBqActionLoading(false); }
+    };
 
     // Restore dataset from URL subpath
     createEffect(() => {
@@ -733,17 +909,25 @@ function BigQueryView(props) {
                         <Show when={props.onAdd && tableData() && tableData().columns}>
                             <div style="display:flex;gap:6px">
                                 <button onClick={() => setShowCsvImport(true)}
-                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
+                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
                                     onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
                                     onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
                                     {'\u2191'} Import CSV
+                                </button>
+                                <button onClick={() => setShowMerge(true)}
+                                    style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:all 0.15s"
+                                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--warning)'; e.currentTarget.style.color = 'var(--warning)'; }}
+                                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                                    title="MERGE upsert from a source query">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M17 20.41L18.41 19 15 15.59 13.59 17M7.5 8H11v5.59L5.59 19 7 20.41l6-6V8h3.5L12 3.5"/></svg>
+                                    Upsert
                                 </button>
                                 <button onClick={() => props.onAdd('Add BigQuery Row',
                                     tableData().columns.map(c => ({ name: c, type: 'text' })),
                                     async (formData) => {
                                         await api.mutate('bigquery', 'rows', { dataset: selectedDataset(), table: selectedTable(), row: formData });
                                     }
-                                )} style="padding:6px 12px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:12px">
+                                )} style="padding:6px 12px;border:none;border-radius:6px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:12px">
                                     + Add Row
                                 </button>
                             </div>
@@ -780,13 +964,17 @@ function BigQueryView(props) {
                                                                 const firstCol = columns[0];
                                                                 const value = row[firstCol];
                                                                 return (
-                                                                    <button onClick={() => props.onDelete('Delete this row?', async () => {
-                                                                        await api.mutate('bigquery', 'rows/delete', {
-                                                                            dataset: selectedDataset(),
-                                                                            table: selectedTable(),
-                                                                            whereClause: `${firstCol} = '${String(value).replace(/'/g, "''")}'`
-                                                                        });
-                                                                    })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete">Del</button>
+                                                                    <div style="display:flex;gap:4px">
+                                                                        <button onClick={() => { setEditingRow(row); setShowEditRow(true); }}
+                                                                            style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--accent, #4285f4);cursor:pointer;font-size:11px" title="Edit row">Edit</button>
+                                                                        <button onClick={() => props.onDelete('Delete this row?', async () => {
+                                                                            await api.mutate('bigquery', 'rows/delete', {
+                                                                                dataset: selectedDataset(),
+                                                                                table: selectedTable(),
+                                                                                whereClause: `${firstCol} = '${String(value).replace(/'/g, "''")}'`
+                                                                            });
+                                                                        })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete">Del</button>
+                                                                    </div>
                                                                 );
                                                             })()}
                                                         </Show>
@@ -803,7 +991,19 @@ function BigQueryView(props) {
 
                 {/* Tables list (no table selected, dataset selected) */}
                 <Show when={selectedDataset() && !selectedTable()}>
-                    <h2 style="margin:0 0 12px 0;font-size:16px">Dataset: {selectedDataset()}</h2>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                        <h2 style="margin:0;font-size:16px">Dataset: {selectedDataset()}</h2>
+                        <div style="display:flex;gap:6px">
+                            <button onClick={() => setShowCreateTable(true)}
+                                style="padding:6px 12px;border:none;border-radius:6px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:12px">
+                                + Create Table
+                            </button>
+                            <button onClick={() => handleDeleteDataset(selectedDataset())} disabled={bqActionLoading()}
+                                style="padding:6px 12px;border:1px solid #ea4335;border-radius:6px;background:var(--surface);color:#ea4335;cursor:pointer;font-size:12px">
+                                Delete Dataset
+                            </button>
+                        </div>
+                    </div>
                     <Show when={tables().length > 0} fallback={
                         <div class="empty-state">
                             <div class="empty-state-icon">{'\u2205'}</div>
@@ -813,20 +1013,20 @@ function BigQueryView(props) {
                     }>
                         <div class="data-table-wrapper">
                             <table class="data-table">
-                                <thead><tr><th>Table Name</th><th>Kind</th><th>Type</th></tr></thead>
+                                <thead><tr><th>Table Name</th><th>Kind</th><th>Type</th><th>Actions</th></tr></thead>
                                 <tbody>
-                                    <For each={tables()}>
-                                        {(tbl) => {
-                                            const tblId = tbl.tableReference ? tbl.tableReference.tableId : (tbl.name || tbl.id);
-                                            return (
-                                                <tr class="clickable-row" onClick={() => selectTable(tbl)} onKeyDown={onActivate(() => selectTable(tbl))} role="button" tabIndex="0">
-                                                    <td style={{ "font-weight": "500" }}>{tblId}</td>
-                                                    <td>{tbl.kind || 'table'}</td>
-                                                    <td>{tbl.type || '--'}</td>
-                                                </tr>
-                                            );
-                                        }}
-                                    </For>
+                                    <For each={tables()}>{(tbl) => {
+                                        const tblId = tbl.tableReference ? tbl.tableReference.tableId : (tbl.name || tbl.id);
+                                        const tableType = tbl.type || 'TABLE';
+                                        return (
+                                            <tr>
+                                                <td class="clickable-row" onClick={() => selectTable(tbl)} onKeyDown={onActivate(() => selectTable(tbl))} role="button" tabIndex="0" style={{ "font-weight": "500" }}>{tblId}</td>
+                                                <td>{tbl.kind || 'table'}</td>
+                                                <td>{tableType}</td>
+                                                <td><button onClick={(e) => { e.stopPropagation(); handleDeleteTable(tblId); }} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete table">Del</button></td>
+                                            </tr>
+                                        );
+                                    }}</For>
                                 </tbody>
                             </table>
                         </div>
@@ -835,29 +1035,53 @@ function BigQueryView(props) {
 
                 {/* Datasets list (nothing selected) */}
                 <Show when={!selectedDataset()}>
-                    <Show when={datasets().length > 0} fallback={
-                        <div class="empty-state">
-                            <div class="empty-state-icon">{'\u2205'}</div>
-                            <div class="empty-state-title">No datasets found</div>
-                            <div class="empty-state-text">Create a BigQuery dataset to see it here.</div>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                        <h2 style="margin:0;font-size:16px">BigQuery Datasets</h2>
+                        <div style="display:flex;gap:6px">
+                            <button onClick={() => { setShowInfoSchema(!showInfoSchema()); if (showInfoSchema()) loadInfoSchema('tables'); }}
+                                style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:all 0.15s"
+                                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.color = 'var(--primary)'; }}
+                                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                                title="Browse system INFORMATION_SCHEMA views">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                                {showInfoSchema() ? 'Datasets' : 'INFORMATION_SCHEMA'}
+                            </button>
+                            <button onClick={() => setShowCreateDataset(true)}
+                                style="padding:6px 12px;border:none;border-radius:6px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:12px">
+                                + Create Dataset
+                            </button>
                         </div>
-                    }>
-                        <div class="data-table-wrapper">
-                            <table class="data-table">
-                                <thead><tr><th>Dataset</th><th>Kind</th><th>Location</th></tr></thead>
-                                <tbody>
-                                    <For each={datasets()}>
-                                        {(ds) => (
-                                            <tr class="clickable-row" onClick={() => selectDataset(ds)} onKeyDown={onActivate(() => selectDataset(ds))} role="button" tabIndex="0">
-                                                <td style={{ "font-weight": "500" }}>{dsName(ds)}</td>
-                                                <td>{ds.kind || 'dataset'}</td>
-                                                <td>{ds.location || '--'}</td>
-                                            </tr>
-                                        )}
-                                    </For>
-                                </tbody>
-                            </table>
-                        </div>
+                    </div>
+                    <Show when={showInfoSchema()}>
+                        <InfoSchemaBrowser view={infoSchemaView()} data={infoSchemaData()} loading={bqActionLoading()} onSelectView={loadInfoSchema} onClose={() => setShowInfoSchema(false)} />
+                    </Show>
+                    <Show when={!showInfoSchema()}>
+                        <Show when={datasets().length > 0} fallback={
+                            <div class="empty-state">
+                                <div class="empty-state-icon">{'\u2205'}</div>
+                                <div class="empty-state-title">No datasets found</div>
+                                <div class="empty-state-text">Create a BigQuery dataset to see it here.</div>
+                            </div>
+                        }>
+                            <div class="data-table-wrapper">
+                                <table class="data-table">
+                                    <thead><tr><th>Dataset</th><th>Kind</th><th>Location</th><th>Actions</th></tr></thead>
+                                    <tbody>
+                                        <For each={datasets()}>{(ds) => {
+                                            const dsId = dsName(ds);
+                                            return (
+                                                <tr>
+                                                    <td class="clickable-row" onClick={() => selectDataset(ds)} onKeyDown={onActivate(() => selectDataset(ds))} role="button" tabIndex="0" style={{ "font-weight": "500" }}>{dsId}</td>
+                                                    <td>{ds.kind || 'dataset'}</td>
+                                                    <td>{ds.location || '--'}</td>
+                                                    <td><button onClick={(e) => { e.stopPropagation(); handleDeleteDataset(dsId); }} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete dataset">Del</button></td>
+                                                </tr>
+                                            );
+                                        }}</For>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </Show>
                     </Show>
                 </Show>
             </Show>
@@ -884,6 +1108,137 @@ function BigQueryView(props) {
                 onImportRow={bqImportRow}
                 onImportDone={() => selectTable({ tableReference: { tableId: selectedTable() } })}
             />
+
+            {/* Create Dataset Dialog */}
+            <Show when={showCreateDataset()}>
+                <div class="modal-overlay" onClick={() => setShowCreateDataset(false)}>
+                    <div class="modal-content" onClick={e => e.stopPropagation()} style="max-width:400px">
+                        <h3 style="margin:0 0 16px 0;font-size:16px;font-weight:600">Create Dataset</h3>
+                        <form onSubmit={e => { e.preventDefault(); handleCreateDataset(Object.fromEntries(new FormData(e.target))); }}>
+                            <label style="display:block;margin-bottom:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary)">Dataset ID *</label>
+                            <input name="datasetId" required placeholder="my_dataset" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;margin-bottom:12px;font-size:13px;background:var(--surface);color:var(--text)" />
+                            <label style="display:block;margin-bottom:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary)">Description</label>
+                            <input name="description" placeholder="Optional" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;margin-bottom:16px;font-size:13px;background:var(--surface);color:var(--text)" />
+                            <div style="display:flex;gap:8px;justify-content:flex-end">
+                                <button type="button" onClick={() => setShowCreateDataset(false)} class="btn-cancel">Cancel</button>
+                                <button type="submit" disabled={bqActionLoading()} class="btn-primary-sm">{bqActionLoading() ? 'Creating…' : 'Create'}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </Show>
+
+            {/* Create Table Dialog */}
+            <Show when={showCreateTable()}>
+                <div class="modal-overlay" onClick={() => setShowCreateTable(false)}>
+                    <div class="modal-content" onClick={e => e.stopPropagation()} style="max-width:560px;max-height:85vh;overflow-y:auto">
+                        <h3 style="margin:0 0 16px 0;font-size:16px;font-weight:600">Create Table in <span style="color:var(--primary)">{selectedDataset()}</span></h3>
+                        <form onSubmit={e => { e.preventDefault(); handleCreateTable(Object.fromEntries(new FormData(e.target))); }}>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+                                <div>
+                                    <label style="display:block;margin-bottom:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary)">Table ID *</label>
+                                    <input name="tableId" required placeholder="my_table" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)" />
+                                </div>
+                                <div>
+                                    <label style="display:block;margin-bottom:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary)">Type</label>
+                                    <select name="tableType" id="bq-tabletype-select" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)" onChange={(e) => {
+                                        const vq = document.getElementById('bq-viewquery');
+                                        if (vq) vq.style.display = e.target.value === 'VIEW' ? 'block' : 'none';
+                                    }}>
+                                        <option value="TABLE">Table</option>
+                                        <option value="VIEW">View</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div id="bq-viewquery" style="display:none;margin-bottom:12px">
+                                <label style="display:block;margin-bottom:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary)">View Query *</label>
+                                <textarea name="viewQuery" placeholder="SELECT * FROM `dataset.table` WHERE active = true" rows="3" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:var(--font-mono);background:var(--surface);color:var(--text);resize:vertical" />
+                            </div>
+                            <label style="display:block;margin-bottom:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary)">Schema <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-tertiary);font-size:10px">(name:TYPE[:MODE], one per line)</span></label>
+                            <textarea name="columns" placeholder="id:INT64&#10;name:STRING&#10;email:STRING:REQUIRED&#10;created_at:TIMESTAMP" rows="5" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;margin-bottom:14px;font-size:12px;font-family:var(--font-mono);background:var(--surface);color:var(--text);resize:vertical" />
+                            <details style="margin-bottom:14px;font-size:11px">
+                                <summary style="cursor:pointer;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary);padding:4px 0">Partitioning & Clustering</summary>
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px;padding-left:4px">
+                                    <div>
+                                        <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-tertiary)">Partition type</label>
+                                        <select name="partitionType" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text)">
+                                            <option value="">None</option>
+                                            <option value="DAY">DAY</option>
+                                            <option value="HOUR">HOUR</option>
+                                            <option value="MONTH">MONTH</option>
+                                            <option value="YEAR">YEAR</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-tertiary)">Partition field</label>
+                                        <input name="partitionField" placeholder="event_date" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text)" />
+                                    </div>
+                                    <div style="grid-column:1/-1">
+                                        <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-tertiary)">Clustering columns (comma-separated)</label>
+                                        <input name="clusteringFields" placeholder="user_id, event_type" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text)" />
+                                    </div>
+                                </div>
+                            </details>
+                            <label style="display:block;margin-bottom:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary)">Description</label>
+                            <input name="description" placeholder="Optional description" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;margin-bottom:18px;font-size:13px;background:var(--surface);color:var(--text)" />
+                            <div style="display:flex;gap:8px;justify-content:flex-end">
+                                <button type="button" onClick={() => setShowCreateTable(false)} class="btn-cancel">Cancel</button>
+                                <button type="submit" disabled={bqActionLoading()} class="btn-primary-sm">{bqActionLoading() ? 'Creating…' : 'Create'}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </Show>
+
+            {/* Edit Row Dialog */}
+            <Show when={showEditRow()}>
+                <div class="modal-overlay" onClick={() => { setShowEditRow(false); setEditingRow(null); }}>
+                    <div class="modal-content" onClick={e => e.stopPropagation()} style="max-width:600px;max-height:80vh;overflow-y:auto">
+                        <h3 style="margin:0 0 16px 0;font-size:16px;font-weight:600">Edit Row in <span style="color:var(--primary)">{selectedDataset()}.{selectedTable()}</span></h3>
+                        <Show when={editingRow()}>
+                            <form onSubmit={e => { e.preventDefault(); handleUpdateRow(Object.fromEntries(new FormData(e.target))); }}>
+                                <For each={tableData()?.columns || []}>{(col) => (
+                                    <div style="margin-bottom:10px">
+                                        <label style="display:block;margin-bottom:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary)">{col}</label>
+                                        <input name={col} value={editingRow()?.[col] ?? ''} style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)" />
+                                    </div>
+                                )}</For>
+                                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+                                    <button type="button" onClick={() => { setShowEditRow(false); setEditingRow(null); }} class="btn-cancel">Cancel</button>
+                                    <button type="submit" disabled={bqActionLoading()} class="btn-primary-sm">{bqActionLoading() ? 'Updating…' : 'Update'}</button>
+                                </div>
+                            </form>
+                        </Show>
+                    </div>
+                </div>
+            </Show>
+
+            {/* MERGE (Upsert) Dialog */}
+            <Show when={showMerge()}>
+                <div class="modal-overlay" onClick={() => setShowMerge(false)}>
+                    <div class="modal-content" onClick={e => e.stopPropagation()} style="max-width:600px;max-height:85vh;overflow-y:auto">
+                        <h3 style="margin:0 0 16px 0;font-size:16px;font-weight:600">MERGE into <span style="color:var(--primary)">{selectedDataset()}.{selectedTable()}</span></h3>
+                        <form onSubmit={e => { e.preventDefault(); handleMerge(Object.fromEntries(new FormData(e.target))); }}>
+                            <label style="display:block;margin-bottom:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary)">Source Query (subquery or table reference)</label>
+                            <textarea name="sourceQuery" required placeholder="SELECT id, name, updated_at FROM `other_dataset.source_table`" rows="3" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;margin-bottom:14px;font-size:12px;font-family:var(--font-mono);background:var(--surface);color:var(--text);resize:vertical" />
+                            <label style="display:block;margin-bottom:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary)">MERGE Condition (ON clause)</label>
+                            <input name="mergeCondition" required placeholder="T.id = S.id" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;margin-bottom:14px;font-size:13px;font-family:var(--font-mono);background:var(--surface);color:var(--text)" />
+                            <details style="margin-bottom:14px">
+                                <summary style="cursor:pointer;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary);padding:4px 0">WHEN MATCHED — Update (T.col = S.source_col, comma-separated)</summary>
+                                <input name="updateSet" placeholder="name = S.name, updated_at = S.updated_at" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;margin-top:8px;font-size:12px;font-family:var(--font-mono);background:var(--surface);color:var(--text)" />
+                            </details>
+                            <details style="margin-bottom:18px">
+                                <summary style="cursor:pointer;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary);padding:4px 0">WHEN NOT MATCHED — Insert (col = S.source_col, comma-separated)</summary>
+                                <input name="insertValues" placeholder="id = S.id, name = S.name, created_at = S.created_at" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;margin-top:8px;font-size:12px;font-family:var(--font-mono);background:var(--surface);color:var(--text)" />
+                            </details>
+                            <div style="display:flex;gap:8px;justify-content:flex-end">
+                                <button type="button" onClick={() => setShowMerge(false)} class="btn-cancel">Cancel</button>
+                                <button type="submit" disabled={bqActionLoading()} class="btn-primary-sm">{bqActionLoading() ? 'Merging…' : 'MERGE'}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </Show>
         </div>
     );
 }

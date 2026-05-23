@@ -554,16 +554,46 @@ function SQLEditor(props) {
         } finally { setRunning(false); }
     }
 
+    async function dryRunQuery() {
+        const query = sqlText().trim();
+        if (!query || running()) return;
+        setRunning(true); setError(null); setResult(null); setResultPage(1);
+        try {
+            const data = await api.queryDryRun(query);
+            if (data.valid) {
+                const bytes = data.totalBytesProcessed || 0;
+                const cost = data.estimatedCostUsd || 0;
+                const formattedBytes = bytes < 1024 ? `${bytes} B` :
+                    bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` :
+                    bytes < 1024 * 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` :
+                    `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+                setError(null);
+                setResult({ columns: ['Metric', 'Value'], rows: [
+                    ['Bytes Processed', formattedBytes],
+                    ['Estimated Cost', `$${cost.toFixed(6)}`],
+                    ['Query Valid', 'Yes']
+                ], rowCount: 3, executionTime: 0, isDryRun: true });
+                setResultPage(1);
+            } else {
+                setError(data.error || 'Dry-run failed');
+                setResult(null);
+            }
+        } catch (err) {
+            setError(err.message || 'Dry-run failed');
+            setResult(null);
+        } finally { setRunning(false); }
+    }
+
     function loadHistoryItem(item) { setSqlText(item.sql); setShowHistory(false); }
     function clearEditor() { setSqlText(''); persistActiveTab(''); setIsPlaceholder(true); setResult(null); setResultPage(1); setError(null); }
 
     // Quick-select: write SELECT * FROM table LIMIT 10 and execute immediately
     function quickSelect(tableName, e) {
         if (e) e.stopPropagation();
-        // Strip database prefix for Spanner (e.g., "my-database.Users" → "Users")
-        const cleanName = service() === 'spanner' && tableName.includes('.') ? tableName.split('.').pop() : tableName;
+        // Pass the full table name (with database prefix for Spanner/BigQuery) as-is.
+        // The backend handles prefix stripping and resolves the correct database.
         const svc = SQL_SERVICES.find(s => s.id === service());
-        const quoted = svc?.dialect === 'bigquery' ? '`' + cleanName + '`' : cleanName;
+        const quoted = svc?.dialect === 'bigquery' ? '`' + tableName + '`' : tableName;
         const sql = `SELECT * FROM ${quoted} LIMIT 10`;
         setSqlText(sql);
         setIsPlaceholder(false);
@@ -837,7 +867,7 @@ function SQLEditor(props) {
                                                                                             <IconTable />
                                                                                             <span class="tree-name">{table.shortName}</span>
                                                                                             <span class="tree-badge">{colCount}</span>
-	                                                                                            <button class="tree-run-btn" title="SELECT * LIMIT 10" aria-label={`Run SELECT * for ${table.shortName}`} onClick={(e) => quickSelect(table.shortName, e)}>
+	                                                                                            <button class="tree-run-btn" title="SELECT * LIMIT 10" aria-label={`Run SELECT * for ${table.shortName}`} onClick={(e) => { setSelectedInstance(instName); setSelectedDatabase(dbName); quickSelect(table.name, e); }}>
 	                                                                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg>
                                                                                             </button>
                                                                                         </div>
@@ -900,26 +930,78 @@ function SQLEditor(props) {
                                                 {(table) => {
                                                     const tblKey = 'tbl:' + table.name;
                                                     const colCount = (table.columns || []).length;
+                                                    const isBigQuery = currentServiceInfo()?.dialect === 'bigquery';
+                                                    const tableType = table.type || 'TABLE';
+                                                    const numRows = table.numRows || 0;
+                                                    const numBytes = table.numBytes || 0;
+                                                    const formattedRows = numRows >= 1_000_000 ? (numRows / 1_000_000).toFixed(1) + 'M' :
+                                                        numRows >= 1_000 ? (numRows / 1_000).toFixed(1) + 'K' : String(numRows);
+                                                    const formattedBytes = numBytes >= 1_073_741_824 ? (numBytes / 1_073_741_824).toFixed(1) + ' GB' :
+                                                        numBytes >= 1_048_576 ? (numBytes / 1_048_576).toFixed(1) + ' MB' :
+                                                        numBytes >= 1_024 ? (numBytes / 1_024).toFixed(1) + ' KB' : numBytes + ' B';
+                                                    const tooltipParts = [table.shortName];
+                                                    if (isBigQuery) {
+                                                        tooltipParts.push(`Type: ${tableType}`);
+                                                        tooltipParts.push(`Rows: ${formattedRows}`);
+                                                        tooltipParts.push(`Size: ${formattedBytes}`);
+                                                        if (table.description) tooltipParts.push(table.description);
+                                                        if (table.clustering) tooltipParts.push(`Clustered by: ${table.clustering.join(', ')}`);
+                                                        if (table.timePartitioning) tooltipParts.push(`Partitioned: ${table.timePartitioning.type || 'DAY'}`);
+                                                    }
                                                     return (
                                                         <div class="tree-group">
                                                             {/* ── Table node ── */}
-	                                                            <div
-	                                                                class="tree-row tree-row-tbl"
-	                                                                onClick={() => toggle(tblKey)}
-	                                                                onKeyDown={onActivate(() => toggle(tblKey))}
-	                                                                role="button" tabIndex={0}
-                                                                    aria-expanded={!!expanded()[tblKey]}
-	                                                            >
+                                                            <div
+                                                                class="tree-row tree-row-tbl"
+                                                                onClick={() => toggle(tblKey)}
+                                                                onKeyDown={onActivate(() => toggle(tblKey))}
+                                                                role="button" tabIndex={0}
+                                                                aria-expanded={!!expanded()[tblKey]}
+                                                                title={tooltipParts.join('\n')}
+                                                            >
                                                                 <IconChevron open={expanded()[tblKey]} />
-                                                                <IconTable />
+                                                                <Show when={tableType === 'VIEW'} fallback={<IconTable />}>
+                                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--text-secondary)" aria-hidden="true" focusable="false">
+                                                                        <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                                                                    </svg>
+                                                                </Show>
                                                                 <span class="tree-name">{table.shortName}</span>
                                                                 <span class="tree-badge">{colCount}</span>
-	                                                                <button class="tree-run-btn" title="SELECT * LIMIT 10" aria-label={`Run SELECT * for ${table.shortName}`} onClick={(e) => quickSelect(table.name, e)}>
-	                                                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg>
+                                                                <Show when={isBigQuery && tableType === 'VIEW'}>
+                                                                    <span class="tree-badge tree-badge-view">VIEW</span>
+                                                                </Show>
+                                                                <Show when={isBigQuery && numRows > 0}>
+                                                                    <span class="tree-badge tree-badge-rows">{formattedRows}</span>
+                                                                </Show>
+                                                                <button class="tree-run-btn" title="SELECT * LIMIT 10" aria-label={`Run SELECT * for ${table.shortName}`} onClick={(e) => quickSelect(table.name, e)}>
+                                                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg>
                                                                 </button>
                                                             </div>
                                                             <Show when={expanded()[tblKey]}>
                                                                 <div class="tree-children">
+                                                                    <Show when={isBigQuery}>
+                                                                        <div class="tree-row tree-row-meta" title="Table metadata">
+                                                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="var(--text-tertiary)" aria-hidden="true" focusable="false">
+                                                                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
+                                                                            </svg>
+                                                                            <span class="tree-meta-text">{tableType} &middot; {formattedRows} rows &middot; {formattedBytes}</span>
+                                                                        </div>
+                                                                        <Show when={table.description}>
+                                                                            <div class="tree-row tree-row-meta">
+                                                                                <span class="tree-meta-text" style="color: var(--text-tertiary); font-style: italic;">{table.description}</span>
+                                                                            </div>
+                                                                        </Show>
+                                                                        <Show when={table.timePartitioning}>
+                                                                            <div class="tree-row tree-row-meta">
+                                                                                <span class="tree-meta-text">Partitioned: {table.timePartitioning?.type || 'DAY'}{table.timePartitioning?.field ? ' on ' + table.timePartitioning.field : ''}</span>
+                                                                            </div>
+                                                                        </Show>
+                                                                        <Show when={table.clustering && table.clustering.length > 0}>
+                                                                            <div class="tree-row tree-row-meta">
+                                                                                <span class="tree-meta-text">Clustered: {table.clustering.join(', ')}</span>
+                                                                            </div>
+                                                                        </Show>
+                                                                    </Show>
                                                                     <For each={table.columns || []}>
                                                                         {(col) => (
                                                                             <div class="tree-row tree-row-col" title={`${col.name || col} (${col.type || ''})`}>
@@ -978,12 +1060,20 @@ function SQLEditor(props) {
                     <div class="sql-toolbar-center">
                         <button class="btn btn-primary sql-run-btn" onClick={runQuery} disabled={running() || !sqlText().trim()}>
                             <Show when={running()} fallback={
-	                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg>
                             }>
                                 <div class="loading-spinner" style={{ width: '14px', height: '14px', "border-width": '2px' }} />
                             </Show>
-	                            {running() ? 'Running…' : 'Run'}
+                            {running() ? 'Running…' : 'Run'}
                         </button>
+                        <Show when={currentServiceInfo()?.dialect === 'bigquery'}>
+                            <button class="btn btn-secondary sql-dryrun-btn" onClick={dryRunQuery} disabled={running() || !sqlText().trim()} title="Estimate query cost without executing">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                    <path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/>
+                                </svg>
+                                Dry Run
+                            </button>
+                        </Show>
                         <button class="btn btn-secondary" onClick={clearEditor} title="Clear editor and results">Clear</button>
                         <div class="sql-shortcut-hint">
                             <kbd>{navigator.platform?.includes('Mac') ? '\u2318' : 'Ctrl'}</kbd><span>+</span><kbd>Enter</kbd>
@@ -1038,11 +1128,21 @@ function SQLEditor(props) {
 	                        <span class="sql-status-error" role="alert">{error()}</span>
                     </Show>
                     <Show when={!running() && !error() && result()}>
-	                        <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--success)" aria-hidden="true" focusable="false">
-                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                        </svg>
-                        <span class="sql-status-ok">Query complete</span>
-	                        <span class="sql-status-meta">{formatNumber(result().rowCount)} row{result().rowCount !== 1 ? 's' : ''} &middot; TTFB {formatDuration(Math.max(1, Math.round(result().executionTime * 0.42)))} &middot; Local latency {formatDuration(result().executionTime)}</span>
+                        <Show when={result().isDryRun} fallback={
+                            <>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--success)" aria-hidden="true" focusable="false">
+                                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                                </svg>
+                                <span class="sql-status-ok">Query complete</span>
+                                <span class="sql-status-meta">{formatNumber(result().rowCount)} row{result().rowCount !== 1 ? 's' : ''} &middot; TTFB {formatDuration(Math.max(1, Math.round(result().executionTime * 0.42)))} &middot; Local latency {formatDuration(result().executionTime)}</span>
+                            </>
+                        }>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--warning)" aria-hidden="true" focusable="false">
+                                <path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/>
+                            </svg>
+                            <span class="sql-status-ok" style="color: var(--warning)">Dry run complete</span>
+                            <span class="sql-status-meta">Estimated cost &amp; bytes processed shown below</span>
+                        </Show>
                     </Show>
                     <Show when={!running() && !error() && !result()}>
                         <span class="sql-status-idle">Run a query to see results</span>

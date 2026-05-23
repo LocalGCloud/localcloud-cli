@@ -38,7 +38,7 @@ button,
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
 }
 
@@ -71,7 +71,7 @@ button,
 }
 
 .card-body {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
 }
 
 /* --- Service Card --- */
@@ -96,7 +96,7 @@ button,
 }
 
 .service-card-name {
-  font-size: 13px;
+  font-size: var(--font-size-base);
   font-weight: 600;
   color: var(--text);
   letter-spacing: -0.01em;
@@ -106,14 +106,14 @@ button,
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 
 .service-card-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   color: var(--text-secondary);
 }
 
@@ -134,13 +134,13 @@ button,
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 
 .data-table thead th {
   text-align: left;
   padding: 8px 12px;
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   color: var(--text-tertiary);
   text-transform: uppercase;
@@ -191,9 +191,9 @@ button,
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 34px;
+  height: 38px;
   padding: 0 16px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   font-family: var(--font-body);
   border-radius: var(--radius-sm);
@@ -280,7 +280,7 @@ button,
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   border-radius: 9999px;
   text-transform: uppercase;
@@ -317,7 +317,7 @@ button,
 .badge-beta {
   background: var(--warning-soft);
   color: var(--warning);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   letter-spacing: 0.5px;
   text-transform: uppercase;
@@ -330,7 +330,7 @@ button,
   background: var(--warning-soft);
   color: var(--warning);
   border: 1px solid color-mix(in srgb, var(--warning) 24%, transparent);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 700;
   letter-spacing: 0.4px;
   text-transform: uppercase;
@@ -341,7 +341,7 @@ button,
 .badge-local {
   background: var(--success-soft);
   color: var(--success);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   letter-spacing: 0.5px;
   text-transform: uppercase;
@@ -352,7 +352,7 @@ button,
 .badge-cloud {
   background: var(--info-soft);
   color: var(--primary);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   letter-spacing: 0.5px;
   text-transform: uppercase;
@@ -364,7 +364,7 @@ button,
   background: var(--surface);
   color: var(--text-tertiary);
   border: 1px solid var(--border);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   letter-spacing: 0.5px;
   text-transform: uppercase;
@@ -379,7 +379,7 @@ button,
   justify-content: center;
   min-width: 48px;
   padding: 2px 8px;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   border-radius: var(--radius-xs);
   font-family: var(--font-mono);
@@ -436,14 +436,14 @@ button,
 
 .empty-state-title {
   font-family: var(--font-display);
-  font-size: 15px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text);
   margin-bottom: 6px;
 }
 
 .empty-state-text {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   max-width: 360px;
   line-height: 1.5;
@@ -456,7 +456,7 @@ button,
   justify-content: center;
   padding: 48px 24px;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   gap: 10px;
 }
 
@@ -476,7 +476,7 @@ button,
   border-radius: var(--radius-sm);
   padding: 16px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   line-height: 1.7;
   color: var(--text);
   overflow-x: auto;
@@ -504,7 +504,7 @@ button,
 .filter-bar input[type="text"] {
   height: 34px;
   padding: 0 12px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-family: var(--font-body);
   background: var(--surface);
   color: var(--text);
@@ -532,7 +532,7 @@ button,
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   cursor: pointer;
 }
@@ -548,7 +548,7 @@ button,
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
 }
 
@@ -556,7 +556,7 @@ button,
   height: 34px;
   width: 50px;
   padding: 0 8px;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-family: var(--font-body);
   background: var(--surface);
   color: var(--text);
@@ -592,7 +592,7 @@ button,
 
 .tab-item {
   padding: 10px 16px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text-secondary);
   cursor: pointer;
@@ -632,7 +632,7 @@ button,
   padding: 12px 16px;
   border-radius: var(--radius-sm);
   margin-bottom: 16px;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -670,7 +670,7 @@ button,
 }
 
 .stat-card-label {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   color: var(--text-tertiary);
   text-transform: uppercase;
@@ -680,7 +680,7 @@ button,
 
 .stat-card-value {
   font-family: var(--font-display);
-  font-size: 28px;
+  font-size: var(--font-size-2xl);
   font-weight: 600;
   color: var(--text);
 }
@@ -709,6 +709,22 @@ button,
   }
 }
 
+/* Sparkline inline chart in stat cards */
+.sparkline {
+  display: block;
+  margin-top: 8px;
+  width: 100%;
+  max-width: 80px;
+  height: 24px;
+}
+
+.sparkline polyline {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
 /* ---------- Section ---------- */
 .section {
   margin-bottom: 28px;
@@ -716,7 +732,7 @@ button,
 
 .section-title {
   font-family: var(--font-display);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text);
   margin-bottom: 14px;
@@ -742,14 +758,14 @@ button,
 }
 
 .settings-row-label {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text);
   margin-bottom: 2px;
 }
 
 .settings-row-desc {
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   color: var(--text-secondary);
 }
 
@@ -763,7 +779,7 @@ button,
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--primary);
   cursor: pointer;
   margin-bottom: 16px;
@@ -790,14 +806,14 @@ button,
   gap: 0;
   padding-top: 8px;
   margin-bottom: 12px;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   flex-wrap: wrap;
 }
 
 .data-breadcrumb-sep {
   color: var(--text-tertiary);
   margin: 0 6px;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   user-select: none;
 }
 
@@ -813,7 +829,7 @@ button,
   border-radius: 4px;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-family: var(--font-body);
   transition: background 0.15s, color 0.15s;
 }
@@ -849,7 +865,7 @@ button,
   border: none;
   background: none;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   font-family: var(--font-body);
   cursor: pointer;
@@ -883,7 +899,7 @@ button,
   border: none;
   background: none;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-family: var(--font-body);
   cursor: pointer;
   text-align: left;
@@ -939,7 +955,7 @@ button,
   justify-content: flex-end;
   gap: 8px;
   padding: 10px 0;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
 }
 
@@ -967,9 +983,9 @@ button,
 
 .input-group input[type="number"] {
   width: 72px;
-  height: 34px;
+  height: 38px;
   padding: 0 10px;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-family: var(--font-mono);
   background: var(--surface);
   color: var(--text);
@@ -983,7 +999,7 @@ button,
 }
 
 .input-group-suffix {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
 
@@ -1016,7 +1032,7 @@ button,
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 17px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   font-family: var(--font-display);
   color: var(--text);
@@ -1056,7 +1072,7 @@ button,
 
 .env-var-key {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   white-space: nowrap;
   min-width: 0;
@@ -1065,7 +1081,7 @@ button,
 
 .env-var-value {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text);
   flex: 1;
@@ -1098,7 +1114,7 @@ button,
 }
 
 .env-var-copied {
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   color: var(--success);
   white-space: nowrap;
   animation: fade-in 150ms ease;
@@ -1115,7 +1131,7 @@ button,
 }
 
 .env-quick-setup-label {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--primary);
   text-transform: uppercase;
@@ -1124,7 +1140,7 @@ button,
 }
 
 .env-quick-setup-desc {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   margin-bottom: 10px;
 }
@@ -1142,7 +1158,7 @@ button,
 .env-quick-setup-cmd code {
   flex: 1;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text);
   overflow-x: auto;
   white-space: nowrap;
@@ -1155,14 +1171,14 @@ button,
 
 .env-category-header {
   font-family: var(--font-display);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text);
   margin-bottom: 4px;
 }
 
 .env-category-desc {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   margin-bottom: 10px;
 }
@@ -1185,7 +1201,7 @@ button,
 }
 
 .env-service-name {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text);
 }
@@ -1197,7 +1213,7 @@ button,
   gap: 6px;
   margin-top: 8px;
   padding: 4px 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text-secondary);
   background: none;
@@ -1230,7 +1246,7 @@ button,
 
 .env-sample-tab {
   padding: 7px 14px;
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   font-weight: 500;
   color: var(--text-secondary);
   background: none;
@@ -1261,7 +1277,7 @@ button,
 
 .segmented-toggle-btn {
   padding: 4px 12px;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1312,7 +1328,7 @@ button,
 }
 
 .code-block-label {
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   color: var(--text-secondary);
   margin-bottom: 4px;
@@ -1379,7 +1395,7 @@ button,
 }
 
 .collapsible-card-header-name {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   flex: 1;
 }
@@ -1402,6 +1418,17 @@ button,
   justify-content: center;
   animation: fade-in 100ms ease;
   overscroll-behavior: contain;
+}
+
+.modal-content {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  animation: modal-slide-up 200ms ease-out;
 }
 
 .modal-card {
@@ -1454,7 +1481,7 @@ button,
 
 /* ---------- Form Elements ---------- */
 .form-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   display: block;
   margin-bottom: 4px;
@@ -1462,13 +1489,13 @@ button,
 
 .form-input {
   width: 100%;
-  height: 34px;
+  height: 40px;
   padding: 0 10px;
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-xs);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-family: var(--font-body);
   transition: border-color var(--transition);
 }
@@ -1560,7 +1587,7 @@ button,
 }
 
 .se-service-title {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 600;
   color: var(--text);
   margin: 0;
@@ -1569,7 +1596,7 @@ button,
 }
 
 .se-service-desc {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   margin: 0;
   line-height: 1.5;
@@ -1600,7 +1627,7 @@ button,
   align-items: center;
   gap: 6px;
   padding: 10px 16px;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   font-family: var(--font-body);
   color: var(--text-secondary);
@@ -1650,7 +1677,7 @@ button,
   margin: 0;
 }
 .sql-not-supported-hint {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--text-tertiary);
   line-height: 1.5;
   margin: 0;
@@ -1680,7 +1707,7 @@ button,
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -1709,7 +1736,7 @@ button,
   border: none;
   background: transparent;
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   font-family: var(--font-body);
   width: 100%;
   outline: none;
@@ -1732,7 +1759,7 @@ button,
   gap: 8px;
   padding: 40px 16px;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-tertiary);
 }
 
@@ -1742,7 +1769,7 @@ button,
   justify-content: center;
   gap: 8px;
   padding: 24px 16px;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   color: var(--text-tertiary);
 }
 
@@ -1806,7 +1833,7 @@ button,
 
 /* Database row */
 .tree-row-db {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text);
   padding-left: 8px;
@@ -1818,7 +1845,7 @@ button,
 
 /* Table row */
 .tree-row-tbl {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   color: var(--text);
   padding-left: 12px;
@@ -1826,7 +1853,7 @@ button,
 
 /* Column row */
 .tree-row-col {
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   color: var(--text-secondary);
   padding-left: 28px;
   cursor: default;
@@ -1850,7 +1877,7 @@ button,
 
 /* Badge (column count / table count) */
 .tree-badge {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   color: var(--text-tertiary);
   background: var(--surface-variant);
   padding: 1px 6px;
@@ -1861,9 +1888,77 @@ button,
 }
 
 .tree-badge-db {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   color: var(--primary);
   background: var(--primary-soft);
+}
+
+.tree-badge-view {
+  font-size: var(--font-size-2xs);
+  color: var(--warning);
+  background: var(--warning-soft, rgba(255, 152, 0, 0.15));
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.tree-badge-rows {
+  font-size: var(--font-size-2xs);
+  color: var(--success);
+  background: var(--success-soft, rgba(76, 175, 80, 0.15));
+}
+
+.tree-row-meta {
+  padding-left: 28px;
+  gap: 6px;
+  cursor: default;
+}
+
+.tree-row-meta:hover {
+  background: transparent;
+}
+
+.tree-meta-text {
+  font-size: var(--font-size-2xs);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+}
+
+/* Dialog buttons */
+.btn-cancel {
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  transition: all 0.15s;
+}
+
+.btn-cancel:hover {
+  background: var(--surface-variant);
+  border-color: var(--text-tertiary);
+}
+
+.btn-primary-sm {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent, #4285f4);
+  color: white;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.btn-primary-sm:hover:not(:disabled) {
+  background: var(--primary-hover, #3b78e7);
+}
+
+.btn-primary-sm:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .tree-run-btn {
@@ -1904,11 +1999,11 @@ button,
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
 }
 
 .tree-col-type {
-  font-size: 8px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   color: var(--text-tertiary);
   text-transform: uppercase;
@@ -2012,7 +2107,7 @@ button,
   border: none;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   font-family: var(--font-body);
   cursor: pointer;
@@ -2027,7 +2122,7 @@ button,
 .sql-service-select select:focus { outline: none; }
 
 .sql-dialect-badge {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   color: var(--text-tertiary);
   text-transform: uppercase;
@@ -2040,16 +2135,30 @@ button,
 .sql-run-btn {
   gap: 5px;
   padding: 0 14px;
-  height: 30px;
-  font-size: 12px;
+  height: 34px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
+}
+
+.sql-dryrun-btn {
+  gap: 4px;
+  padding: 0 10px;
+  height: 34px;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.sql-dryrun-btn:hover:not(:disabled) {
+  color: var(--primary);
+  border-color: var(--primary);
 }
 
 .sql-shortcut-hint {
   display: flex;
   align-items: center;
   gap: 3px;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: var(--text-tertiary);
 }
 
@@ -2061,7 +2170,7 @@ button,
   height: 18px;
   padding: 0 4px;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   color: var(--text-secondary);
   background: var(--surface-variant);
@@ -2123,7 +2232,7 @@ button,
   padding: 6px 14px;
   background: var(--sql-editor-gutter);
   border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   flex-shrink: 0;
   min-height: 32px;
@@ -2142,7 +2251,7 @@ button,
 .sql-status-error {
   color: var(--error);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   white-space: pre-wrap;
   word-break: break-word;
   text-overflow: ellipsis;
@@ -2151,7 +2260,7 @@ button,
 .sql-status-meta {
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
 }
 
 /* --- Results Pane --- */
@@ -2171,7 +2280,7 @@ button,
   height: 100%;
   min-height: 120px;
   color: var(--text-tertiary);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
 }
 
 .sql-results-table-wrap {
@@ -2182,14 +2291,14 @@ button,
 .sql-results-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-family: var(--font-mono);
 }
 
 .sql-results-table thead th {
   text-align: left;
   padding: 8px 12px;
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   color: var(--text-secondary);
   background: var(--surface);
@@ -2277,7 +2386,7 @@ button,
   grid-template-columns: 1fr auto;
   gap: 8px;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 
 .aura-util-lines i {
@@ -2306,14 +2415,14 @@ button,
 
 .aura-category-heading h3 {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   text-transform: uppercase;
   color: var(--text-secondary);
 }
 
 .aura-category-heading span {
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 
 .aura-service-grid {
@@ -2370,7 +2479,7 @@ button,
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 700;
 }
 
@@ -2398,7 +2507,7 @@ button,
   color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 
 .aura-sql-tab.active {
@@ -2464,7 +2573,7 @@ button,
   border-radius: 8px;
   background: var(--bg-subtle);
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .sql-results-table thead th {
@@ -2502,7 +2611,7 @@ button,
   border-radius: 999px;
   background: var(--surface-variant);
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   font-weight: 800;
 }
 
@@ -2528,7 +2637,7 @@ button,
 .aura-mapping-preview span {
   display: block;
   color: var(--text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   text-transform: uppercase;
   font-weight: 800;
 }
@@ -2539,13 +2648,13 @@ button,
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   margin-top: 4px;
 }
 
 .sql-results-rownum {
   color: var(--text-tertiary) !important;
-  font-size: 10px !important;
+  font-size: var(--font-size-xs) !important;
   width: 36px;
   text-align: right !important;
   padding-right: 12px !important;
@@ -2555,7 +2664,7 @@ button,
 .sql-null {
   color: var(--sql-null-color);
   font-style: italic;
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
 }
 
 .sql-results-sep {
@@ -2588,6 +2697,16 @@ button,
   to { transform: translateX(0); }
 }
 
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modal-slide-up {
+  from { opacity: 0; transform: translateY(20px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 .sql-history-header {
   display: flex;
   align-items: center;
@@ -2598,7 +2717,7 @@ button,
 }
 
 .sql-history-title { font-size: 14px; font-weight: 600; color: var(--text); }
-.sql-history-empty { padding: 40px 20px; text-align: center; font-size: 13px; color: var(--text-secondary); }
+.sql-history-empty { padding: 40px 20px; text-align: center; font-size: var(--font-size-sm); color: var(--text-secondary); }
 .sql-history-list { overflow-y: auto; flex: 1; }
 
 .sql-history-item {
@@ -2623,12 +2742,12 @@ button,
   margin-bottom: 4px;
 }
 
-.sql-history-service { font-size: 11px; font-weight: 600; color: var(--primary); }
-.sql-history-time { font-size: 10px; color: var(--text-tertiary); }
+.sql-history-service { font-size: var(--font-size-2xs); font-weight: 600; color: var(--primary); }
+.sql-history-time { font-size: var(--font-size-2xs); color: var(--text-tertiary); }
 
 .sql-history-sql {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   color: var(--text);
   line-height: 1.5;
   white-space: nowrap;
@@ -2641,7 +2760,7 @@ button,
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: var(--text-tertiary);
 }
 
@@ -2673,7 +2792,7 @@ button,
   color: #fff;
   padding: 8px 16px;
   z-index: 1000;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   border-radius: 0 0 var(--radius-sm) 0;
   transition: top var(--transition);
@@ -2691,7 +2810,7 @@ button,
   background: var(--surface-active, rgba(0,0,0,0.03));
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   white-space: pre-wrap;
   text-align: left;
@@ -2710,7 +2829,7 @@ button,
   padding: 8px 16px;
   background: var(--error);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   z-index: 90;
 }
@@ -2774,7 +2893,7 @@ input:checked + .toggle-slider::before {
 }
 
 .toggle-lock-icon {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   margin-left: 4px;
   color: var(--text-tertiary);
 }
@@ -2797,7 +2916,7 @@ input:checked + .toggle-slider::before {
   color: #fff;
   padding: 8px 16px;
   border-radius: var(--radius-sm, 6px);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   z-index: 1000;
   animation: fadeIn 0.2s ease-out;
 }
