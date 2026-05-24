@@ -14,7 +14,7 @@ docker run -d --name localcloud \
   localcloud/localcloud:latest
 
 # Point Terraform at LocalCloud
-eval $(curl -s 'http://localhost:8080/_localcloud/env?format=terraform')
+eval $(curl -s 'http://localhost:8080/env?format=terraform')
 
 # Run Terraform
 terraform init
@@ -58,7 +58,7 @@ terraform apply
 
 | Resource | Reason |
 |----------|--------|
-| `google_project` | Projects managed via `/_localcloud/projects` API |
+| `google_project` | Projects managed via `/projects` API |
 | `google_project_iam_*` | IAM is permissive by default |
 | `google_service_account` | Not emulated |
 | `google_dns_*` | DNS not emulated |

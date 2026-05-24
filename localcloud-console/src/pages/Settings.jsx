@@ -595,7 +595,7 @@ function UserGuideModal(props) {
                             <Text>Start all emulated GCP services with a single command:</Text>
                             <CopyableCodeBlock>docker compose up -d</CopyableCodeBlock>
                             <Text>Wait for the health check to pass, then configure your shell:</Text>
-                            <CopyableCodeBlock>{`eval "$(curl -s http://localhost:8080/_localcloud/env?format=shell)"`}</CopyableCodeBlock>
+                            <CopyableCodeBlock>{`eval "$(curl -s http://localhost:8080/env?format=shell)"`}</CopyableCodeBlock>
                         </Section>
                         <Section title="2. Use GCP SDKs as normal">
                             <Text>Your application code works against LocalCloud with zero changes. The environment variables tell Google Cloud SDKs to connect to localhost instead of real GCP.</Text>
@@ -624,7 +624,7 @@ export GOOGLE_CLOUD_PROJECT="local-project"`}</CopyableCodeBlock>
                         </Section>
                         <Section title="Auto-configure (recommended)">
                             <Text>Instead of setting variables manually, use the auto-configure endpoint to set all variables at once:</Text>
-                            <CopyableCodeBlock>{`eval "$(curl -s http://localhost:8080/_localcloud/env?format=shell)"`}</CopyableCodeBlock>
+                            <CopyableCodeBlock>{`eval "$(curl -s http://localhost:8080/env?format=shell)"`}</CopyableCodeBlock>
                             <Text>This sets all required variables for every enabled service, including the project ID.</Text>
                         </Section>
                         <Section title="Docker Compose apps">
@@ -647,7 +647,7 @@ services:
                         <Section title="Configure gcloud CLI to use LocalCloud">
                             <Text>The gcloud CLI can be pointed to LocalCloud so commands like "gcloud pubsub topics list" query your local emulator instead of real GCP:</Text>
                             <CopyableCodeBlock>{`# Set the auto-configure endpoint
-eval "$(curl -s http://localhost:8080/_localcloud/env?format=shell)"
+eval "$(curl -s http://localhost:8080/env?format=shell)"
 
 # Now gcloud commands hit LocalCloud:
 gcloud pubsub topics list
@@ -697,7 +697,7 @@ unset CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER
                         <Section title="Loading seed data">
                             <Text>Seed files define initial state for services using YAML. Load them on startup or into a running instance:</Text>
                             <CopyableCodeBlock>{`# Load into a running instance
-curl -X POST http://localhost:8080/_localcloud/seed \\
+curl -X POST http://localhost:8080/seed \\
   -H "Content-Type: application/yaml" --data-binary @seed.yaml
 
 # Or mount on startup (docker-compose.yml)
@@ -728,10 +728,10 @@ services:
                         <Section title="Reset data">
                             <Text>Reset all emulator data or restore the last loaded seed:</Text>
                             <CopyableCodeBlock>{`# Reset all data
-curl -X POST http://localhost:8080/_localcloud/reset
+curl -X POST http://localhost:8080/reset
 
 # Reset and restore last seed
-curl -X POST http://localhost:8080/_localcloud/reset \\
+curl -X POST http://localhost:8080/reset \\
   -H "Content-Type: application/json" \\
   -d '{"restore_seed": true}'`}</CopyableCodeBlock>
                         </Section>
@@ -744,15 +744,15 @@ curl -X POST http://localhost:8080/_localcloud/reset \\
                                 <table class="data-table">
                                     <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
                                     <tbody>
-                                        <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/health</td><td>Health status of all services</td></tr>
-                                        <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/services</td><td>List services with ports and status</td></tr>
-                                        <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/env?format=shell</td><td>Environment variables</td></tr>
-                                        <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/projects</td><td>List all projects</td></tr>
-                                        <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/projects</td><td>Create a project</td></tr>
-                                        <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/browse/{'{'} service {'}'}</td><td>Browse service data</td></tr>
-                                        <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/seed</td><td>Load seed data (YAML)</td></tr>
-                                        <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/reset</td><td>Reset all data</td></tr>
-                                        <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/requests</td><td>Recent request log</td></tr>
+                                        <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/health</td><td>Health status of all services</td></tr>
+                                        <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/services</td><td>List services with ports and status</td></tr>
+                                        <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/env?format=shell</td><td>Environment variables</td></tr>
+                                        <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/projects</td><td>List all projects</td></tr>
+                                        <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/projects</td><td>Create a project</td></tr>
+                                        <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/browse/{'{'} service {'}'}</td><td>Browse service data</td></tr>
+                                        <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/seed</td><td>Load seed data (YAML)</td></tr>
+                                        <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/reset</td><td>Reset all data</td></tr>
+                                        <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/requests</td><td>Recent request log</td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -760,13 +760,13 @@ curl -X POST http://localhost:8080/_localcloud/reset \\
                         <Section title="Project-scoped queries">
                             <Text>Add ?project= to browse, env, and reset endpoints to scope to a specific project:</Text>
                             <CopyableCodeBlock>{`# Browse secrets for a specific project
-curl http://localhost:8080/_localcloud/browse/secretmanager?project=staging
+curl http://localhost:8080/browse/secretmanager?project=staging
 
 # Get env vars for a specific project
-curl "http://localhost:8080/_localcloud/env?format=json&project=dev"
+curl "http://localhost:8080/env?format=json&project=dev"
 
 # Reset only one project's data
-curl -X POST http://localhost:8080/_localcloud/reset?project=staging`}</CopyableCodeBlock>
+curl -X POST http://localhost:8080/reset?project=staging`}</CopyableCodeBlock>
                         </Section>
                     </Show>
                 </div>
@@ -863,7 +863,7 @@ export default function Settings(props) {
             .map(k => ({ key: k, value: cat.sdk[k] }));
     };
 
-    const autoConfigCmd = `eval "$(curl -s http://localhost:8080/_localcloud/env?format=shell)"`;
+    const autoConfigCmd = `eval "$(curl -s http://localhost:8080/env?format=shell)"`;
 
     const handleQuickCopy = async () => {
         const ok = await copyToClipboard(autoConfigCmd);
@@ -1271,7 +1271,7 @@ environment:
                 </p>
                 <button class="btn btn-secondary" onClick={async () => {
                     try {
-                        const resp = await fetch('/_localcloud/export');
+                        const resp = await fetch('/export');
                         const text = await resp.text();
                         const blob = new Blob([text], { type: 'application/yaml' });
                         const url = URL.createObjectURL(blob);
@@ -1298,7 +1298,7 @@ environment:
                     <button class="btn btn-secondary" onClick={async () => {
                         if (!confirm('Re-seed all services with default data? Existing data will be preserved (UPSERT).')) return;
                         try {
-                            const resp = await fetch('/_localcloud/reseed', { method: 'POST' });
+                            const resp = await fetch('/reseed', { method: 'POST' });
                             const data = await resp.json();
                             if (data.error) { alert('Seed failed: ' + data.message); return; }
                             alert('Seed complete: ' + (data.total_records || 0) + ' records loaded across ' + Object.keys(data.services || {}).length + ' services');
@@ -1347,7 +1347,7 @@ environment:
                     </GuideSection>
                     <GuideSection title="Step 2: Configure your shell">
                         <GuideText>Auto-configure all environment variables:</GuideText>
-                        <CopyableCodeBlock>{`eval "$(curl -s http://localhost:8080/_localcloud/env?format=shell)"`}</CopyableCodeBlock>
+                        <CopyableCodeBlock>{`eval "$(curl -s http://localhost:8080/env?format=shell)"`}</CopyableCodeBlock>
                     </GuideSection>
                     <GuideSection title="Step 3: Test it">
                         <GuideText>Verify your setup with a quick test:</GuideText>
@@ -1421,15 +1421,15 @@ gcloud spanner instances list`}</CopyableCodeBlock>
                 {/* Seed Data */}
                 <Show when={guideTab() === 'seed'}>
                     <GuideSection title="Loading seed data">
-                        <CopyableCodeBlock>{`curl -X POST http://localhost:8080/_localcloud/seed \\
+                        <CopyableCodeBlock>{`curl -X POST http://localhost:8080/seed \\
   -H "Content-Type: application/yaml" --data-binary @seed.yaml`}</CopyableCodeBlock>
                     </GuideSection>
                     <GuideSection title="Reset data">
                         <CopyableCodeBlock>{`# Reset all data
-curl -X POST http://localhost:8080/_localcloud/reset
+curl -X POST http://localhost:8080/reset
 
 # Reset and restore last seed
-curl -X POST http://localhost:8080/_localcloud/reset \\
+curl -X POST http://localhost:8080/reset \\
   -H "Content-Type: application/json" -d '{"restore_seed": true}'`}</CopyableCodeBlock>
                     </GuideSection>
                 </Show>
@@ -1441,13 +1441,13 @@ curl -X POST http://localhost:8080/_localcloud/reset \\
                             <table class="data-table">
                                 <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
                                 <tbody>
-                                    <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/health</td><td>Health status</td></tr>
-                                    <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/services</td><td>List services</td></tr>
-                                    <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/env?format=shell</td><td>Environment variables</td></tr>
-                                    <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/routing</td><td>Service routing status</td></tr>
-                                    <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/credentials</td><td>GCP credential status</td></tr>
-                                    <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/seed</td><td>Load seed data</td></tr>
-                                    <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/_localcloud/reset</td><td>Reset all data</td></tr>
+                                    <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/health</td><td>Health status</td></tr>
+                                    <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/services</td><td>List services</td></tr>
+                                    <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/env?format=shell</td><td>Environment variables</td></tr>
+                                    <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/routing</td><td>Service routing status</td></tr>
+                                    <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/credentials</td><td>GCP credential status</td></tr>
+                                    <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/seed</td><td>Load seed data</td></tr>
+                                    <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/reset</td><td>Reset all data</td></tr>
                                 </tbody>
                             </table>
                         </div>

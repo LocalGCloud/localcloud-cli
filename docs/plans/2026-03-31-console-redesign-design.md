@@ -17,13 +17,13 @@ Additionally, the UI uses a custom dark theme that doesn't match the Google Clou
 ### Before (Broken)
 ```
 Browser → Armeria → cli_runner.py (subprocess: localcloud CLI) → Docker container
-                → proxy.py → /_localcloud/health (only endpoint used)
+                → proxy.py → /health (only endpoint used)
 ```
 
 ### After
 ```
-Browser → Armeria (8080) → LocalCloud Admin API (8080/_localcloud/*)
-                        → Browse API (8080/_localcloud/browse/*)
+Browser → Armeria (8080) → LocalCloud Admin API (8080/*)
+                        → Browse API (8080/browse/*)
 ```
 
 Armeria becomes a thin JSON proxy. No CLI dependency. No subprocess calls.
@@ -34,14 +34,14 @@ Armeria becomes a thin JSON proxy. No CLI dependency. No subprocess calls.
 
 | Armeria Route | Method | Proxies To | Purpose |
 |---|---|---|---|
-| `/api/health` | GET | `/_localcloud/health` | Dashboard status + service health |
-| `/api/services` | GET | `/_localcloud/health` → extract services | Service list with status |
-| `/api/requests` | GET | `/_localcloud/requests` | Request log ring buffer |
-| `/api/reset` | POST | `/_localcloud/reset` | Reset all service data |
-| `/api/seed` | POST | `/_localcloud/seed` | Load seed YAML |
-| `/api/env` | GET | `/_localcloud/env?format=json` | Environment variables |
-| `/api/browse/<service>` | GET | `/_localcloud/browse/<service>` | Data browsing |
-| `/api/browse/<service>/<path>` | GET | `/_localcloud/browse/<service>/<path>` | Nested data browsing |
+| `/api/health` | GET | `/health` | Dashboard status + service health |
+| `/api/services` | GET | `/health` → extract services | Service list with status |
+| `/api/requests` | GET | `/requests` | Request log ring buffer |
+| `/api/reset` | POST | `/reset` | Reset all service data |
+| `/api/seed` | POST | `/seed` | Load seed YAML |
+| `/api/env` | GET | `/env?format=json` | Environment variables |
+| `/api/browse/<service>` | GET | `/browse/<service>` | Data browsing |
+| `/api/browse/<service>/<path>` | GET | `/browse/<service>/<path>` | Nested data browsing |
 
 ### Files to Change
 - **Delete**: `backend/cli_runner.py` — no longer needed
@@ -64,7 +64,7 @@ Armeria becomes a thin JSON proxy. No CLI dependency. No subprocess calls.
 - Click row to expand detail: env var name, supported operations summary
 
 ### 3. Logs (Request Log)
-- Source: `/_localcloud/requests` ring buffer
+- Source: `/requests` ring buffer
 - Table: Timestamp, Method, Path, Status Code, Latency
 - Filters: service dropdown, status code range, method type
 - Auto-refresh toggle with interval control
@@ -78,7 +78,7 @@ Armeria becomes a thin JSON proxy. No CLI dependency. No subprocess calls.
 - BigQuery: datasets → tables → schema
 - Secret Manager: secrets → versions
 - Cloud Tasks: queues → tasks
-- All via `/_localcloud/browse/<service>` endpoint
+- All via `/browse/<service>` endpoint
 
 ### 5. Settings
 - Environment variable export (shell, docker-compose, JSON formats)

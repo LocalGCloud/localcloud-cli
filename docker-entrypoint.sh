@@ -257,7 +257,7 @@ if [ -f "$SEED_FILE" ]; then
                     # RESTART: Seed volatile (in-memory) services immediately.
                     seed_log "restart detected — seeding volatile services (Pub/Sub, Firestore, Bigtable)..."
                     sleep 2
-                    RESULT=$(curl -s -X POST "http://localhost:8080/_localcloud/seed?mode=volatile" \
+                    RESULT=$(curl -s -X POST "http://localhost:8080/seed?mode=volatile" \
                         -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" 2>&1)
                     seed_log "volatile seed done: $RESULT"
 
@@ -279,7 +279,7 @@ if [ -f "$SEED_FILE" ]; then
                                         seed_log "BigQuery has persistent data, skipping"
                                     else
                                         seed_log "BigQuery has no data, seeding..."
-                                        curl -s -X POST http://localhost:8080/_localcloud/seed \
+                                        curl -s -X POST http://localhost:8080/seed \
                                             -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" >/dev/null 2>&1
                                         seed_log "BigQuery seed complete"
                                     fi
@@ -293,7 +293,7 @@ if [ -f "$SEED_FILE" ]; then
                     # FIRST RUN: Seed everything.
                     sleep 2
                     seed_log "first run — loading all seed data..."
-                    RESULT=$(curl -s -X POST http://localhost:8080/_localcloud/seed \
+                    RESULT=$(curl -s -X POST http://localhost:8080/seed \
                         -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" 2>&1)
                     seed_log "phase 1 done: $RESULT"
 
@@ -304,7 +304,7 @@ if [ -f "$SEED_FILE" ]; then
                             for j in $(seq 1 30); do
                                 if curl -sf http://localhost:9020/v1/projects/local-project/instances >/dev/null 2>&1; then
                                     seed_log "Spanner ready, seeding..."
-                                    curl -s -X POST http://localhost:8080/_localcloud/seed \
+                                    curl -s -X POST http://localhost:8080/seed \
                                         -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" >/dev/null 2>&1
                                     seed_log "Spanner seed complete"
                                     break
@@ -320,7 +320,7 @@ if [ -f "$SEED_FILE" ]; then
                             for j in $(seq 1 45); do
                                 if curl -sf "http://localhost:9050/bigquery/v2/projects/${LOCALCLOUD_PROJECT:-local-project}/datasets" >/dev/null 2>&1; then
                                     seed_log "BigQuery ready, seeding..."
-                                    curl -s -X POST http://localhost:8080/_localcloud/seed \
+                                    curl -s -X POST http://localhost:8080/seed \
                                         -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" >/dev/null 2>&1
                                     seed_log "BigQuery seed complete"
                                     break

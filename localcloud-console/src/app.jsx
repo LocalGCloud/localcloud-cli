@@ -23,6 +23,7 @@ const ICON_PATHS = {
     sun: 'M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58a.996.996 0 0 0-1.41 0 .996.996 0 0 0 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41zm12.37 12.37a.996.996 0 0 0-1.41 0 .996.996 0 0 0 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0a.996.996 0 0 0 0-1.41zm1.06-10.96a.996.996 0 0 0 0-1.41.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0zM7.05 18.36a.996.996 0 0 0 0-1.41.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0z',
     moon: 'M9.37 5.51A7.35 7.35 0 0 0 9.1 7.5c0 4.08 3.32 7.4 7.4 7.4.68 0 1.35-.09 1.99-.27A7.014 7.014 0 0 1 12 19c-3.86 0-7-3.14-7-7 0-2.93 1.81-5.45 4.37-6.49zM12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26 5.403 5.403 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z',
     pin: 'M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v6H18v-6h1.6v-2H14l2-2z',
+    user: 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z',
 };
 
 function Icon(props) {
@@ -104,17 +105,17 @@ function App() {
     let healthFailCount = 0;
     let imageUpdateCheckStarted = false;
 
+    const storedProject = (() => {
+        try { return localStorage.getItem('localcloud-active-project') || null; } catch { return null; }
+    })();
+
     const [projects, setProjects] = createSignal([]);
-    const [activeProject, setActiveProjectState] = createSignal(null);
+    const [activeProject, setActiveProjectState] = createSignal(storedProject || 'local-project');
     const [projectDropdownOpen, setProjectDropdownOpen] = createSignal(false);
     const [showNewProjectDialog, setShowNewProjectDialog] = createSignal(false);
     const [newProjectId, setNewProjectId] = createSignal('');
     const [newProjectName, setNewProjectName] = createSignal('');
     const [projectError, setProjectError] = createSignal(null);
-
-    const storedProject = (() => {
-        try { return localStorage.getItem('localcloud-active-project') || null; } catch { return null; }
-    })();
 
     const switchProject = (projectId) => {
         setActiveProject(projectId);
@@ -392,14 +393,14 @@ function App() {
             </Show>
 
             <header class="topbar aura-topbar">
-                <div class="topbar-left">
+                <div class="topbar-left aura-topbar-left">
                     <button class="aura-sidebar-toggle" onClick={() => {
                         if (window.innerWidth <= 900) setMobileSidebarOpen(!mobileSidebarOpen());
                         else setSidebarPinned(!sidebarPinned());
                     }} title={sidebarPinned() ? 'Collapse services' : 'Pin services'} aria-label={sidebarPinned() ? 'Collapse services sidebar' : 'Pin services sidebar'} aria-expanded={window.innerWidth <= 900 ? mobileSidebarOpen() : sidebarPinned()}>
                         <img src="/icons/localcloud-mark.svg" alt="" width="28" height="28" />
                     </button>
-                    <button class="aura-brand-lockup aura-brand-button" onClick={() => navigateTo('dashboard')} title="Nerve Center">
+                    <button class="aura-brand-lockup aura-brand-button" onClick={() => navigateTo('dashboard')} title="Dashboard">
                         <span class="aura-brand-name">LocalCloud</span>
                         <span
                             class={`aura-brand-version ${rawUpdateAvailable() ? 'has-update' : ''}`}
@@ -412,25 +413,24 @@ function App() {
                             </Show>
                         </span>
                     </button>
-                </div>
-                <div class="aura-project-wrap">
-                    <button class="topbar-project-chip aura-project-chip" onClick={() => setProjectDropdownOpen(!projectDropdownOpen())} aria-expanded={projectDropdownOpen()}>
-                        <span class={`aura-connection-led ${connectionStatus()}`} />
-                        <span class="aura-project-main">{projectId()} ({projectRegion()})</span>
-                        <span class="aura-project-sub">{persistenceMode()} backend</span>
-                    </button>
-                    <Show when={projectDropdownOpen()}>
-                        <div class="project-dropdown aura-project-dropdown">
-                            <div class="project-dropdown-label">Projects</div>
-                            <For each={projects()}>
-                                {(p) => <button class={`project-dropdown-item ${activeProject() === p.project_id ? 'active' : ''}`} onClick={() => switchProject(p.project_id)}>
-                                    <span>{p.project_id}</span>
-                                    <Show when={p.display_name && p.display_name !== p.project_id}><span>{p.display_name}</span></Show>
-                                </button>}
-                            </For>
-                            <button class="project-dropdown-item aura-new-project" onClick={() => { setProjectDropdownOpen(false); setShowNewProjectDialog(true); }}>New Project</button>
-                        </div>
-                    </Show>
+                    <div class="aura-project-wrap">
+                        <button class="topbar-project-chip aura-project-chip" onClick={() => setProjectDropdownOpen(!projectDropdownOpen())} aria-expanded={projectDropdownOpen()}>
+                            <span class="aura-project-main">{projectId()}</span>
+                            <span class="aura-project-sub">{projectRegion()} · {persistenceMode()}</span>
+                        </button>
+                        <Show when={projectDropdownOpen()}>
+                            <div class="project-dropdown aura-project-dropdown">
+                                <div class="project-dropdown-label">Projects</div>
+                                <For each={projects()}>
+                                    {(p) => <button class={`project-dropdown-item ${activeProject() === p.project_id ? 'active' : ''}`} onClick={() => switchProject(p.project_id)}>
+                                        <span>{p.project_id}</span>
+                                        <Show when={p.display_name && p.display_name !== p.project_id}><span>{p.display_name}</span></Show>
+                                    </button>}
+                                </For>
+                                <button class="project-dropdown-item aura-new-project" onClick={() => { setProjectDropdownOpen(false); setShowNewProjectDialog(true); }}>New Project</button>
+                            </div>
+                        </Show>
+                    </div>
                 </div>
                 <div class="topbar-center aura-search-center">
                     <button class="aura-global-search" onClick={() => { setSearchOpen(true); setSearchQuery(''); if (globalSearchIndex().length === 0) buildGlobalSearchIndex(); }}>
@@ -440,7 +440,7 @@ function App() {
                     </button>
                 </div>
                 <div class="topbar-right">
-                    <button class="aura-top-icon" onClick={() => navigateTo('settings')} title="User docs" aria-label="Open user docs">
+                    <button class="aura-top-icon" onClick={() => navigateTo('settings')} title="Documentation" aria-label="Open documentation">
                         <Icon name="docs" size={22} />
                     </button>
                     <div class="aura-settings-wrap">
@@ -456,8 +456,8 @@ function App() {
                             </div>
                         </Show>
                     </div>
-                    <button class="topbar-toggle" onClick={toggleDarkMode} title={darkMode() ? 'Switch to light mode' : 'Switch to dark mode'} aria-label={darkMode() ? 'Switch to light mode' : 'Switch to dark mode'}>
-                        <Icon name={darkMode() ? 'sun' : 'moon'} size={18} />
+                    <button class="aura-user-btn" title="Guest · Sign in coming soon" aria-label="User menu">
+                        <Icon name="user" size={22} />
                     </button>
                 </div>
             </header>

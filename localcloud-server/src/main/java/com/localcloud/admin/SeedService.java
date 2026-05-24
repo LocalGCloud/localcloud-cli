@@ -36,8 +36,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Armeria annotated service for seeding and resetting emulator data.
  * Seeds data by calling external emulator REST APIs (GCS, Pub/Sub, BigQuery)
- * and in-process stores (Secret Manager). Registered at the
- * {@code /_localcloud} path prefix.
+ * and in-process stores (Secret Manager).
  */
 public class SeedService {
 
@@ -164,60 +163,63 @@ public class SeedService {
         return doSeed(yamlContent, volatileOnly);
     }
 
+    @Post("/import")
+    public com.linecorp.armeria.common.HttpResponse importState(ServiceRequestContext ctx, AggregatedHttpRequest request) {
+        return seed(ctx, request);
+    }
+
     private com.linecorp.armeria.common.HttpResponse doSeed(String yamlContent) {
         return doSeed(yamlContent, false);
     }
 
     private com.linecorp.armeria.common.HttpResponse doSeed(String yamlContent, boolean volatileOnly) {
         try {
-
-            @SuppressWarnings("unchecked")
-            Map<String, Object> rawData = yamlMapper.readValue(yamlContent, Map.class);
-
-            // Multi-project format: projects: { dev: { gcs: ... }, staging: { gcs: ... } }
-            // Single-project format: services: { gcs: ... } or flat { gcs: ... }
-            int totalSeeded = 0;
-            Map<String, Object> results = new LinkedHashMap<>();
-
-            if (rawData.containsKey("projects") && rawData.get("projects") instanceof Map) {
-                // Multi-project seed
-                @SuppressWarnings("unchecked")
-                Map<String, Object> projectsMap = (Map<String, Object>) rawData.get("projects");
-                for (Map.Entry<String, Object> entry : projectsMap.entrySet()) {
-                    String projectId = entry.getKey();
-                    if (!(entry.getValue() instanceof Map)) continue;
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> projectServices = (Map<String, Object>) entry.getValue();
-                    // Unwrap nested services: key if present
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> seedData = projectServices.containsKey("services") && projectServices.get("services") instanceof Map
-                            ? (Map<String, Object>) projectServices.get("services")
-                            : projectServices;
-                    int count = seedServicesForProject(seedData, projectId, results, volatileOnly);
-                    totalSeeded += count;
-                }
-            } else {
-                // Single-project seed (backward compatible)
-                @SuppressWarnings("unchecked")
-                Map<String, Object> seedData = rawData.containsKey("services") && rawData.get("services") instanceof Map
-                        ? (Map<String, Object>) rawData.get("services")
-                        : rawData;
-                totalSeeded = seedServicesForProject(seedData, config.getProjectId(), results, volatileOnly);
-            }
-
-            // Store seed for potential restore
-            lastSeedYaml = yamlContent;
-
-            Map<String, Object> response = new LinkedHashMap<>();
-            response.put("status", "seeded");
-            response.put("total_records", totalSeeded);
-            response.put("services", results);
-
+            Map<String, Object> response = seedYaml(yamlContent, volatileOnly);
             return jsonResponse(HttpStatus.OK, response);
         } catch (Exception e) {
             logger.error("Error processing seed data", e);
             return errorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Seed failed: " + e.getMessage());
         }
+    }
+
+    public Map<String, Object> seedYaml(String yamlContent, boolean volatileOnly) throws Exception {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> rawData = yamlMapper.readValue(yamlContent, Map.class);
+
+        // Multi-project format: projects: { dev: { gcs: ... }, staging: { gcs: ... } }
+        // Single-project format: services: { gcs: ... } or flat { gcs: ... }
+        int totalSeeded = 0;
+        Map<String, Object> results = new LinkedHashMap<>();
+
+        if (rawData.containsKey("projects") && rawData.get("projects") instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> projectsMap = (Map<String, Object>) rawData.get("projects");
+            for (Map.Entry<String, Object> entry : projectsMap.entrySet()) {
+                String projectId = entry.getKey();
+                if (!(entry.getValue() instanceof Map)) continue;
+                @SuppressWarnings("unchecked")
+                Map<String, Object> projectServices = (Map<String, Object>) entry.getValue();
+                @SuppressWarnings("unchecked")
+                Map<String, Object> seedData = projectServices.containsKey("services") && projectServices.get("services") instanceof Map
+                        ? (Map<String, Object>) projectServices.get("services")
+                        : projectServices;
+                totalSeeded += seedServicesForProject(seedData, projectId, results, volatileOnly);
+            }
+        } else {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> seedData = rawData.containsKey("services") && rawData.get("services") instanceof Map
+                    ? (Map<String, Object>) rawData.get("services")
+                    : rawData;
+            totalSeeded = seedServicesForProject(seedData, config.getProjectId(), results, volatileOnly);
+        }
+
+        lastSeedYaml = yamlContent;
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", "seeded");
+        response.put("total_records", totalSeeded);
+        response.put("services", results);
+        return response;
     }
 
     /**
@@ -339,17 +341,7 @@ public class SeedService {
                     ? projectParam : config.getProjectId();
 
             // Clear all data for the target project
-            int cleared = 0;
-            cleared += resetSecretManager(projectId);
-            cleared += resetCloudTasks(projectId);
-            cleared += resetLogging(projectId);
-            cleared += resetMonitoring(projectId);
-            cleared += resetMemorystore(projectId);
-            cleared += resetBigtable(projectId);
-            cleared += resetCompute(projectId);
-            cleared += resetCloudRun(projectId);
-            cleared += resetGke(projectId);
-            cleared += resetWorkflows(projectId);
+            int cleared = resetProjectData(projectId);
             logger.info("Reset: cleared {} rows for project '{}'", cleared, projectId);
 
             Map<String, Object> response = new LinkedHashMap<>();
@@ -387,6 +379,26 @@ public class SeedService {
             logger.error("Error resetting data", e);
             return errorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Reset failed: " + e.getMessage());
         }
+    }
+
+    public int resetProjectData(String projectId) {
+        int cleared = 0;
+        cleared += resetGcs(projectId);
+        cleared += resetPubSub(projectId);
+        cleared += resetFirestore(projectId);
+        cleared += resetBigQuery(projectId);
+        cleared += resetSpanner(projectId);
+        cleared += resetSecretManager(projectId);
+        cleared += resetCloudTasks(projectId);
+        cleared += resetLogging(projectId);
+        cleared += resetMonitoring(projectId);
+        cleared += resetMemorystore(projectId);
+        cleared += resetBigtable(projectId);
+        cleared += resetCompute(projectId);
+        cleared += resetCloudRun(projectId);
+        cleared += resetGke(projectId);
+        cleared += resetWorkflows(projectId);
+        return cleared;
     }
 
     /**

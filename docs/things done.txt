@@ -29,7 +29,7 @@ Docker Image Optimization (complete)
 
   Terraform Integration (Phase 1 complete)
 
-  - eval $(curl -s 'http://localhost:8080/_localcloud/env?format=terraform') works
+  - eval $(curl -s 'http://localhost:8080/env?format=terraform') works
   - GCS, Pub/Sub, BigQuery, Spanner verified working
   - Example main.tf, GitHub Actions CI, compatibility matrix
 

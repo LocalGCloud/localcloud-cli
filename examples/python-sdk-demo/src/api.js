@@ -1,9 +1,9 @@
 /**
  * API wrapper for LocalCloud admin endpoints
- * All endpoints are under /_localcloud base path
+ * All endpoints are under  base path
  */
 
-const API_BASE = '/_localcloud';
+const API_BASE = '';
 
 /**
  * Fetch health status of the platform

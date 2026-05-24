@@ -17,7 +17,7 @@ echo "=== Cloud Workflows Integration Tests ==="
 echo ""
 
 # Check health
-curl -sf "$BASE/_localcloud/health" >/dev/null || { echo "ERROR: LocalCloud not running at $BASE"; exit 1; }
+curl -sf "$BASE/health" >/dev/null || { echo "ERROR: LocalCloud not running at $BASE"; exit 1; }
 echo "Container healthy."
 echo ""
 
@@ -27,7 +27,7 @@ echo ""
 echo "--- 11.1 Multi-step workflow execution ---"
 
 # Seed a test workflow
-SEED_RESULT=$(curl -sf -X POST "$BASE/_localcloud/seed" \
+SEED_RESULT=$(curl -sf -X POST "$BASE/seed" \
   -H "Content-Type: application/x-yaml" \
   --data-binary @- <<'YAML'
 version: "1.0"
@@ -54,22 +54,22 @@ YAML
 echo "$SEED_RESULT" | grep -q '"workflows"' && pass "Seed deployed" || fail "Seed deploy" "$SEED_RESULT"
 
 # Verify workflow appears in browse
-WF_LIST=$(curl -sf "$BASE/_localcloud/browse/workflows")
+WF_LIST=$(curl -sf "$BASE/browse/workflows")
 echo "$WF_LIST" | grep -q "integration-test-wf" && pass "Workflow listed" || fail "Workflow list" "$WF_LIST"
 
 # Execute the workflow
-EXEC_RESULT=$(curl -sf -X POST "$BASE/_localcloud/browse/workflows/integration-test-wf/execute" \
+EXEC_RESULT=$(curl -sf -X POST "$BASE/browse/workflows/integration-test-wf/execute" \
   -H "Content-Type: application/json" -d '{}' 2>/dev/null || echo "NO_EXEC_ENDPOINT")
 
 # If no execute endpoint via browse, try the direct API pattern
 if [ "$EXEC_RESULT" = "NO_EXEC_ENDPOINT" ]; then
   # Try creating execution via browse or service endpoint
-  EXEC_RESULT=$(curl -sf "$BASE/_localcloud/browse/workflows/integration-test-wf/executions" 2>/dev/null || echo "[]")
+  EXEC_RESULT=$(curl -sf "$BASE/browse/workflows/integration-test-wf/executions" 2>/dev/null || echo "[]")
 fi
 
 # Check execution list after a short wait (async execution)
 sleep 2
-EXEC_LIST=$(curl -sf "$BASE/_localcloud/browse/workflows/integration-test-wf/executions" 2>/dev/null || echo "[]")
+EXEC_LIST=$(curl -sf "$BASE/browse/workflows/integration-test-wf/executions" 2>/dev/null || echo "[]")
 echo "  Executions: $EXEC_LIST"
 
 # The seed doesn't auto-execute, so just verify the workflow is deployed and browseable
@@ -82,7 +82,7 @@ echo ""
 # ---------------------------------------------------------------
 echo "--- 11.2 Connector-compatible workflow ---"
 
-SEED2=$(curl -sf -X POST "$BASE/_localcloud/seed" \
+SEED2=$(curl -sf -X POST "$BASE/seed" \
   -H "Content-Type: application/x-yaml" \
   --data-binary @- <<'YAML'
 version: "1.0"
@@ -109,7 +109,7 @@ YAML
 echo "$SEED2" | grep -q '"workflows"' && pass "Connector workflow deployed" || fail "Connector workflow" "$SEED2"
 
 # Verify it appears
-WF_DETAIL=$(curl -sf "$BASE/_localcloud/browse/workflows/connector-test-wf" 2>/dev/null || echo "{}")
+WF_DETAIL=$(curl -sf "$BASE/browse/workflows/connector-test-wf" 2>/dev/null || echo "{}")
 echo "$WF_DETAIL" | grep -q "connector-test-wf" && pass "Connector workflow detail" || fail "Connector detail" "$WF_DETAIL"
 
 echo ""
@@ -119,7 +119,7 @@ echo ""
 # ---------------------------------------------------------------
 echo "--- 11.3 Parallel + error handling workflow ---"
 
-SEED3=$(curl -sf -X POST "$BASE/_localcloud/seed" \
+SEED3=$(curl -sf -X POST "$BASE/seed" \
   -H "Content-Type: application/x-yaml" \
   --data-binary @- <<'YAML'
 version: "1.0"
@@ -158,7 +158,7 @@ echo ""
 # ---------------------------------------------------------------
 echo "--- 11.4 Callback workflow ---"
 
-SEED4=$(curl -sf -X POST "$BASE/_localcloud/seed" \
+SEED4=$(curl -sf -X POST "$BASE/seed" \
   -H "Content-Type: application/x-yaml" \
   --data-binary @- <<'YAML'
 version: "1.0"
@@ -187,7 +187,7 @@ YAML
 echo "$SEED4" | grep -q '"workflows"' && pass "Callback workflow deployed" || fail "Callback workflow" "$SEED4"
 
 # Verify callback endpoint exists
-CB_404=$(curl -sf -o /dev/null -w "%{http_code}" -X POST "$BASE/_localcloud/workflows/callbacks/nonexistent-id" \
+CB_404=$(curl -sf -o /dev/null -w "%{http_code}" -X POST "$BASE/workflows/callbacks/nonexistent-id" \
   -H "Content-Type: application/json" -d '{"test":true}' 2>/dev/null || echo "000")
 [ "$CB_404" = "404" ] && pass "Callback 404 for unknown ID" || fail "Callback 404" "Got $CB_404"
 

@@ -13,7 +13,7 @@ Two changes that make LocalCloud feel more polished:
 | Goal | Problem | Solution |
 |------|---------|----------|
 | `cloud.localhost` instead of `localhost:8080` | Port number in URL feels unpolished | Add Caddy reverse proxy (port 80 → port 8080) |
-| `/health` instead of `/_localcloud/health` | Unnecessary prefix on admin endpoints | Register developer-facing services at root-level paths too |
+| `/health` instead of `/health` | Unnecessary prefix on admin endpoints | Register developer-facing services at root-level paths too |
 
 Both `cloud.localhost` (through Caddy) and `localhost:8080` (direct) must continue working.
 
@@ -134,19 +134,19 @@ Update the example `docker run` to include `-p 80:80`.
 
 ### Problem
 
-The console SPA is served at `/`, but all admin/dev endpoints are nested under `/_localcloud/`. This adds noise to every developer command.
+The console SPA is served at `/`, but all admin/dev endpoints are nested under `/`. This adds noise to every developer command.
 
 | Current | Desired |
 |---------|---------|
-| `/_localcloud/health` | `/health` |
-| `/_localcloud/health/{service}` | `/health/{service}` |
-| `/_localcloud/services` | `/services` |
-| `/_localcloud/usage` | `/usage` |
-| `/_localcloud/export` | `/export` |
+| `/health` | `/health` |
+| `/health/{service}` | `/health/{service}` |
+| `/services` | `/services` |
+| `/usage` | `/usage` |
+| `/export` | `/export` |
 
 ### Approach: Dual Registration
 
-Register `HealthCheckService` and `ExportService` at **both** `/_localcloud` (existing, for backward compat) **and** `/` (new root). Armeria matches most-specific routes first, so root-level admin paths take priority over the console's `serviceUnder("/")`.
+Register `HealthCheckService` and `ExportService` at **both** `` (existing, for backward compat) **and** `/` (new root). Armeria matches most-specific routes first, so root-level admin paths take priority over the console's `serviceUnder("/")`.
 
 ### Route inventory
 
@@ -154,16 +154,16 @@ Register `HealthCheckService` and `ExportService` at **both** `/_localcloud` (ex
 
 | Method | Existing path | New path |
 |--------|---------------|----------|
-| `@Get("/health")` | `/_localcloud/health` | `/health` |
-| `@Get("/health/{service}")` | `/_localcloud/health/{service}` | `/health/{service}` |
-| `@Get("/services")` | `/_localcloud/services` | `/services` |
-| `@Get("/usage")` | `/_localcloud/usage` | `/usage` |
+| `@Get("/health")` | `/health` | `/health` |
+| `@Get("/health/{service}")` | `/health/{service}` | `/health/{service}` |
+| `@Get("/services")` | `/services` | `/services` |
+| `@Get("/usage")` | `/usage` | `/usage` |
 
 **ExportService** (`src/main/java/com/localcloud/admin/ExportService.java`):
 
 | Method | Existing path | New path |
 |--------|---------------|----------|
-| `@Get("/export")` | `/_localcloud/export` | `/export` |
+| `@Get("/export")` | `/export` | `/export` |
 
 No path conflicts with console static files (which live at `/index.html`, `/assets/*`, other SPA routes).
 
@@ -173,12 +173,12 @@ No path conflicts with console static files (which live at `/index.html`, `/asse
 
 ### 1. `LocalCloudApplication.java` — gateway route registration
 
-After the existing `/_localcloud` registrations (lines 222-228), add:
+After the existing `` registrations (lines 222-228), add:
 
 ```java
 // Root-level aliases for developer-facing admin endpoints.
 // Armeria matches most-specific routes first, so these take priority
-// over the console's serviceUnder("/"). The /_localcloud originals
+// over the console's serviceUnder("/"). The  originals
 // remain for backward compatibility.
 sb.annotatedService("/", healthCheckService);
 sb.annotatedService("/", exportService);
@@ -188,10 +188,10 @@ sb.annotatedService("/", exportService);
 
 ### 2. `ServiceGatingDecorator.java`
 
-Currently bypasses `/_localcloud/*` and root `/`. Add root-level admin paths:
+Currently bypasses `/*` and root `/`. Add root-level admin paths:
 
 ```java
-if (path.startsWith("/_localcloud") || path.startsWith("/icons") ||
+if (path.startsWith("") || path.startsWith("/icons") ||
     path.equals("/") || path.equals("/health") || path.equals("/services") ||
     path.equals("/usage") || path.startsWith("/export") || path.startsWith("/health/")) {
     return delegate.serve(ctx, req);
@@ -205,7 +205,7 @@ if (path.startsWith("/_localcloud") || path.startsWith("/icons") ||
 Same pattern — add root-level paths to the IAM bypass condition so they're accessible without authentication:
 
 ```java
-if (ctx.path().startsWith("/_localcloud") || ctx.path().equals("/health") ||
+if (ctx.path().startsWith("") || ctx.path().equals("/health") ||
     ctx.path().startsWith("/health/") || ctx.path().startsWith("/export") ||
     ctx.path().equals("/services") || ctx.path().equals("/usage") || ...) {
     return delegate.serve(ctx, req);
@@ -227,14 +227,14 @@ Uses `localhost:8080` (not `cloud.localhost`) to avoid depending on DNS resoluti
 
 ### 5. `docker-entrypoint.sh`
 
-Check for any `/_localcloud/health` curl calls during startup and update to `/health`.
+Check for any `/health` curl calls during startup and update to `/health`.
 
 ---
 
 ### 6. Tests — update assertions
 
-- `ServiceGatingDecoratorTest.java` — any assertion referencing `/_localcloud/health` path
-- `IamMiddlewareTest.java` — any assertion referencing `/_localcloud/services/gcs/config` path
+- `ServiceGatingDecoratorTest.java` — any assertion referencing `/health` path
+- `IamMiddlewareTest.java` — any assertion referencing `/services/gcs/config` path
 
 ---
 
@@ -242,10 +242,10 @@ Check for any `/_localcloud/health` curl calls during startup and update to `/he
 
 | Before | After |
 |--------|-------|
-| `curl localhost:8080/_localcloud/health` | `curl localhost:8080/health` |
-| `curl cloud.localhost/_localcloud/export?format=shell` | `curl cloud.localhost/export?format=shell` |
-| Docker HEALTHCHECK at `/_localcloud/health` | HEALTHCHECK at `/health` |
-| Old `/_localcloud/*` paths | Old paths **still work** — no breaking changes |
+| `curl localhost:8080/health` | `curl localhost:8080/health` |
+| `curl cloud.localhost/export?format=shell` | `curl cloud.localhost/export?format=shell` |
+| Docker HEALTHCHECK at `/health` | HEALTHCHECK at `/health` |
+| Old `/*` paths | Old paths **still work** — no breaking changes |
 
 ---
 
@@ -297,7 +297,7 @@ Update console access instructions to mention `cloud.localhost`.
 | 2 | `Caddyfile` | 1 | **New** — reverse proxy `cloud.localhost` → `localhost:8080` |
 | 3 | `supervisord.conf` | 1 | Add `[program:caddy]` at priority 35 |
 | 4 | `start.sh` | 1 | Add `-p 127.0.0.1:80:80` |
-| 5 | `docker-entrypoint.sh` | 2 | Check for `/_localcloud/health` references, update to `/health` |
+| 5 | `docker-entrypoint.sh` | 2 | Check for `/health` references, update to `/health` |
 | 6 | `LocalCloudApplication.java` | 2 | Dual-register HealthCheckService and ExportService at `/` |
 | 7 | `ServiceGatingDecorator.java` | 2 | Add root-level admin paths to bypass list |
 | 8 | `IamMiddleware.java` | 2 | Add root-level admin paths to bypass list |

@@ -27,7 +27,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Armeria annotated service providing Data Mirror sync REST endpoints.
- * Registered at the {@code /_localcloud/sync} path prefix.
+ * Registered at the {@code /sync} path prefix.
  *
  * <p>Endpoints cover:
  * <ul>
@@ -167,7 +167,7 @@ public class SyncApiService {
 
             String project = resolveProject(ctx);
 
-            String redirectUri = "http://localhost:8080/_localcloud/sync/auth/callback";
+            String redirectUri = "http://localhost:8080/sync/auth/callback";
             String scope = "https://www.googleapis.com/auth/cloud-platform.read-only";
 
             // Build the Google OAuth authorization URL with the supplied client_id.

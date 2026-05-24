@@ -1945,7 +1945,7 @@ cd .. && docker build -t localcloud/localcloud:latest .
 ./stop.sh && ./start.sh
 sleep 15
 docker logs localcloud 2>&1 | grep -i "license"
-curl -s http://localhost:8080/_localcloud/health | python3 -c "import sys,json; d=json.load(sys.stdin); print('Status:', d['status'])"
+curl -s http://localhost:8080/health | python3 -c "import sys,json; d=json.load(sys.stdin); print('Status:', d['status'])"
 ```
 Expected: "License: development mode" in logs, health status is "healthy" or "degraded" (normal)
 

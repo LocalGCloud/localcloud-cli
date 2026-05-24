@@ -11,7 +11,7 @@
 #        -p 9050:9050 -m 4g localcloud/localcloud:latest
 #
 #   2. Source the Terraform env vars:
-#      eval $(curl -s 'http://localhost:8080/_localcloud/env?format=terraform')
+#      eval $(curl -s 'http://localhost:8080/env?format=terraform')
 #
 #   3. Run Terraform:
 #      terraform init

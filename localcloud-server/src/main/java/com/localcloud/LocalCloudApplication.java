@@ -16,6 +16,7 @@ import com.localcloud.admin.AdminApiService;
 import com.localcloud.admin.BrowseService;
 import com.localcloud.admin.CredentialBroker;
 import com.localcloud.admin.ExportService;
+import com.localcloud.admin.FaultInjectionService;
 import com.localcloud.admin.MutateService;
 import com.localcloud.admin.ProjectService;
 import com.localcloud.admin.GraphQLGateway;
@@ -23,6 +24,7 @@ import com.localcloud.admin.QueryHistoryRepository;
 import com.localcloud.admin.QueryService;
 import com.localcloud.admin.SeedService;
 import com.localcloud.admin.ServiceConfigRepository;
+import com.localcloud.admin.SnapshotService;
 import com.localcloud.admin.TelemetryService;
 import com.localcloud.admin.ServiceRoutingRepository;
 import com.localcloud.admin.UsageMetricsRepository;
@@ -46,8 +48,11 @@ import com.localcloud.emulators.workflows.WorkflowConnectorService;
 import com.localcloud.docker.ContainerManager;
 import com.localcloud.docker.DockerClientProvider;
 import com.localcloud.gateway.ApiGateway;
+import com.localcloud.gateway.FaultInjectionDecorator;
+import com.localcloud.gateway.FaultInjectionRegistry;
 import com.localcloud.gateway.HealthCheckService;
 import com.localcloud.gateway.IamMiddleware;
+import com.localcloud.gateway.MetadataServerService;
 import com.localcloud.gateway.ServiceGatingDecorator;
 import com.localcloud.gateway.ProcessHealthChecker;
 import com.localcloud.gateway.RequestLogger;
@@ -83,6 +88,7 @@ public class LocalCloudApplication {
     private final SchemaManager schemaManager;
     private final ApiGateway gateway;
     private final RequestLogger requestLogger;
+    private final FaultInjectionRegistry faultInjectionRegistry;
     private final ProcessHealthChecker processHealthChecker;
     private final HealthCheckService healthCheckService;
     private final ProjectService projectService;
@@ -108,6 +114,7 @@ public class LocalCloudApplication {
         this.schemaManager = new SchemaManager(dataSource);
         this.gateway = new ApiGateway();
         this.requestLogger = new RequestLogger();
+        this.faultInjectionRegistry = new FaultInjectionRegistry();
         this.processHealthChecker = new ProcessHealthChecker(config, config.getServiceRegistry());
         var usageMetrics = new UsageMetricsRepository(dataSource);
         this.queryHistoryRepo = new QueryHistoryRepository(dataSource);
@@ -193,7 +200,7 @@ public class LocalCloudApplication {
         LicenseTier currentTier = licenseResult.tier() != null ? licenseResult.tier() : LicenseTier.COMMUNITY;
         LicenseTierProvider tierProvider = new StaticLicenseTierProvider(currentTier);
         this.adminApiService = new AdminApiService(config, requestLogger, projectService,
-                routingRepository, credentialBroker, serviceConfigRepository, tierProvider);
+                routingRepository, credentialBroker, serviceConfigRepository, tierProvider, faultInjectionRegistry);
 
         // Apply tier-based service gating using minTier from services.yaml
         for (Map.Entry<String, ServiceDefinition> entry : config.getServiceRegistry().getAllServices().entrySet()) {
@@ -218,21 +225,20 @@ public class LocalCloudApplication {
         // Service gating — returns 503 for requests to disabled facade services
         sb.decorator(new ServiceGatingDecorator(config));
 
-        // Register admin/health check annotated services
-        sb.annotatedService("/_localcloud", healthCheckService);
-        sb.annotatedService("/_localcloud", adminApiService);
-        sb.annotatedService("/_localcloud/browse", browseService);
-        sb.annotatedService("/_localcloud/mutate", mutateService);
-        sb.annotatedService("/_localcloud", seedService);
-        sb.annotatedService("/_localcloud", exportService);
-        sb.annotatedService("/_localcloud", queryService);
+        // Fault injection — optional local failures for resilience testing
+        sb.decorator(new FaultInjectionDecorator(faultInjectionRegistry));
 
-        // Root-level aliases for developer-facing admin endpoints.
-        // Armeria matches most-specific routes first, so these take priority
-        // over the console's serviceUnder("/"). The /_localcloud originals
-        // remain for backward compatibility.
+        // Register developer-facing admin services at root-level paths.
         sb.annotatedService("/", healthCheckService);
+        sb.annotatedService("/", adminApiService);
+        sb.annotatedService("/browse", browseService);
+        sb.annotatedService("/mutate", mutateService);
+        sb.annotatedService("/", seedService);
         sb.annotatedService("/", exportService);
+        sb.annotatedService("/", queryService);
+        sb.annotatedService("/", new SnapshotService(config, exportService, seedService));
+        sb.annotatedService("/", new FaultInjectionService(faultInjectionRegistry));
+        sb.annotatedService("/computeMetadata/v1", new MetadataServerService(config));
 
         // GraphQL API gateway — exposes a unified GraphQL endpoint at /graphql
         // that stitches together Spanner, BigQuery, Logging, Monitoring, and query history.
@@ -288,7 +294,7 @@ public class LocalCloudApplication {
         }
 
         SyncApiService syncApiService = new SyncApiService(syncService, syncCredentialRepo, config);
-        sb.annotatedService("/_localcloud/sync", syncApiService);
+        sb.annotatedService("/sync", syncApiService);
 
         // Spanner IAM stubs — intercept SetIamPolicy/GetIamPolicy/TestIamPermissions
         // before they fall through to the NOT_IMPLEMENTED handler or reach the C++ emulator.
@@ -300,11 +306,11 @@ public class LocalCloudApplication {
         logger.info("Spanner IAM stubs registered (permissive mode)");
 
         // Dashboard static files (served from classpath resources)
-        sb.serviceUnder("/_localcloud/dashboard/",
+        sb.serviceUnder("/dashboard/",
                 FileService.of(ClassLoader.getSystemClassLoader(), "dashboard"));
 
         // Console static files (served from filesystem in Docker container)
-        // Armeria matches most-specific routes first, so /_localcloud/* API routes take priority
+        // Armeria matches most-specific routes first, so API routes take priority.
         Path consoleDist = Path.of("/opt/localcloud/console/dist");
         if (Files.isDirectory(consoleDist)) {
             sb.serviceUnder("/", FileService.of(consoleDist));
@@ -431,17 +437,17 @@ public class LocalCloudApplication {
             var envVarsRepo = new WorkflowEnvVarsRepository(dataSource);
             workflowsEmulator.getWorkflowsService().setEnvVarsRepository(envVarsRepo);
             var envVarsService = new WorkflowEnvVarsService(config, envVarsRepo);
-            sb.annotatedService("/_localcloud/workflow-env", envVarsService);
+            sb.annotatedService("/workflow-env", envVarsService);
             var connectorService = new WorkflowConnectorService(config, envVarsRepo,
                     workflowsEmulator.getWorkflowsService().getStore());
-            sb.annotatedService("/_localcloud/workflow", connectorService);
+            sb.annotatedService("/workflow", connectorService);
             sb.annotatedService("/v1", new com.localcloud.emulators.workflows.WorkflowsRestService(
                     workflowsEmulator.getWorkflowsService(), workflowsEmulator));
 
             // Register callback HTTP endpoint so external systems can wake waiting executions
             WorkflowsCallbackService callbackService = new WorkflowsCallbackService(
                     workflowsEmulator.getWorkflowsService().getCallbackManager());
-            sb.annotatedService("/_localcloud/workflows", callbackService);
+            sb.annotatedService("/workflows", callbackService);
 
             // Wire WorkflowsServiceImpl into MutateService so console executions
             // route through the full execution path (connectors, callbacks, env vars)
@@ -499,7 +505,7 @@ public class LocalCloudApplication {
                             "reason": "ENDPOINT_NOT_EMULATED",
                             "domain": "localcloud",
                             "metadata": {
-                              "suggestion": "Check /_localcloud/services for available emulated services, or see contracts/emulated-services.md for supported operations."
+                              "suggestion": "Check /services for available emulated services, or see contracts/emulated-services.md for supported operations."
                             }
                           }
                         ]
@@ -517,9 +523,9 @@ public class LocalCloudApplication {
         logger.info("  LocalCloud Server started successfully");
         logger.info("  Project ID:  {}", config.getProjectId());
         logger.info("  Gateway:     http://localhost:{}", port);
-        logger.info("  Health:      http://localhost:{}/_localcloud/health", port);
+        logger.info("  Health:      http://localhost:{}/health", port);
         logger.info("  Console:     http://localhost:{}", port);
-        logger.info("  Dashboard:   http://localhost:{}/_localcloud/dashboard/", port);
+        logger.info("  Dashboard:   http://localhost:{}/dashboard/", port);
         logger.info("  Persistence: {}", config.isPersistenceEnabled() ? "enabled (" + config.getDataDir() + ")" : "disabled");
         logger.info("  Services:    {}", config.getEnabledServices());
         logger.info("=================================================");

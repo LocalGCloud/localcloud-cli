@@ -6,6 +6,7 @@ import java.lang.management.MemoryUsage;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,12 +21,15 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.common.QueryParams;
 import com.linecorp.armeria.server.ServiceRequestContext;
 import com.linecorp.armeria.server.annotation.Get;
 import com.linecorp.armeria.server.annotation.Param;
+import com.localcloud.admin.SupervisorClient;
 import com.localcloud.admin.UsageMetricsRepository;
 import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.config.ServiceRegistry;
+import com.localcloud.config.ServiceRegistry.HealthCheckDef;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
 
 /**
@@ -46,6 +50,18 @@ public class HealthCheckService {
     private final ObjectMapper mapper;
     private final ServiceRegistry registry;
     private final ScheduledExecutorService flushScheduler;
+    private final SupervisorClient supervisorClient = new SupervisorClient();
+
+    // Map service IDs to supervisord program names (external services only)
+    private static final Map<String, String> SERVICE_TO_PROGRAM = Map.ofEntries(
+        Map.entry("gcs", "fake-gcs-server"),
+        Map.entry("pubsub", "pubsub-emulator"),
+        Map.entry("firestore", "firestore-emulator"),
+        Map.entry("bigtable", "bigtable-emulator"),
+        Map.entry("spanner", "spanner-emulator"),
+        Map.entry("bigquery", "bigquery-emulator"),
+        Map.entry("memorystore", "valkey")
+    );
 
     public HealthCheckService(LocalCloudConfig config, ApiGateway gateway,
                               ProcessHealthChecker processHealthChecker,
@@ -246,7 +262,7 @@ public class HealthCheckService {
 
     /**
      * Returns health status for a single service by name.
-     * Example: GET /_localcloud/health/gcs
+     * Example: GET /health/gcs
      */
     @Get("/health/{service}")
     public HttpResponse serviceHealth(@Param("service") String service) {
@@ -296,6 +312,67 @@ public class HealthCheckService {
         }));
     }
 
+    /**
+     * Returns CI-friendly readiness for all enabled services or a selected
+     * comma-separated service set via {@code ?services=gcs,pubsub}.
+     */
+    @Get("/readiness")
+    public HttpResponse readiness(ServiceRequestContext ctx) {
+        return HttpResponse.of(CompletableFuture.supplyAsync(() -> {
+            try {
+                QueryParams params = ctx.queryParams();
+                List<String> requestedServices = parseRequestedServices(params.get("services"));
+
+                processHealthChecker.checkAll();
+                Map<String, String> statuses = processHealthChecker.getAllStatuses();
+                Instant checkedAt = Instant.now();
+
+                List<String> serviceIds = requestedServices.isEmpty()
+                        ? enabledServiceIds()
+                        : requestedServices;
+
+                ReadinessResult result = buildReadinessResult(serviceIds, statuses, checkedAt);
+                String json = mapper.writeValueAsString(result.response());
+                return HttpResponse.of(result.ready() ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE,
+                        MediaType.JSON, json);
+            } catch (Exception e) {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR,
+                        MediaType.PLAIN_TEXT_UTF_8, "Internal server error");
+            }
+        }));
+    }
+
+    /**
+     * Returns readiness for a single service. Disabled services return 503
+     * with a remediation hint because an explicitly requested service is
+     * considered required by the caller.
+     */
+    @Get("/readiness/{service}")
+    public HttpResponse serviceReadiness(@Param("service") String service) {
+        return HttpResponse.of(CompletableFuture.supplyAsync(() -> {
+            try {
+                if (registry.getService(service) == null) {
+                    Map<String, Object> error = Map.of(
+                            "error", true,
+                            "message", "Unknown service: " + service
+                    );
+                    return HttpResponse.of(HttpStatus.NOT_FOUND, MediaType.JSON,
+                            mapper.writeValueAsString(error));
+                }
+
+                processHealthChecker.checkAll();
+                ReadinessResult result = buildReadinessResult(
+                        List.of(service), processHealthChecker.getAllStatuses(), Instant.now());
+                String json = mapper.writeValueAsString(result.response());
+                return HttpResponse.of(result.ready() ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE,
+                        MediaType.JSON, json);
+            } catch (Exception e) {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR,
+                        MediaType.PLAIN_TEXT_UTF_8, "Internal server error");
+            }
+        }));
+    }
+
     @Get("/services")
     public HttpResponse services() {
         return HttpResponse.of(CompletableFuture.supplyAsync(() -> {
@@ -306,6 +383,19 @@ public class HealthCheckService {
 
                 // Get persisted cumulative counts from DB
                 Map<String, Long> persistedCounts = usageMetrics.getGlobalCounts();
+
+                // Get all supervisor process PIDs for per-process memory
+                Map<String, Map<String, String>> allProcs = supervisorClient.getAllProcesses();
+                Map<String, Long> procMemory = new LinkedHashMap<>();
+                for (var entry : allProcs.entrySet()) {
+                    String pidStr = entry.getValue().getOrDefault("pid", "0");
+                    try {
+                        long pid = Long.parseLong(pidStr);
+                        procMemory.put(entry.getKey(), SupervisorClient.getProcessMemoryMb(pid));
+                    } catch (NumberFormatException e) {
+                        procMemory.put(entry.getKey(), 0L);
+                    }
+                }
 
                 List<Map<String, Object>> serviceList = new ArrayList<>();
                 for (Map.Entry<String, ServiceDefinition> entry : registry.getAllServices().entrySet()) {
@@ -326,6 +416,13 @@ public class HealthCheckService {
                     }
                     long totalCount = persisted + unflushed;
 
+                    // Per-process memory: look up supervisor PID for external services
+                    long memoryMb = 0;
+                    String programName = SERVICE_TO_PROGRAM.get(serviceName);
+                    if (programName != null) {
+                        memoryMb = procMemory.getOrDefault(programName, 0L);
+                    }
+
                     String envValue = def.envValue("localhost");
                     Map<String, Object> svc = new LinkedHashMap<>();
                     svc.put("id", serviceName);
@@ -339,6 +436,7 @@ public class HealthCheckService {
                     svc.put("request_count", totalCount);
                     svc.put("enabled", enabled);
                     svc.put("enabledSource", config.getConfigSource(serviceName));
+                    svc.put("memory_mb", memoryMb);
                     serviceList.add(svc);
                 }
 
@@ -353,6 +451,136 @@ public class HealthCheckService {
             }
         }));
     }
+
+    private List<String> enabledServiceIds() {
+        List<String> serviceIds = new ArrayList<>();
+        for (String serviceId : registry.getAllServices().keySet()) {
+            if (config.isServiceEnabled(serviceId)) {
+                serviceIds.add(serviceId);
+            }
+        }
+        return serviceIds;
+    }
+
+    private static List<String> parseRequestedServices(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(raw.split(","))
+                .map(String::trim)
+                .filter(service -> !service.isEmpty())
+                .distinct()
+                .toList();
+    }
+
+    private ReadinessResult buildReadinessResult(List<String> serviceIds,
+                                                 Map<String, String> statuses,
+                                                 Instant checkedAt) {
+        boolean allReady = true;
+        List<Map<String, Object>> services = new ArrayList<>();
+
+        for (String serviceId : serviceIds) {
+            ServiceDefinition def = registry.getService(serviceId);
+            Map<String, Object> svc;
+            if (def == null) {
+                allReady = false;
+                svc = unknownServiceReadiness(serviceId, checkedAt);
+            } else {
+                svc = serviceReadiness(serviceId, def, statuses, checkedAt);
+                if (!Boolean.TRUE.equals(svc.get("ready"))) {
+                    allReady = false;
+                }
+            }
+            services.add(svc);
+        }
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("ready", allReady);
+        response.put("status", allReady ? "ready" : "not_ready");
+        response.put("checked_at", checkedAt.toString());
+        response.put("project_id", config.getProjectId());
+        response.put("services", services);
+        return new ReadinessResult(allReady, response);
+    }
+
+    private Map<String, Object> unknownServiceReadiness(String serviceId, Instant checkedAt) {
+        Map<String, Object> svc = new LinkedHashMap<>();
+        svc.put("service_id", serviceId);
+        svc.put("enabled", false);
+        svc.put("ready", false);
+        svc.put("status", "unknown");
+        svc.put("last_checked_at", checkedAt.toString());
+        svc.put("failure_reason", "unknown_service");
+        svc.put("remediation_hint", "Use /services or /profiles to select a known service id.");
+        return svc;
+    }
+
+    private Map<String, Object> serviceReadiness(String serviceId, ServiceDefinition def,
+                                                 Map<String, String> statuses,
+                                                 Instant checkedAt) {
+        boolean enabled = config.isServiceEnabled(serviceId);
+        String status = enabled ? statuses.getOrDefault(serviceId, "unknown") : "disabled";
+        boolean ready = enabled && "healthy".equals(status);
+
+        Map<String, Object> svc = new LinkedHashMap<>();
+        svc.put("service_id", serviceId);
+        svc.put("display_name", def.displayName());
+        svc.put("enabled", enabled);
+        svc.put("ready", ready);
+        svc.put("status", status);
+        svc.put("endpoint", def.envValue("localhost"));
+        svc.put("protocol", def.protocol());
+        svc.put("type", def.type());
+        svc.put("port", def.port());
+        svc.put("health_check", healthCheckMetadata(def));
+        svc.put("last_checked_at", checkedAt.toString());
+        svc.put("failure_reason", ready ? null : failureReason(enabled, status));
+        svc.put("remediation_hint", ready ? null : remediationHint(serviceId, def, enabled, status));
+        return svc;
+    }
+
+    private Map<String, Object> healthCheckMetadata(ServiceDefinition def) {
+        Map<String, Object> healthCheck = new LinkedHashMap<>();
+        if (def.isFacade()) {
+            healthCheck.put("type", "facade");
+            healthCheck.put("description", "In-process service is ready when the gateway is running and the service is enabled.");
+            return healthCheck;
+        }
+
+        HealthCheckDef hc = def.healthCheck();
+        healthCheck.put("type", hc != null ? hc.type() : "tcp");
+        healthCheck.put("port", hc != null && hc.port() != null ? hc.port() : def.port());
+        if (hc != null && hc.path() != null) {
+            healthCheck.put("path", hc.path().replace("{projectId}", config.getProjectId()));
+        }
+        return healthCheck;
+    }
+
+    private static String failureReason(boolean enabled, String status) {
+        if (!enabled) {
+            return "service_disabled";
+        }
+        if ("unknown".equals(status)) {
+            return "health_status_unknown";
+        }
+        return "health_check_failed";
+    }
+
+    private static String remediationHint(String serviceId, ServiceDefinition def,
+                                          boolean enabled, String status) {
+        if (!enabled) {
+            return "Enable " + serviceId + " or remove it from the requested readiness service set.";
+        }
+        if ("unknown".equals(status)) {
+            return "Health has not been observed yet; retry wait or inspect /health/" + serviceId + ".";
+        }
+        if (def.isExternal()) {
+            return "Inspect service logs and confirm the local process is listening on port " + def.port() + ".";
+        }
+        return "Inspect gateway logs for the in-process facade.";
+    }
+
+    private record ReadinessResult(boolean ready, Map<String, Object> response) {}
 
     /**
      * Return cumulative usage metrics per service for the active project.

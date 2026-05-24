@@ -1381,6 +1381,6 @@ cd .. && docker compose build
 
 # Smoke test
 docker compose up -d
-curl http://localhost:8080/_localcloud/health
-curl http://localhost:8080/_localcloud/services | jq '.[] | select(.name == "Cloud Workflows")'
+curl http://localhost:8080/health
+curl http://localhost:8080/services | jq '.[] | select(.name == "Cloud Workflows")'
 ```

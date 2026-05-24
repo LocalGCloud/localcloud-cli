@@ -1455,7 +1455,7 @@ class SyncApiServiceTest {
 
 **Step 2: Implement SyncApiService**
 
-Armeria annotated service at `/_localcloud/sync` prefix. Follows exact same pattern as `AdminApiService`:
+Armeria annotated service at `/sync` prefix. Follows exact same pattern as `AdminApiService`:
 
 ```java
 package com.localcloud.sync;
@@ -1675,7 +1675,7 @@ syncService.registerAdapter("bigquery", new BigQuerySyncAdapter(
 // TODO: register other adapters as they are implemented
 
 SyncApiService syncApiService = new SyncApiService(syncService, syncCredentialRepo, config);
-sb.annotatedService("/_localcloud/sync", syncApiService);
+sb.annotatedService("/sync", syncApiService);
 ```
 
 **Step 4: Run tests**
@@ -1707,17 +1707,17 @@ Add to the existing `api` export:
 
 ```javascript
 // Data Mirror sync
-syncAuthStatus:     ()           => get(appendProject('/_localcloud/sync/auth/status')),
-syncConnect:        (body)       => postJson(appendProject('/_localcloud/sync/auth/connect'), body),
-syncDisconnect:     ()           => post(appendProject('/_localcloud/sync/auth/disconnect')),
-syncBrowse:         (service)    => get(appendProject(`/_localcloud/sync/${service}/browse`)),
+syncAuthStatus:     ()           => get(appendProject('/sync/auth/status')),
+syncConnect:        (body)       => postJson(appendProject('/sync/auth/connect'), body),
+syncDisconnect:     ()           => post(appendProject('/sync/auth/disconnect')),
+syncBrowse:         (service)    => get(appendProject(`/sync/${service}/browse`)),
 syncPreview:        (service, resource, limit = 5) =>
-    get(appendProject(`/_localcloud/sync/${service}/preview`) + `&resource=${encodeURIComponent(resource)}&limit=${limit}`),
-syncEstimate:       (service, body) => postJson(appendProject(`/_localcloud/sync/${service}/estimate`), body),
-syncStart:          (service, body) => postJson(appendProject(`/_localcloud/sync/${service}/start`), body),
-syncManifests:      ()           => get(appendProject('/_localcloud/sync/manifests')),
-syncServiceManifests: (service)  => get(appendProject(`/_localcloud/sync/${service}/manifests`)),
-syncDeleteManifest: (id)         => del(appendProject(`/_localcloud/sync/manifests/${id}`)),
+    get(appendProject(`/sync/${service}/preview`) + `&resource=${encodeURIComponent(resource)}&limit=${limit}`),
+syncEstimate:       (service, body) => postJson(appendProject(`/sync/${service}/estimate`), body),
+syncStart:          (service, body) => postJson(appendProject(`/sync/${service}/start`), body),
+syncManifests:      ()           => get(appendProject('/sync/manifests')),
+syncServiceManifests: (service)  => get(appendProject(`/sync/${service}/manifests`)),
+syncDeleteManifest: (id)         => del(appendProject(`/sync/manifests/${id}`)),
 ```
 
 **Step 2: Build and verify**
@@ -2321,10 +2321,10 @@ Replace the inline schema tree in the SQL Editor section with `<SchemaExplorer s
 - Modify: `localcloud-server/src/main/java/com/localcloud/sync/SyncApiService.java`
 
 Add OAuth endpoints:
-- `POST /_localcloud/sync/auth/start` — generates Google OAuth URL with `cloud-platform.read-only` scope, returns URL
-- `GET /_localcloud/sync/auth/callback` — handles redirect, exchanges code for tokens, stores in DB, returns HTML "Connected!" page
-- `POST /_localcloud/sync/auth/refresh` — refreshes access token using refresh_token
-- `GET /_localcloud/sync/auth/projects` — lists GCP projects using token (Cloud Resource Manager API)
+- `POST /sync/auth/start` — generates Google OAuth URL with `cloud-platform.read-only` scope, returns URL
+- `GET /sync/auth/callback` — handles redirect, exchanges code for tokens, stores in DB, returns HTML "Connected!" page
+- `POST /sync/auth/refresh` — refreshes access token using refresh_token
+- `GET /sync/auth/projects` — lists GCP projects using token (Cloud Resource Manager API)
 
 **Commit:** `feat(sync): add OAuth flow endpoints for Google sign-in`
 

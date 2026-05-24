@@ -48,7 +48,7 @@ payload = {
 }
 
 req = urllib.request.Request(
-    'http://localhost:8080/_localcloud/mutate/spanner/ddl',
+    'http://localhost:8080/mutate/spanner/ddl',
     data=json.dumps(payload).encode('utf-8'),
     headers={'Content-Type': 'application/json'},
     method='POST'

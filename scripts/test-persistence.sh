@@ -63,7 +63,7 @@ docker run -d --name "$CONTAINER" \
 
 echo "Waiting for gateway..."
 for i in $(seq 1 90); do
-    if curl -sf http://localhost:8080/_localcloud/health >/dev/null 2>&1; then
+    if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
         echo "  Gateway healthy after ${i}s"
         break
     fi
@@ -82,7 +82,7 @@ sleep 30
 # Re-seed to ensure all services have data (emulators may not have been ready)
 echo "Re-seeding to catch any services that weren't ready..."
 for attempt in 1 2 3; do
-    curl -sf -X POST "http://localhost:8080/_localcloud/seed" \
+    curl -sf -X POST "http://localhost:8080/seed" \
         -H "Content-Type: application/yaml" --data-binary "@${SEED_FILE}" >/dev/null 2>&1 || true
     sleep 10
 done
@@ -93,7 +93,7 @@ done
 browse_has() {
     local svc="$1" pattern="$2"
     local resp
-    resp=$(curl -sf --max-time 5 "http://localhost:8080/_localcloud/browse/$svc?project=$PROJECT" 2>/dev/null || echo "")
+    resp=$(curl -sf --max-time 5 "http://localhost:8080/browse/$svc?project=$PROJECT" 2>/dev/null || echo "")
     if echo "$resp" | grep -qi "$pattern" 2>/dev/null; then
         return 0
     fi
@@ -265,11 +265,11 @@ fi
 # --- Memorystore / Valkey: Set 10 keys via admin mutate ---
 echo "  Memorystore: Setting 10 keys..."
 for i in $(seq 1 10); do
-    api_post "http://localhost:8080/_localcloud/mutate/memorystore/keys" \
+    api_post "http://localhost:8080/mutate/memorystore/keys" \
         "{\"key\":\"persistence:test:$i\",\"value\":\"value-$i\",\"type\":\"string\"}"
 done
 # Memorystore browse returns database keyCount, verify non-zero
-MS_KEYS=$(api_get "http://localhost:8080/_localcloud/browse/memorystore?project=$PROJECT" | grep -o '"keyCount":[0-9]*' | head -1 | grep -o '[0-9]*' || echo "0")
+MS_KEYS=$(api_get "http://localhost:8080/browse/memorystore?project=$PROJECT" | grep -o '"keyCount":[0-9]*' | head -1 | grep -o '[0-9]*' || echo "0")
 if [ "$MS_KEYS" -ge 1 ]; then
     pass; echo -e "  ${GREEN}PASS${NC}: Memorystore mock data ($MS_KEYS keys)"
 else
@@ -278,7 +278,7 @@ fi
 
 # --- Workflows: Create via seed endpoint ---
 echo "  Workflows: Creating workflow..."
-curl -sf -X POST "http://localhost:8080/_localcloud/seed" \
+curl -sf -X POST "http://localhost:8080/seed" \
     -H "Content-Type: application/yaml" \
     -d "services:
   workflows:
@@ -305,7 +305,7 @@ docker restart "$CONTAINER"
 
 echo "Waiting for gateway after restart..."
 for i in $(seq 1 90); do
-    if curl -sf http://localhost:8080/_localcloud/health >/dev/null 2>&1; then
+    if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
         echo "  Gateway healthy after ${i}s"
         break
     fi
@@ -399,7 +399,7 @@ else
 fi
 
 # Memorystore
-MS_KEYS=$(api_get "http://localhost:8080/_localcloud/browse/memorystore?project=$PROJECT" | grep -o '"keyCount":[0-9]*' | head -1 | grep -o '[0-9]*' || echo "0")
+MS_KEYS=$(api_get "http://localhost:8080/browse/memorystore?project=$PROJECT" | grep -o '"keyCount":[0-9]*' | head -1 | grep -o '[0-9]*' || echo "0")
 if [ "$MS_KEYS" -ge 1 ]; then
     pass; echo -e "  ${GREEN}PASS${NC}: Memorystore mock data persisted ($MS_KEYS keys)"
 else

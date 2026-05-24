@@ -17,7 +17,7 @@ import java.util.*;
 
 /**
  * REST endpoints for workflow environment variables and presets.
- * Registered at /_localcloud/workflows/env
+ * Registered at /workflows/env
  */
 public class WorkflowEnvVarsService {
     private static final Logger logger = LoggerFactory.getLogger(WorkflowEnvVarsService.class);

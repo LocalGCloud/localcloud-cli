@@ -59,7 +59,7 @@ localcloud console
 | Problem | Solution |
 |---------|----------|
 | Console page is blank | Rebuild: `cd localcloud-console && npm run build` |
-| Services show error | Check `curl http://localhost:8080/_localcloud/health` |
+| Services show error | Check `curl http://localhost:8080/health` |
 | Empty Data Browser | Create test data first (use seed file or SDK examples) |
 | Can't reach console | Verify container is running: `docker ps` |
 
@@ -77,7 +77,7 @@ Browser (http://localhost:8080)
     ↓
 Armeria Gateway (port 8080)
     ├─ Serves console static files from /opt/localcloud/console/dist/
-    ├─ Admin API at /_localcloud/*
+    ├─ Admin API at /*
     ├─ gRPC facade services (Secret Manager, Cloud Tasks, etc.)
     └─ PostgreSQL (internal persistence)
 ```

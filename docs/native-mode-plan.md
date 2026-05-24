@@ -261,7 +261,7 @@ ADMIN_PASSWORD=your-password \
 | Volume mounts for data | `~/.localcloud/data/` directory |
 | Health check (wait-for-pg.sh) | `pg_isready` or `redis-cli ping` |
 | Data directory creation | `mkdir -p ~/.localcloud/{gcs-data,spanner-data,bigquery-data}` |
-| Seed data loading | `curl -X POST http://localhost:8080/_localcloud/seed` (same) |
+| Seed data loading | `curl -X POST http://localhost:8080/seed` (same) |
 
 ### 3.4 Port Configuration
 

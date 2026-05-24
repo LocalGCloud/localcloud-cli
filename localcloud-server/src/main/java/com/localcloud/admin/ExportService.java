@@ -9,9 +9,12 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import redis.clients.jedis.Jedis;
@@ -21,6 +24,7 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.server.ServiceRequestContext;
 import com.linecorp.armeria.server.annotation.Get;
 import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.config.ServiceRegistry;
@@ -34,7 +38,7 @@ import org.slf4j.LoggerFactory;
  * Exports current emulator state as a seed-compatible YAML file.
  * This is the inverse of {@link SeedService} — it reads data from
  * each service and assembles a YAML structure that can be re-imported.
- * Registered at the {@code /_localcloud} path prefix.
+ * Registered at the root path prefix.
  */
 public class ExportService {
 
@@ -80,90 +84,17 @@ public class ExportService {
     }
 
     /**
-     * Export current state of all services as a seed-compatible YAML file.
+     * Export current state as a seed-compatible YAML file.
+     *
+     * <p>Optional query parameter: {@code ?services=gcs,pubsub} exports only
+     * the selected service ids. Omitting it keeps the existing all-service
+     * behavior.</p>
      */
     @Get("/export")
-    public HttpResponse export() {
+    public HttpResponse export(ServiceRequestContext ctx) {
         try {
-            Map<String, Object> seedData = new LinkedHashMap<>();
-            seedData.put("version", "1.0");
-            seedData.put("project", config.getProjectId());
-
-            Map<String, Object> services = new LinkedHashMap<>();
-
-            // GCS: list buckets and object keys (no content)
-            try {
-                Map<String, Object> gcs = exportGcs();
-                if (gcs != null && !gcs.isEmpty()) {
-                    services.put("gcs", gcs);
-                }
-            } catch (Exception e) {
-                logger.warn("Failed to export GCS: {}", e.getMessage());
-            }
-
-            // Pub/Sub: topics and subscriptions
-            try {
-                Map<String, Object> pubsub = exportPubSub();
-                if (pubsub != null && !pubsub.isEmpty()) {
-                    services.put("pubsub", pubsub);
-                }
-            } catch (Exception e) {
-                logger.warn("Failed to export Pub/Sub: {}", e.getMessage());
-            }
-
-            // BigQuery: datasets and tables (schema only, no row data)
-            try {
-                Map<String, Object> bigquery = exportBigQuery();
-                if (bigquery != null && !bigquery.isEmpty()) {
-                    services.put("bigquery", bigquery);
-                }
-            } catch (Exception e) {
-                logger.warn("Failed to export BigQuery: {}", e.getMessage());
-            }
-
-            // Secret Manager: secret names only (no values)
-            try {
-                Map<String, Object> secretmanager = exportSecretManager();
-                if (secretmanager != null && !secretmanager.isEmpty()) {
-                    services.put("secretmanager", secretmanager);
-                }
-            } catch (Exception e) {
-                logger.warn("Failed to export Secret Manager: {}", e.getMessage());
-            }
-
-            // Spanner: instances, databases, DDL
-            try {
-                Map<String, Object> spanner = exportSpanner();
-                if (spanner != null && !spanner.isEmpty()) {
-                    services.put("spanner", spanner);
-                }
-            } catch (Exception e) {
-                logger.warn("Failed to export Spanner: {}", e.getMessage());
-            }
-
-            // Memorystore: all keys
-            try {
-                Map<String, Object> memorystore = exportMemorystore();
-                if (memorystore != null && !memorystore.isEmpty()) {
-                    services.put("memorystore", memorystore);
-                }
-            } catch (Exception e) {
-                logger.warn("Failed to export Memorystore: {}", e.getMessage());
-            }
-
-            // Cloud Tasks: queues
-            try {
-                Map<String, Object> cloudtasks = exportCloudTasks();
-                if (cloudtasks != null && !cloudtasks.isEmpty()) {
-                    services.put("cloudtasks", cloudtasks);
-                }
-            } catch (Exception e) {
-                logger.warn("Failed to export Cloud Tasks: {}", e.getMessage());
-            }
-
-            seedData.put("services", services);
-
-            String yaml = yamlMapper.writerWithDefaultPrettyPrinter().writeValueAsString(seedData);
+            Set<String> selectedServices = parseSelectedServices(ctx.queryParams().get("services"));
+            String yaml = exportYaml(selectedServices);
 
             return HttpResponse.of(HttpStatus.OK, MediaType.parse("application/yaml"), yaml);
         } catch (Exception e) {
@@ -176,6 +107,67 @@ public class ExportService {
                         MediaType.PLAIN_TEXT_UTF_8, "Export failed");
             }
         }
+    }
+
+    public String exportYaml(Set<String> selectedServices) throws Exception {
+        return yamlMapper.writerWithDefaultPrettyPrinter().writeValueAsString(exportSeedData(selectedServices));
+    }
+
+    public Map<String, Object> exportSeedData(Set<String> selectedServices) {
+        Map<String, Object> seedData = new LinkedHashMap<>();
+        seedData.put("version", "1.0");
+        seedData.put("project", config.getProjectId());
+        if (selectedServices != null && !selectedServices.isEmpty()) {
+            seedData.put("selected_services", new ArrayList<>(selectedServices));
+        }
+
+        Set<String> requestedServices = selectedServices == null ? Set.of() : selectedServices;
+        Map<String, Object> services = new LinkedHashMap<>();
+
+        exportIfSelected(requestedServices, services, "gcs", this::exportGcs);
+        exportIfSelected(requestedServices, services, "pubsub", this::exportPubSub);
+        exportIfSelected(requestedServices, services, "bigquery", this::exportBigQuery);
+        exportIfSelected(requestedServices, services, "secretmanager", this::exportSecretManager);
+        exportIfSelected(requestedServices, services, "spanner", this::exportSpanner);
+        exportIfSelected(requestedServices, services, "memorystore", this::exportMemorystore);
+        exportIfSelected(requestedServices, services, "cloudtasks", this::exportCloudTasks);
+
+        seedData.put("services", services);
+        return seedData;
+    }
+
+    private void exportIfSelected(Set<String> selectedServices, Map<String, Object> services,
+                                  String serviceId, ExportOperation operation) {
+        if (!shouldExport(selectedServices, serviceId)) {
+            return;
+        }
+        try {
+            Map<String, Object> data = operation.export();
+            if (data != null && !data.isEmpty()) {
+                services.put(serviceId, data);
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to export {}: {}", serviceId, e.getMessage());
+        }
+    }
+
+    @FunctionalInterface
+    private interface ExportOperation {
+        Map<String, Object> export() throws Exception;
+    }
+
+    private static Set<String> parseSelectedServices(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Set.of();
+        }
+        return new LinkedHashSet<>(Arrays.stream(raw.split(","))
+                .map(String::trim)
+                .filter(service -> !service.isEmpty())
+                .toList());
+    }
+
+    private static boolean shouldExport(Set<String> selectedServices, String serviceId) {
+        return selectedServices.isEmpty() || selectedServices.contains(serviceId);
     }
 
     // ========== GCS ==========

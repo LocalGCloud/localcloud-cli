@@ -18,7 +18,7 @@ import java.util.*;
 /**
  * REST endpoints for the remote workflow source connector.
  * Handles connection, listing workflows, discovering services, and importing.
- * Registered at /_localcloud/workflow
+ * Registered at /workflow
  */
 public class WorkflowConnectorService {
     private static final Logger logger = LoggerFactory.getLogger(WorkflowConnectorService.class);
@@ -103,7 +103,7 @@ public class WorkflowConnectorService {
 
             if (url == null || username == null) {
                 return HttpResponse.of(HttpStatus.CONFLICT, MediaType.JSON,
-                    "{\"error\":\"No remote source connection configured. Call POST /_localcloud/workflow/connect first.\"}");
+                    "{\"error\":\"No remote source connection configured. Call POST /workflow/connect first.\"}");
             }
 
             RemoteSourceClient client = new RemoteSourceClient(url, username);

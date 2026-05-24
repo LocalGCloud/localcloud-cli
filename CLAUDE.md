@@ -48,7 +48,7 @@ Java 21 (LTS, primary): Follow standard conventions
 - **External emulators**: Managed by supervisord inside Docker container (GCS on 4443, Pub/Sub on 8085, Firestore on 8086, Bigtable on 8087, Spanner on 9010, BigQuery on 9050)
 - **Persistence**: PostgreSQL (inside container) for facade service data; filesystem for GCS blobs
 - **Console**: Solid.js app served by Armeria gateway at `/` (port 8080), opened via `localcloud console`
-- **Seed**: YAML files with `services:` wrapper; loaded via `POST /_localcloud/seed`
+- **Seed**: YAML files with `services:` wrapper; loaded via `POST /seed`
 
 ## Key Implementation Notes
 
@@ -59,12 +59,12 @@ Java 21 (LTS, primary): Follow standard conventions
 - Emulators (Firestore, Pub/Sub, Bigtable) run as direct JAR/binary execution, not via gcloud CLI
 - Bigtable emulator: `github.com/jhsenjaliya/little_bigtable@v0.0.1` — pulled and built from published Go module during `docker build`
 - PostgreSQL 17 (matching Debian Trixie's glibc requirements)
-- `/_localcloud/services` returns array format with id, name, status, port, protocol, endpoint, env_var, env_value, request_count
-- `/_localcloud/reset` reads `restore_seed` from JSON body (not query params)
+- `/services` returns array format with id, name, status, port, protocol, endpoint, env_var, env_value, request_count
+- `/reset` reads `restore_seed` from JSON body (not query params)
 - Seed YAML supports both flat format (`gcs: ...`) and nested format (`services: { gcs: ... }`)
 - BigQuery emulator v2 is Python-based (DuckDB+SQLGlot), native on both arm64 and amd64
 - Container needs `-m 4g` memory limit for stable operation
-- Terraform integration via `GOOGLE_*_CUSTOM_ENDPOINT` env vars — `GET /_localcloud/env?format=terraform` outputs all overrides
+- Terraform integration via `GOOGLE_*_CUSTOM_ENDPOINT` env vars — `GET /env?format=terraform` outputs all overrides
 - Phase 1 Terraform resources verified: google_storage_bucket, google_pubsub_topic/subscription, google_bigquery_dataset/table, google_spanner_instance/database
 
 ## Recent Changes

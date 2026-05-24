@@ -17,7 +17,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Decorator that gates requests to facade services based on their enabled/disabled state.
  * Returns 503 Service Unavailable for requests to disabled services.
- * Admin endpoints (/_localcloud) are always accessible.
+ * Admin endpoints are always accessible.
  */
 public class ServiceGatingDecorator implements DecoratingHttpServiceFunction {
 
@@ -47,9 +47,7 @@ public class ServiceGatingDecorator implements DecoratingHttpServiceFunction {
         String path = ctx.path();
 
         // Admin endpoints are always accessible
-        if (path.startsWith("/_localcloud") || path.startsWith("/icons") || path.equals("/") ||
-            path.equals("/health") || path.equals("/services") || path.equals("/usage") ||
-            path.startsWith("/export") || path.startsWith("/health/")) {
+        if (isAdminOrConsolePath(path)) {
             return delegate.serve(ctx, req);
         }
 
@@ -67,6 +65,56 @@ public class ServiceGatingDecorator implements DecoratingHttpServiceFunction {
         }
 
         return delegate.serve(ctx, req);
+    }
+
+    private static boolean isAdminOrConsolePath(String path) {
+        return path.startsWith("/icons")
+                || path.equals("/")
+                || path.equals("/health")
+                || path.startsWith("/health/")
+                || path.equals("/readiness")
+                || path.startsWith("/readiness/")
+                || path.equals("/services")
+                || path.startsWith("/services/")
+                || path.equals("/usage")
+                || path.equals("/env")
+                || path.equals("/requests")
+                || path.equals("/profiles")
+                || path.equals("/capabilities")
+                || path.equals("/coverage")
+                || path.startsWith("/coverage/")
+                || path.equals("/diagnostics")
+                || path.startsWith("/diagnostics/")
+                || path.equals("/faults")
+                || path.startsWith("/faults/")
+                || path.startsWith("/export")
+                || path.equals("/import")
+                || path.equals("/seed")
+                || path.equals("/reseed")
+                || path.equals("/reset")
+                || path.startsWith("/reset/")
+                || path.equals("/projects")
+                || path.startsWith("/projects/")
+                || path.equals("/routing")
+                || path.startsWith("/routing/")
+                || path.equals("/credentials")
+                || path.startsWith("/config/")
+                || path.equals("/browse")
+                || path.startsWith("/browse/")
+                || path.equals("/mutate")
+                || path.startsWith("/mutate/")
+                || path.equals("/query")
+                || path.startsWith("/query/")
+                || path.startsWith("/schema/")
+                || path.equals("/gcs/file-schema")
+                || path.equals("/query-history")
+                || path.startsWith("/workflow-env")
+                || path.startsWith("/workflow")
+                || path.startsWith("/sync")
+                || path.equals("/snapshots")
+                || path.startsWith("/snapshots/")
+                || path.startsWith("/dashboard/")
+                || path.startsWith("/computeMetadata/v1");
     }
 
     /**

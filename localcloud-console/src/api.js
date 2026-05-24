@@ -90,53 +90,53 @@ async function postJson(path, body) {
 }
 
 export const api = {
-    health: () => get('/_localcloud/health'),
-    services: () => get('/_localcloud/services'),
-    requests: () => get('/_localcloud/requests'),
-    env: () => get(appendProject('/_localcloud/env?format=json')),
-    reset: () => post(appendProject('/_localcloud/reset')),
-    browse: (service, sub) => get(appendProject(`/_localcloud/browse/${service}${sub ? '/' + sub : ''}`)),
+    health: () => get('/health'),
+    services: () => get('/services'),
+    requests: () => get('/requests'),
+    env: () => get(appendProject('/env?format=json')),
+    reset: () => post(appendProject('/reset')),
+    browse: (service, sub) => get(appendProject(`/browse/${service}${sub ? '/' + sub : ''}`)),
     mutate: async (service, operation, data) => {
-        const res = await postJson(`/_localcloud/mutate/${service}/${operation}`, data);
+        const res = await postJson(`/mutate/${service}/${operation}`, data);
         if (res && res.error) {
             throw new Error(res.message || 'Mutation failed');
         }
         return res;
     },
     mutateSub: async (service, operation, subOp, data) => {
-        const res = await postJson(`/_localcloud/mutate/${service}/${operation}/${subOp}`, data);
+        const res = await postJson(`/mutate/${service}/${operation}/${subOp}`, data);
         if (res && res.error) {
             throw new Error(res.message || 'Mutation failed');
         }
         return res;
     },
     merge: async (service, data) => {
-        const res = await postJson(`/_localcloud/mutate/${service}/merge`, data);
+        const res = await postJson(`/mutate/${service}/merge`, data);
         if (res && res.error) {
             throw new Error(res.message || 'Merge failed');
         }
         return res;
     },
-    resetService: (service, restoreSeed) => post(appendProject(`/_localcloud/reset/${service}`), { restore_seed: restoreSeed }),
-    export: () => get('/_localcloud/export'),
+    resetService: (service, restoreSeed) => post(appendProject(`/reset/${service}`), { restore_seed: restoreSeed }),
+    export: () => get('/export'),
     // Project management
-    projects: () => get('/_localcloud/projects'),
-    createProject: (projectId, displayName) => post('/_localcloud/projects', { project_id: projectId, display_name: displayName }),
-    deleteProject: (projectId) => del(`/_localcloud/projects/${encodeURIComponent(projectId)}`),
+    projects: () => get('/projects'),
+    createProject: (projectId, displayName) => post('/projects', { project_id: projectId, display_name: displayName }),
+    deleteProject: (projectId) => del(`/projects/${encodeURIComponent(projectId)}`),
     // Routing & credentials
-    routing: () => get(appendProject('/_localcloud/routing')),
-    credentials: () => get('/_localcloud/credentials'),
+    routing: () => get(appendProject('/routing')),
+    credentials: () => get('/credentials'),
     setRouting: (serviceId, mode, remoteProject, remoteRegion) =>
-        put(appendProject(`/_localcloud/routing/${encodeURIComponent(serviceId)}`), { mode, remote_project: remoteProject, remote_region: remoteRegion }),
-    enableService: (serviceId) => post(`/_localcloud/services/${encodeURIComponent(serviceId)}/enable`),
-    disableService: (serviceId) => post(`/_localcloud/services/${encodeURIComponent(serviceId)}/disable`),
+        put(appendProject(`/routing/${encodeURIComponent(serviceId)}`), { mode, remote_project: remoteProject, remote_region: remoteRegion }),
+    enableService: (serviceId) => post(`/services/${encodeURIComponent(serviceId)}/enable`),
+    disableService: (serviceId) => post(`/services/${encodeURIComponent(serviceId)}/disable`),
     // SQL query execution
-    query: (service, sql, params) => postJson(appendProject('/_localcloud/query'), { ...params, service, sql }),
-    queryBatch: (service, statements, params) => postJson(appendProject('/_localcloud/query/batch'), { ...params, service, statements }),
-    queryDryRun: (sql) => postJson(appendProject('/_localcloud/query/dryrun'), { sql }),
+    query: (service, sql, params) => postJson(appendProject('/query'), { ...params, service, sql }),
+    queryBatch: (service, statements, params) => postJson(appendProject('/query/batch'), { ...params, service, statements }),
+    queryDryRun: (sql) => postJson(appendProject('/query/dryrun'), { sql }),
     // Schema info
     schema: (service, params) => {
-        let url = appendProject(`/_localcloud/schema/${encodeURIComponent(service)}`);
+        let url = appendProject(`/schema/${encodeURIComponent(service)}`);
         if (params) {
             const qs = Object.entries(params).map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join('&');
             url += (url.includes('?') ? '&' : '?') + qs;
@@ -144,17 +144,17 @@ export const api = {
         return get(url);
     },
     // BigQuery INFORMATION_SCHEMA browsing
-    bigqueryInfoSchema: (viewType) => get(appendProject(`/_localcloud/browse/bigquery/information_schema${viewType ? '/' + encodeURIComponent(viewType) : ''}`)),
+    bigqueryInfoSchema: (viewType) => get(appendProject(`/browse/bigquery/information_schema${viewType ? '/' + encodeURIComponent(viewType) : ''}`)),
     // GCS file schema detection
-    gcsFileSchema: (bucket, object) => get(appendProject(`/_localcloud/gcs/file-schema?bucket=${encodeURIComponent(bucket)}&object=${encodeURIComponent(object)}`)),
+    gcsFileSchema: (bucket, object) => get(appendProject(`/gcs/file-schema?bucket=${encodeURIComponent(bucket)}&object=${encodeURIComponent(object)}`)),
     // Usage metrics (persistent cumulative counts)
-    usage: () => get(appendProject('/_localcloud/usage')),
+    usage: () => get(appendProject('/usage')),
     // Spanner system insights / per-database statistics
     spannerStats: (instance, database) =>
-        get(appendProject(`/_localcloud/browse/spanner/instances/${encodeURIComponent(instance)}/${encodeURIComponent(database)}/stats`)),
+        get(appendProject(`/browse/spanner/instances/${encodeURIComponent(instance)}/${encodeURIComponent(database)}/stats`)),
     // Query execution history
     queryHistory: (service, limit, offset) => {
-        let url = appendProject('/_localcloud/query-history');
+        let url = appendProject('/query-history');
         const params = [];
         if (service) params.push(`service=${encodeURIComponent(service)}`);
         if (limit !== undefined) params.push(`limit=${limit}`);
@@ -163,37 +163,37 @@ export const api = {
         return get(url);
     },
     // Workflow env vars
-    workflowEnvVars: (preset) => get(appendProject(`/_localcloud/workflow-env${preset ? '?preset=' + encodeURIComponent(preset) : ''}`)),
-    workflowEnvVarsAll: () => get(appendProject('/_localcloud/workflow-env?all=true')),
-    createWorkflowEnvVar: (varName, varValue, preset) => postJson(appendProject('/_localcloud/workflow-env'), { varName, varValue, preset }),
-    updateWorkflowEnvVar: (varName, varValue, preset) => put(appendProject(`/_localcloud/workflow-env/${encodeURIComponent(varName)}`), { varValue, preset }),
+    workflowEnvVars: (preset) => get(appendProject(`/workflow-env${preset ? '?preset=' + encodeURIComponent(preset) : ''}`)),
+    workflowEnvVarsAll: () => get(appendProject('/workflow-env?all=true')),
+    createWorkflowEnvVar: (varName, varValue, preset) => postJson(appendProject('/workflow-env'), { varName, varValue, preset }),
+    updateWorkflowEnvVar: (varName, varValue, preset) => put(appendProject(`/workflow-env/${encodeURIComponent(varName)}`), { varValue, preset }),
     deleteWorkflowEnvVar: (varName, preset) => {
-        const url = appendProject(`/_localcloud/workflow-env/${encodeURIComponent(varName)}${preset ? (appendProject('').includes('?') ? '&' : '?') + 'preset=' + encodeURIComponent(preset) : ''}`);
+        const url = appendProject(`/workflow-env/${encodeURIComponent(varName)}${preset ? (appendProject('').includes('?') ? '&' : '?') + 'preset=' + encodeURIComponent(preset) : ''}`);
         return fetch(`${BASE}${url}`, { method: 'DELETE' }).then(r => { if (!r.ok) throw new Error(`${r.status}`); return {}; });
     },
-    workflowPresets: () => get(appendProject('/_localcloud/workflow-env/presets')),
-    activatePreset: (preset) => postJson(appendProject('/_localcloud/workflow-env/presets/activate'), { preset }),
+    workflowPresets: () => get(appendProject('/workflow-env/presets')),
+    activatePreset: (preset) => postJson(appendProject('/workflow-env/presets/activate'), { preset }),
     // Workflow connector
-    workflowConnectStatus: () => get(appendProject('/_localcloud/workflow/connect')),
-    workflowConnect: (url, username) => postJson(appendProject('/_localcloud/workflow/connect'), { url, username }),
-    workflowRemoteList: () => get(appendProject('/_localcloud/workflow/workflows')),
-    workflowRemoteServices: () => get(appendProject('/_localcloud/workflow/services')),
-    workflowImport: (name) => postJson(appendProject('/_localcloud/workflow/import'), { name }),
+    workflowConnectStatus: () => get(appendProject('/workflow/connect')),
+    workflowConnect: (url, username) => postJson(appendProject('/workflow/connect'), { url, username }),
+    workflowRemoteList: () => get(appendProject('/workflow/workflows')),
+    workflowRemoteServices: () => get(appendProject('/workflow/services')),
+    workflowImport: (name) => postJson(appendProject('/workflow/import'), { name }),
     // Data Mirror sync
-    syncAuthStatus:       ()           => get(appendProject('/_localcloud/sync/auth/status')),
-    syncAuthStart:        (body)       => postJson(appendProject('/_localcloud/sync/auth/start'), body),
-    syncConnect:          (body)       => postJson(appendProject('/_localcloud/sync/auth/connect'), body),
-    syncDisconnect:       ()           => post(appendProject('/_localcloud/sync/auth/disconnect')),
-    syncBrowse:           (service)    => get(appendProject(`/_localcloud/sync/${service}/browse`)),
+    syncAuthStatus:       ()           => get(appendProject('/sync/auth/status')),
+    syncAuthStart:        (body)       => postJson(appendProject('/sync/auth/start'), body),
+    syncConnect:          (body)       => postJson(appendProject('/sync/auth/connect'), body),
+    syncDisconnect:       ()           => post(appendProject('/sync/auth/disconnect')),
+    syncBrowse:           (service)    => get(appendProject(`/sync/${service}/browse`)),
     syncPreview:          (service, resource, limit = 5) =>
-        get(appendProject(`/_localcloud/sync/${service}/preview`) + `&resource=${encodeURIComponent(resource)}&limit=${limit}`),
-    syncEstimate:         (service, body) => postJson(appendProject(`/_localcloud/sync/${service}/estimate`), body),
-    syncStart:            (service, body) => postJson(appendProject(`/_localcloud/sync/${service}/start`), body),
-    syncManifests:        ()           => get(appendProject('/_localcloud/sync/manifests')),
-    syncServiceManifests: (service)    => get(appendProject(`/_localcloud/sync/${service}/manifests`)),
+        get(appendProject(`/sync/${service}/preview`) + `&resource=${encodeURIComponent(resource)}&limit=${limit}`),
+    syncEstimate:         (service, body) => postJson(appendProject(`/sync/${service}/estimate`), body),
+    syncStart:            (service, body) => postJson(appendProject(`/sync/${service}/start`), body),
+    syncManifests:        ()           => get(appendProject('/sync/manifests')),
+    syncServiceManifests: (service)    => get(appendProject(`/sync/${service}/manifests`)),
     syncProgress:         (service, resource) =>
-        get(appendProject(`/_localcloud/sync/${service}/progress`) + `&resource=${encodeURIComponent(resource)}`),
-    syncCancel:           (service, body) => postJson(appendProject(`/_localcloud/sync/${service}/cancel`), body),
-    syncResync:           (id)         => postJson(appendProject(`/_localcloud/sync/resync/${id}`), {}),
-    syncDeleteManifest:   (id)         => del(appendProject(`/_localcloud/sync/manifests/${id}`)),
+        get(appendProject(`/sync/${service}/progress`) + `&resource=${encodeURIComponent(resource)}`),
+    syncCancel:           (service, body) => postJson(appendProject(`/sync/${service}/cancel`), body),
+    syncResync:           (id)         => postJson(appendProject(`/sync/resync/${id}`), {}),
+    syncDeleteManifest:   (id)         => del(appendProject(`/sync/manifests/${id}`)),
 };

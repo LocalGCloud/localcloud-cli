@@ -29,10 +29,10 @@ Add a welcome banner to `docker-entrypoint.sh` that prints after the gateway hea
   LocalCloud is ready!
 
   Console:  http://localhost:8080
-  Health:   http://localhost:8080/_localcloud/health
+  Health:   http://localhost:8080/health
 
   Configure your SDKs:
-    eval "$(curl -s http://localhost:8080/_localcloud/env?format=shell)"
+    eval "$(curl -s http://localhost:8080/env?format=shell)"
 
   Enabled services: GCS, Pub/Sub, Firestore, BigQuery,
     Secret Manager, Cloud Tasks, Spanner, Bigtable,

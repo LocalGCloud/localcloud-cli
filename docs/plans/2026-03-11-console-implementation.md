@@ -325,12 +325,12 @@ class BackendProxy:
             return {"error": str(e)}
 
     def get_status(self):
-        """Get system status from /_localcloud/health."""
-        return self._get("/_localcloud/health")
+        """Get system status from /health."""
+        return self._get("/health")
 
     def get_services(self):
-        """Get service list from /_localcloud/health."""
-        data = self._get("/_localcloud/health")
+        """Get service list from /health."""
+        data = self._get("/health")
         return {"services": data.get("services", [])}
 
     def get_service(self, service_name: str):

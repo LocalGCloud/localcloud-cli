@@ -23,7 +23,7 @@ import urllib.request
 import urllib.error
 
 # Maps display name -> (module_path, health_key)
-# health_key is the key in the /_localcloud/health response's "services" dict
+# health_key is the key in the /health response's "services" dict
 DEMOS = [
     ("Cloud Storage", "services.gcs_demo", "gcs"),
     ("Pub/Sub", "services.pubsub_demo", "pubsub"),
@@ -54,7 +54,7 @@ SKIP = f"{YELLOW}\u2014{RESET}"
 def get_enabled_services(gateway_url: str) -> set[str] | None:
     """Query LocalCloud health endpoint to discover enabled services."""
     try:
-        req = urllib.request.Request(f"{gateway_url}/_localcloud/health")
+        req = urllib.request.Request(f"{gateway_url}/health")
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read())
             return set(data.get("services", {}).keys())
@@ -121,7 +121,7 @@ def main():
 
     # Set emulator environment variables from LocalCloud
     try:
-        req = urllib.request.Request(f"{gateway_url}/_localcloud/env?format=json")
+        req = urllib.request.Request(f"{gateway_url}/env?format=json")
         with urllib.request.urlopen(req, timeout=5) as resp:
             env_vars = json.loads(resp.read())
             for key, value in env_vars.items():

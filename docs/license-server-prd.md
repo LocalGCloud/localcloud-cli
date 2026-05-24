@@ -150,7 +150,7 @@ The license server solves all of these while supporting both online (internet-co
 
 - Service tier requirements are defined in `services.yaml` (e.g., `spanner.minTier: pro`).
 - On startup, any service whose `minTier` exceeds the current tier is disabled.
-- The `POST /_localcloud/services/{id}/enable` endpoint checks tier and rejects with a descriptive error if insufficient.
+- The `POST /services/{id}/enable` endpoint checks tier and rejects with a descriptive error if insufficient.
 - The `ENFORCE_LICENSE` build arg can disable all enforcement for development images.
 
 ---

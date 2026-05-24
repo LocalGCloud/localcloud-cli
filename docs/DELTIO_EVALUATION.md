@@ -78,9 +78,9 @@
 
 Deltio serves **gRPC only**. LocalCloud's admin operations rely on REST:
 
-- `POST /_localcloud/seed` — sends seed data via YAML to the gateway, which proxies REST to emulators
-- `GET /_localcloud/browse/pubsub` — admin console browsing via REST
-- `POST /_localcloud/mutate/pubsub/...` — admin console mutations via REST
+- `POST /seed` — sends seed data via YAML to the gateway, which proxies REST to emulators
+- `GET /browse/pubsub` — admin console browsing via REST
+- `POST /mutate/pubsub/...` — admin console mutations via REST
 
 The gateway (`SeedService.java`, `BrowseService.java`, `MutateService.java`) hardcodes `"http://localhost:8085"` as the Pub/Sub base URL and uses JSON REST calls. Switching to Deltio would require either:
 

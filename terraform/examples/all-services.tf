@@ -4,7 +4,7 @@
 #
 # Tests infrastructure creation across all LocalCloud services.
 # Usage:
-#   eval $(curl -s 'http://localhost:8080/_localcloud/env?format=terraform')
+#   eval $(curl -s 'http://localhost:8080/env?format=terraform')
 #   cd terraform/examples
 #   terraform init
 #   terraform plan

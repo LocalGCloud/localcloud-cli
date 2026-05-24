@@ -228,7 +228,7 @@ gateway facade. Each entry captures:
 
 **API Endpoint:**
 ```
-GET /_localcloud/query-history?service=spanner&limit=50&offset=0
+GET /query-history?service=spanner&limit=50&offset=0
 ```
 
 **Console:** A "History" sub-tab in the Spanner data browser shows a sortable
@@ -306,7 +306,7 @@ index distribution) without parsing DDL manually.
 emulator's DDL response. Accessible via:
 
 ```
-GET /_localcloud/browse/spanner/instances/{instance}/{database}/stats
+GET /browse/spanner/instances/{instance}/{database}/stats
 ```
 
 **Response:**

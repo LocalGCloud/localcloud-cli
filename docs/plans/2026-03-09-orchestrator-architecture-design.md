@@ -25,7 +25,7 @@ LocalCloud becomes an **orchestrator** that:
 │  │          LocalCloud Java Server (Armeria)             │   │
 │  │  ┌─────────────┐ ┌──────────┐ ┌──────────────────┐  │   │
 │  │  │ Admin API    │ │ Health   │ │ Request Logger   │  │   │
-│  │  │ /_localcloud │ │ Aggreg.  │ │ (ring buffer)    │  │   │
+│  │  │  │ │ Aggreg.  │ │ (ring buffer)    │  │   │
 │  │  └─────────────┘ └──────────┘ └──────────────────┘  │   │
 │  │  ┌─────────────────────────────────────────────────┐ │   │
 │  │  │         Thin Facades (our code)                 │ │   │
@@ -89,12 +89,12 @@ Exposed to host:
 Our Java server (Armeria) handles:
 
 1. **Gateway routing** — unified `:8080` entry, routes to correct backing emulator based on request path/service
-2. **Admin API** — `/_localcloud/*` endpoints: health aggregation, service status, request log browsing, seed loading, state reset
+2. **Admin API** — `/*` endpoints: health aggregation, service status, request log browsing, seed loading, state reset
 3. **Health aggregation** — polls each emulator process, combines into unified `/health`
 4. **Request logging** — ring buffer of last 1000 requests across all services
 5. **Seed loading** — parses seed YAML, calls each emulator's API to create initial state (buckets, topics, documents, etc.)
 6. **Thin facades** — Secret Manager, Cloud Tasks, Logging, Monitoring implemented as gRPC services backed by PostgreSQL
-7. **Environment export** — `/_localcloud/env` returns all emulator endpoints as env vars
+7. **Environment export** — `/env` returns all emulator endpoints as env vars
 
 ## Container Image Strategy
 
@@ -239,5 +239,5 @@ Google's client libraries natively respect `*_EMULATOR_HOST` environment variabl
 2. `eval $(localcloud env)` configures all GCP client libraries without code changes
 3. Standard GCP SDK operations work against each emulated service
 4. Seed files populate initial state across all services
-5. `/_localcloud/health` reports aggregated status of all processes
+5. `/health` reports aggregated status of all processes
 6. Container memory stays under 2GB with all services running

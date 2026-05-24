@@ -168,12 +168,12 @@ class OnlineKeyValidatorTest {
         long expires = System.currentTimeMillis() / 1000L + 3600;
         String realJwt = buildJwt("pro", "user@example.com", "device-abc", expires);
 
-        // Tamper: flip last char of the signature segment
+        // Tamper: flip a leading signature character so the decoded signature bytes change.
         String[] parts = realJwt.split("\\.");
         String sig = parts[2];
-        char last = sig.charAt(sig.length() - 1);
-        char tampered = last == 'A' ? 'B' : 'A';
-        String tamperedJwt = parts[0] + "." + parts[1] + "." + sig.substring(0, sig.length() - 1) + tampered;
+        char first = sig.charAt(0);
+        char tampered = first == 'A' ? 'B' : 'A';
+        String tamperedJwt = parts[0] + "." + parts[1] + "." + tampered + sig.substring(1);
 
         registerPublicKeyEndpoint();
         registerValidateEndpoint(tamperedJwt);

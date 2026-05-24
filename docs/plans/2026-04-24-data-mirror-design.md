@@ -151,8 +151,8 @@ Single reusable component across all three tabs:
 SchemaExplorer(source: "local" | "remote", serviceId, onSelect)
 ```
 
-- `source="local"` → calls existing `/_localcloud/browse/{service}` APIs
-- `source="remote"` → calls new `/_localcloud/sync/{service}/browse` API
+- `source="local"` → calls existing `/browse/{service}` APIs
+- `source="remote"` → calls new `/sync/{service}/browse` API
 - Same tree structure, expand/collapse, schema display
 - Only visual difference: source badge and sync-related badges
 - Both sources return same JSON response shape
@@ -178,7 +178,7 @@ No new CLI commands. Everything managed through console UI.
 1. User clicks "Sign in with Google" in console
 2. Server generates OAuth URL with `cloud-platform.read-only` scope
 3. Console opens Google sign-in in new tab
-4. User authenticates, Google redirects to `localhost:8080/_localcloud/sync/auth/callback`
+4. User authenticates, Google redirects to `localhost:8080/sync/auth/callback`
 5. Server exchanges code for access_token + refresh_token, stores encrypted
 6. Console auto-updates to connected state
 7. Project dropdown auto-populated via Cloud Resource Manager API
@@ -291,30 +291,30 @@ CREATE TABLE sync_credentials (
 
 ```
 # Auth
-POST /_localcloud/sync/auth/start          — generate OAuth URL
-GET  /_localcloud/sync/auth/callback        — OAuth redirect handler
-POST /_localcloud/sync/auth/upload-key      — upload SA JSON key
-GET  /_localcloud/sync/auth/status          — connection status
-GET  /_localcloud/sync/auth/projects        — list accessible GCP projects
-POST /_localcloud/sync/auth/disconnect      — clear credentials
-POST /_localcloud/sync/auth/refresh         — force token refresh
+POST /sync/auth/start          — generate OAuth URL
+GET  /sync/auth/callback        — OAuth redirect handler
+POST /sync/auth/upload-key      — upload SA JSON key
+GET  /sync/auth/status          — connection status
+GET  /sync/auth/projects        — list accessible GCP projects
+POST /sync/auth/disconnect      — clear credentials
+POST /sync/auth/refresh         — force token refresh
 
 # Remote browsing (feeds SchemaExplorer source="remote")
-GET  /_localcloud/sync/{service}/browse     — list remote resources
-GET  /_localcloud/sync/{service}/preview    — preview rows/docs
-GET  /_localcloud/sync/{service}/schema     — get schema for resource
+GET  /sync/{service}/browse     — list remote resources
+GET  /sync/{service}/preview    — preview rows/docs
+GET  /sync/{service}/schema     — get schema for resource
 
 # Sync operations
-POST /_localcloud/sync/{service}/estimate   — dry-run cost estimate
-POST /_localcloud/sync/{service}/start      — execute sync
-GET  /_localcloud/sync/{service}/progress   — poll sync progress (SSE)
-POST /_localcloud/sync/{service}/cancel     — cancel running sync
+POST /sync/{service}/estimate   — dry-run cost estimate
+POST /sync/{service}/start      — execute sync
+GET  /sync/{service}/progress   — poll sync progress (SSE)
+POST /sync/{service}/cancel     — cancel running sync
 
 # History
-GET  /_localcloud/sync/manifests            — all sync history
-GET  /_localcloud/sync/{service}/manifests   — per-service history
-POST /_localcloud/sync/resync/{id}          — re-run previous sync
-DELETE /_localcloud/sync/manifests/{id}      — remove synced data + manifest
+GET  /sync/manifests            — all sync history
+GET  /sync/{service}/manifests   — per-service history
+POST /sync/resync/{id}          — re-run previous sync
+DELETE /sync/manifests/{id}      — remove synced data + manifest
 ```
 
 ### Progress Tracking
@@ -322,7 +322,7 @@ DELETE /_localcloud/sync/manifests/{id}      — remove synced data + manifest
 Sync progress streamed via SSE:
 
 ```
-GET /_localcloud/sync/{service}/progress
+GET /sync/{service}/progress
 
 event: progress
 data: {"rows_transferred": 441200, "rows_estimated": 1047000,

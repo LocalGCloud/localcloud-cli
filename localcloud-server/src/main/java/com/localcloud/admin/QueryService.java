@@ -38,7 +38,7 @@ import org.slf4j.LoggerFactory;
  * Executes SQL queries against PostgreSQL-backed services directly,
  * and proxies queries to BigQuery and Spanner emulators.
  * <p>
- * Registered at the {@code /_localcloud} path prefix.
+ * Registered at the root path prefix.
  */
 public class QueryService {
 

@@ -28,7 +28,7 @@ jobs:
           - 9020:9020
           - 9050:9050
           - 6379:6379
-        options: --memory 4g --health-cmd "curl -f http://localhost:8080/_localcloud/health" --health-interval 10s --health-timeout 5s --health-retries 10
+        options: --memory 4g --health-cmd "curl -f http://localhost:8080/health" --health-interval 10s --health-timeout 5s --health-retries 10
 
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +40,7 @@ jobs:
       - name: Wait for LocalCloud
         run: |
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:8080/_localcloud/health > /dev/null; then
+            if curl -sf http://localhost:8080/health > /dev/null; then
               echo "LocalCloud is ready"
               break
             fi
@@ -48,7 +48,7 @@ jobs:
           done
 
       - name: Configure Terraform for LocalCloud
-        run: eval $(curl -s http://localhost:8080/_localcloud/env?format=terraform) >> $GITHUB_ENV
+        run: eval $(curl -s http://localhost:8080/env?format=terraform) >> $GITHUB_ENV
 
       - name: Terraform Init
         working-directory: terraform/examples

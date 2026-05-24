@@ -176,7 +176,7 @@ function AreaChartCard(props) {
 
       {/* ── Floating hover tooltip ── */}
       <Show when={hoverRawVal() !== null}>
-        <div class="dash-chart-tip" style={{ left: `${hoverRatio() * 100}%` }}>
+        <div class="dash-chart-tip" style={{ left: tipLeft() }}>
           {props.formatter(hoverRawVal())}
         </div>
       </Show>
@@ -187,7 +187,7 @@ function AreaChartCard(props) {
 /* ================================================================
    Status hero card — green / degraded with service breakdown
    ================================================================ */
-function StatusCard({ healthData, active, inactive, unhealthy, total }) {
+function StatusCard({ healthData, activeCount, inactiveCount, unhealthyCount, totalCount }) {
   const overallHealthy = () => {
     const h = healthData();
     return h && h.status === 'healthy';
@@ -203,19 +203,19 @@ function StatusCard({ healthData, active, inactive, unhealthy, total }) {
       </div>
       <div class="dash-status-meta">
         <span class="dash-status-meta-item">
-          <span class="dash-status-meta-val active">{active}</span>
+          <span class="dash-status-meta-val active">{activeCount()}</span>
           <span class="dash-status-meta-lbl">Active</span>
         </span>
         <span class="dash-status-meta-item">
-          <span class="dash-status-meta-val inactive">{inactive}</span>
+          <span class="dash-status-meta-val inactive">{inactiveCount()}</span>
           <span class="dash-status-meta-lbl">Inactive</span>
         </span>
         <span class="dash-status-meta-item">
-          <span class="dash-status-meta-val unhealthy">{unhealthy}</span>
+          <span class="dash-status-meta-val unhealthy">{unhealthyCount()}</span>
           <span class="dash-status-meta-lbl">Unhealthy</span>
         </span>
         <span class="dash-status-meta-item">
-          <span class="dash-status-meta-val">{total}</span>
+          <span class="dash-status-meta-val">{totalCount()}</span>
           <span class="dash-status-meta-lbl">Total</span>
         </span>
       </div>
@@ -289,17 +289,20 @@ export default function Dashboard(props) {
 
   createEffect(() => {
     const h = props.healthData();
-    if (h?.cpu?.process_load != null) {
+    if (h?.cpu?.system_load != null) {
       setCpuHistory(prev => {
-        if (prev.length > 0 && prev[prev.length - 1] === h.cpu.process_load) return prev;
-        const next = [...prev, h.cpu.process_load];
+        if (prev.length > 0 && prev[prev.length - 1] === h.cpu.system_load) return prev;
+        const next = [...prev, h.cpu.system_load];
         return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
       });
     }
-    if (h?.memory?.heap_used_mb != null) {
+    const totalPhys = h?.memory?.total_physical_mb;
+    const freePhys = h?.memory?.free_physical_mb;
+    if (totalPhys != null && freePhys != null) {
+      const usedPhys = totalPhys - freePhys;
       setMemHistory(prev => {
-        if (prev.length > 0 && prev[prev.length - 1] === h.memory.heap_used_mb) return prev;
-        const next = [...prev, h.memory.heap_used_mb];
+        if (prev.length > 0 && prev[prev.length - 1] === usedPhys) return prev;
+        const next = [...prev, usedPhys];
         return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
       });
     }
@@ -368,7 +371,7 @@ export default function Dashboard(props) {
 
   const health = () => props.healthData();
   const uptimeSec = () => health()?.uptime_seconds;
-  const memMax = () => health()?.memory?.heap_max_mb;
+  const memMax = () => health()?.memory?.total_physical_mb;
   const cpuCores = () => health()?.cpu?.available_processors;
 
   const startTimeStr = () => {
@@ -383,7 +386,7 @@ export default function Dashboard(props) {
       {/* ── Page header ── */}
       <div class="page-header dash-page-header">
         <div>
-          <h1>Nerve Center</h1>
+          <h1>Dashboard</h1>
           <p class="page-header-subtitle">System health overview and emulated service management.</p>
         </div>
       </div>
@@ -396,16 +399,16 @@ export default function Dashboard(props) {
       <div class="dash-grid">
         <StatusCard
           healthData={props.healthData}
-          active={activeCount()}
-          inactive={inactiveCount()}
-          unhealthy={unhealthyCount()}
-          total={totalCount()} />
+          activeCount={activeCount}
+          inactiveCount={inactiveCount}
+          unhealthyCount={unhealthyCount}
+          totalCount={totalCount} />
 
         <AreaChartCard
           id="cpu" class="dash-card-cpu"
           label="CPU" accent="#38bdf8" accentDim="rgba(56,189,248,0.12)"
           data={cpuHistory}
-          currentValue={() => health()?.cpu?.process_load}
+          currentValue={() => health()?.cpu?.system_load}
           unit="%"
           formatter={(v) => `${v.toFixed(1)}%`}
           extra={() => cpuCores() ? `${cpuCores()} cores` : ''}
@@ -415,7 +418,11 @@ export default function Dashboard(props) {
           id="memory" class="dash-card-memory"
           label="Memory" accent="#fbbf24" accentDim="rgba(251,191,36,0.12)"
           data={memHistory}
-          currentValue={() => health()?.memory?.heap_used_mb}
+          currentValue={() => {
+            const m = health()?.memory;
+            if (m?.total_physical_mb != null && m?.free_physical_mb != null) return m.total_physical_mb - m.free_physical_mb;
+            return null;
+          }}
           unit="MB" maxRef={memMax}
           formatter={(v) => formatMemory(v)}
           extra={() => memMax() ? `of ${formatMemory(memMax())} max` : ''}
@@ -443,6 +450,7 @@ export default function Dashboard(props) {
                 <th>Protocol</th>
                 <th>Env Var</th>
                 <th style={{ "text-align": 'right' }}>Requests</th>
+                <th style={{ "text-align": 'right' }}>Memory</th>
                 <th style={{ "text-align": 'right' }}>Usage</th>
               </tr>
             </thead>
@@ -525,6 +533,9 @@ export default function Dashboard(props) {
                       <td style={{ "text-align": 'right', "font-weight": '600', "font-family": "var(--font-mono)", "font-size": "12px" }}>
                         {formatNumber(svc.request_count || 0)}
                       </td>
+                      <td style={{ "text-align": 'right', "font-weight": '600', "font-family": "var(--font-mono)", "font-size": "12px" }}>
+                        {svc.memory_mb > 0 ? formatMemory(svc.memory_mb) : '--'}
+                      </td>
                       <td style={{ "text-align": 'right', "font-weight": '600', "font-family": "var(--font-mono)", "font-size": "12px", color: "var(--success)" }}>
                         {formatCost(svc.request_count || 0)}
                       </td>
@@ -553,7 +564,7 @@ export default function Dashboard(props) {
         </button>
         <button class="btn btn-secondary" onClick={async () => {
           try {
-            const resp = await fetch('/_localcloud/export');
+            const resp = await fetch('/export');
             const text = await resp.text();
             const blob = new Blob([text], { type: 'application/yaml' });
             const url = URL.createObjectURL(blob);

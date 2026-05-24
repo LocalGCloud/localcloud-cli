@@ -46,7 +46,7 @@ Set environment variables to route GCP SDKs to LocalCloud:
 
 ```bash
 # Auto-configure from running container
-eval "$(curl -s http://localhost:8080/_localcloud/env?format=shell)"
+eval "$(curl -s http://localhost:8080/env?format=shell)"
 
 # Or set manually
 export STORAGE_EMULATOR_HOST=http://localhost:4443
@@ -120,7 +120,7 @@ docker run -d --name localcloud \
   localcloud/localcloud:latest
 
 # Verify it's running
-curl http://localhost:8080/_localcloud/health | jq
+curl http://localhost:8080/health | jq
 
 # View logs
 docker logs -f localcloud
@@ -248,7 +248,7 @@ docker run -d --name localcloud \
 To load seed data into a running container:
 
 ```bash
-curl -X POST http://localhost:8080/_localcloud/seed \
+curl -X POST http://localhost:8080/seed \
   -H "Content-Type: application/x-yaml" --data-binary @seed.yaml
 ```
 
@@ -256,17 +256,17 @@ See `seed.yaml` for the format and a full example.
 
 ## Admin API
 
-The gateway exposes admin endpoints at `/_localcloud/` on port 8080:
+The gateway exposes admin endpoints at `/` on port 8080:
 
 ```bash
 # Health check
-curl http://localhost:8080/_localcloud/health | jq
+curl http://localhost:8080/health | jq
 
 # List services
-curl http://localhost:8080/_localcloud/services | jq
+curl http://localhost:8080/services | jq
 
 # Reset all data
-curl -X POST http://localhost:8080/_localcloud/reset
+curl -X POST http://localhost:8080/reset
 ```
 
 ## Terraform
@@ -275,7 +275,7 @@ Use LocalCloud as a drop-in replacement for Google Cloud in your Terraform workf
 
 ```bash
 # Point Terraform at LocalCloud (one command)
-eval $(curl -s 'http://localhost:8080/_localcloud/env?format=terraform')
+eval $(curl -s 'http://localhost:8080/env?format=terraform')
 
 # Run Terraform normally
 terraform init
@@ -304,7 +304,7 @@ services:
     options: --memory 4g
 
 steps:
-  - run: eval $(curl -s http://localhost:8080/_localcloud/env?format=terraform)
+  - run: eval $(curl -s http://localhost:8080/env?format=terraform)
   - run: terraform init && terraform apply -auto-approve
 ```
 

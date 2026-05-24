@@ -108,7 +108,7 @@ class IamMiddlewareTest {
     void adminEndpointBypassesIamInPermissiveMode() throws Exception {
         middleware = new IamMiddleware(mockConfig("permissive"));
 
-        setupRequest("/_localcloud/status");
+        setupRequest("/status");
         HttpResponse expected = HttpResponse.of(HttpStatus.OK);
         when(delegate.serve(ctx, req)).thenReturn(expected);
 
@@ -121,7 +121,7 @@ class IamMiddlewareTest {
     void adminEndpointBypassesIamInStrictMode() throws Exception {
         middleware = new IamMiddleware(mockConfig("strict"));
 
-        setupRequest("/_localcloud/reset");
+        setupRequest("/reset");
         HttpResponse expected = HttpResponse.of(HttpStatus.OK);
         when(delegate.serve(ctx, req)).thenReturn(expected);
 
@@ -173,6 +173,32 @@ class IamMiddlewareTest {
     }
 
     @Test
+    void consoleRootBypassesIamInStrictMode() throws Exception {
+        middleware = new IamMiddleware(mockConfig("strict"));
+
+        setupRequest("/");
+        HttpResponse expected = HttpResponse.of(HttpStatus.OK);
+        when(delegate.serve(ctx, req)).thenReturn(expected);
+
+        HttpResponse result = middleware.serve(delegate, ctx, req);
+
+        assertSame(expected, result);
+    }
+
+    @Test
+    void consoleStaticAssetBypassesIamInStrictMode() throws Exception {
+        middleware = new IamMiddleware(mockConfig("strict"));
+
+        setupRequest("/app.js");
+        HttpResponse expected = HttpResponse.of(HttpStatus.OK);
+        when(delegate.serve(ctx, req)).thenReturn(expected);
+
+        HttpResponse result = middleware.serve(delegate, ctx, req);
+
+        assertSame(expected, result);
+    }
+
+    @Test
     void rootLevelUsageEndpointBypassesIam() throws Exception {
         middleware = new IamMiddleware(mockConfig("strict"));
 
@@ -199,10 +225,36 @@ class IamMiddlewareTest {
     }
 
     @Test
+    void diagnosticsArchiveBypassesIam() throws Exception {
+        middleware = new IamMiddleware(mockConfig("strict"));
+
+        setupRequest("/diagnostics/archive");
+        HttpResponse expected = HttpResponse.of(HttpStatus.OK);
+        when(delegate.serve(ctx, req)).thenReturn(expected);
+
+        HttpResponse result = middleware.serve(delegate, ctx, req);
+
+        assertSame(expected, result);
+    }
+
+    @Test
+    void faultAdminEndpointBypassesIam() throws Exception {
+        middleware = new IamMiddleware(mockConfig("strict"));
+
+        setupRequest("/faults");
+        HttpResponse expected = HttpResponse.of(HttpStatus.OK);
+        when(delegate.serve(ctx, req)).thenReturn(expected);
+
+        HttpResponse result = middleware.serve(delegate, ctx, req);
+
+        assertSame(expected, result);
+    }
+
+    @Test
     void adminEndpointNestedPathBypassesIam() throws Exception {
         middleware = new IamMiddleware(mockConfig("strict"));
 
-        setupRequest("/_localcloud/services/gcs/config");
+        setupRequest("/services/gcs/config");
         HttpResponse expected = HttpResponse.of(HttpStatus.OK);
         when(delegate.serve(ctx, req)).thenReturn(expected);
 
@@ -227,6 +279,27 @@ class IamMiddlewareTest {
 
         // Should return a 403 response, not delegate
         assertNotNull(result);
+        verify(delegate, never()).serve(ctx, req);
+    }
+
+    @Test
+    void strictModeDenialExplainsPrincipalServiceAndPermission() throws Exception {
+        middleware = new IamMiddleware(mockConfig("strict"));
+
+        setupRequest("/storage/v1/b/my-bucket/o");
+        when(req.headers()).thenReturn(RequestHeaders.of(
+                HttpMethod.GET, "/storage/v1/b/my-bucket/o",
+                "authorization", "Bearer dev@example.com"));
+
+        HttpResponse result = middleware.serve(delegate, ctx, req);
+        var aggregated = result.aggregate().join();
+        String body = aggregated.contentUtf8();
+
+        assertEquals(HttpStatus.FORBIDDEN, aggregated.status());
+        assertTrue(body.contains("dev@example.com"));
+        assertTrue(body.contains("\"service\": \"gcs\""));
+        assertTrue(body.contains("\"missing_permission\": \"gcs.local.access\""));
+        assertTrue(body.contains("suggested_binding"));
         verify(delegate, never()).serve(ctx, req);
     }
 

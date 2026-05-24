@@ -200,7 +200,7 @@ export default function Logs(props) {
                             Send requests to the emulated services to see them appear here.
                         </div>
                         <div class="empty-state-hint">
-                            <code>curl http://localhost:8080/_localcloud/health</code>
+                            <code>curl http://localhost:8080/health</code>
                         </div>
                     </div>
                 }>

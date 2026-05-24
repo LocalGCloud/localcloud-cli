@@ -51,7 +51,7 @@ jobs:
         options: --memory 4g
     steps:
       - uses: actions/checkout@v4
-      - run: eval "$(curl -s http://localhost:8080/_localcloud/env?format=shell)"
+      - run: eval "$(curl -s http://localhost:8080/env?format=shell)"
       - run: ./gradlew test
 ```
 
@@ -73,8 +73,8 @@ services:
     options: --memory 4g
 
 steps:
-  - run: eval "$(curl -s http://localhost:8080/_localcloud/env?format=shell)"
-  - run: curl -X POST http://localhost:8080/_localcloud/seed
+  - run: eval "$(curl -s http://localhost:8080/env?format=shell)"
+  - run: curl -X POST http://localhost:8080/seed
          -H "Content-Type: application/x-yaml" --data-binary @test-fixtures/seed.yaml
   - run: ./gradlew integrationTest
 ```
@@ -129,7 +129,7 @@ Before merging a Terraform change, the PR pipeline runs `terraform plan` against
 
 ```yaml
 steps:
-  - run: eval "$(curl -s http://localhost:8080/_localcloud/env?format=terraform)"
+  - run: eval "$(curl -s http://localhost:8080/env?format=terraform)"
   - run: terraform init
   - run: terraform plan -out=tfplan
   - run: terraform show tfplan  # Review output in PR comment
@@ -142,7 +142,7 @@ No real GCP credentials needed. The plan shows exactly what resources would be c
 A team wants to validate that their Terraform configuration creates all resources correctly **and** cleans them up properly:
 
 ```bash
-eval "$(curl -s http://localhost:8080/_localcloud/env?format=terraform)"
+eval "$(curl -s http://localhost:8080/env?format=terraform)"
 terraform init
 terraform apply -auto-approve
 # Run integration tests against created resources
@@ -159,7 +159,7 @@ A platform team maintains a library of reusable Terraform modules (e.g., `gcs-bu
 ```bash
 for module in modules/*/; do
   cd "$module"
-  eval "$(curl -s http://localhost:8080/_localcloud/env?format=terraform)"
+  eval "$(curl -s http://localhost:8080/env?format=terraform)"
   terraform init && terraform apply -auto-approve && terraform destroy -auto-approve
 done
 ```
@@ -211,7 +211,7 @@ docker run -d --name localcloud \
   localcloud/localcloud:latest
 
 # Configure shell (every new terminal)
-eval "$(curl -s http://localhost:8080/_localcloud/env?format=shell)"
+eval "$(curl -s http://localhost:8080/env?format=shell)"
 
 # Run application — GCP SDKs automatically point to localhost
 python my_app.py
@@ -226,7 +226,7 @@ A developer sets breakpoints in their IDE. Their service reads from Cloud Storag
 - They can inspect the Storage bucket contents via `http://localhost:4443` or the LocalCloud web console
 - They can query BigQuery results directly from the SQL editor at `http://localhost:8080`
 - They can step through code and see the exact data state at each breakpoint
-- They can reset state (`POST /_localcloud/reset`) and replay the scenario instantly
+- They can reset state (`POST /reset`) and replay the scenario instantly
 
 **3c. Seeding test data deterministically**
 
@@ -272,7 +272,7 @@ The same code, same SDKs, different routing per service.
 | Environment setup | Hours to days (project, IAM, VPN, credentials) | 60 seconds (`docker run`) |
 | Iteration speed | 2-5s latency to cloud APIs | <1ms latency locally |
 | Offline capability | Impossible | Fully functional |
-| State reset | Complex (teardown, re-provision) | Single `POST /_localcloud/reset` |
+| State reset | Complex (teardown, re-provision) | Single `POST /reset` |
 | Cost per dev | $100-500+/month (shared cloud resources) | $0 (laptop resources) |
 | Shared env conflicts | Frequent (teams sharing staging) | Impossible (fully isolated) |
 | Onboarding new devs | Days before productive | Minutes |
@@ -332,7 +332,7 @@ A conference workshop has 100 attendees, all wanting to try a new GCP-integrated
 ```bash
 docker pull localcloud/localcloud:latest
 docker run -d --name localcloud ... localcloud/localcloud:latest
-eval "$(curl -s http://localhost:8080/_localcloud/env?format=shell)"
+eval "$(curl -s http://localhost:8080/env?format=shell)"
 ```
 
 Every attendee gets a working environment in 2 minutes. The conference wifi handles it because LocalCloud runs locally — no cloud traffic.
@@ -359,7 +359,7 @@ A platform like Coursera or Udemy creates a "Learn GCP by Doing" course. Instead
 | Environment consistency | Varies by student's cloud access | Identical for everyone |
 | Cost per student | $15-50+ in cloud credits | $0 |
 | Trainer overhead | High (support tickets, credit distribution) | Minimal (one Docker command) |
-| State reset for exercises | Complex (delete resources, re-create) | Trivial (`/_localcloud/reset`) |
+| State reset for exercises | Complex (delete resources, re-create) | Trivial (`/reset`) |
 | Geographic limitations | Some regions have restricted GCP access | None — runs anywhere Docker runs |
 
 **Commercial angle:** Training is a **land-and-expand** channel. Students who learn on LocalCloud become familiar with the tool. When they join companies, they advocate for LocalCloud adoption. Corporate training departments may purchase site licenses rather than budget for per-attendee cloud credits.
@@ -438,7 +438,7 @@ A company's ecosystem partners build integrations that use GCP services. Instead
 | Demo reliability | "Cloud is down," "Quota exceeded," "Credentials expired" | Always works — runs locally |
 | Internet dependency | Required (cloud access) | None (fully offline capable) |
 | Setup for each demo | 10-30 minutes of preparation | 30 seconds (`docker run`) |
-| State reset between demos | Manual cleanup or new cloud project | `/_localcloud/reset` (instant) |
+| State reset between demos | Manual cleanup or new cloud project | `/reset` (instant) |
 | POC deployment friction | High (GCP project, IAM, security review) | Low (Docker compose file) |
 | Partner onboarding | Each partner needs GCP access | Each partner runs a container |
 | Professional presentation | Risk of cloud errors during live demo | Deterministic, rehearsable |

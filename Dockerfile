@@ -119,13 +119,13 @@
 #   It auto-loads on container startup once all services are healthy.
 #   Mount your own file to override, or set LOCALCLOUD_SEED_FILE to a different path.
 #   To load seed data manually into a running container:
-#     curl -X POST http://localhost:8080/_localcloud/seed \
+#     curl -X POST http://localhost:8080/seed \
 #       -H "Content-Type: application/x-yaml" --data-binary @seed.yaml
 #
 # TERRAFORM
 # ---------
 #   Point Terraform at LocalCloud (zero .tf changes needed):
-#     eval $(curl -s 'http://localhost:8080/_localcloud/env?format=terraform')
+#     eval $(curl -s 'http://localhost:8080/env?format=terraform')
 #     terraform init && terraform plan && terraform apply
 #
 # BUILD (for contributors)
@@ -335,7 +335,7 @@ RUN echo "${VERSION_VAL}+${BUILD_HASH}.${BUILD_DATE}" > /opt/localcloud/VERSION 
 ENV LOCALCLOUD_VERSION_FILE=/opt/localcloud/VERSION
 
 # 8. Runtime Environment
-ENV JAVA_OPTS="-Xmx512m -Xms128m -XX:+UseZGC -Xss256k -XX:MaxMetaspaceSize=96m -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/./urandom" \
+ENV JAVA_OPTS="-Xmx256m -Xms64m -XX:+UseSerialGC -Xss256k -XX:MaxMetaspaceSize=96m -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/./urandom" \
     LOCALCLOUD_PROJECT="local-project" \
     LOCALCLOUD_ENABLE_GCS="true" \
     LOCALCLOUD_ENABLE_PUBSUB="true" \

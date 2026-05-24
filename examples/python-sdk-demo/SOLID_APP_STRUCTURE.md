@@ -7,7 +7,7 @@ This directory contains the Solid.js implementation of the LocalCloud Dashboard 
 ```
 src/
 ├── app.jsx                 # Main app entry point (routing, state management, lifecycle)
-├── api.js                  # API wrapper for all /_localcloud endpoints
+├── api.js                  # API wrapper for all  endpoints
 ├── components/             # Reusable shared components
 │   ├── Header.jsx          # App header with title, project ID, theme toggle
 │   ├── Sidebar.jsx         # Navigation sidebar with page links
@@ -133,7 +133,7 @@ npm run dev  # Start dev server with hot reload
 npm run build  # Creates optimized bundle with esbuild
 ```
 
-The build output will be ready to serve from `/_localcloud/dashboard/` by the Java backend.
+The build output will be ready to serve from `/dashboard/` by the Java backend.
 
 ## Solid.js Syntax Notes
 
@@ -148,10 +148,10 @@ The build output will be ready to serve from `/_localcloud/dashboard/` by the Ja
 ## Integration with Backend
 
 The app expects:
-1. HTML file at `/_localcloud/dashboard/index.html` (served by Java backend)
-2. Script bundle at `/_localcloud/dashboard/app.js` (built by esbuild)
-3. CSS at `/_localcloud/dashboard/style.css` (from Phase 2)
-4. API endpoints at `/_localcloud/*` (implemented by Java backend)
+1. HTML file at `/dashboard/index.html` (served by Java backend)
+2. Script bundle at `/dashboard/app.js` (built by esbuild)
+3. CSS at `/dashboard/style.css` (from Phase 2)
+4. API endpoints at `/*` (implemented by Java backend)
 
 ## Testing
 

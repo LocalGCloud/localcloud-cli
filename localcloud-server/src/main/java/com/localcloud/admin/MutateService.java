@@ -34,7 +34,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Mutate service for the LocalCloud dashboard. Handles CRUD mutations for all
  * services through their emulator APIs. Registered at the
- * {@code /_localcloud/mutate} path prefix.
+ * {@code /mutate} path prefix.
  */
 public class MutateService {
 
@@ -1348,7 +1348,7 @@ public class MutateService {
                 : config.getProjectId();
         String locationId = (String) body.getOrDefault("location", "us-central1");
 
-        // POST /_localcloud/mutate/workflows/execute — create and run an execution
+        // POST /mutate/workflows/execute — create and run an execution
         // Delegates to WorkflowsServiceImpl.createExecution() for full feature parity
         // (connectors, callbacks, env vars, child workflows).
         if ("execute".equals(operation)) {
@@ -1398,7 +1398,7 @@ public class MutateService {
             }
         }
 
-        // POST /_localcloud/mutate/workflows/cancel — cancel an execution
+        // POST /mutate/workflows/cancel — cancel an execution
         if ("cancel".equals(operation)) {
             String executionId = (String) body.get("execution_id");
             if (executionId == null) return mapper.writeValueAsString(Map.of("error", true, "message", "execution_id is required"));

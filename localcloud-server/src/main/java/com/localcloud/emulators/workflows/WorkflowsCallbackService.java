@@ -16,9 +16,9 @@ import java.util.Map;
 /**
  * HTTP endpoint for delivering callbacks to waiting workflow executions.
  * <p>
- * Registered at {@code /_localcloud/workflows} and handles:
+ * Registered at {@code /workflows} and handles:
  * <pre>
- *   POST /_localcloud/workflows/callbacks/{callbackId}
+ *   POST /workflows/callbacks/{callbackId}
  * </pre>
  * The request body can be any JSON value and is forwarded as the callback payload
  * to the workflow execution that is awaiting the callback.

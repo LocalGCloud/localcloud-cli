@@ -22,7 +22,7 @@ BIGTABLE_EMULATOR_HOST=localhost:8087
 The console/admin browse path is:
 
 ```text
-/_localcloud/browse/bigtable
+/browse/bigtable
         -> PostgreSQL bigtable_data
         -> persisted seed/browser rows, not the emulator data plane
 ```

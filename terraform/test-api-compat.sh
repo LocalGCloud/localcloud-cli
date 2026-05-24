@@ -57,7 +57,7 @@ echo ""
 # Wait for health
 echo "Waiting for LocalCloud..."
 for i in $(seq 1 30); do
-    if curl -sf "$BASE/_localcloud/health" > /dev/null 2>&1; then
+    if curl -sf "$BASE/health" > /dev/null 2>&1; then
         echo "LocalCloud is healthy"
         break
     fi
@@ -127,7 +127,7 @@ echo ""
 # ─── Phase 3: Compute Engine (REST) ──────────────────────────────
 
 # Enable compute for testing (disabled by default)
-curl -s -X POST "$BASE/_localcloud/services/compute/enable" > /dev/null 2>&1
+curl -s -X POST "$BASE/services/compute/enable" > /dev/null 2>&1
 sleep 1
 
 echo "--- Compute Engine (REST) ---"

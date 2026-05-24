@@ -85,10 +85,8 @@ public class IamMiddleware implements DecoratingHttpServiceFunction {
     @Override
     public HttpResponse serve(HttpService delegate, ServiceRequestContext ctx,
                               HttpRequest req) throws Exception {
-        // Admin and developer-facing endpoints are always accessible regardless of IAM mode
-        if (ctx.path().startsWith("/_localcloud") || ctx.path().equals("/health") ||
-            ctx.path().startsWith("/health/") || ctx.path().startsWith("/export") ||
-            ctx.path().equals("/services") || ctx.path().equals("/usage")) {
+        // Admin and developer-facing endpoints are always accessible regardless of IAM mode.
+        if (isAdminPath(ctx.path())) {
             return delegate.serve(ctx, req);
         }
 
@@ -104,6 +102,64 @@ public class IamMiddleware implements DecoratingHttpServiceFunction {
                 yield delegate.serve(ctx, req);
             }
         };
+    }
+
+    private static boolean isAdminPath(String path) {
+        return path.equals("/")
+                || path.startsWith("/icons")
+                || isStaticAssetPath(path)
+                || path.equals("/health")
+                || path.startsWith("/health/")
+                || path.equals("/readiness")
+                || path.startsWith("/readiness/")
+                || path.equals("/services")
+                || path.startsWith("/services/")
+                || path.equals("/usage")
+                || path.equals("/env")
+                || path.equals("/requests")
+                || path.equals("/profiles")
+                || path.equals("/capabilities")
+                || path.equals("/coverage")
+                || path.startsWith("/coverage/")
+                || path.equals("/diagnostics")
+                || path.startsWith("/diagnostics/")
+                || path.equals("/faults")
+                || path.startsWith("/faults/")
+                || path.startsWith("/export")
+                || path.equals("/import")
+                || path.equals("/seed")
+                || path.equals("/reseed")
+                || path.equals("/reset")
+                || path.startsWith("/reset/")
+                || path.equals("/projects")
+                || path.startsWith("/projects/")
+                || path.equals("/routing")
+                || path.startsWith("/routing/")
+                || path.equals("/credentials")
+                || path.startsWith("/config/")
+                || path.equals("/browse")
+                || path.startsWith("/browse/")
+                || path.equals("/mutate")
+                || path.startsWith("/mutate/")
+                || path.equals("/query")
+                || path.startsWith("/query/")
+                || path.startsWith("/schema/")
+                || path.equals("/gcs/file-schema")
+                || path.equals("/query-history")
+                || path.startsWith("/workflow-env")
+                || path.startsWith("/workflow")
+                || path.startsWith("/sync")
+                || path.equals("/snapshots")
+                || path.startsWith("/snapshots/")
+                || path.startsWith("/dashboard/")
+                || path.startsWith("/computeMetadata/v1");
+    }
+
+    private static boolean isStaticAssetPath(String path) {
+        return path.endsWith(".js")
+                || path.endsWith(".css")
+                || path.endsWith(".svg")
+                || path.endsWith(".html");
     }
 
     /**
@@ -125,7 +181,8 @@ public class IamMiddleware implements DecoratingHttpServiceFunction {
                     return delegate.serve(ctx, req);
                 }
             }
-            return denyResponse("No credentials provided and no anonymous access policy configured.");
+            return denyResponse("No credentials provided and no anonymous access policy configured.",
+                    "anonymous", ctx.path(), Collections.emptyList());
         }
 
         // Check identity-specific policy
@@ -138,7 +195,8 @@ public class IamMiddleware implements DecoratingHttpServiceFunction {
         }
 
         logger.info("IAM strict: {} denied access to {}", identity, ctx.path());
-        return denyResponse("Identity '" + identity + "' does not have access to this resource.");
+        return denyResponse("Identity '" + identity + "' does not have access to this resource.",
+                identity, ctx.path(), allowedPrefixes);
     }
 
     /**
@@ -149,7 +207,8 @@ public class IamMiddleware implements DecoratingHttpServiceFunction {
                                           HttpRequest req) throws Exception {
         String authHeader = req.headers().get("authorization");
         if (authHeader == null || !authHeader.toLowerCase().startsWith("bearer ")) {
-            return denyResponse("GCP-live mode requires a valid Bearer token in the Authorization header.");
+            return denyResponse("GCP-live mode requires a valid Bearer token in the Authorization header.",
+                    "anonymous", ctx.path(), Collections.emptyList());
         }
 
         String token = authHeader.substring(7).trim();
@@ -163,7 +222,8 @@ public class IamMiddleware implements DecoratingHttpServiceFunction {
                 List<String> allowed = policyBindings.getOrDefault(cached.email(),
                         policyBindings.getOrDefault("*", Collections.emptyList()));
                 if (!isPathAllowed(ctx.path(), allowed)) {
-                    return denyResponse("Identity '" + cached.email() + "' does not have access to this resource.");
+                    return denyResponse("Identity '" + cached.email() + "' does not have access to this resource.",
+                            cached.email(), ctx.path(), allowed);
                 }
             }
             return delegate.serve(ctx, req);
@@ -181,7 +241,7 @@ public class IamMiddleware implements DecoratingHttpServiceFunction {
 
             if (response.statusCode() != 200) {
                 logger.info("IAM gcp-live: token validation failed (HTTP {})", response.statusCode());
-                return denyResponse("Invalid or expired bearer token.");
+                return denyResponse("Invalid or expired bearer token.", "unknown", ctx.path(), Collections.emptyList());
             }
 
             Map<String, Object> tokenInfo = mapper.readValue(
@@ -205,7 +265,8 @@ public class IamMiddleware implements DecoratingHttpServiceFunction {
                 List<String> allowed = policyBindings.getOrDefault(email,
                         policyBindings.getOrDefault("*", Collections.emptyList()));
                 if (!isPathAllowed(ctx.path(), allowed)) {
-                    return denyResponse("Identity '" + email + "' does not have access to this resource.");
+                    return denyResponse("Identity '" + email + "' does not have access to this resource.",
+                            email, ctx.path(), allowed);
                 }
             }
 
@@ -214,7 +275,8 @@ public class IamMiddleware implements DecoratingHttpServiceFunction {
 
         } catch (Exception e) {
             logger.warn("IAM gcp-live: token validation error: {}", e.getMessage());
-            return denyResponse("Failed to validate credentials: " + e.getMessage());
+            return denyResponse("Failed to validate credentials: " + e.getMessage(),
+                    "unknown", ctx.path(), Collections.emptyList());
         }
     }
 
@@ -320,6 +382,17 @@ public class IamMiddleware implements DecoratingHttpServiceFunction {
      * Build a 403 Forbidden JSON response matching GCP error format.
      */
     private HttpResponse denyResponse(String message) {
+        return denyResponse(message, "unknown", "unknown", Collections.emptyList());
+    }
+
+    private HttpResponse denyResponse(String message, String principal, String path, List<String> allowedPrefixes) {
+        String service = ServiceGatingDecorator.resolveService(path);
+        if (service == null) {
+            service = "unknown";
+        }
+        String missingPermission = service + ".local.access";
+        String suggestedRole = "roles/localcloud." + service + "Developer";
+        String suggestedBinding = "{\"identity\":\"" + escape(principal) + "\",\"services\":[\"" + escape(suggestedPolicyPrefix(path)) + "\"]}";
         String body = """
                 {
                   "error": {
@@ -332,15 +405,55 @@ public class IamMiddleware implements DecoratingHttpServiceFunction {
                         "reason": "IAM_PERMISSION_DENIED",
                         "domain": "localcloud",
                         "metadata": {
-                          "iam_mode": "%s"
+                          "iam_mode": "%s",
+                          "principal": "%s",
+                          "service": "%s",
+                          "operation": "%s",
+                          "resource": "%s",
+                          "missing_permission": "%s",
+                          "suggested_role": "%s",
+                          "suggested_binding": "%s",
+                          "allowed_prefixes": "%s"
                         }
                       }
                     ]
                   }
                 }
-                """.formatted(message.replace("\"", "\\\""), mode);
+                """.formatted(escape(message), escape(mode), escape(principal), escape(service),
+                        escape(path), escape(path), escape(missingPermission), escape(suggestedRole),
+                        escape(suggestedBinding), escape(String.valueOf(allowedPrefixes)));
 
         return HttpResponse.of(HttpStatus.FORBIDDEN, MediaType.JSON, body);
+    }
+
+    private static String suggestedPolicyPrefix(String path) {
+        if (path == null || path.isBlank() || "unknown".equals(path)) {
+            return "*";
+        }
+        if (path.startsWith("/storage/")) {
+            return "/storage/";
+        }
+        if (path.startsWith("/bigquery/")) {
+            return "/bigquery/";
+        }
+        if (path.startsWith("/compute/")) {
+            return "/compute/";
+        }
+        if (path.startsWith("/v1/")) {
+            return "/v1/";
+        }
+        if (path.startsWith("/v2/")) {
+            return "/v2/";
+        }
+        int secondSlash = path.indexOf('/', 1);
+        return secondSlash > 0 ? path.substring(0, secondSlash + 1) : path;
+    }
+
+    private static String escape(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     /**

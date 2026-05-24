@@ -57,7 +57,7 @@ public class WorkflowsServiceImpl {
         this.executionPool = Executors.newVirtualThreadPerTaskExecutor();
 
         // Wire callback manager to stdlib
-        EventsFunctions.register(this.stdlib, this.callbackManager, "http://localhost:8080/_localcloud/workflows/callbacks");
+        EventsFunctions.register(this.stdlib, this.callbackManager, "http://localhost:8080/workflows/callbacks");
     }
 
     public WorkflowsStore getStore() { return store; }

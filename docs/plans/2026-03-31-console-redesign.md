@@ -67,19 +67,19 @@ class BackendProxy:
     # --- Admin API ---
 
     def get_health(self) -> Dict[str, Any]:
-        return self._get(f"{self.gateway_url}/_localcloud/health")
+        return self._get(f"{self.gateway_url}/health")
 
     def get_requests(self) -> Dict[str, Any]:
-        return self._get(f"{self.gateway_url}/_localcloud/requests")
+        return self._get(f"{self.gateway_url}/requests")
 
     def get_env(self, fmt: str = "json") -> Dict[str, Any]:
-        return self._get(f"{self.gateway_url}/_localcloud/env", params={"format": fmt})
+        return self._get(f"{self.gateway_url}/env", params={"format": fmt})
 
     def reset(self) -> Dict[str, Any]:
-        return self._post(f"{self.gateway_url}/_localcloud/reset")
+        return self._post(f"{self.gateway_url}/reset")
 
     def seed(self, yaml_data: str) -> Dict[str, Any]:
-        return self._post(f"{self.gateway_url}/_localcloud/seed",
+        return self._post(f"{self.gateway_url}/seed",
                           data=yaml_data, headers={"Content-Type": "application/yaml"})
 
     # --- Data Browse (direct emulator APIs) ---

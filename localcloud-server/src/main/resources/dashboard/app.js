@@ -29,7 +29,7 @@
     // --- Health / Status ---
 
     function fetchHealth() {
-        fetch(BASE + '/_localcloud/health')
+        fetch(BASE + '/health')
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 renderHealth(data);
@@ -94,7 +94,7 @@
         var limitEl = document.getElementById('log-limit');
         var limit = limitEl ? limitEl.value : 50;
 
-        fetch(BASE + '/_localcloud/requests?limit=' + limit)
+        fetch(BASE + '/requests?limit=' + limit)
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 renderRequestLog(data.requests || []);
@@ -146,7 +146,7 @@
 
         resultEl.innerHTML = '<div class="loading">Loading...</div>';
 
-        fetch(BASE + '/_localcloud/browse/' + service)
+        fetch(BASE + '/browse/' + service)
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 renderBrowseData(data);

@@ -98,7 +98,7 @@ class ServiceGatingDecoratorTest {
 
     @Test
     void resolveService_unknownPaths_returnNull() {
-        assertNull(ServiceGatingDecorator.resolveService("/_localcloud/health"));
+        assertNull(ServiceGatingDecorator.resolveService("/health"));
         assertNull(ServiceGatingDecorator.resolveService("/"));
         assertNull(ServiceGatingDecorator.resolveService("/some/random/path"));
         assertNull(ServiceGatingDecorator.resolveService("/v3/projects/p/resources"));

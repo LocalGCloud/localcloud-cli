@@ -40,7 +40,7 @@ import org.slf4j.LoggerFactory;
  * the local PostgreSQL database for in-process facade data (Secret Manager,
  * Cloud Tasks, Logging, Monitoring).
  * <p>
- * Registered at the {@code /_localcloud/browse} path prefix.
+ * Registered at the {@code /browse} path prefix.
  */
 public class BrowseService {
 

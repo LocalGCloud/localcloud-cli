@@ -146,7 +146,7 @@ gcs:
 Enforcement at two points:
 
 1. **Startup** (`LocalCloudApplication.start()`): services with `minTier` above current tier are disabled via `config.setServiceEnabled(serviceId, false)`
-2. **Runtime** (`AdminApiService`): `POST /_localcloud/services/{id}/enable` and `PUT /_localcloud/config/services` check tier before allowing enable
+2. **Runtime** (`AdminApiService`): `POST /services/{id}/enable` and `PUT /config/services` check tier before allowing enable
 
 Response when blocked:
 ```json

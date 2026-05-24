@@ -24,7 +24,7 @@ Browser (http://localhost:8080)
     ↓
 Armeria Gateway (port 8080)
     ├─ Static file serving from /opt/localcloud/console/dist/
-    ├─ Admin API (/_localcloud/*)
+    ├─ Admin API (/*)
     └─ gRPC facade services
          ↓
     PostgreSQL (internal persistence)
@@ -66,7 +66,7 @@ This creates:
 
 ## Usage
 
-For local development, run `npm run dev` and open **http://localhost:3001**. The dev server proxies `/_localcloud/*` to **http://localhost:8080**.
+For local development, run `npm run dev` and open **http://localhost:3001**. The dev server proxies `/*` to **http://localhost:8080**.
 
 ```bash
 # Start LocalCloud

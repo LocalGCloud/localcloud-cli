@@ -42,12 +42,12 @@ const ctx = await context({
 await ctx.watch();
 console.log('[dev] Watching JSX...');
 
-// --- HTTP server: serves dist/ + proxies /_localcloud/* to container ---
+// --- HTTP server: serves dist/ + proxies /* to container ---
 const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.map': 'application/json' };
 
 const server = createServer((req, res) => {
     // Proxy API calls to LocalCloud container
-    if (req.url.startsWith('/_localcloud')) {
+    if (req.url.startsWith('')) {
         const proxyReq = httpRequest(`${API_TARGET}${req.url}`, {
             method: req.method,
             headers: { ...req.headers, host: 'localhost:8080' },

@@ -624,7 +624,7 @@ docker exec localcloud ls -la /var/lib/localcloud/redis-data/
 **Step 7: Verify browsing via API**
 
 ```bash
-curl -s http://localhost:8080/_localcloud/browse?service=memorystore | python3 -m json.tool
+curl -s http://localhost:8080/browse?service=memorystore | python3 -m json.tool
 ```
 
 Expected: JSON with `test:key` in keys list.
@@ -632,7 +632,7 @@ Expected: JSON with `test:key` in keys list.
 **Step 8: Verify seeding**
 
 ```bash
-curl -s -X POST http://localhost:8080/_localcloud/seed -H "Content-Type: application/json" \
+curl -s -X POST http://localhost:8080/seed -H "Content-Type: application/json" \
   -d '{"services":{"memorystore":{"keys":[{"key":"user:1","value":"John"},{"key":"user:2","value":"Jane"}]}}}'
 ```
 
@@ -641,7 +641,7 @@ Then browse again — should see `user:1` and `user:2`.
 **Step 9: Verify reset**
 
 ```bash
-curl -s -X POST http://localhost:8080/_localcloud/reset -H "Content-Type: application/json" \
+curl -s -X POST http://localhost:8080/reset -H "Content-Type: application/json" \
   -d '{"services":["memorystore"]}'
 docker exec localcloud valkey-cli DBSIZE
 ```

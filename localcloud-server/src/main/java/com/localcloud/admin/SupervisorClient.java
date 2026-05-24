@@ -9,6 +9,8 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -86,6 +88,66 @@ public class SupervisorClient {
             logger.warn("Failed to get supervisor process status for '{}': {}", name, e.getMessage());
             return fallback;
         }
+    }
+
+    /**
+     * Get info for all supervised processes in a single XML-RPC call.
+     *
+     * @return map of program name -> {name, pid, statename, description}
+     */
+    public Map<String, Map<String, String>> getAllProcesses() {
+        Map<String, Map<String, String>> result = new LinkedHashMap<>();
+        try {
+            String response = callXmlRpc("supervisor.getAllProcessInfo", "");
+            if (response == null) return result;
+
+            int structStart = 0;
+            while ((structStart = response.indexOf("<struct>", structStart)) >= 0) {
+                int structEnd = response.indexOf("</struct>", structStart);
+                if (structEnd < 0) break;
+                String structXml = response.substring(structStart, structEnd + "</struct>".length());
+
+                String name = extractXmlValue(structXml, "name", "");
+                String pid = extractXmlValue(structXml, "pid", "0");
+                String statename = extractXmlValue(structXml, "statename", "UNKNOWN");
+                String description = extractXmlValue(structXml, "description", "");
+
+                if (!name.isEmpty()) {
+                    Map<String, String> info = new LinkedHashMap<>();
+                    info.put("name", name);
+                    info.put("pid", pid);
+                    info.put("statename", statename);
+                    info.put("description", description);
+                    result.put(name, info);
+                }
+
+                structStart = structEnd + "</struct>".length();
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to get all supervisor processes: {}", e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * Read RSS (resident memory) of a process in megabytes from /proc/[pid]/statm.
+     * Returns 0 if the PID is 0 or /proc entry cannot be read.
+     */
+    public static long getProcessMemoryMb(long pid) {
+        if (pid <= 0) return 0;
+        try {
+            String content = Files.readString(Path.of("/proc/" + pid + "/statm"));
+            // statm format: size resident shared text lib data dt
+            // resident is the second field, in pages (typically 4096 bytes)
+            String[] parts = content.trim().split("\\s+");
+            if (parts.length >= 2) {
+                long pages = Long.parseLong(parts[1]);
+                return (pages * 4096) / (1024 * 1024);
+            }
+        } catch (Exception e) {
+            // Process may have exited, or /proc not available
+        }
+        return 0;
     }
 
     /**

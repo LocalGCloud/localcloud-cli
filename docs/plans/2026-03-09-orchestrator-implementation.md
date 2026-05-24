@@ -177,7 +177,7 @@ VOLUME /var/lib/localcloud
 EXPOSE 8080 4443 8085 8086 8087 9010 9020 9050 9060
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
-    CMD curl -f http://localhost:8080/_localcloud/health || exit 1
+    CMD curl -f http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/localcloud.conf"]
@@ -464,7 +464,7 @@ git commit -m "feat: add ProcessHealthChecker for external emulator health polli
 **Step 1: Simplify start() method**
 
 Remove all emulator registration code for delegated services (GCS, Pub/Sub, Firestore, BigQuery, Spanner, Bigtable). Keep:
-- Admin API registration at `/_localcloud`
+- Admin API registration at ``
 - Dashboard static files
 - Health check service (updated to use ProcessHealthChecker)
 - Secret Manager gRPC registration (our facade)
@@ -726,7 +726,7 @@ Expected: supervisord starts PostgreSQL, fake-gcs-server, pubsub-emulator, fires
 **Step 4: Test health endpoint**
 
 ```bash
-curl http://localhost:8080/_localcloud/health
+curl http://localhost:8080/health
 ```
 
 Expected: JSON with status "healthy" and individual service statuses.
@@ -734,7 +734,7 @@ Expected: JSON with status "healthy" and individual service statuses.
 **Step 5: Test env endpoint**
 
 ```bash
-curl http://localhost:8080/_localcloud/env
+curl http://localhost:8080/env
 ```
 
 Expected: Shell-format env vars with correct emulator host values.
@@ -756,7 +756,7 @@ git commit -m "fix: smoke test fixes for orchestrator build"
 **Step 1: Test seed loading against external emulators**
 
 ```bash
-curl -X POST http://localhost:8080/_localcloud/seed -H "Content-Type: application/yaml" -d @seed.yaml
+curl -X POST http://localhost:8080/seed -H "Content-Type: application/yaml" -d @seed.yaml
 ```
 
 Expected: Seed data created in GCS (bucket + object), Pub/Sub (topic + subscription), and Secret Manager (secret + version).
@@ -771,7 +771,7 @@ curl http://localhost:4443/storage/v1/b?project=local-project
 curl http://localhost:8085/v1/projects/local-project/topics
 
 # Secret Manager (via gRPC or admin browse)
-curl http://localhost:8080/_localcloud/browse/secretmanager/secrets
+curl http://localhost:8080/browse/secretmanager/secrets
 ```
 
 **Step 3: Commit any fixes**

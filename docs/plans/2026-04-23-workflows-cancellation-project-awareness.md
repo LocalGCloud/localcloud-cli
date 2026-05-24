@@ -732,7 +732,7 @@ b) Lines 1028-1044: Replace direct SQL with `workflowsService.cancelExecution()`
 **b) Cancel routing (replace lines 1028-1044):**
 
 ```java
-        // POST /_localcloud/mutate/workflows/cancel — cancel an execution
+        // POST /mutate/workflows/cancel — cancel an execution
         if ("cancel".equals(operation)) {
             String executionId = (String) body.get("execution_id");
             if (executionId == null) return mapper.writeValueAsString(Map.of("error", true, "message", "execution_id is required"));

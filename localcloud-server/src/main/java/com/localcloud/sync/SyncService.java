@@ -469,7 +469,7 @@ public class SyncService {
             if (credentialData == null) {
                 throw new IllegalStateException(
                         "No sync credential found for project: " + projectId +
-                        ". Connect to a GCP project first via POST /_localcloud/sync/connect.");
+                        ". Connect to a GCP project first via POST /sync/connect.");
             }
 
             JsonNode json = mapper.readTree(credentialData);

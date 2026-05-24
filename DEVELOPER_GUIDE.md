@@ -19,7 +19,7 @@ docker run -d --name localcloud \
   localcloud/localcloud:latest
 
 # Configure your shell (one command)
-eval "$(curl -s http://localhost:8080/_localcloud/env?format=shell)"
+eval "$(curl -s http://localhost:8080/env?format=shell)"
 
 # Use GCP SDKs as normal — they now point to localhost
 python -c "
@@ -54,7 +54,7 @@ docker stop localcloud          # Stop
 docker start localcloud         # Restart (data persists)
 docker rm -f localcloud         # Remove container
 docker logs -f localcloud       # Follow logs
-curl localhost:8080/_localcloud/health | jq   # Health check
+curl localhost:8080/health | jq   # Health check
 ```
 
 ### Custom Builds
@@ -83,7 +83,7 @@ When `ENFORCE_LICENSE=true`, the container enforces full license validation at s
 
 ```bash
 # Auto-configure all env vars
-eval "$(curl -s http://localhost:8080/_localcloud/env?format=shell)"
+eval "$(curl -s http://localhost:8080/env?format=shell)"
 ```
 
 Or set manually:
@@ -115,7 +115,7 @@ LocalCloud works as a drop-in replacement for Google Cloud in Terraform workflow
 
 ```bash
 # Point Terraform at LocalCloud (one command)
-eval $(curl -s 'http://localhost:8080/_localcloud/env?format=terraform')
+eval $(curl -s 'http://localhost:8080/env?format=terraform')
 
 # Run Terraform normally
 terraform init
@@ -150,14 +150,14 @@ services:
       - "9010:9010"
     mem_limit: 4g
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/_localcloud/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
       retries: 5
 ```
 
 ```bash
 # After container is healthy
-eval $(curl -s 'http://localhost:8080/_localcloud/env?format=terraform')
+eval $(curl -s 'http://localhost:8080/env?format=terraform')
 terraform apply
 ```
 
@@ -171,7 +171,7 @@ services:
     options: --memory 4g
 
 steps:
-  - run: eval $(curl -s http://localhost:8080/_localcloud/env?format=terraform)
+  - run: eval $(curl -s http://localhost:8080/env?format=terraform)
   - run: terraform init && terraform apply -auto-approve
   - run: terraform destroy -auto-approve
 ```
@@ -246,19 +246,19 @@ docker run ... -e LOCALCLOUD_ENABLE_GKE=true -v /var/run/docker.sock:/var/run/do
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/_localcloud/browse/workflows` | List all workflows |
-| GET | `/_localcloud/browse/workflows/{id}` | Get workflow definition and metadata |
-| GET | `/_localcloud/browse/workflows/{id}/executions` | List executions for a workflow |
+| GET | `/browse/workflows` | List all workflows |
+| GET | `/browse/workflows/{id}` | Get workflow definition and metadata |
+| GET | `/browse/workflows/{id}/executions` | List executions for a workflow |
 
 ```bash
 # List all workflows
-curl http://localhost:8080/_localcloud/browse/workflows | jq
+curl http://localhost:8080/browse/workflows | jq
 
 # Get a specific workflow
-curl http://localhost:8080/_localcloud/browse/workflows/my-workflow | jq
+curl http://localhost:8080/browse/workflows/my-workflow | jq
 
 # List executions for a workflow
-curl http://localhost:8080/_localcloud/browse/workflows/my-workflow/executions | jq
+curl http://localhost:8080/browse/workflows/my-workflow/executions | jq
 ```
 
 ### Seed Format
@@ -327,12 +327,12 @@ services:
 docker run -d --name localcloud ... -v ./seed.yaml:/etc/localcloud/seed.yaml:ro ...
 
 # Load into running instance
-curl -X POST http://localhost:8080/_localcloud/seed \
+curl -X POST http://localhost:8080/seed \
   -H "Content-Type: application/yaml" --data-binary @seed.yaml
 
 # Reset all data (or reset + restore seed)
-curl -X POST http://localhost:8080/_localcloud/reset
-curl -X POST http://localhost:8080/_localcloud/reset \
+curl -X POST http://localhost:8080/reset
+curl -X POST http://localhost:8080/reset \
   -H "Content-Type: application/json" -d '{"restore_seed": true}'
 ```
 
@@ -344,15 +344,15 @@ LocalCloud supports multiple GCP projects with isolated data per project.
 
 ```bash
 # Create a project
-curl -X POST http://localhost:8080/_localcloud/projects \
+curl -X POST http://localhost:8080/projects \
   -H "Content-Type: application/json" \
   -d '{"project_id": "staging", "display_name": "Staging"}'
 
 # Browse data scoped to a project
-curl http://localhost:8080/_localcloud/browse/gcs?project=staging
+curl http://localhost:8080/browse/gcs?project=staging
 
 # Delete a project (cascades all data)
-curl -X DELETE http://localhost:8080/_localcloud/projects/staging
+curl -X DELETE http://localhost:8080/projects/staging
 ```
 
 The web console includes a project switcher dropdown in the topbar.
@@ -378,20 +378,20 @@ The Settings page includes a complete setup guide with copy-paste commands for s
 
 ## Admin API
 
-All endpoints are at `/_localcloud/` on port 8080.
+All endpoints are at `/` on port 8080.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/_localcloud/health` | Service health status |
-| GET | `/_localcloud/services` | List services with ports and request counts |
-| GET | `/_localcloud/env?format=shell` | Environment variables (shell/json/docker-compose) |
-| GET | `/_localcloud/usage` | Cumulative usage metrics per service |
-| GET | `/_localcloud/browse/{service}` | Browse service data (read-only) |
-| POST | `/_localcloud/seed` | Load seed data (YAML body) |
-| POST | `/_localcloud/reset` | Reset all data |
-| GET | `/_localcloud/projects` | List projects |
-| POST | `/_localcloud/projects` | Create project |
-| DELETE | `/_localcloud/projects/{id}` | Delete project and all data |
+| GET | `/health` | Service health status |
+| GET | `/services` | List services with ports and request counts |
+| GET | `/env?format=shell` | Environment variables (shell/json/docker-compose) |
+| GET | `/usage` | Cumulative usage metrics per service |
+| GET | `/browse/{service}` | Browse service data (read-only) |
+| POST | `/seed` | Load seed data (YAML body) |
+| POST | `/reset` | Reset all data |
+| GET | `/projects` | List projects |
+| POST | `/projects` | Create project |
+| DELETE | `/projects/{id}` | Delete project and all data |
 
 ---
 
@@ -418,7 +418,7 @@ services:
       - localcloud-data:/var/lib/localcloud
       - ./seed.yaml:/etc/localcloud/seed.yaml:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/_localcloud/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 5
