@@ -1,93 +1,14 @@
-import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
+import { createSignal, createEffect, onCleanup, Show, For, createMemo } from 'solid-js';
 import { api } from '../api.js';
 import DataBrowser from './DataBrowser.jsx';
 import CodeEditor, { toCodeMirrorSchema } from '../components/CodeEditor.jsx';
 import Workflows from './Workflows.jsx';
 import { RemoteSyncPanel } from '../components/RemoteSyncPanel.jsx';
+import { TriggerTestPanel, JobOutputPanel, SchedulerHistoryPanel, ConnectionInfoPanel } from '../components/ServicePanels.jsx';
 import { IconDatabase, IconTable, IconColumn, IconChevron } from '../components/TreeIcons.jsx';
 import { formatNumber, formatTime, onActivate } from '../utils/a11y.js';
-
-// ─── Service Metadata (icon, title, description) ─────────────────────
-const SERVICE_META = {
-    gcs:           { label: 'Cloud Storage',    description: 'Object storage for companies of all sizes. Store any amount of data and retrieve it as often as you like.' },
-    pubsub:        { label: 'Pub/Sub',          description: 'Global messaging and event ingestion. Reliable, many-to-many, asynchronous messaging between services.' },
-    firestore:     { label: 'Firestore',        description: 'Flexible, scalable NoSQL cloud database for mobile, web, and server development.', tag: 'Coming up' },
-    bigquery:      { label: 'BigQuery',         description: 'Serverless, highly scalable, and cost-effective multicloud data warehouse for analytics.' },
-    secretmanager: { label: 'Secret Manager',   description: 'Store API keys, passwords, certificates, and other sensitive data securely.' },
-    cloudtasks:    { label: 'Cloud Tasks',      description: 'Manage the execution of large numbers of distributed tasks, callbacks, and webhooks.' },
-    spanner:       { label: 'Spanner',          description: 'Fully managed relational database with unlimited scale, strong consistency, and up to 99.999% availability.' },
-    bigtable:      { label: 'Bigtable',         description: 'A fully managed, scalable NoSQL database service for large analytical and operational workloads.' },
-    logging:       { label: 'Cloud Logging',    description: 'Real-time log management and analysis. Store, search, analyze, and alert on log data.' },
-    monitoring:    { label: 'Cloud Monitoring', description: 'Full-stack monitoring for cloud applications. Metrics, uptime checks, dashboards, and alerting.' },
-    gke:           { label: 'GKE',              description: 'Secured and managed Kubernetes service with four-way auto-scaling and multi-cluster support.' },
-    compute:       { label: 'Compute Engine',   description: 'Virtual machines running in Google\'s data center. Scalable, high-performance VMs.' },
-    cloudrun:      { label: 'Cloud Run',        description: 'Fully managed compute platform for deploying and scaling containerized applications quickly and securely.' },
-    memorystore:   { label: 'Memorystore',      description: 'Fully managed in-memory data store service for Redis and Memcached.' },
-    workflows:     { label: 'Cloud Workflows',  description: 'Orchestrate and automate Google Cloud and HTTP-based API services with serverless workflows.' },
-    vertexai:      { label: 'Vertex AI',        description: 'Local Gemini-style generative AI endpoints with deterministic stub responses and optional backend wiring.' },
-    kms:           { label: 'Cloud KMS',         description: 'Local key rings, crypto keys, key versions, and software-backed encryption/decryption for development.' },
-    cloudsql:      { label: 'Cloud SQL',         description: 'Cloud SQL Admin API control plane for PostgreSQL and MySQL-compatible development workflows.' },
-};
-
-// ─── SQL-Capable Services ──────────────────────────────────────────────
-const SQL_SERVICES = [
-    { id: 'pubsub', label: 'Pub/Sub', dialect: 'postgresql', dialectLabel: 'Pub/Sub SQL', icon: 'pubsub',
-      placeholder: "" },
-    { id: 'gcs', label: 'Cloud Storage', dialect: 'bigquery', dialectLabel: 'BigQuery SQL', icon: 'gcs',
-      placeholder: "" },
-    { id: 'bigquery', label: 'BigQuery', dialect: 'bigquery', dialectLabel: 'BigQuery SQL', icon: 'bigquery',
-      placeholder: "SELECT * FROM `dataset.table` LIMIT 10" },
-    { id: 'spanner', label: 'Spanner', dialect: 'googlesql', dialectLabel: 'GoogleSQL', icon: 'spanner',
-      placeholder: "SELECT * FROM my_table LIMIT 10" },
-    { id: 'secretmanager', label: 'Secret Manager', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'secretmanager',
-      placeholder: "" },
-    { id: 'cloudtasks', label: 'Cloud Tasks', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'cloudtasks',
-      placeholder: "" },
-    { id: 'logging', label: 'Logging', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'logging',
-      placeholder: "" },
-    { id: 'monitoring', label: 'Monitoring', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'monitoring',
-      placeholder: "" },
-    { id: 'bigtable', label: 'Bigtable', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'bigtable',
-      placeholder: "" },
-    { id: 'compute', label: 'Compute Engine', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'compute',
-      placeholder: "" },
-    { id: 'cloudrun', label: 'Cloud Run', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'cloudrun',
-      placeholder: "" },
-    { id: 'gke', label: 'GKE', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'gke',
-      placeholder: "" },
-    { id: 'memorystore', label: 'Memorystore', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'memorystore',
-      placeholder: "" },
-    { id: 'workflows', label: 'Cloud Workflows', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'workflows',
-      placeholder: "SELECT workflow_id, state, revision_id, updated_at\nFROM workflows\nWHERE state = 'ACTIVE'" },
-    { id: 'vertexai', label: 'Vertex AI', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'vertexai',
-      placeholder: "SELECT model_id, method, prompt_tokens, response_tokens, created_at\nFROM vertexai_requests\nORDER BY created_at DESC\nLIMIT 20" },
-    { id: 'kms', label: 'Cloud KMS', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'kms',
-      placeholder: "SELECT key_ring_id, crypto_key_id, primary_version, created_at\nFROM kms_crypto_keys\nORDER BY created_at DESC" },
-    { id: 'cloudsql', label: 'Cloud SQL', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'cloudsql',
-      placeholder: "SELECT instance_id, database_version, backend_type, state, created_at\nFROM cloudsql_instances\nORDER BY created_at DESC" },
-];
-const SQL_RESULT_PAGE_SIZE = 50;
-
-// ─── Static Schema Fallbacks ───────────────────────────────────────────
-const SERVICE_SCHEMAS = {
-    bigquery: { tables: [] },
-    spanner: { tables: [] },
-    workflows: { tables: [
-        { name: 'workflows', columns: [{ name: 'workflow_id', type: 'TEXT' }, { name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'source_contents', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'revision_id', type: 'INT' }, { name: 'labels', type: 'JSONB' }, { name: 'created_at', type: 'TIMESTAMP' }, { name: 'updated_at', type: 'TIMESTAMP' }] },
-        { name: 'workflow_executions', columns: [{ name: 'execution_id', type: 'TEXT' }, { name: 'workflow_id', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'argument', type: 'JSONB' }, { name: 'result', type: 'JSONB' }, { name: 'error', type: 'JSONB' }, { name: 'start_time', type: 'TIMESTAMP' }, { name: 'end_time', type: 'TIMESTAMP' }] }
-    ]},
-    vertexai: { tables: [
-        { name: 'vertexai_requests', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'model_id', type: 'TEXT' }, { name: 'method', type: 'TEXT' }, { name: 'prompt_tokens', type: 'INT' }, { name: 'response_tokens', type: 'INT' }, { name: 'created_at', type: 'TIMESTAMP' }] }
-    ]},
-    kms: { tables: [
-        { name: 'kms_key_rings', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'key_ring_id', type: 'TEXT' }, { name: 'created_at', type: 'TIMESTAMP' }] },
-        { name: 'kms_crypto_keys', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'key_ring_id', type: 'TEXT' }, { name: 'crypto_key_id', type: 'TEXT' }, { name: 'purpose', type: 'TEXT' }, { name: 'primary_version', type: 'INT' }] }
-    ]},
-    cloudsql: { tables: [
-        { name: 'cloudsql_instances', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'instance_id', type: 'TEXT' }, { name: 'database_version', type: 'TEXT' }, { name: 'backend_type', type: 'TEXT' }, { name: 'state', type: 'TEXT' }] },
-        { name: 'cloudsql_databases', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'instance_id', type: 'TEXT' }, { name: 'database_name', type: 'TEXT' }, { name: 'physical_name', type: 'TEXT' }] }
-    ]}
-};
+import { formatSize } from '../utils/format.js';
+import { SERVICE_META, SQL_SERVICES, SQL_RESULT_PAGE_SIZE, SERVICE_SCHEMAS } from '../data/services.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 function formatDuration(ms) {
@@ -167,18 +88,23 @@ function generateFileQuery(bucket, objectName) {
     return `SELECT * FROM read_parquet('${filePath}') LIMIT 100`;
 }
 
-function formatFileSize(bytes) {
-    if (bytes == null) return '';
-    const n = Number(bytes);
-    if (n === 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(n) / Math.log(1024));
-    return `${(n / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
-}
-
 function formatBadge(name) {
     const ext = getFileExtension(name).replace('.', '').toUpperCase();
     return ext === 'JSONL' || ext === 'NDJSON' ? 'JSON' : ext;
+}
+
+function fileBadgeClass(name) {
+    const ext = getFileExtension(name);
+    if (ext === '.parquet') return 'tree-badge-file tree-badge-parquet';
+    if (ext === '.csv') return 'tree-badge-file tree-badge-csv';
+    if (ext === '.json' || ext === '.jsonl' || ext === '.ndjson') return 'tree-badge-file tree-badge-json';
+    return 'tree-badge-file';
+}
+
+function quoteTableName(serviceInfo, tableName) {
+    if (serviceInfo?.dialect === 'bigquery') return '`' + tableName.replace(/`/g, '\\`') + '`';
+    if (serviceInfo?.id === 'bigtable') return '"' + tableName.replace(/"/g, '""') + '"';
+    return tableName;
 }
 
 // ─── SQL Editor Component (Full Workspace) ─────────────────────────────
@@ -199,7 +125,14 @@ function SQLEditor(props) {
     const [dynamicSchema, setDynamicSchema] = createSignal(null);
     const [expanded, setExpanded] = createSignal({});
     const [schemaSearch, setSchemaSearch] = createSignal('');
+    const [schemaSearchInputReady, setSchemaSearchInputReady] = createSignal(false);
     const [schemaLoading, setSchemaLoading] = createSignal(false);
+    const [savedQueries, setSavedQueries] = createSignal((() => {
+        try {
+            const parsed = JSON.parse(localStorage.getItem('localcloud-sql-bookmarks') || '[]');
+            return Array.isArray(parsed) ? parsed : [];
+        } catch { return []; }
+    })());
 
     // Resizable editor pane
     const [editorHeight, setEditorHeight] = createSignal(300);
@@ -366,6 +299,7 @@ function SQLEditor(props) {
     // Load schema from API for SQL-capable services (not GCS — it uses file loading)
     createEffect(() => {
         const svc = service();
+        props.refreshTrigger?.();
         // Note: For Spanner, instance/database may be empty on first load.
         // The backend auto-resolves to the first available instance/database.
         if (!NON_SQL_SERVICES.has(svc) && svc !== 'gcs') loadDynamicSchema(svc);
@@ -380,19 +314,18 @@ function SQLEditor(props) {
             // Instance/database selection only affects query execution, not schema browsing
             const schemaParams = undefined;
             data = await api.schema(svc, schemaParams);
-            if (requestId !== schemaLoadRequest || service() !== svc) return;
+            if (requestId !== schemaLoadRequest || service() !== svc) { setSchemaLoading(false); return; }
             if (data && data.tables) setDynamicSchema(data);
             else setDynamicSchema(null);
-            // Populate Spanner instance/database signals from schema response
             if (svc === 'spanner' && data) {
                 if (data.instances) setSpannerInstances(data.instances);
                 if (data.databases) setSpannerDatabases(data.databases);
             }
         } catch {
-            if (requestId !== schemaLoadRequest || service() !== svc) return;
+            if (requestId !== schemaLoadRequest || service() !== svc) { setSchemaLoading(false); return; }
             setDynamicSchema(null);
         }
-        if (requestId !== schemaLoadRequest || service() !== svc) return;
+        if (requestId !== schemaLoadRequest || service() !== svc) { setSchemaLoading(false); return; }
         setSchemaLoading(false);
         // Auto-expand nodes
         const info = SQL_SERVICES.find(s => s.id === svc);
@@ -419,19 +352,24 @@ function SQLEditor(props) {
 
     // Build hierarchical tree: database → tables → columns
     // For Spanner: instance → database → tables → columns
-    const schemaTree = () => {
+    const schemaTree = createMemo(() => {
         const schema = currentSchema();
         const tables = schema?.tables || [];
         const q = schemaSearch().toLowerCase().trim();
         const svcInfo = currentServiceInfo();
         const isBigQuery = svcInfo?.dialect === 'bigquery';
         const isSpanner = svcInfo?.id === 'spanner';
+        const isBigtable = svcInfo?.id === 'bigtable';
 
         // Group tables by database/dataset
         const groups = {};
         for (const t of tables) {
             let dbName, tableName;
             if (isBigQuery && t.name.includes('.')) {
+                const parts = t.name.split('.');
+                dbName = parts[0];
+                tableName = parts.slice(1).join('.');
+            } else if (isBigtable && t.name.includes('.')) {
                 const parts = t.name.split('.');
                 dbName = parts[0];
                 tableName = parts.slice(1).join('.');
@@ -456,10 +394,9 @@ function SQLEditor(props) {
             groups[groupKey].push({ ...t, shortName: tableName, _instance: t.instance, _database: dbName });
         }
         return groups;
-    };
+    });
 
-    // For Spanner: build instance → databases grouping from schemaTree
-    const spannerInstanceTree = () => {
+    const spannerInstanceTree = createMemo(() => {
         const tree = schemaTree();
         const instanceGroups = {};
         for (const [groupKey, tables] of Object.entries(tree)) {
@@ -469,13 +406,54 @@ function SQLEditor(props) {
             instanceGroups[inst][dbName] = tables;
         }
         return instanceGroups;
-    };
+    });
 
     function toggle(key) { setExpanded(prev => ({ ...prev, [key]: !prev[key] })); }
 
     function persistActiveTab(nextSql = sqlText()) {
         const id = activeSqlTab();
         setSqlTabs(prev => prev.map(tab => tab.id === id ? { ...tab, sql: nextSql } : tab));
+    }
+
+    function persistSavedQueries(next) {
+        setSavedQueries(next);
+        try { localStorage.setItem('localcloud-sql-bookmarks', JSON.stringify(next)); } catch {}
+    }
+
+    const serviceSavedQueries = createMemo(() => savedQueries().filter(q => q.service === service()));
+
+    function saveActiveQuery() {
+        const query = sqlText().trim();
+        if (!query) return;
+        persistActiveTab(query);
+        const tab = sqlTabs().find(t => t.id === activeSqlTab());
+        const title = tab?.title || `${currentServiceInfo()?.label || service()} Query`;
+        const bookmark = {
+            id: `saved-${Date.now()}`,
+            service: service(),
+            title,
+            sql: query,
+            savedAt: new Date().toISOString(),
+        };
+        const next = [
+            bookmark,
+            ...savedQueries().filter(q => !(q.service === service() && q.sql === query)),
+        ].slice(0, 40);
+        persistSavedQueries(next);
+    }
+
+    function loadSavedQuery(item) {
+        setSqlText(item.sql);
+        setIsPlaceholder(false);
+        persistActiveTab(item.sql);
+        setResult(null);
+        setResultPage(1);
+        setError(null);
+    }
+
+    function removeSavedQuery(id, e) {
+        e.stopPropagation();
+        persistSavedQueries(savedQueries().filter(q => q.id !== id));
     }
 
     function switchSqlTab(tabId) {
@@ -593,7 +571,7 @@ function SQLEditor(props) {
         // Pass the full table name (with database prefix for Spanner/BigQuery) as-is.
         // The backend handles prefix stripping and resolves the correct database.
         const svc = SQL_SERVICES.find(s => s.id === service());
-        const quoted = svc?.dialect === 'bigquery' ? '`' + tableName + '`' : tableName;
+        const quoted = quoteTableName(svc, tableName);
         const sql = `SELECT * FROM ${quoted} LIMIT 10`;
         setSqlText(sql);
         setIsPlaceholder(false);
@@ -607,14 +585,11 @@ function SQLEditor(props) {
     // Track whether current sqlText is still auto-generated placeholder
     const [isPlaceholder, setIsPlaceholder] = createSignal(true);
 
-    // For PostgreSQL-backed services, never show unrelated internal tables from
-    // a broad schema response. Some services intentionally publish no SQL schema.
-    const serviceSchema = () => {
+    const serviceSchema = createMemo(() => {
         const svc = currentServiceInfo();
         const ds = dynamicSchema();
         if (!svc || !ds || !ds.tables) return ds;
-        if (svc.dialect === 'bigquery' || svc.dialect === 'googlesql' || svc.id === 'pubsub' || svc.id === 'bigtable') return ds;
-        // For PostgreSQL-backed services, use the static schema to filter
+        if (svc.dialect === 'bigquery' || svc.dialect === 'googlesql' || svc.id === 'pubsub' || svc.id === 'bigtable' || svc.id === 'memorystore') return ds;
         const staticTables = SERVICE_SCHEMAS[service()]?.tables;
         if (staticTables && staticTables.length > 0) {
             const allowedNames = new Set(staticTables.map(t => t.name));
@@ -622,10 +597,9 @@ function SQLEditor(props) {
             return { ...ds, tables: filtered };
         }
         return { ...ds, tables: [] };
-    };
+    });
 
-    // Dynamic placeholder: use first real table from service-filtered schema
-    const dynamicPlaceholder = () => {
+    const dynamicPlaceholder = createMemo(() => {
         const svc = currentServiceInfo();
         if (!svc) return '';
         const ds = serviceSchema();
@@ -633,10 +607,10 @@ function SQLEditor(props) {
             const tbl = ds.tables[0];
             // Strip database prefix for Spanner (e.g., "my-database.Users" → "Users")
             const tableName = svc.id === 'spanner' && tbl.name.includes('.') ? tbl.name.split('.').pop() : tbl.name;
-            return `SELECT * FROM ${svc.dialect === 'bigquery' ? '`' + tableName + '`' : tableName} LIMIT 10`;
+            return `SELECT * FROM ${quoteTableName(svc, tableName)} LIMIT 10`;
         }
         return svc.placeholder;
-    };
+    });
 
     // Set placeholder from dynamic schema when it loads (overwrite if still auto-generated)
     createEffect(() => {
@@ -652,6 +626,16 @@ function SQLEditor(props) {
         setIsPlaceholder(false);
         setSqlText(val);
         persistActiveTab(val);
+    };
+
+    const enableSchemaSearchInput = () => setSchemaSearchInputReady(true);
+    const handleSchemaSearchInput = (e) => {
+        if (!schemaSearchInputReady()) {
+            e.currentTarget.value = '';
+            setSchemaSearch('');
+            return;
+        }
+        setSchemaSearch(e.currentTarget.value);
     };
     const resultRows = () => result()?.rows || [];
     const resultTotalPages = () => Math.max(1, Math.ceil(resultRows().length / SQL_RESULT_PAGE_SIZE));
@@ -693,14 +677,46 @@ function SQLEditor(props) {
 	                            type="text"
 	                            placeholder="Filter resources…"
                                 aria-label="Filter SQL resources"
-                                name="sql-resource-filter"
-                                autocomplete="off"
+                                autocomplete="new-password"
+                                autocapitalize="off"
+                                autocorrect="off"
+                                spellcheck={false}
+                                data-lpignore="true"
+                                data-1p-ignore="true"
+                                readOnly={!schemaSearchInputReady()}
+                                onPointerDown={enableSchemaSearchInput}
+                                onKeyDown={enableSchemaSearchInput}
+                                onFocus={enableSchemaSearchInput}
 	                            value={schemaSearch()}
-                            onInput={(e) => setSchemaSearch(e.currentTarget.value)}
+                            onInput={handleSchemaSearchInput}
                         />
                     </div>
                 </div>
                 <div class="sql-explorer-tree">
+                    <Show when={serviceSavedQueries().length > 0}>
+                        <div class="sql-bookmark-section">
+                            <div class="sql-bookmark-heading">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M17 3H7a2 2 0 0 0-2 2v17l7-3 7 3V5a2 2 0 0 0-2-2z"/></svg>
+                                Saved queries
+                            </div>
+                            <For each={serviceSavedQueries()}>
+                                {(item) => (
+                                    <div
+                                        class="sql-bookmark-item"
+                                        onClick={() => loadSavedQuery(item)}
+                                        onKeyDown={onActivate(() => loadSavedQuery(item))}
+                                        role="button"
+                                        tabIndex={0}
+                                    >
+                                        <span class="sql-bookmark-title">{item.title}</span>
+                                        <span class="sql-bookmark-sql">{item.sql}</span>
+                                        <button class="sql-bookmark-remove" onClick={(e) => removeSavedQuery(item.id, e)} aria-label={`Remove ${item.title}`} title="Remove saved query">&times;</button>
+                                    </div>
+                                )}
+                            </For>
+                        </div>
+                    </Show>
+
                     <Show when={schemaLoading()}>
                         <div class="sql-explorer-loading">
                             <div class="loading-spinner" style={{ width: '14px', height: '14px', "border-width": '1.5px' }} />
@@ -761,9 +777,9 @@ function SQLEditor(props) {
                                                                     </span>
                                                                     <IconTable />
                                                                     <span class="tree-name">{file.name}</span>
-                                                                    <span class="tree-badge" style={{ "font-size": "9px", "letter-spacing": "0.5px" }}>{formatBadge(file.name)}</span>
+                                                                    <span class={`tree-badge ${fileBadgeClass(file.name)}`}>{formatBadge(file.name)}</span>
                                                                     <Show when={file.size}>
-                                                                        <span class="tree-col-type" style={{ "margin-left": "auto" }}>{formatFileSize(file.size)}</span>
+                                                                        <span class="tree-col-type" style={{ "margin-left": "auto" }}>{formatSize(file.size)}</span>
                                                                     </Show>
                                                                 </div>
                                                                 <Show when={expanded()[fileKey]}>
@@ -1043,6 +1059,7 @@ function SQLEditor(props) {
                                     onKeyDown={onActivate(() => switchSqlTab(tab.id))}
                                     tabIndex="0"
 	                            >
+                                    <img src={`/icons/${currentServiceInfo()?.icon || service()}.svg`} alt="" width="14" height="14" class="aura-sql-tab-icon" />
 	                                <span>{tab.title}</span>
 	                                <Show when={sqlTabs().length > 1}>
 	                                    <button type="button" class="aura-sql-tab-close" onClick={(e) => closeSqlTab(tab.id, e)} aria-label={`Close ${tab.title}`}>&times;</button>
@@ -1075,6 +1092,10 @@ function SQLEditor(props) {
                             </button>
                         </Show>
                         <button class="btn btn-secondary" onClick={clearEditor} title="Clear editor and results">Clear</button>
+                        <button class="btn btn-secondary" onClick={saveActiveQuery} disabled={!sqlText().trim()} title="Save query to the explorer">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M17 3H7a2 2 0 0 0-2 2v17l7-3 7 3V5a2 2 0 0 0-2-2z"/></svg>
+                            Save Query
+                        </button>
                         <div class="sql-shortcut-hint">
                             <kbd>{navigator.platform?.includes('Mac') ? '\u2318' : 'Ctrl'}</kbd><span>+</span><kbd>Enter</kbd>
                         </div>
@@ -1245,9 +1266,25 @@ function SQLEditor(props) {
 
 // ─── Main Component ────────────────────────────────────────────────────
 export default function ServiceExplorer(props) {
-    const [mode, setMode] = createSignal('explorer');
+    const [mode, setMode] = createSignal(props.activeView?.() || 'explorer');
     const [refreshTrigger, setRefreshTrigger] = createSignal(0);
     const [resetTrigger, setResetTrigger] = createSignal(0);
+    let lastSyncedView = props.activeView?.();
+
+    createEffect(() => {
+        const view = props.activeView?.();
+        if (view && view !== lastSyncedView && (view === 'explorer' || view === 'editor')) {
+            lastSyncedView = view;
+            setMode(view);
+        }
+    });
+
+    const switchPrimaryMode = (nextMode) => {
+        if (nextMode !== 'explorer' && nextMode !== 'editor') return;
+        lastSyncedView = nextMode;
+        props.onViewChange?.(nextMode);
+        setMode(nextMode);
+    };
 
     const activeService = () => props.selectedService?.() || 'gcs';
     const meta = () => SERVICE_META[activeService()] || { label: activeService(), description: '' };
@@ -1287,33 +1324,77 @@ export default function ServiceExplorer(props) {
             </Show>
 
             {/* Standard services get SQL Editor + Data Explorer */}
-            <Show when={!isWorkflows()}>
+<Show when={!isWorkflows()}>
                 {/* Mode Toggle + Action Buttons */}
                 <div class="se-mode-bar">
                     <div class="se-mode-tabs">
                         <button
                             class={`se-mode-tab ${mode() === 'editor' ? 'active' : ''}`}
-                            onClick={() => setMode('editor')}
+                            onClick={() => switchPrimaryMode('editor')}
                         >
-	                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                 <path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/>
                             </svg>
                             SQL Editor
                         </button>
                         <button
                             class={`se-mode-tab ${mode() === 'explorer' ? 'active' : ''}`}
-                            onClick={() => setMode('explorer')}
+                            onClick={() => switchPrimaryMode('explorer')}
                         >
-	                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                 <path d="M20 6H12L10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/>
                             </svg>
                             Data Explorer
                         </button>
+                        <Show when={activeService() === 'cloudfunctions'}>
+                            <button
+                                class={`se-mode-tab ${mode() === 'trigger' ? 'active' : ''}`}
+                                onClick={() => setMode('trigger')}
+                            >
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                    <path d="M13 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8z"/>
+                                </svg>
+                                Trigger Test
+                            </button>
+                        </Show>
+                        <Show when={activeService() === 'dataproc'}>
+                            <button
+                                class={`se-mode-tab ${mode() === 'jobs' ? 'active' : ''}`}
+                                onClick={() => setMode('jobs')}
+                            >
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                    <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+                                </svg>
+                                Job Output
+                            </button>
+                        </Show>
+                        <Show when={activeService() === 'cloudscheduler'}>
+                            <button
+                                class={`se-mode-tab ${mode() === 'history' ? 'active' : ''}`}
+                                onClick={() => setMode('history')}
+                            >
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                    <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>
+                                </svg>
+                                Job History
+                            </button>
+                        </Show>
+                        <Show when={activeService() === 'alloydb'}>
+                            <button
+                                class={`se-mode-tab ${mode() === 'connection' ? 'active' : ''}`}
+                                onClick={() => setMode('connection')}
+                            >
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                                </svg>
+                                Connection
+                            </button>
+                        </Show>
                         <button
                             class={`se-mode-tab ${mode() === 'sync' ? 'active' : ''}`}
                             onClick={() => setMode('sync')}
                         >
-	                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                 <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
                             </svg>
                             Remote Sync
@@ -1342,24 +1423,52 @@ export default function ServiceExplorer(props) {
                 </div>
 
                 <div style={{ display: mode() === 'editor' ? 'flex' : 'none', flex: '1', "min-height": '0', "flex-direction": 'column' }}>
-                    <SQLEditor serviceId={activeService()} />
+                    <SQLEditor serviceId={activeService()} refreshTrigger={refreshTrigger} />
                 </div>
 
-                <div style={{ display: mode() === 'explorer' ? 'flex' : 'none', flex: '1', "min-height": '0', "flex-direction": 'column' }}>
-                    <DataBrowser
-                        selectedService={props.selectedService}
-                        onTabChange={props.onTabChange}
-                        activeProject={props.activeProject}
-                        refreshTrigger={refreshTrigger}
-                        resetTrigger={resetTrigger}
-                        subpath={props.subpath}
-                        onSubpathChange={props.onSubpathChange}
-                    />
-                </div>
+                <Show when={mode() === 'explorer'}>
+                    <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column' }}>
+                        <DataBrowser
+                            selectedService={props.selectedService}
+                            onTabChange={props.onTabChange}
+                            activeProject={props.activeProject}
+                            refreshTrigger={refreshTrigger}
+                            resetTrigger={resetTrigger}
+                            subpath={props.subpath}
+                            onSubpathChange={props.onSubpathChange}
+                        />
+                    </div>
+                </Show>
 
-                <div style={{ display: mode() === 'sync' ? 'flex' : 'none', flex: '1', "min-height": '0', "flex-direction": 'column' }}>
-                    <RemoteSyncPanel serviceId={activeService()} activeProject={props.activeProject} />
-                </div>
+                <Show when={mode() === 'sync'}>
+                    <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column' }}>
+                        <RemoteSyncPanel serviceId={activeService()} activeProject={props.activeProject} />
+                    </div>
+                </Show>
+
+                <Show when={activeService() === 'cloudfunctions' && mode() === 'trigger'}>
+                    <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '16px' }}>
+                        <TriggerTestPanel />
+                    </div>
+                </Show>
+
+                <Show when={activeService() === 'dataproc' && mode() === 'jobs'}>
+                    <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '16px' }}>
+                        <JobOutputPanel outputPath={props.subpath?.[1]} />
+                    </div>
+                </Show>
+
+                <Show when={activeService() === 'cloudscheduler' && mode() === 'history'}>
+                    <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '16px' }}>
+                        <SchedulerHistoryPanel jobName={props.subpath?.[1] ? `projects/local-project/locations/us-central1/jobs/${props.subpath[1]}` : null} />
+                    </div>
+                </Show>
+
+                <Show when={activeService() === 'alloydb' && mode() === 'connection'}>
+                    <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '16px' }}>
+                        <ConnectionInfoPanel project={props.activeProject} />
+                    </div>
+                </Show>
             </Show>
         </div>
     );

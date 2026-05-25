@@ -99,9 +99,13 @@ public class SupervisorClient {
         Map<String, Map<String, String>> result = new LinkedHashMap<>();
         try {
             String response = callXmlRpc("supervisor.getAllProcessInfo", "");
-            if (response == null) return result;
+            if (response == null) {
+                logger.debug("supervisor.getAllProcessInfo returned null");
+                return result;
+            }
 
             int structStart = 0;
+            int structCount = 0;
             while ((structStart = response.indexOf("<struct>", structStart)) >= 0) {
                 int structEnd = response.indexOf("</struct>", structStart);
                 if (structEnd < 0) break;
@@ -119,10 +123,12 @@ public class SupervisorClient {
                     info.put("statename", statename);
                     info.put("description", description);
                     result.put(name, info);
+                    structCount++;
                 }
 
                 structStart = structEnd + "</struct>".length();
             }
+            logger.debug("supervisor.getAllProcessInfo: found {} processes", structCount);
         } catch (Exception e) {
             logger.warn("Failed to get all supervisor processes: {}", e.getMessage());
         }
@@ -130,19 +136,23 @@ public class SupervisorClient {
     }
 
     /**
-     * Read RSS (resident memory) of a process in megabytes from /proc/[pid]/statm.
+     * Read RSS (resident memory) of a process in megabytes from /proc/[pid]/status.
+     * Parses the VmRSS line which reports memory in kB regardless of page size.
      * Returns 0 if the PID is 0 or /proc entry cannot be read.
      */
     public static long getProcessMemoryMb(long pid) {
         if (pid <= 0) return 0;
         try {
-            String content = Files.readString(Path.of("/proc/" + pid + "/statm"));
-            // statm format: size resident shared text lib data dt
-            // resident is the second field, in pages (typically 4096 bytes)
-            String[] parts = content.trim().split("\\s+");
-            if (parts.length >= 2) {
-                long pages = Long.parseLong(parts[1]);
-                return (pages * 4096) / (1024 * 1024);
+            String content = Files.readString(Path.of("/proc/" + pid + "/status"));
+            for (String line : content.split("\n")) {
+                if (line.startsWith("VmRSS:")) {
+                    String[] parts = line.trim().split("\\s+");
+                    if (parts.length >= 2) {
+                        long kb = Long.parseLong(parts[1]);
+                        long mb = kb / 1024;
+                        return mb > 0 ? mb : 1;
+                    }
+                }
             }
         } catch (Exception e) {
             // Process may have exited, or /proc not available

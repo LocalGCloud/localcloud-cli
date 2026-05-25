@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <!-- Function node circle -->
+  <circle cx="12" cy="12" r="6" fill="#aecbfa"/>
+  <circle cx="12" cy="12" r="4" fill="#669df6"/>
+  <!-- Incoming trigger arrow -->
+  <path d="M4 12h4" stroke="#4285f4" stroke-width="2" stroke-linecap="round"/>
+  <path d="M5.5 9.5l2.5 2.5-2.5 2.5" stroke="#4285f4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Outgoing response arrow -->
+  <path d="M20 12h-4" stroke="#4285f4" stroke-width="2" stroke-linecap="round"/>
+  <path d="M18.5 9.5L16 12l2.5 2.5" stroke="#4285f4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

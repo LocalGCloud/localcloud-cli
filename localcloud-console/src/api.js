@@ -186,13 +186,13 @@ export const api = {
     syncDisconnect:       ()           => post(appendProject('/sync/auth/disconnect')),
     syncBrowse:           (service)    => get(appendProject(`/sync/${service}/browse`)),
     syncPreview:          (service, resource, limit = 5) =>
-        get(appendProject(`/sync/${service}/preview`) + `&resource=${encodeURIComponent(resource)}&limit=${limit}`),
+        get(appendProject(`/sync/${service}/preview`) + `?resource=${encodeURIComponent(resource)}&limit=${limit}`),
     syncEstimate:         (service, body) => postJson(appendProject(`/sync/${service}/estimate`), body),
     syncStart:            (service, body) => postJson(appendProject(`/sync/${service}/start`), body),
     syncManifests:        ()           => get(appendProject('/sync/manifests')),
     syncServiceManifests: (service)    => get(appendProject(`/sync/${service}/manifests`)),
     syncProgress:         (service, resource) =>
-        get(appendProject(`/sync/${service}/progress`) + `&resource=${encodeURIComponent(resource)}`),
+        get(appendProject(`/sync/${service}/progress`) + `?resource=${encodeURIComponent(resource)}`),
     syncCancel:           (service, body) => postJson(appendProject(`/sync/${service}/cancel`), body),
     syncResync:           (id)         => postJson(appendProject(`/sync/resync/${id}`), {}),
     syncDeleteManifest:   (id)         => del(appendProject(`/sync/manifests/${id}`)),

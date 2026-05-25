@@ -4,26 +4,26 @@
 
 | Area | Description | Skill |
 |------|-------------|-------|
-| Get | 219 symbols | `/gortex-get` |
-| Handle | 186 symbols | `/gortex-handle` |
-| Build | 138 symbols | `/gortex-build` |
-| Admin | 136 symbols | `/gortex-admin` |
+| Get | 257 symbols | `/gortex-get` |
+| Get | 199 symbols | `/gortex-get` |
+| Seed | 196 symbols | `/gortex-seed` |
+| Get | 182 symbols | `/gortex-get` |
+| List | 141 symbols | `/gortex-list` |
 | Stdlib | 80 symbols | `/gortex-stdlib` |
+| Licensing | 75 symbols | `/gortex-licensing` |
 | Bigtablesql | 74 symbols | `/gortex-bigtablesql` |
 | Expression | 64 symbols | `/gortex-expression` |
-| Bigtablesql | 60 symbols | `/gortex-bigtablesql` |
-| Engine | 52 symbols | `/gortex-engine` |
-| Adapters | 40 symbols | `/gortex-adapters` |
-| Engine | 37 symbols | `/gortex-engine` |
+| Generate | 60 symbols | `/gortex-generate` |
+| Adapters | 49 symbols | `/gortex-adapters` |
+| Build | 46 symbols | `/gortex-build` |
+| Bigtablesql | 45 symbols | `/gortex-bigtablesql` |
+| Pages | 45 symbols | `/gortex-pages` |
+| Services | 45 symbols | `/gortex-services` |
+| Gateway | 44 symbols | `/gortex-gateway` |
+| Engine | 43 symbols | `/gortex-engine` |
+| Localcloud | 32 symbols | `/gortex-localcloud` |
 | Expression | 32 symbols | `/gortex-expression` |
-| Test | 30 symbols | `/gortex-test` |
-| Gateway | 30 symbols | `/gortex-gateway` |
-| Adapters | 29 symbols | `/gortex-adapters` |
-| Pages | 27 symbols | `/gortex-pages` |
-| Engine | 27 symbols | `/gortex-engine` |
-| Get | 27 symbols | `/gortex-get` |
-| Gateway | 27 symbols | `/gortex-gateway` |
-| Localcloud | 26 symbols | `/gortex-localcloud` |
+| Get | 32 symbols | `/gortex-get` |
 <!-- gortex:skills:end -->
 
 <!-- gortex:communities:end -->

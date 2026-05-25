@@ -134,6 +134,66 @@ services:
     gcloudApiName: cloudtasks
     terraformEnvVar: GOOGLE_CLOUD_TASKS_CUSTOM_ENDPOINT
 
+  cloudscheduler:
+    displayName: "Cloud Scheduler"
+    port: gateway
+    protocol: grpc
+    envVar: CLOUD_SCHEDULER_EMULATOR_HOST
+    envValuePrefix: ""
+    type: facade
+    defaultEnabled: true
+    minTier: community
+    gcloudApiName: cloudscheduler
+    terraformEnvVar: GOOGLE_CLOUD_SCHEDULER_CUSTOM_ENDPOINT
+
+  cloudfunctions:
+    displayName: "Cloud Functions (2nd Gen)"
+    port: gateway
+    protocol: grpc
+    envVar: CLOUD_FUNCTIONS_EMULATOR_HOST
+    envValuePrefix: ""
+    type: facade
+    defaultEnabled: true
+    minTier: community
+    gcloudApiName: cloudfunctions
+    terraformEnvVar: GOOGLE_CLOUD_FUNCTIONS_CUSTOM_ENDPOINT
+
+  alloydb:
+    displayName: "AlloyDB"
+    port: gateway
+    protocol: grpc
+    envVar: ALLOYDB_EMULATOR_HOST
+    envValuePrefix: ""
+    type: facade
+    defaultEnabled: true
+    minTier: community
+    gcloudApiName: alloydb
+    terraformEnvVar: GOOGLE_ALLOYDB_CUSTOM_ENDPOINT
+
+  dataproc:
+    displayName: "Dataproc"
+    port: gateway
+    protocol: grpc
+    envVar: DATAPROC_EMULATOR_HOST
+    envValuePrefix: ""
+    type: facade
+    defaultEnabled: true
+    minTier: community
+    gcloudApiName: dataproc
+    terraformEnvVar: GOOGLE_DATAPROC_CUSTOM_ENDPOINT
+
+  cloudiam:
+    displayName: "Cloud IAM"
+    port: gateway
+    protocol: grpc
+    envVar: IAM_EMULATOR_HOST
+    envValuePrefix: ""
+    type: facade
+    defaultEnabled: true
+    minTier: community
+    gcloudApiName: iam
+    terraformEnvVar: GOOGLE_IAM_CUSTOM_ENDPOINT
+
   logging:
     displayName: "Cloud Logging"
     port: gateway

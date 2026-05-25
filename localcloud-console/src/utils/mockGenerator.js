@@ -36,6 +36,50 @@ export function generateMockValue(columnName, type = 'STRING') {
     const nameLower = columnName.toLowerCase();
     const cleanType = type.toUpperCase().split('(')[0].trim();
 
+    // Type-specific values come first so numeric key columns like customer_id
+    // do not receive UUID strings.
+    switch (cleanType) {
+        case 'BOOL':
+        case 'BOOLEAN':
+            return Math.random() > 0.5;
+
+        case 'INT64':
+        case 'INT':
+        case 'INTEGER':
+        case 'BIGINT':
+        case 'SMALLINT':
+            return Math.floor(Math.random() * 1000) + 1;
+
+        case 'FLOAT64':
+        case 'FLOAT':
+        case 'DOUBLE':
+        case 'DOUBLE PRECISION':
+        case 'REAL':
+        case 'NUMERIC':
+        case 'DECIMAL':
+            return parseFloat((Math.random() * 100).toFixed(4));
+
+        case 'DATE':
+            const d = new Date();
+            d.setDate(d.getDate() - Math.floor(Math.random() * 365));
+            return d.toISOString().split('T')[0];
+
+        case 'TIMESTAMP':
+        case 'DATETIME':
+        case 'TIME':
+            const ts = new Date();
+            ts.setMinutes(ts.getMinutes() - Math.floor(Math.random() * 10000));
+            return ts.toISOString();
+
+        case 'JSON':
+        case 'JSONB':
+            return JSON.stringify({
+                created_by: 'localcloud-generator',
+                version: 1.0,
+                status: 'verified'
+            });
+    }
+
     // 1. Context-based matching using field names
     if (nameLower.includes('email')) {
         const first = pickRandom(FIRST_NAMES).toLowerCase();
@@ -92,32 +136,6 @@ export function generateMockValue(columnName, type = 'STRING') {
 
     // 2. Type-based fallbacks
     switch (cleanType) {
-        case 'BOOL':
-        case 'BOOLEAN':
-            return Math.random() > 0.5;
-        
-        case 'INT64':
-        case 'INT':
-        case 'INTEGER':
-            return Math.floor(Math.random() * 1000) + 1;
-            
-        case 'FLOAT64':
-        case 'FLOAT':
-        case 'DOUBLE':
-        case 'NUMERIC':
-            return parseFloat((Math.random() * 100).toFixed(4));
-            
-        case 'DATE':
-            const d = new Date();
-            d.setDate(d.getDate() - Math.floor(Math.random() * 365));
-            return d.toISOString().split('T')[0];
-            
-        case 'TIMESTAMP':
-        case 'DATETIME':
-            const ts = new Date();
-            ts.setMinutes(ts.getMinutes() - Math.floor(Math.random() * 10000));
-            return ts.toISOString();
-            
         case 'BYTES':
             // Generate simple random hex bytes
             let hex = '';
@@ -125,14 +143,7 @@ export function generateMockValue(columnName, type = 'STRING') {
                 hex += Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
             }
             return hex;
-            
-        case 'JSON':
-            return JSON.stringify({
-                created_by: 'localcloud-generator',
-                version: 1.0,
-                status: 'verified'
-            });
-            
+
         case 'STRING':
         default:
             // Generate a random word/short sentence

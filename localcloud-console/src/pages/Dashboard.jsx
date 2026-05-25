@@ -21,6 +21,11 @@ const SERVICE_NAMES = {
   vertexai: 'Vertex AI',
   kms: 'Cloud KMS',
   cloudsql: 'Cloud SQL',
+  alloydb: 'AlloyDB',
+  cloudscheduler: 'Cloud Scheduler',
+  cloudfunctions: 'Cloud Functions',
+  dataproc: 'Dataproc',
+  cloudiam: 'Cloud IAM',
 };
 
 const ALL_SERVICE_IDS = [
@@ -42,6 +47,11 @@ const ALL_SERVICE_IDS = [
   { id: 'vertexai', port: 8080, protocol: 'REST', env_var: 'AIPLATFORM_EMULATOR_HOST', endpoint: 'http://localhost:8080' },
   { id: 'kms', port: 8080, protocol: 'REST', env_var: 'CLOUD_KMS_EMULATOR_HOST', endpoint: 'http://localhost:8080' },
   { id: 'cloudsql', port: 8080, protocol: 'REST', env_var: 'CLOUD_SQL_EMULATOR_HOST', endpoint: 'http://localhost:8080' },
+  { id: 'alloydb', port: 8080, protocol: 'GRPC', env_var: 'ALLOYDB_EMULATOR_HOST', endpoint: 'localhost:8080' },
+  { id: 'cloudscheduler', port: 8080, protocol: 'GRPC', env_var: 'CLOUD_SCHEDULER_EMULATOR_HOST', endpoint: 'localhost:8080' },
+  { id: 'cloudfunctions', port: 8080, protocol: 'GRPC', env_var: 'CLOUD_FUNCTIONS_EMULATOR_HOST', endpoint: 'localhost:8080' },
+  { id: 'dataproc', port: 8080, protocol: 'GRPC', env_var: 'DATAPROC_EMULATOR_HOST', endpoint: 'localhost:8080' },
+  { id: 'cloudiam', port: 8080, protocol: 'GRPC', env_var: 'IAM_EMULATOR_HOST', endpoint: 'localhost:8080' },
 ];
 
 function ServiceIcon({ id, size = 20 }) {
@@ -92,6 +102,11 @@ function AreaChartCard(props) {
   const norm = () => raw().map(v => ((v - minVal()) / range()) * 100);
 
   const polyPoints = () => norm().map((v, i) => `${(i / (len() - 1)) * 100},${100 - v}`).join(' ');
+  const currentY = () => {
+    const value = props.currentValue();
+    if (value == null) return null;
+    return 100 - ((value - minVal()) / range()) * 100;
+  };
   const areaPath = () => {
     const pts = norm().map((v, i) => `${(i / (len() - 1)) * 100},${100 - v}`).join(' L');
     return `M0,100 L${pts} L100,100 Z`;
@@ -146,8 +161,13 @@ function AreaChartCard(props) {
           <polyline points={polyPoints()} fill="none" stroke={props.accent} stroke-width="1.5" vector-effect="non-scaling-stroke" />
         </Show>
         {/* Grid lines */}
+        <line x1="0" y1="25" x2="100" y2="25" stroke="var(--border)" stroke-width="0.25" opacity="0.12" />
         <line x1="0" y1="100" x2="100" y2="100" stroke="var(--border)" stroke-width="0.4" opacity="0.25" />
         <line x1="0" y1="50" x2="100" y2="50" stroke="var(--border)" stroke-width="0.3" opacity="0.12" stroke-dasharray="2,4" />
+        <line x1="0" y1="75" x2="100" y2="75" stroke="var(--border)" stroke-width="0.25" opacity="0.12" />
+        <Show when={hasData() && currentY() !== null}>
+          <line x1="0" y1={currentY()} x2="100" y2={currentY()} stroke={props.accent} stroke-width="0.5" opacity="0.5" stroke-dasharray="4,4" />
+        </Show>
         {/* Hover tracking */}
         <rect x="0" y="0" width="100" height="100" fill="transparent"
           onMouseMove={handleMove} onMouseLeave={handleLeave} />
@@ -502,7 +522,7 @@ export default function Dashboard(props) {
                       <td style={{ "font-weight": "600" }}>
                         <span style={{ display: 'inline-flex', "align-items": 'center', gap: '8px' }}>
                           <span>{svc.displayName}</span>
-                          <Show when={svc.id === 'firestore'}><span class="badge badge-coming-up">Coming up</span></Show>
+                          <Show when={svc.id === 'firestore' || svc.id === 'vertexai'}><span class="badge badge-coming-up">Coming up</span></Show>
                         </span>
                       </td>
                       <td>

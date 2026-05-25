@@ -7,8 +7,10 @@ import java.net.http.HttpResponse.BodyHandlers;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -168,6 +170,7 @@ public class BrowseService {
             String json = switch (service) {
                 case "spanner" -> browseSpannerTableData(a, b, c, d, e, projectId);
                 case "bigquery" -> browseBigQueryTableData(a, b, c, d, e, projectId);
+                case "dataproc" -> browseDataprocJobOutput(d, projectId);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unsupported 6-segment browse for service: " + service));
@@ -192,6 +195,14 @@ public class BrowseService {
                 case "spanner" -> browseSpannerDatabase(a, b, c, projectId);
                 case "bigquery" -> browseBigQueryTables(a, b, c, projectId);
                 case "bigtable" -> browseBigtable(a, b + "/" + c, projectId);
+                case "alloydb" -> {
+                    if ("tables".equals(a)) {
+                        yield browseAlloyDBTables(b, c, projectId);
+                    }
+                    yield mapper.writeValueAsString(Map.of(
+                            "error", true,
+                            "message", "Invalid AlloyDB browse path"));
+                }
                 case "memorystore" -> {
                     // memorystore/db/{index}/keys?prefix=...
                     if ("db".equals(a) && "keys".equals(c)) {
@@ -202,6 +213,7 @@ public class BrowseService {
                     yield mapper.writeValueAsString(Map.of("error", true,
                             "message", "Invalid Memorystore browse path"));
                 }
+                case "cloudscheduler" -> browseSchedulerJobExecutions(a, b, projectId);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unsupported 4-segment browse for service: " + service));
@@ -224,6 +236,14 @@ public class BrowseService {
             usageMetrics.incrementCount(projectId, service, 1);
             String json = switch (service) {
                 case "spanner" -> browseSpannerStats(a, b, c, d, projectId);
+                case "alloydb" -> {
+                    if ("rows".equals(a)) {
+                        yield browseAlloyDBRows(b, c, d, projectId);
+                    }
+                    yield mapper.writeValueAsString(Map.of(
+                            "error", true,
+                            "message", "Invalid AlloyDB browse path"));
+                }
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unsupported 5-segment browse for service: " + service));
@@ -257,6 +277,11 @@ public class BrowseService {
                 case "firestore" -> browseFirestore(resourceType, resourceId, projectId);
                 case "bigtable" -> browseBigtable(resourceType, resourceId, projectId);
                 case "workflows" -> browseWorkflows(resourceType, resourceId, projectId);
+                case "cloudscheduler" -> browseCloudScheduler(resourceType, resourceId, projectId);
+                case "cloudfunctions" -> browseCloudFunctions(resourceType, resourceId, projectId);
+                case "alloydb" -> browseAlloyDB(resourceType, resourceId, projectId);
+                case "dataproc" -> browseDataproc(resourceType, resourceId, projectId);
+                case "cloudiam" -> browseCloudIAM(resourceType, resourceId, projectId);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unknown service: " + service));
@@ -1414,6 +1439,535 @@ public class BrowseService {
         }
 
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Workflows browse path"));
+    }
+
+    // ========== Cloud Scheduler (in-process, query PostgreSQL) ==========
+
+    private String browseCloudScheduler(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        if (resourceType == null || "jobs".equals(resourceType) && resourceId == null) {
+            List<Map<String, Object>> jobs = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT project_id, location_id, job_id, schedule, time_zone, state, next_execution_time, " +
+                     "created_at, updated_at FROM scheduler_jobs WHERE project_id = ? ORDER BY location_id, job_id")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> j = new LinkedHashMap<>();
+                        j.put("name", "projects/" + rs.getString("project_id") + "/locations/"
+                                + rs.getString("location_id") + "/jobs/" + rs.getString("job_id"));
+                        j.put("schedule", rs.getString("schedule"));
+                        j.put("timeZone", rs.getString("time_zone"));
+                        j.put("state", rs.getString("state"));
+                        if (rs.getTimestamp("next_execution_time") != null)
+                            j.put("nextExecutionTime", rs.getTimestamp("next_execution_time").toString());
+                        if (rs.getTimestamp("created_at") != null)
+                            j.put("createdAt", rs.getTimestamp("created_at").toString());
+                        if (rs.getTimestamp("updated_at") != null)
+                            j.put("updatedAt", rs.getTimestamp("updated_at").toString());
+                        jobs.add(j);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("jobs", jobs));
+        }
+        if ("executions".equals(resourceType) && resourceId != null) {
+            List<Map<String, Object>> executions = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT job_name, status, executed_at, output FROM scheduler_executions " +
+                     "WHERE job_name LIKE ? ORDER BY executed_at DESC LIMIT 100")) {
+                ps.setString(1, "%" + resourceId + "%");
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> e = new LinkedHashMap<>();
+                        e.put("jobName", rs.getString("job_name"));
+                        e.put("status", rs.getString("status"));
+                        if (rs.getTimestamp("executed_at") != null)
+                            e.put("executedAt", rs.getTimestamp("executed_at").toString());
+                        e.put("output", rs.getString("output"));
+                        executions.add(e);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("executions", executions));
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Cloud Scheduler browse path. Use: /browse/cloudscheduler"));
+    }
+
+    private String browseSchedulerJobExecutions(String a, String b, String projectId) throws Exception {
+        if (!"jobs".equals(a)) {
+            return mapper.writeValueAsString(Map.of("error", true,
+                    "message", "Invalid Cloud Scheduler browse path. Use: /browse/cloudscheduler/jobs/{jobName}/executions"));
+        }
+        String jobName = b;
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        List<Map<String, Object>> executions = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "SELECT job_name, status, executed_at, output FROM scheduler_executions " +
+                 "WHERE job_name = ? ORDER BY executed_at DESC LIMIT 50")) {
+            ps.setString(1, jobName);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> e = new LinkedHashMap<>();
+                    e.put("jobName", rs.getString("job_name"));
+                    e.put("status", rs.getString("status"));
+                    if (rs.getTimestamp("executed_at") != null)
+                        e.put("executedAt", rs.getTimestamp("executed_at").toString());
+                    e.put("output", rs.getString("output"));
+                    executions.add(e);
+                }
+            }
+        }
+        return mapper.writeValueAsString(Map.of("executions", executions));
+    }
+
+    private String browseDataprocJobOutput(String jobId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "SELECT driver_output_path FROM dataproc_jobs WHERE job_id = ? AND project_id = ?")) {
+            ps.setString(1, jobId);
+            ps.setString(2, projectId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    String path = rs.getString("driver_output_path");
+                    if (path != null && !path.isBlank()) {
+                        try {
+                            String content = java.nio.file.Files.readString(java.nio.file.Paths.get(path));
+                            return mapper.writeValueAsString(Map.of("output", content));
+                        } catch (java.nio.file.NoSuchFileException e) {
+                            return mapper.writeValueAsString(Map.of("error", true, "message", "Output file not found: " + path));
+                        } catch (Exception e) {
+                            return mapper.writeValueAsString(Map.of("error", true, "message", "Could not read output: " + e.getMessage()));
+                        }
+                    }
+                }
+            }
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Job not found: " + jobId));
+    }
+
+    // ========== Cloud Functions (in-process, query PostgreSQL) ==========
+
+    private String browseCloudFunctions(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        if ("functions".equals(resourceType) && resourceId != null && !resourceId.isBlank()) {
+            String[] parts = resourceId.split("/");
+            if (parts.length == 2) {
+                String locationId = parts[0];
+                String functionId = parts[1];
+                List<Map<String, Object>> functions = new ArrayList<>();
+                try (Connection conn = dataSource.getConnection();
+                     PreparedStatement ps = conn.prepareStatement(
+                         "SELECT project_id, location_id, function_id, runtime, entry_point, state, " +
+                         "created_at, updated_at FROM cloud_functions " +
+                         "WHERE project_id = ? AND location_id = ? AND function_id = ?")) {
+                    ps.setString(1, projectId);
+                    ps.setString(2, locationId);
+                    ps.setString(3, functionId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            Map<String, Object> f = new LinkedHashMap<>();
+                            f.put("name", "projects/" + rs.getString("project_id") + "/locations/"
+                                    + rs.getString("location_id") + "/functions/" + rs.getString("function_id"));
+                            f.put("runtime", rs.getString("runtime"));
+                            f.put("entryPoint", rs.getString("entry_point"));
+                            f.put("state", rs.getString("state"));
+                            if (rs.getTimestamp("created_at") != null)
+                                f.put("createdAt", rs.getTimestamp("created_at").toString());
+                            if (rs.getTimestamp("updated_at") != null)
+                                f.put("updatedAt", rs.getTimestamp("updated_at").toString());
+                            functions.add(f);
+                        }
+                    }
+                }
+                return mapper.writeValueAsString(Map.of("functions", functions));
+            }
+        }
+        List<Map<String, Object>> functions = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "SELECT project_id, location_id, function_id, runtime, entry_point, state, " +
+                 "created_at, updated_at FROM cloud_functions WHERE project_id = ? ORDER BY function_id")) {
+            ps.setString(1, projectId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> f = new LinkedHashMap<>();
+                    f.put("name", "projects/" + rs.getString("project_id") + "/locations/"
+                            + rs.getString("location_id") + "/functions/" + rs.getString("function_id"));
+                    f.put("runtime", rs.getString("runtime"));
+                    f.put("entryPoint", rs.getString("entry_point"));
+                    f.put("state", rs.getString("state"));
+                    if (rs.getTimestamp("created_at") != null)
+                        f.put("createdAt", rs.getTimestamp("created_at").toString());
+                    if (rs.getTimestamp("updated_at") != null)
+                        f.put("updatedAt", rs.getTimestamp("updated_at").toString());
+                    functions.add(f);
+                }
+            }
+        }
+        return mapper.writeValueAsString(Map.of("functions", functions));
+    }
+
+    // ========== AlloyDB (in-process, query PostgreSQL) ==========
+
+    private String browseAlloyDB(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        if (resourceType == null || "clusters".equals(resourceType) && resourceId == null) {
+            List<Map<String, Object>> clusters = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT project_id, location_id, cluster_id, database_name, created_at FROM alloydb_clusters " +
+                     "WHERE project_id = ? ORDER BY cluster_id")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> c = new LinkedHashMap<>();
+                        c.put("name", "projects/" + rs.getString("project_id") + "/locations/"
+                                + rs.getString("location_id") + "/clusters/" + rs.getString("cluster_id"));
+                        c.put("clusterId", rs.getString("cluster_id"));
+                        c.put("databaseName", rs.getString("database_name"));
+                        c.put("state", "READY");
+                        if (rs.getTimestamp("created_at") != null)
+                            c.put("createdAt", rs.getTimestamp("created_at").toString());
+                        clusters.add(c);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("clusters", clusters));
+        }
+        if ("instances".equals(resourceType) && resourceId != null) {
+            List<Map<String, Object>> instances = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT i.instance_proto, i.created_at FROM alloydb_instances i " +
+                     "JOIN alloydb_clusters c ON i.project_id = c.project_id AND i.location_id = c.location_id " +
+                     "AND i.cluster_id = c.cluster_id " +
+                     "WHERE i.project_id = ? AND i.cluster_id = ? ORDER BY i.instance_id")) {
+                ps.setString(1, projectId);
+                ps.setString(2, resourceId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        com.google.cloud.alloydb.v1.Instance instance =
+                                com.google.cloud.alloydb.v1.Instance.parseFrom(rs.getBytes("instance_proto"));
+                        String[] nameParts = instance.getName().split("/");
+                        Map<String, Object> inst = new LinkedHashMap<>();
+                        inst.put("instanceId", nameParts.length == 8 ? nameParts[7] : instance.getName());
+                        inst.put("instanceType", instance.getInstanceType().name());
+                        inst.put("state", instance.getState().name());
+                        if (rs.getTimestamp("created_at") != null)
+                            inst.put("createdAt", rs.getTimestamp("created_at").toString());
+                        instances.add(inst);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("instances", instances));
+        }
+        if ("databases".equals(resourceType) && resourceId != null) {
+            List<Map<String, Object>> databases = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT location_id, cluster_id, database_name, physical_name, created_at FROM alloydb_databases " +
+                     "WHERE project_id = ? AND cluster_id = ? ORDER BY database_name")) {
+                ps.setString(1, projectId);
+                ps.setString(2, resourceId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> db = new LinkedHashMap<>();
+                        db.put("name", rs.getString("database_name"));
+                        db.put("databaseName", rs.getString("database_name"));
+                        db.put("physicalName", rs.getString("physical_name"));
+                        db.put("clusterId", rs.getString("cluster_id"));
+                        db.put("locationId", rs.getString("location_id"));
+                        if (rs.getTimestamp("created_at") != null)
+                            db.put("createdAt", rs.getTimestamp("created_at").toString());
+                        databases.add(db);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("databases", databases));
+        }
+        if ("backups".equals(resourceType)) {
+            List<Map<String, Object>> backups = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT b.backup_id, b.cluster_name, b.created_at FROM alloydb_backups b " +
+                     "WHERE b.project_id = ? ORDER BY b.backup_id")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> bk = new LinkedHashMap<>();
+                        bk.put("backupId", rs.getString("backup_id"));
+                        bk.put("clusterName", rs.getString("cluster_name"));
+                        bk.put("state", "READY");
+                        if (rs.getTimestamp("created_at") != null)
+                            bk.put("createdAt", rs.getTimestamp("created_at").toString());
+                        backups.add(bk);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("backups", backups));
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid AlloyDB browse path. Use: /browse/alloydb or /browse/alloydb/instances/{clusterId}"));
+    }
+
+    private String browseAlloyDBTables(String clusterId, String databaseName, String projectId) throws Exception {
+        Map<String, String> cluster = findAlloyDBCluster(projectId, clusterId);
+        if (cluster == null) {
+            return mapper.writeValueAsString(Map.of("error", true, "message", "AlloyDB cluster not found: " + clusterId));
+        }
+        String physicalDatabase = findAlloyDBPhysicalDatabase(projectId, clusterId, databaseName);
+        if (physicalDatabase == null) {
+            return mapper.writeValueAsString(Map.of("error", true, "message", "AlloyDB database not found: " + databaseName));
+        }
+
+        List<Map<String, Object>> tables = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection(physicalDatabase);
+             PreparedStatement ps = conn.prepareStatement("""
+                     SELECT c.table_name, c.column_name, c.data_type
+                     FROM information_schema.columns c
+                     JOIN information_schema.tables t
+                       ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+                     WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+                     ORDER BY c.table_name, c.ordinal_position
+                     """)) {
+            try (ResultSet rs = ps.executeQuery()) {
+                String currentTable = null;
+                List<Map<String, Object>> columns = null;
+                while (rs.next()) {
+                    String tableName = rs.getString("table_name");
+                    if (!tableName.equals(currentTable)) {
+                        if (currentTable != null) {
+                            tables.add(tableEntry(currentTable, columns));
+                        }
+                        currentTable = tableName;
+                        columns = new ArrayList<>();
+                    }
+                    Map<String, Object> col = new LinkedHashMap<>();
+                    col.put("name", rs.getString("column_name"));
+                    col.put("type", rs.getString("data_type").toUpperCase());
+                    columns.add(col);
+                }
+                if (currentTable != null) {
+                    tables.add(tableEntry(currentTable, columns));
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("AlloyDB table browse failed for {}: {}", physicalDatabase, e.getMessage());
+            return mapper.writeValueAsString(Map.of(
+                    "tables", List.of(),
+                    "message", "Could not inspect PostgreSQL database " + physicalDatabase + ": " + e.getMessage()));
+        }
+        return mapper.writeValueAsString(Map.of("tables", tables));
+    }
+
+    private String browseAlloyDBRows(String clusterId, String databaseName, String tableName, String projectId)
+            throws Exception {
+        Map<String, String> cluster = findAlloyDBCluster(projectId, clusterId);
+        if (cluster == null) {
+            return mapper.writeValueAsString(Map.of("error", true, "message", "AlloyDB cluster not found: " + clusterId));
+        }
+        String physicalDatabase = findAlloyDBPhysicalDatabase(projectId, clusterId, databaseName);
+        if (physicalDatabase == null) {
+            return mapper.writeValueAsString(Map.of("error", true, "message", "AlloyDB database not found: " + databaseName));
+        }
+
+        if (!alloyDBTableExists(physicalDatabase, tableName)) {
+            return mapper.writeValueAsString(Map.of("error", true, "message", "AlloyDB table not found: " + tableName));
+        }
+
+        List<String> columns = new ArrayList<>();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        String sql = "SELECT * FROM " + quoteIdentifier(tableName) + " LIMIT 100";
+        try (Connection conn = dataSource.getConnection(physicalDatabase);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            var meta = rs.getMetaData();
+            for (int i = 1; i <= meta.getColumnCount(); i++) {
+                columns.add(meta.getColumnLabel(i));
+            }
+            while (rs.next()) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                for (int i = 0; i < columns.size(); i++) {
+                    row.put(columns.get(i), jsonSafeValue(rs.getObject(i + 1)));
+                }
+                rows.add(row);
+            }
+        }
+        return mapper.writeValueAsString(Map.of("columns", columns, "rows", rows, "rowCount", rows.size()));
+    }
+
+    private Map<String, Object> tableEntry(String tableName, List<Map<String, Object>> columns) {
+        Map<String, Object> table = new LinkedHashMap<>();
+        table.put("name", tableName);
+        table.put("columns", columns == null ? List.of() : columns);
+        return table;
+    }
+
+    private Map<String, String> findAlloyDBCluster(String projectId, String clusterId) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT location_id, cluster_id, database_name FROM alloydb_clusters WHERE project_id = ? AND cluster_id = ?")) {
+            ps.setString(1, projectId);
+            ps.setString(2, clusterId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return null;
+                Map<String, String> cluster = new LinkedHashMap<>();
+                cluster.put("location_id", rs.getString("location_id"));
+                cluster.put("cluster_id", rs.getString("cluster_id"));
+                cluster.put("database_name", rs.getString("database_name"));
+                return cluster;
+            }
+        }
+    }
+
+    private String findAlloyDBPhysicalDatabase(String projectId, String clusterId, String databaseName) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement("""
+                     SELECT physical_name
+                     FROM alloydb_databases
+                     WHERE project_id = ? AND cluster_id = ? AND database_name = ?
+                     """)) {
+            ps.setString(1, projectId);
+            ps.setString(2, clusterId);
+            ps.setString(3, databaseName);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return rs.getString("physical_name");
+            }
+        }
+        Map<String, String> cluster = findAlloyDBCluster(projectId, clusterId);
+        if (cluster != null && databaseName.equals(cluster.get("database_name"))) {
+            return cluster.get("database_name");
+        }
+        return null;
+    }
+
+    private boolean alloyDBTableExists(String databaseName, String tableName) throws Exception {
+        try (Connection conn = dataSource.getConnection(databaseName);
+             PreparedStatement ps = conn.prepareStatement("""
+                     SELECT 1 FROM information_schema.tables
+                     WHERE table_schema = 'public' AND table_type = 'BASE TABLE' AND table_name = ?
+                     """)) {
+            ps.setString(1, tableName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private Object jsonSafeValue(Object value) {
+        if (value == null) return null;
+        if (value instanceof org.postgresql.util.PGobject pg) return pg.getValue();
+        if (value instanceof byte[] bytes) return Base64.getEncoder().encodeToString(bytes);
+        if (value instanceof java.sql.Timestamp || value instanceof java.sql.Date || value instanceof java.sql.Time) {
+            return value.toString();
+        }
+        return value;
+    }
+
+    private String quoteIdentifier(String identifier) {
+        return "\"" + identifier.replace("\"", "\"\"") + "\"";
+    }
+
+    // ========== Dataproc (in-process, query PostgreSQL) ==========
+
+    private String browseDataproc(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        if (resourceType == null || "clusters".equals(resourceType) && resourceId == null) {
+            List<Map<String, Object>> clusters = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT project_id, region, cluster_name, metadata, created_at FROM dataproc_clusters " +
+                     "WHERE project_id = ? ORDER BY cluster_name")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> c = new LinkedHashMap<>();
+                        c.put("name", rs.getString("cluster_name"));
+                        c.put("region", rs.getString("region"));
+                        String md = rs.getString("metadata");
+                        String status = "RUNNING";
+                        if (md != null && !md.isBlank()) {
+                            try {
+                                var meta = mapper.readValue(md, Map.class);
+                                if (meta.containsKey("state")) status = String.valueOf(meta.get("state"));
+                            } catch (Exception ignored) {}
+                        }
+                        c.put("status", status);
+                        if (rs.getTimestamp("created_at") != null)
+                            c.put("createdAt", rs.getTimestamp("created_at").toString());
+                        clusters.add(c);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("clusters", clusters));
+        }
+        if ("jobs".equals(resourceType)) {
+            List<Map<String, Object>> jobs = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT job_id, cluster_name, region, status, created_at, driver_output_path " +
+                     "FROM dataproc_jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 100")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> j = new LinkedHashMap<>();
+                        j.put("jobId", rs.getString("job_id"));
+                        j.put("clusterName", rs.getString("cluster_name"));
+                        j.put("region", rs.getString("region"));
+                        j.put("status", rs.getString("status"));
+                        j.put("jobType", "SPARK");
+                        if (rs.getTimestamp("created_at") != null)
+                            j.put("createdAt", rs.getTimestamp("created_at").toString());
+                        j.put("driverOutputPath", rs.getString("driver_output_path"));
+                        jobs.add(j);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("jobs", jobs));
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Dataproc browse path. Use: /browse/dataproc or /browse/dataproc/jobs"));
+    }
+
+    // ========== Cloud IAM (in-process, query PostgreSQL) ==========
+
+    private String browseCloudIAM(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        List<Map<String, Object>> policies = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "SELECT resource_type, resource_id, policy FROM iam_policies ORDER BY resource_type, resource_id")) {
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> p = new LinkedHashMap<>();
+                    p.put("resourceType", rs.getString("resource_type"));
+                    p.put("resourceId", rs.getString("resource_id"));
+                    byte[] policyBytes = rs.getBytes("policy");
+                    if (policyBytes != null) {
+                        p.put("policy", "stored"); // placeholder, actual protobuf parsing not needed for list view
+                    }
+                    policies.add(p);
+                }
+            }
+        }
+        return mapper.writeValueAsString(Map.of("policies", policies));
     }
 
     // ========== GCS bucket ownership helpers ==========

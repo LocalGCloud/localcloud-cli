@@ -1,89 +1,12 @@
-import { createSignal, createEffect, createMemo, Show, For, untrack } from 'solid-js';
+import { createSignal, createEffect, createMemo, Show, For, untrack, onCleanup } from 'solid-js';
 import { api } from '../api.js';
 import CsvImportWizard from '../components/CsvImportWizard.jsx';
 import DataBreadcrumb from '../components/DataBreadcrumb.jsx';
+import DatabaseExplorer from '../components/DatabaseExplorer.jsx';
 import { formatDateTime, onActivate } from '../utils/a11y.js';
+import { formatSize } from '../utils/format.js';
 import CodeEditor from '../components/CodeEditor.jsx';
 import { generateMockRow } from '../utils/mockGenerator.js';
-
-function formatSqlDdl(sql) {
-    if (!sql) return '';
-
-    // Normalize newlines and spaces
-    let clean = sql.replace(/\s+/g, ' ').trim();
-
-    let formatted = '';
-    let depth = 0;
-    let inSingleQuote = false;
-    let inDoubleQuote = false;
-
-    const indent = '  ';
-
-    for (let i = 0; i < clean.length; i++) {
-        const char = clean[i];
-
-        // Handle quotes
-        if (char === "'" && !inDoubleQuote) {
-            inSingleQuote = !inSingleQuote;
-        } else if (char === '"' && !inSingleQuote) {
-            inDoubleQuote = !inDoubleQuote;
-        }
-
-        if (inSingleQuote || inDoubleQuote) {
-            formatted += char;
-            continue;
-        }
-
-        if (char === '(') {
-            depth++;
-            formatted += char;
-            // Only insert newline and indentation for the main table body opening
-            if (depth === 1) {
-                formatted += '\n' + indent;
-            }
-        } else if (char === ')') {
-            depth = Math.max(0, depth - 1);
-            if (depth === 0) {
-                formatted += '\n' + char;
-            } else {
-                formatted += char;
-            }
-        } else if (char === ',') {
-            formatted += char;
-            // Only wrap to a new line if we are at the main table body level (depth === 1)
-            if (depth === 1) {
-                formatted += '\n' + indent;
-            } else {
-                formatted += ' ';
-            }
-        } else if (char === ';') {
-            formatted += ';\n\n';
-        } else {
-            // Avoid double spaces
-            if (char === ' ' && (formatted.endsWith(' ') || formatted.endsWith('\n') || formatted.endsWith(indent))) {
-                continue;
-            }
-            formatted += char;
-        }
-    }
-
-    // Final polish: Upper-case keywords
-    const keywords = [
-        'CREATE TABLE', 'CREATE UNIQUE INDEX', 'CREATE INDEX', 'PRIMARY KEY', 'CONSTRAINT',
-        'FOREIGN KEY', 'CHECK', 'DEFAULT', 'OPTIONS', 'STORING', 'ON', 'AS', 'IN', 'AND', 'OR',
-        'NOT NULL', 'NULL', 'INT64', 'FLOAT64', 'BOOL', 'STRING', 'BYTES', 'DATE', 'TIMESTAMP',
-        'JSON', 'DESC', 'ASC', 'UNIQUE NONNULL', 'UNIQUE'
-    ];
-
-    let result = formatted.trim();
-    for (const kw of keywords) {
-        const regex = new RegExp('\\b' + kw.replace(/\s+/g, '\\s+') + '\\b', 'gi');
-        result = result.replace(regex, kw);
-    }
-
-    return result;
-}
-
 
 const TABS = [
     { id: 'gcs', label: 'Cloud Storage' },
@@ -100,66 +23,37 @@ const TABS = [
     { id: 'compute', label: 'Compute' },
     { id: 'cloudrun', label: 'Cloud Run' },
     { id: 'memorystore', label: 'Memorystore' },
+    { id: 'cloudsql', label: 'Cloud SQL' },
+    { id: 'cloudscheduler', label: 'Cloud Scheduler' },
+    { id: 'cloudfunctions', label: 'Cloud Functions' },
+    { id: 'alloydb', label: 'AlloyDB' },
+    { id: 'dataproc', label: 'Dataproc' },
+    { id: 'cloudiam', label: 'Cloud IAM' },
 ];
 
 const SERVICE_INFO = {
-    firestore: {
-        name: 'Firestore',
-        port: 8086,
-        envVar: 'FIRESTORE_EMULATOR_HOST',
-        envValue: 'localhost:8086',
-        protocol: 'gRPC',
-        description: 'Use the Firestore SDK to browse documents.',
-    },
-    spanner: {
-        name: 'Spanner',
-        port: 9010,
-        envVar: 'SPANNER_EMULATOR_HOST',
-        envValue: 'localhost:9010',
-        protocol: 'gRPC',
-        description: 'Use Spanner SDK to browse databases.',
-    },
-    bigtable: {
-        name: 'Bigtable',
-        port: 8087,
-        envVar: 'BIGTABLE_EMULATOR_HOST',
-        envValue: 'localhost:8087',
-        protocol: 'gRPC',
-        description: 'Use the Bigtable SDK to browse tables.',
-    },
     gke: {
-        name: 'GKE',
-        port: 443,
-        envVar: 'GKE_EMULATOR_HOST',
-        envValue: 'localhost:443',
-        protocol: 'gRPC',
-        description: 'Use GKE SDK or kubectl to manage clusters.',
+        name: 'GKE', port: 443, envVar: 'GKE_EMULATOR_HOST', envValue: 'localhost:443',
+        protocol: 'gRPC', description: 'Use GKE SDK or kubectl to manage clusters.',
     },
     compute: {
-        name: 'Compute Engine',
-        port: 4443,
-        envVar: 'COMPUTE_EMULATOR_HOST',
-        envValue: 'localhost:4443',
-        protocol: 'REST',
-        description: 'Use the Compute Engine SDK to manage instances.',
+        name: 'Compute Engine', port: 4443, envVar: 'COMPUTE_EMULATOR_HOST', envValue: 'localhost:4443',
+        protocol: 'REST', description: 'Use the Compute Engine SDK to manage instances.',
     },
     cloudrun: {
-        name: 'Cloud Run',
-        port: 4443,
-        envVar: 'CLOUD_RUN_EMULATOR_HOST',
-        envValue: 'localhost:4443',
-        protocol: 'gRPC',
-        description: 'Use the Cloud Run SDK to manage services.',
+        name: 'Cloud Run', port: 4443, envVar: 'CLOUD_RUN_EMULATOR_HOST', envValue: 'localhost:4443',
+        protocol: 'gRPC', description: 'Use the Cloud Run SDK to manage services.',
     },
 };
 
-function formatSize(bytes) {
-    if (bytes == null) return '--';
-    const n = Number(bytes);
-    if (n === 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(n) / Math.log(1024));
-    return `${(n / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
+function EmptyState(props) {
+    return (
+        <div class="empty-state">
+            <div class="empty-state-icon">{'\u2205'}</div>
+            <div class="empty-state-title">{props.title}</div>
+            <div class="empty-state-text">{props.message}</div>
+        </div>
+    );
 }
 
 function formatDate(ts) {
@@ -631,6 +525,7 @@ function BigQueryView(props) {
     const [infoSchemaView, setInfoSchemaView] = createSignal('tables');
     const [infoSchemaData, setInfoSchemaData] = createSignal(null);
     const [showMerge, setShowMerge] = createSignal(false);
+    const [isViewType, setIsViewType] = createSignal(false);
 
     const datasets = () => {
         const raw = d();
@@ -1141,16 +1036,13 @@ function BigQueryView(props) {
                                 </div>
                                 <div>
                                     <label style="display:block;margin-bottom:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary)">Type</label>
-                                    <select name="tableType" id="bq-tabletype-select" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)" onChange={(e) => {
-                                        const vq = document.getElementById('bq-viewquery');
-                                        if (vq) vq.style.display = e.target.value === 'VIEW' ? 'block' : 'none';
-                                    }}>
+                                    <select name="tableType" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)" onChange={(e) => setIsViewType(e.target.value === 'VIEW')}>
                                         <option value="TABLE">Table</option>
                                         <option value="VIEW">View</option>
                                     </select>
                                 </div>
                             </div>
-                            <div id="bq-viewquery" style="display:none;margin-bottom:12px">
+                            <div style={{display: isViewType() ? 'block' : 'none', 'margin-bottom': '12px'}}>
                                 <label style="display:block;margin-bottom:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary)">View Query *</label>
                                 <textarea name="viewQuery" placeholder="SELECT * FROM `dataset.table` WHERE active = true" rows="3" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:var(--font-mono);background:var(--surface);color:var(--text);resize:vertical" />
                             </div>
@@ -1237,6 +1129,672 @@ function BigQueryView(props) {
                             </div>
                         </form>
                     </div>
+                </div>
+            </Show>
+        </div>
+    );
+}
+
+// -- Cloud Scheduler View --
+function CloudSchedulerView(props) {
+    const d = () => props.data();
+
+    const stateBadgeClass = (state) => {
+        const s = (state || '').toLowerCase();
+        if (s === 'enabled') return 'badge-healthy';
+        if (s === 'paused') return 'badge-warning';
+        if (s === 'disabled') return 'badge-unhealthy';
+        return 'badge-neutral';
+    };
+
+    return (
+        <div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                <div />
+                <Show when={props.onAdd}>
+                    <button onClick={() => props.onAdd('Create Job', [
+                        { name: 'name', type: 'text' },
+                        { name: 'schedule', type: 'text' },
+                        { name: 'timeZone', type: 'text' },
+                        { name: 'targetUrl', type: 'text' },
+                    ], async (formData) => {
+                        await api.mutate('cloudscheduler', 'jobs', formData);
+                    })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
+                        + Create Job
+                    </button>
+                </Show>
+            </div>
+            <Show when={d() && d().jobs && d().jobs.length > 0} fallback={
+                <div class="empty-state">
+                    <div class="empty-state-icon">{'\u2205'}</div>
+                    <div class="empty-state-title">No jobs found</div>
+                    <div class="empty-state-text">Create a scheduled job to see it here.</div>
+                </div>
+            }>
+                <div class="data-table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Job Name</th>
+                                <th>Schedule</th>
+                                <th>Time Zone</th>
+                                <th>State</th>
+                                <th>Next Execution</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <For each={d().jobs}>
+                                {(job) => {
+                                    const nameParts = (job.name || '').split('/');
+                                    const displayName = nameParts[nameParts.length - 1];
+                                    return (
+                                        <tr>
+                                            <td style={{ "font-weight": "500" }}>{displayName}</td>
+                                            <td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>{job.schedule || '--'}</td>
+                                            <td>{job.timeZone || 'UTC'}</td>
+                                            <td>
+                                                <span class={`badge ${stateBadgeClass(job.state)}`}>
+                                                    {job.state || 'UNKNOWN'}
+                                                </span>
+                                            </td>
+                                            <td>{job.nextExecutionTime ? formatDate(job.nextExecutionTime) : '--'}</td>
+                                            <td>
+                                                <Show when={props.onDelete}>
+                                                    <button onClick={() => props.onDelete('Delete job "' + displayName + '"?', async () => {
+                                                        await api.mutate('cloudscheduler', 'jobs/delete', { name: job.name });
+                                                    })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete">Del</button>
+                                                </Show>
+                                            </td>
+                                        </tr>
+                                    );
+                                }}
+                            </For>
+                        </tbody>
+                    </table>
+                </div>
+            </Show>
+        </div>
+    );
+}
+
+// -- Cloud Functions View --
+function CloudFunctionsView(props) {
+    const d = () => props.data();
+
+    const stateBadgeClass = (state) => {
+        const s = (state || '').toLowerCase();
+        if (s === 'active') return 'badge-healthy';
+        if (s === 'deploying') return 'badge-warning';
+        if (s === 'failed') return 'badge-unhealthy';
+        return 'badge-neutral';
+    };
+
+    return (
+        <div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                <div />
+                <Show when={props.onAdd}>
+                    <button onClick={() => props.onAdd('Create Function', [
+                        { name: 'name', type: 'text' },
+                        { name: 'runtime', type: 'text' },
+                        { name: 'entryPoint', type: 'text' },
+                    ], async (formData) => {
+                        await api.mutate('cloudfunctions', 'functions', formData);
+                    })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
+                        + Create Function
+                    </button>
+                </Show>
+            </div>
+            <Show when={d() && d().functions && d().functions.length > 0} fallback={
+                <div class="empty-state">
+                    <div class="empty-state-icon">{'\u2205'}</div>
+                    <div class="empty-state-title">No functions found</div>
+                    <div class="empty-state-text">Create a Cloud Function to see it here.</div>
+                </div>
+            }>
+                <div class="data-table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Function Name</th>
+                                <th>Runtime</th>
+                                <th>Entry Point</th>
+                                <th>State</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <For each={d().functions}>
+                                {(fn) => {
+                                    const nameParts = (fn.name || '').split('/');
+                                    const displayName = nameParts[nameParts.length - 1];
+                                    return (
+                                        <tr>
+                                            <td style={{ "font-weight": "500" }}>{displayName}</td>
+                                            <td><span class="badge badge-neutral">{fn.runtime || '--'}</span></td>
+                                            <td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>{fn.entryPoint || '--'}</td>
+                                            <td>
+                                                <span class={`badge ${stateBadgeClass(fn.state)}`}>
+                                                    {fn.state || 'UNKNOWN'}
+                                                </span>
+                                            </td>
+                                            <td>{fn.createdAt ? formatDate(fn.createdAt) : '--'}</td>
+                                            <td>
+                                                <Show when={props.onDelete}>
+                                                    <button onClick={() => props.onDelete('Delete function "' + displayName + '"?', async () => {
+                                                        await api.mutate('cloudfunctions', 'functions/delete', { name: fn.name });
+                                                    })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete">Del</button>
+                                                </Show>
+                                            </td>
+                                        </tr>
+                                    );
+                                }}
+                            </For>
+                        </tbody>
+                    </table>
+                </div>
+            </Show>
+        </div>
+    );
+}
+
+// -- AlloyDB View --
+function AlloyDBView(props) {
+    const d = () => props.data();
+    const [selectedCluster, setSelectedCluster] = createSignal(null);
+    const [selectedDatabase, setSelectedDatabase] = createSignal(null);
+    const [selectedTable, setSelectedTable] = createSignal(null);
+    const [instancesData, setInstancesData] = createSignal([]);
+    const [databasesData, setDatabasesData] = createSignal([]);
+    const [tablesData, setTablesData] = createSignal([]);
+    const [rowsData, setRowsData] = createSignal(null);
+    const [subLoading, setSubLoading] = createSignal(false);
+
+    const clusters = () => d()?.clusters || [];
+    const clusterId = (cluster) => cluster.clusterId || (cluster.name || '').split('/').pop();
+    const displayCluster = (cluster) => clusterId(cluster) || '--';
+
+    const stateBadgeClass = (state) => {
+        const s = (state || '').toLowerCase();
+        if (s === 'ready' || s === 'running') return 'badge-healthy';
+        if (s === 'creating' || s === 'restoring') return 'badge-warning';
+        if (s === 'stopped' || s === 'failed') return 'badge-unhealthy';
+        return 'badge-neutral';
+    };
+
+    const updateSubpath = (cluster, database, table) => {
+        if (props.onSubpathChange) {
+            const parts = [];
+            if (cluster) {
+                parts.push(cluster);
+                if (database) {
+                    parts.push(database);
+                    if (table) parts.push(table);
+                }
+            }
+            props.onSubpathChange(parts);
+        }
+    };
+
+    const selectCluster = async (cluster) => {
+        const id = typeof cluster === 'string' ? cluster : clusterId(cluster);
+        if (!id) return;
+        setSelectedCluster(id);
+        setSelectedDatabase(null);
+        setSelectedTable(null);
+        setRowsData(null);
+        setTablesData([]);
+        updateSubpath(id, null, null);
+        setSubLoading(true);
+        try {
+            const [instances, databases] = await Promise.all([
+                api.browse('alloydb', 'instances/' + encodeURIComponent(id)),
+                api.browse('alloydb', 'databases/' + encodeURIComponent(id)),
+            ]);
+            setInstancesData(instances.instances || []);
+            setDatabasesData(databases.databases || []);
+        } catch {
+            setInstancesData([]);
+            setDatabasesData([]);
+        } finally {
+            setSubLoading(false);
+        }
+    };
+
+    const selectDatabase = async (databaseName) => {
+        const cluster = selectedCluster();
+        if (!cluster || !databaseName) return;
+        setSelectedDatabase(databaseName);
+        setSelectedTable(null);
+        setRowsData(null);
+        updateSubpath(cluster, databaseName, null);
+        setSubLoading(true);
+        try {
+            const result = await api.browse('alloydb', 'tables/' + encodeURIComponent(cluster) + '/' + encodeURIComponent(databaseName));
+            setTablesData(result.tables || []);
+        } catch {
+            setTablesData([]);
+        } finally {
+            setSubLoading(false);
+        }
+    };
+
+    const selectTable = async (tableName) => {
+        const cluster = selectedCluster();
+        const database = selectedDatabase();
+        if (!cluster || !database || !tableName) return;
+        setSelectedTable(tableName);
+        updateSubpath(cluster, database, tableName);
+        setSubLoading(true);
+        try {
+            const result = await api.browse('alloydb', 'rows/' + encodeURIComponent(cluster) + '/' + encodeURIComponent(database) + '/' + encodeURIComponent(tableName));
+            setRowsData(result);
+        } catch {
+            setRowsData({ columns: [], rows: [] });
+        } finally {
+            setSubLoading(false);
+        }
+    };
+
+    const goBackToClusters = () => {
+        setSelectedCluster(null);
+        setSelectedDatabase(null);
+        setSelectedTable(null);
+        setInstancesData([]);
+        setDatabasesData([]);
+        setTablesData([]);
+        setRowsData(null);
+        updateSubpath(null, null, null);
+    };
+
+    const goBackToDatabases = () => {
+        setSelectedDatabase(null);
+        setSelectedTable(null);
+        setTablesData([]);
+        setRowsData(null);
+        updateSubpath(selectedCluster(), null, null);
+    };
+
+    const goBackToTables = () => {
+        setSelectedTable(null);
+        setRowsData(null);
+        updateSubpath(selectedCluster(), selectedDatabase(), null);
+    };
+
+    createEffect(() => {
+        const raw = d();
+        if (!raw) {
+            goBackToClusters();
+        }
+    });
+
+    createEffect(() => {
+        const sp = typeof props.subpath === 'function' ? props.subpath() : props.subpath;
+        if (!sp || sp.length === 0 || clusters().length === 0) return;
+        const [cluster, database, table] = sp;
+        if (cluster && untrack(() => selectedCluster()) !== cluster) {
+            selectCluster(cluster).then(() => {
+                if (database) {
+                    selectDatabase(database).then(() => {
+                        if (table) selectTable(table);
+                    });
+                }
+            });
+        }
+    });
+
+    const breadcrumbs = createMemo(() => {
+        const crumbs = [{ label: 'Clusters', onClick: goBackToClusters, active: !selectedCluster() }];
+        if (selectedCluster()) crumbs.push({ label: selectedCluster(), onClick: goBackToDatabases, active: !selectedDatabase() });
+        if (selectedDatabase()) crumbs.push({ label: selectedDatabase(), onClick: goBackToTables, active: !selectedTable() });
+        if (selectedTable()) crumbs.push({ label: selectedTable(), active: true });
+        return crumbs;
+    });
+
+    const rowColumns = () => rowsData()?.columns || [];
+    const rows = () => rowsData()?.rows || [];
+
+    return (
+        <div>
+            <Show when={selectedCluster()}>
+                <DataBreadcrumb crumbs={breadcrumbs()} />
+            </Show>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                <div />
+                <Show when={props.onAdd}>
+                    <button onClick={() => props.onAdd('Create Cluster', [
+                        { name: 'name', type: 'text' },
+                        { name: 'databaseVersion', type: 'text' },
+                    ], async (formData) => {
+                        await api.mutate('alloydb', 'clusters', formData);
+                    })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
+                        + Create Cluster
+                    </button>
+                </Show>
+            </div>
+            <Show when={clusters().length > 0} fallback={
+                <div class="empty-state">
+                    <div class="empty-state-icon">{'\u2205'}</div>
+                    <div class="empty-state-title">No clusters found</div>
+                    <div class="empty-state-text">Create an AlloyDB cluster to see it here. Connect via localhost:5432 using the cluster database.</div>
+                </div>
+            }>
+                <Show when={!selectedCluster()}>
+                    <div class="data-table-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Cluster</th>
+                                    <th>State</th>
+                                    <th>Database</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <For each={clusters()}>
+                                    {(cluster) => {
+                                        const name = displayCluster(cluster);
+                                        return (
+                                            <tr>
+                                                <td style={{ "font-weight": "500" }}>
+                                                    <button class="link-button" onClick={() => selectCluster(cluster)}>{name}</button>
+                                                </td>
+                                                <td><span class={`badge ${stateBadgeClass(cluster.state)}`}>{cluster.state || 'UNKNOWN'}</span></td>
+                                                <td style={{ "font-family": "var(--font-mono)", "font-size": "11px" }}>{cluster.databaseName || '--'}</td>
+                                                <td>{cluster.createdAt ? formatDate(cluster.createdAt) : '--'}</td>
+                                                <td>
+                                                    <Show when={props.onDelete}>
+                                                        <button onClick={() => props.onDelete('Delete cluster "' + name + '"?', async () => {
+                                                            await api.mutate('alloydb', 'clusters/delete', { name: cluster.name });
+                                                        })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete">Del</button>
+                                                    </Show>
+                                                </td>
+                                            </tr>
+                                        );
+                                    }}
+                                </For>
+                            </tbody>
+                        </table>
+                    </div>
+                </Show>
+                <Show when={selectedCluster() && !selectedDatabase()}>
+                    <Show when={subLoading()} fallback={
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">
+                            <div>
+                                <h3 style="margin:0 0 10px 0">Instances</h3>
+                                <div class="data-table-wrapper">
+                                    <table class="data-table">
+                                        <thead><tr><th>Instance</th><th>Type</th><th>State</th></tr></thead>
+                                        <tbody>
+                                            <For each={instancesData()} fallback={<tr><td colspan="3">No instances</td></tr>}>
+                                                {(instance) => <tr><td>{instance.instanceId}</td><td>{instance.instanceType || '--'}</td><td><span class={`badge ${stateBadgeClass(instance.state)}`}>{instance.state || 'UNKNOWN'}</span></td></tr>}
+                                            </For>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div>
+                                <h3 style="margin:0 0 10px 0">Databases</h3>
+                                <div class="data-table-wrapper">
+                                    <table class="data-table">
+                                        <thead><tr><th>Database</th><th>Created</th></tr></thead>
+                                        <tbody>
+                                            <For each={databasesData()} fallback={<tr><td colspan="2">No databases</td></tr>}>
+                                                {(database) => <tr><td><button class="link-button" onClick={() => selectDatabase(database.databaseName || database.name)}>{database.databaseName || database.name}</button></td><td>{database.createdAt ? formatDate(database.createdAt) : '--'}</td></tr>}
+                                            </For>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    }>
+                        <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
+                    </Show>
+                </Show>
+                <Show when={selectedDatabase() && !selectedTable()}>
+                    <Show when={subLoading()} fallback={
+                        <div class="data-table-wrapper">
+                            <table class="data-table">
+                                <thead><tr><th>Table</th><th>Columns</th></tr></thead>
+                                <tbody>
+                                    <For each={tablesData()} fallback={<tr><td colspan="2">No tables</td></tr>}>
+                                        {(table) => <tr><td><button class="link-button" onClick={() => selectTable(table.name)}>{table.name}</button></td><td>{(table.columns || []).map(c => c.name).join(', ')}</td></tr>}
+                                    </For>
+                                </tbody>
+                            </table>
+                        </div>
+                    }>
+                        <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
+                    </Show>
+                </Show>
+                <Show when={selectedTable()}>
+                    <Show when={subLoading()} fallback={
+                        <div class="data-table-wrapper">
+                            <table class="data-table">
+                                <thead><tr><For each={rowColumns()}>{(column) => <th>{column}</th>}</For></tr></thead>
+                                <tbody>
+                                    <For each={rows()} fallback={<tr><td colspan={Math.max(1, rowColumns().length)}>No rows</td></tr>}>
+                                        {(row) => <tr><For each={rowColumns()}>{(column) => <td>{String(row[column] ?? '')}</td>}</For></tr>}
+                                    </For>
+                                </tbody>
+                            </table>
+                        </div>
+                    }>
+                        <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
+                    </Show>
+                </Show>
+            </Show>
+        </div>
+    );
+}
+
+// -- Dataproc View --
+function DataprocView(props) {
+    const d = () => props.data();
+    const [showJobs, setShowJobs] = createSignal(false);
+    const [jobsData, setJobsData] = createSignal(null);
+    const [jobsLoading, setJobsLoading] = createSignal(false);
+
+    const statusBadgeClass = (status) => {
+        const s = (status || '').toLowerCase();
+        if (s === 'running' || s === 'done') return 'badge-healthy';
+        if (s === 'pending' || s === 'setup') return 'badge-warning';
+        if (s === 'error' || s === 'cancelled' || s === 'failed') return 'badge-unhealthy';
+        return 'badge-neutral';
+    };
+
+    const loadJobs = async () => {
+        setShowJobs(true);
+        setJobsLoading(true);
+        try {
+            const data = await api.browse('dataproc', 'jobs');
+            setJobsData(data);
+        } catch (e) { setJobsData(null); }
+        finally { setJobsLoading(false); }
+    };
+
+    return (
+        <div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                <div style="display:flex;gap:8px;align-items:center">
+                    <button onClick={() => setShowJobs(false)} class="btn btn-sm">
+                        Clusters
+                    </button>
+                    <button onClick={loadJobs} class="btn btn-sm">
+                        Jobs
+                    </button>
+                </div>
+                <Show when={props.onAdd}>
+                    <button onClick={() => props.onAdd('Create Cluster', [
+                        { name: 'name', type: 'text' },
+                        { name: 'imageVersion', type: 'text' },
+                    ], async (formData) => {
+                        await api.mutate('dataproc', 'clusters', formData);
+                    })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
+                        + Create Cluster
+                    </button>
+                </Show>
+            </div>
+
+            <Show when={!showJobs()}>
+                <Show when={d() && d().clusters && d().clusters.length > 0} fallback={
+                    <div class="empty-state">
+                        <div class="empty-state-icon">{'\u2205'}</div>
+                        <div class="empty-state-title">No clusters found</div>
+                        <div class="empty-state-text">Create a Dataproc cluster to see it here.</div>
+                    </div>
+                }>
+                    <div class="data-table-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Cluster Name</th>
+                                    <th>Region</th>
+                                    <th>Status</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <For each={d().clusters}>
+                                    {(cluster) => (
+                                        <tr>
+                                            <td style={{ "font-weight": "500" }}>{cluster.name}</td>
+                                            <td>{cluster.region || '--'}</td>
+                                            <td>
+                                                <span class={`badge ${statusBadgeClass(cluster.status)}`}>
+                                                    {cluster.status || 'UNKNOWN'}
+                                                </span>
+                                            </td>
+                                            <td>{cluster.createdAt ? formatDate(cluster.createdAt) : '--'}</td>
+                                            <td>
+                                                <Show when={props.onDelete}>
+                                                    <button onClick={() => props.onDelete('Delete cluster "' + cluster.name + '"?', async () => {
+                                                        await api.mutate('dataproc', 'clusters/delete', { name: cluster.name });
+                                                    })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete">Del</button>
+                                                </Show>
+                                            </td>
+                                        </tr>
+                                    )}
+                                </For>
+                            </tbody>
+                        </table>
+                    </div>
+                </Show>
+            </Show>
+
+            <Show when={showJobs()}>
+                <Show when={jobsLoading()}>
+                    <div class="loading-state"><div class="loading-spinner" /> Loading jobs…</div>
+                </Show>
+                <Show when={!jobsLoading()}>
+                    <Show when={jobsData() && jobsData().jobs && jobsData().jobs.length > 0} fallback={
+                        <div class="empty-state">
+                            <div class="empty-state-icon">{'\u2205'}</div>
+                            <div class="empty-state-title">No jobs found</div>
+                            <div class="empty-state-text">Submit a Spark job to see it here.</div>
+                        </div>
+                    }>
+                        <div class="data-table-wrapper">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Job ID</th>
+                                        <th>Cluster</th>
+                                        <th>Type</th>
+                                        <th>Status</th>
+                                        <th>Created</th>
+                                        <th>Output</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <For each={jobsData().jobs}>
+                                        {(job) => (
+                                            <tr>
+                                                <td style={{ "font-weight": "500", "font-size": "12px" }}>{job.jobId}</td>
+                                                <td>{job.clusterName || '--'}</td>
+                                                <td><span class="badge badge-neutral">{job.jobType || '--'}</span></td>
+                                                <td>
+                                                    <span class={`badge ${statusBadgeClass(job.status)}`}>
+                                                        {job.status || 'UNKNOWN'}
+                                                    </span>
+                                                </td>
+                                                <td>{job.createdAt ? formatDate(job.createdAt) : '--'}</td>
+                                                <td style={{ "max-width": "200px", "overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "font-size": "11px" }}>
+                                                    {job.driverOutputPath || '--'}
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </For>
+                                </tbody>
+                            </table>
+                        </div>
+                    </Show>
+                </Show>
+            </Show>
+        </div>
+    );
+}
+
+// -- Cloud IAM View --
+function CloudIAMView(props) {
+    const d = () => props.data();
+
+    return (
+        <div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                <div />
+                <Show when={props.onAdd}>
+                    <button onClick={() => props.onAdd('Create Policy', [
+                        { name: 'resource', type: 'text' },
+                        { name: 'role', type: 'text' },
+                        { name: 'members', type: 'text' },
+                    ], async (formData) => {
+                        await api.mutate('cloudiam', 'policies', formData);
+                    })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
+                        + Create Policy
+                    </button>
+                </Show>
+            </div>
+            <Show when={d() && d().policies && d().policies.length > 0} fallback={
+                <div class="empty-state">
+                    <div class="empty-state-icon">{'\u2205'}</div>
+                    <div class="empty-state-title">No policies found</div>
+                    <div class="empty-state-text">Create an IAM policy to see it here. All testIamPermissions calls return ALLOW.</div>
+                </div>
+            }>
+                <div class="data-table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Resource Type</th>
+                                <th>Resource ID</th>
+                                <th>Policy</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <For each={d().policies}>
+                                {(policy) => (
+                                    <tr>
+                                        <td><span class="badge badge-neutral">{policy.resourceType}</span></td>
+                                        <td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>{policy.resourceId}</td>
+                                        <td>{policy.policy || '--'}</td>
+                                        <td>
+                                            <Show when={props.onDelete}>
+                                                <button onClick={() => props.onDelete('Delete policy for "' + policy.resourceId + '"?', async () => {
+                                                    await api.mutate('cloudiam', 'policies/delete', { resourceType: policy.resourceType, resourceId: policy.resourceId });
+                                                })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete">Del</button>
+                                            </Show>
+                                        </td>
+                                    </tr>
+                                )}
+                            </For>
+                        </tbody>
+                    </table>
                 </div>
             </Show>
         </div>
@@ -1978,6 +2536,9 @@ function SpannerView(props) {
             setSelectedTable(null);
             return;
         }
+        const pendingIntervals = [];
+        onCleanup(() => pendingIntervals.forEach(id => clearInterval(id)));
+
         const insts = instances();
         if (!insts || insts.length === 0) return;
         const [instName, dbName, tblName] = sp;
@@ -2003,12 +2564,14 @@ function SpannerView(props) {
                                                     selectTable(tblName);
                                                 }
                                             }, 100);
+                                            pendingIntervals.push(checkTbl);
                                             setTimeout(() => clearInterval(checkTbl), 5000);
                                         }
                                     });
                                 }
                             }
                         }, 100);
+                        pendingIntervals.push(checkDb);
                         setTimeout(() => clearInterval(checkDb), 5000);
                     }
                 });
@@ -2038,12 +2601,14 @@ function SpannerView(props) {
                                             selectTable(tblName);
                                         }
                                     }, 100);
+                                    pendingIntervals.push(checkTbl);
                                     setTimeout(() => clearInterval(checkTbl), 5000);
                                 }
                             });
                         }
                     }
                 }, 100);
+                pendingIntervals.push(checkDb);
                 setTimeout(() => clearInterval(checkDb), 5000);
             } else if (dbName && currentDb === dbName) {
                 const currentTbl = untrack(() => selectedTable());
@@ -2822,6 +3387,44 @@ function SpannerView(props) {
                     </div>
                 </Show>
             </Show>
+            </Show>
+        </div>
+    );
+}
+
+function CloudSqlView(props) {
+    const tables = () => props.data()?.tables || [];
+
+    return (
+        <div>
+            <h2 style={{ margin: '0 0 16px 0' }}>Cloud SQL Catalog</h2>
+            <Show when={tables().length > 0} fallback={
+                <EmptyState title="No Cloud SQL tables found" message="Enable Cloud SQL or create instances, databases, and users to see catalog tables." />
+            }>
+                <div class="table-grid">
+                    <For each={tables()}>
+                        {(table) => (
+                            <div class="card">
+                                <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', gap: '12px', 'margin-bottom': '10px' }}>
+                                    <strong>{table.name}</strong>
+                                    <span class="badge badge-info">{(table.columns || []).length} cols</span>
+                                </div>
+                                <div class="data-table-wrapper">
+                                    <table class="data-table">
+                                        <thead>
+                                            <tr><th>Column</th><th>Type</th></tr>
+                                        </thead>
+                                        <tbody>
+                                            <For each={table.columns || []}>
+                                                {(col) => <tr><td>{col.name || col}</td><td>{col.type || '--'}</td></tr>}
+                                            </For>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </For>
+                </div>
             </Show>
         </div>
     );
@@ -3704,6 +4307,9 @@ function CrudModal(props) {
             <div role="dialog" aria-modal="true" aria-labelledby="crud-modal-title" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;overscroll-behavior:contain">
                 <div style="background:var(--surface);border-radius:8px;padding:24px;min-width:400px;max-width:600px;max-height:80vh;overflow-y:auto;border:1px solid var(--border)">
                     <h3 id="crud-modal-title" style="margin:0 0 16px 0;color:var(--text)">{props.title}</h3>
+                    <Show when={props.error}>
+                        <div class="alert alert-error" role="alert" style="margin-bottom:12px">{props.error}</div>
+                    </Show>
                     <For each={props.fields || []}>
                         {(field) => {
                             const fieldId = `crud-field-${String(field.name).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
@@ -3727,8 +4333,16 @@ function CrudModal(props) {
                         }}
                     </For>
                     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-                        <button onClick={props.onClose} style="padding:8px 16px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);cursor:pointer">Cancel</button>
-                        <button onClick={() => props.onSubmit(formData())} style="padding:8px 16px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer">{props.mode === 'edit' ? 'Save' : 'Create'}</button>
+                        <button disabled={props.submitting} onClick={props.onClose} style="padding:8px 16px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);cursor:pointer">Cancel</button>
+                        <button disabled={props.submitting} onClick={() => props.onSubmit(formData())} style={{
+                            padding: '8px 16px',
+                            border: 'none',
+                            'border-radius': '4px',
+                            background: 'var(--accent, #4285f4)',
+                            color: 'white',
+                            cursor: props.submitting ? 'default' : 'pointer',
+                            opacity: props.submitting ? 0.7 : 1,
+                        }}>{props.submitting ? 'Saving...' : (props.mode === 'edit' ? 'Save' : 'Create')}</button>
                     </div>
                 </div>
             </div>
@@ -3758,7 +4372,15 @@ function DeleteConfirmation(props) {
 const CONNECTION_ONLY = new Set(['gke', 'compute', 'cloudrun']);
 
 // Services that fetch data from browse API
-const FETCH_SERVICES = new Set(['gcs', 'pubsub', 'firestore', 'bigquery', 'secretmanager', 'cloudtasks', 'logging', 'monitoring', 'spanner', 'bigtable', 'memorystore']);
+const FETCH_SERVICES = new Set([
+    'gcs', 'pubsub', 'firestore', 'bigquery', 'secretmanager', 'cloudtasks',
+    'logging', 'monitoring', 'spanner', 'bigtable', 'memorystore', 'cloudsql',
+    'cloudscheduler', 'cloudfunctions', 'alloydb', 'dataproc', 'cloudiam',
+]);
+
+const STANDARD_DATABASE_EXPLORER_SERVICES = new Set([
+    'spanner', 'bigquery', 'alloydb', 'cloudsql', 'bigtable', 'firestore', 'memorystore',
+]);
 
 export default function DataBrowser(props) {
     const [selectedTab, setSelectedTab] = createSignal('gcs');
@@ -3773,6 +4395,8 @@ export default function DataBrowser(props) {
     const [crudTitle, setCrudTitle] = createSignal('');
     const [crudMode, setCrudMode] = createSignal('add');
     const [crudCallback, setCrudCallback] = createSignal(null);
+    const [crudError, setCrudError] = createSignal(null);
+    const [crudSubmitting, setCrudSubmitting] = createSignal(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = createSignal(false);
     const [deleteMessage, setDeleteMessage] = createSignal('');
     const [deleteCallback, setDeleteCallback] = createSignal(null);
@@ -3810,6 +4434,12 @@ export default function DataBrowser(props) {
                     api.browse('pubsub/subscriptions'),
                 ]);
                 result = { topics: topicsRes.topics || [], subscriptions: subsRes.subscriptions || [] };
+            } else if (tab === 'cloudsql') {
+                const schema = await api.schema('cloudsql');
+                result = {
+                    ...schema,
+                    tables: (schema.tables || []).filter(table => CLOUDSQL_CATALOG_TABLES.has(table.name)),
+                };
             } else {
                 result = await api.browse(tab);
             }
@@ -3841,6 +4471,8 @@ export default function DataBrowser(props) {
         setCrudFields(fields);
         setCrudMode('add');
         setCrudCallback(() => callback);
+        setCrudError(null);
+        setCrudSubmitting(false);
         setShowCrudModal(true);
     };
 
@@ -3849,6 +4481,8 @@ export default function DataBrowser(props) {
         setCrudFields(fields);
         setCrudMode('edit');
         setCrudCallback(() => callback);
+        setCrudError(null);
+        setCrudSubmitting(false);
         setShowCrudModal(true);
     };
 
@@ -3859,13 +4493,19 @@ export default function DataBrowser(props) {
     };
 
     const handleCrudSubmit = async (formData) => {
+        setCrudError(null);
+        setCrudSubmitting(true);
         try {
             const cb = crudCallback();
             if (cb) await cb(formData);
             setShowCrudModal(false);
-            loadData();
+            if (!STANDARD_DATABASE_EXPLORER_SERVICES.has(selectedTab())) {
+                loadData();
+            }
         } catch (err) {
-            setError('Operation failed: ' + (err.message || 'Unknown error'));
+            setCrudError(err.message || 'Operation failed');
+        } finally {
+            setCrudSubmitting(false);
         }
     };
 
@@ -3933,17 +4573,24 @@ export default function DataBrowser(props) {
         }
 
         switch (tab) {
+            case 'spanner':
+            case 'bigquery':
+            case 'alloydb':
+            case 'cloudsql':
+            case 'bigtable':
+            case 'firestore':
+            case 'memorystore':
+                return <DatabaseExplorer serviceId={tab} data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
             case 'gcs': return <GcsView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} />;
             case 'pubsub': return <PubSubView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
-            case 'firestore': return <FirestoreView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
-            case 'bigquery': return <BigQueryView data={data} onAdd={handleAdd} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
             case 'secretmanager': return <SecretManagerView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
             case 'cloudtasks': return <CloudTasksView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
             case 'logging': return <LoggingView data={data} />;
             case 'monitoring': return <MonitoringView data={data} />;
-            case 'spanner': return <SpannerView data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
-            case 'bigtable': return <BigtableView data={data} onAdd={handleAdd} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
-            case 'memorystore': return <MemorystoreView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} onRefresh={loadData} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
+            case 'cloudscheduler': return <CloudSchedulerView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
+            case 'cloudfunctions': return <CloudFunctionsView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
+            case 'dataproc': return <DataprocView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
+            case 'cloudiam': return <CloudIAMView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
             default: return null;
         }
     };
@@ -3965,6 +4612,8 @@ export default function DataBrowser(props) {
                 title={crudTitle()}
                 fields={crudFields()}
                 mode={crudMode()}
+                error={crudError()}
+                submitting={crudSubmitting()}
             />
             <DeleteConfirmation
                 show={showDeleteConfirm()}

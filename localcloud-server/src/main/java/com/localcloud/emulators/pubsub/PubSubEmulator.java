@@ -113,6 +113,7 @@ public class PubSubEmulator extends AbstractEmulator {
 
                 var messages = store.pull(subProjectId, subId, 100);
                 for (var msg : messages) {
+                    msg.put("subscription_name", PubSubStore.subName(subProjectId, subId));
                     String ackId = (String) msg.get("ack_id");
                     int attempt = msg.get("delivery_attempt") instanceof Number
                             ? ((Number) msg.get("delivery_attempt")).intValue() : 1;
@@ -151,6 +152,7 @@ public class PubSubEmulator extends AbstractEmulator {
             }
         }
 
+        @SuppressWarnings("unchecked")
         private String buildPushBody(Map<String,Object> msg) {
             try {
                 byte[] data = (byte[]) msg.get("data");
@@ -160,10 +162,22 @@ public class PubSubEmulator extends AbstractEmulator {
                 Map<String,Object> message = new HashMap<>();
                 message.put("data", encodedData);
                 message.put("messageId", msg.get("message_id"));
-                message.put("attributes", new HashMap<>());
+                Map<String,Object> attributes = new HashMap<>();
+                Object rawAttributes = msg.get("attributes");
+                if (rawAttributes instanceof String attrsJson && attrsJson.length() > 2) {
+                    try {
+                        Object parsed = HttpUtil.mapper.readValue(attrsJson, Object.class);
+                        if (parsed instanceof Map<?, ?> m) {
+                            m.forEach((k, v) -> attributes.put(String.valueOf(k), String.valueOf(v)));
+                        }
+                    } catch (Exception ignored) {
+                        // attributes JSON was malformed; leave attributes empty
+                    }
+                }
+                message.put("attributes", attributes);
                 Map<String,Object> body = new HashMap<>();
                 body.put("message", message);
-                body.put("subscription", msg.get("subscription_id"));
+                body.put("subscription", msg.get("subscription_name"));
                 return HttpUtil.mapper.writeValueAsString(body);
             } catch (Exception e) {
                 return "{}";

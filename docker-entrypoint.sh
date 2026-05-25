@@ -202,6 +202,11 @@ if [ -n "${LOCALCLOUD_SERVICES}" ]; then
     export LOCALCLOUD_ENABLE_VERTEXAI="false"
     export LOCALCLOUD_ENABLE_KMS="false"
     export LOCALCLOUD_ENABLE_CLOUDSQL="false"
+    export LOCALCLOUD_ENABLE_CLOUDSCHEDULER="false"
+    export LOCALCLOUD_ENABLE_CLOUDFUNCTIONS="false"
+    export LOCALCLOUD_ENABLE_ALLOYDB="false"
+    export LOCALCLOUD_ENABLE_DATAPROC="false"
+    export LOCALCLOUD_ENABLE_CLOUDIAM="false"
 
     # Parse comma-separated service list and enable matching services
     IFS=',' read -ra SERVICES <<< "${LOCALCLOUD_SERVICES}"
@@ -227,6 +232,11 @@ if [ -n "${LOCALCLOUD_SERVICES}" ]; then
             vertexai)       export LOCALCLOUD_ENABLE_VERTEXAI="true" ;;
             kms)            export LOCALCLOUD_ENABLE_KMS="true" ;;
             cloudsql)       export LOCALCLOUD_ENABLE_CLOUDSQL="true" ;;
+            cloudscheduler) export LOCALCLOUD_ENABLE_CLOUDSCHEDULER="true" ;;
+            cloudfunctions) export LOCALCLOUD_ENABLE_CLOUDFUNCTIONS="true" ;;
+            alloydb)        export LOCALCLOUD_ENABLE_ALLOYDB="true" ;;
+            dataproc)       export LOCALCLOUD_ENABLE_DATAPROC="true" ;;
+            cloudiam)       export LOCALCLOUD_ENABLE_CLOUDIAM="true" ;;
             *)
                 echo "WARNING: Unknown service '${service}' in LOCALCLOUD_SERVICES" >&2
                 ;;

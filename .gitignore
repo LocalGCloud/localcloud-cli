@@ -21,7 +21,13 @@ localcloud-console-old/dist/
 localcloud-console-old/node_modules/
 localcloud-console-gemini/dist/
 localcloud-console-gemini/node_modules/
-
+localcloud-license-server/.gradle
+localcloud-license-server/build
+localcloud-license-server/src/main/resources/admin/node_modules
+localcloud-license-server/src/main/resources/admin/dist
+graphify-out
+graphify-out/*
+pp
 
 # IDE
 .idea/
@@ -45,6 +51,7 @@ localcloud-data/
 
 # AI
 #.claude/
+.claude/skills/generated
 .cursor/
 #.gemini/
 .kiro/

@@ -42,6 +42,24 @@ class SchemaManagerSyncTablesTest {
     }
 
     @Test
+    void initialize_createsAlloyDBMetadataTables() throws Exception {
+        List<String> executedSql = captureExecutedSql();
+
+        assertAll(
+            () -> assertTrue(executedSql.stream().anyMatch(sql -> sql.contains("CREATE TABLE IF NOT EXISTS alloydb_clusters")),
+                    "initialize() should include CREATE TABLE for alloydb_clusters"),
+            () -> assertTrue(executedSql.stream().anyMatch(sql -> sql.contains("CREATE TABLE IF NOT EXISTS alloydb_instances")),
+                    "initialize() should include CREATE TABLE for alloydb_instances"),
+            () -> assertTrue(executedSql.stream().anyMatch(sql -> sql.contains("CREATE TABLE IF NOT EXISTS alloydb_databases")),
+                    "initialize() should include CREATE TABLE for alloydb_databases"),
+            () -> assertTrue(executedSql.stream().anyMatch(sql -> sql.contains("CREATE TABLE IF NOT EXISTS alloydb_backups")),
+                    "initialize() should include CREATE TABLE for alloydb_backups"),
+            () -> assertTrue(executedSql.stream().anyMatch(sql -> sql.contains("CREATE TABLE IF NOT EXISTS alloydb_users")),
+                    "initialize() should include CREATE TABLE for alloydb_users")
+        );
+    }
+
+    @Test
     void syncManifests_hasExpectedColumns() throws Exception {
         List<String> executedSql = captureExecutedSql();
 

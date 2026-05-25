@@ -7,14 +7,20 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.google.protobuf.ByteString;
 import com.linecorp.armeria.common.AggregatedHttpRequest;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
@@ -24,8 +30,16 @@ import com.linecorp.armeria.server.annotation.Post;
 import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.config.ServiceRegistry;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
+import com.localcloud.emulators.alloydb.AlloyDBEmulator;
+import com.localcloud.emulators.dataproc.DataprocEmulator;
+import com.localcloud.emulators.functions.CloudFunctionsEmulator;
+import com.localcloud.emulators.iam.IAMEmulator;
+import com.localcloud.emulators.scheduler.CloudSchedulerEmulator;
 import com.localcloud.emulators.workflows.WorkflowsStore;
 import com.localcloud.persistence.PostgresDataSource;
+
+import io.grpc.Status;
+import io.grpc.stub.StreamObserver;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
@@ -49,6 +63,11 @@ public class SeedService {
     private final ObjectMapper jsonMapper;
     private final YAMLMapper yamlMapper;
     private final HttpClient httpClient;
+    private volatile CloudSchedulerEmulator schedulerEmulator;
+    private volatile CloudFunctionsEmulator functionsEmulator;
+    private volatile AlloyDBEmulator alloyDBEmulator;
+    private volatile DataprocEmulator dataprocEmulator;
+    private volatile IAMEmulator iamEmulator;
 
     // Base URLs computed from registry
     private final String gcsBase;
@@ -94,6 +113,26 @@ public class SeedService {
     private static String baseUrl(ServiceDefinition def) {
         if (def == null) return "http://localhost:0";
         return "http://localhost:" + def.port();
+    }
+
+    public void setCloudSchedulerEmulator(CloudSchedulerEmulator schedulerEmulator) {
+        this.schedulerEmulator = schedulerEmulator;
+    }
+
+    public void setCloudFunctionsEmulator(CloudFunctionsEmulator functionsEmulator) {
+        this.functionsEmulator = functionsEmulator;
+    }
+
+    public void setAlloyDBEmulator(AlloyDBEmulator alloyDBEmulator) {
+        this.alloyDBEmulator = alloyDBEmulator;
+    }
+
+    public void setDataprocEmulator(DataprocEmulator dataprocEmulator) {
+        this.dataprocEmulator = dataprocEmulator;
+    }
+
+    public void setIAMEmulator(IAMEmulator iamEmulator) {
+        this.iamEmulator = iamEmulator;
     }
 
     /**
@@ -307,8 +346,36 @@ public class SeedService {
                 results.put("workflows", results.containsKey("workflows") ? ((int) results.get("workflows")) + count : count);
                 totalSeeded += count;
             }
+            Object schedulerSeed = first(seedData, "cloudscheduler", "scheduler");
+            if (schedulerSeed != null) {
+                int count = seedCloudScheduler(schedulerSeed, projectId);
+                addResult(results, "cloudscheduler", count);
+                totalSeeded += count;
+            }
+            Object functionsSeed = first(seedData, "cloudfunctions", "functions");
+            if (functionsSeed != null) {
+                int count = seedCloudFunctions(functionsSeed, projectId);
+                addResult(results, "cloudfunctions", count);
+                totalSeeded += count;
+            }
+            if (seedData.containsKey("alloydb")) {
+                int count = seedAlloyDB(seedData.get("alloydb"), projectId);
+                addResult(results, "alloydb", count);
+                totalSeeded += count;
+            }
+            if (seedData.containsKey("dataproc")) {
+                int count = seedDataproc(seedData.get("dataproc"), projectId);
+                addResult(results, "dataproc", count);
+                totalSeeded += count;
+            }
+            Object iamSeed = first(seedData, "cloudiam", "iam");
+            if (iamSeed != null) {
+                int count = seedCloudIAM(iamSeed);
+                addResult(results, "cloudiam", count);
+                totalSeeded += count;
+            }
         } else {
-            logger.info("Volatile-only seed: skipping persistent services (GCS, BigQuery, Spanner, SecretManager, CloudTasks, Memorystore, Workflows)");
+            logger.info("Volatile-only seed: skipping persistent services (GCS, BigQuery, Spanner, SecretManager, CloudTasks, Memorystore, Workflows, Scheduler, Functions, AlloyDB, Dataproc, IAM)");
         }
 
         return totalSeeded;
@@ -356,17 +423,8 @@ public class SeedService {
                 Map<String, Object> seedData = rawData.containsKey("services") && rawData.get("services") instanceof Map
                         ? (Map<String, Object>) rawData.get("services")
                         : rawData;
-                int totalSeeded = 0;
-                if (seedData.containsKey("gcs")) totalSeeded += seedGcs(seedData.get("gcs"));
-                if (seedData.containsKey("pubsub")) totalSeeded += seedPubSub(seedData.get("pubsub"));
-                if (seedData.containsKey("bigquery")) totalSeeded += seedBigQuery(seedData.get("bigquery"));
-                if (seedData.containsKey("secretmanager")) totalSeeded += seedSecretManager(seedData.get("secretmanager"));
-                if (seedData.containsKey("memorystore")) totalSeeded += seedMemorystore(seedData.get("memorystore"));
-                if (seedData.containsKey("spanner")) totalSeeded += seedSpanner(seedData.get("spanner"));
-                // Firestore emulator not implemented — skip
-                if (seedData.containsKey("bigtable")) totalSeeded += seedBigtable(seedData.get("bigtable"));
-                if (seedData.containsKey("cloudtasks")) totalSeeded += seedCloudTasks(seedData.get("cloudtasks"));
-                if (seedData.containsKey("workflows")) totalSeeded += seedWorkflows(seedData.get("workflows"), projectId);
+                Map<String, Object> restored = new LinkedHashMap<>();
+                int totalSeeded = seedServicesForProject(seedData, projectId, restored, false);
 
                 response.put("seed_restored", true);
                 response.put("records_restored", totalSeeded);
@@ -398,6 +456,11 @@ public class SeedService {
         cleared += resetCloudRun(projectId);
         cleared += resetGke(projectId);
         cleared += resetWorkflows(projectId);
+        cleared += resetCloudScheduler(projectId);
+        cleared += resetCloudFunctions(projectId);
+        cleared += resetAlloyDB(projectId);
+        cleared += resetDataproc(projectId);
+        cleared += resetCloudIAM(projectId);
         return cleared;
     }
 
@@ -455,6 +518,11 @@ public class SeedService {
                 case "cloudrun" -> resetCloudRun(projectId);
                 case "gke" -> resetGke(projectId);
                 case "workflows" -> resetWorkflows(projectId);
+                case "cloudscheduler" -> resetCloudScheduler(projectId);
+                case "cloudfunctions" -> resetCloudFunctions(projectId);
+                case "alloydb" -> resetAlloyDB(projectId);
+                case "dataproc" -> resetDataproc(projectId);
+                case "cloudiam" -> resetCloudIAM(projectId);
                 default -> {
                     logger.warn("No reset logic for service: {}", service);
                     yield 0;
@@ -492,6 +560,11 @@ public class SeedService {
                             case "bigtable" -> seedBigtable(seedData.get("bigtable"));
                             case "cloudtasks" -> seedCloudTasks(seedData.get("cloudtasks"));
                             case "workflows" -> seedWorkflows(seedData.get("workflows"), config.getProjectId());
+                            case "cloudscheduler" -> seedCloudScheduler(seedData.get("cloudscheduler"), config.getProjectId());
+                            case "cloudfunctions" -> seedCloudFunctions(seedData.get("cloudfunctions"), config.getProjectId());
+                            case "alloydb" -> seedAlloyDB(seedData.get("alloydb"), config.getProjectId());
+                            case "dataproc" -> seedDataproc(seedData.get("dataproc"), config.getProjectId());
+                            case "cloudiam" -> seedCloudIAM(seedData.get("cloudiam"));
                             default -> 0;
                         };
                     }
@@ -1820,6 +1893,1180 @@ public class SeedService {
         } catch (Exception e) {
             logger.warn("Failed to reset workflows: {}", e.getMessage());
             return 0;
+        }
+    }
+
+    // ========== Cloud Scheduler seed/reset ==========
+
+    private int seedCloudScheduler(Object schedulerData, String projectId) {
+        if (schedulerEmulator == null) {
+            logger.warn("Cloud Scheduler seed skipped — emulator is not registered");
+            return 0;
+        }
+        Map<String, Object> scheduler = asMap(schedulerData);
+        int count = 0;
+        for (Map<String, Object> jobEntry : mapList(scheduler, "jobs")) {
+            try {
+                String locationId = stringOr(jobEntry, "us-central1", "location", "region");
+                String jobId = idFromName(string(jobEntry, "job_id", "jobId", "name"), "jobs");
+                String schedule = string(jobEntry, "schedule");
+                if (jobId == null || schedule == null) {
+                    logger.warn("Skipping Scheduler seed entry missing job_id/name or schedule: {}", jobEntry);
+                    continue;
+                }
+
+                String parent = "projects/" + projectId + "/locations/" + locationId;
+                com.google.cloud.scheduler.v1.Job.Builder job = com.google.cloud.scheduler.v1.Job.newBuilder()
+                        .setName(parent + "/jobs/" + jobId)
+                        .setSchedule(schedule)
+                        .setTimeZone(stringOr(jobEntry, "UTC", "time_zone", "timeZone"));
+                String description = string(jobEntry, "description");
+                if (description != null) job.setDescription(description);
+
+                if (!applySchedulerTarget(projectId, jobEntry, job)) {
+                    logger.warn("Skipping Scheduler job {} without a supported target", jobId);
+                    continue;
+                }
+                Map<String, Object> retryConfig = asMap(first(jobEntry, "retry_config", "retryConfig"));
+                if (!retryConfig.isEmpty()) {
+                    job.setRetryConfig(buildSchedulerRetryConfig(retryConfig));
+                }
+
+                boolean created = this.<com.google.cloud.scheduler.v1.Job>callGrpcIgnoringAlreadyExists(observer ->
+                        schedulerEmulator.getServiceImpl().createJob(
+                                com.google.cloud.scheduler.v1.CreateJobRequest.newBuilder()
+                                        .setParent(parent)
+                                        .setJob(job.build())
+                                        .build(), observer));
+                if (created) count++;
+            } catch (Exception e) {
+                logger.warn("Failed to seed Scheduler job: {}", e.getMessage());
+            }
+        }
+        return count;
+    }
+
+    private boolean applySchedulerTarget(String projectId, Map<String, Object> jobEntry,
+                                         com.google.cloud.scheduler.v1.Job.Builder job) {
+        Map<String, Object> httpTarget = asMap(first(jobEntry, "http_target", "httpTarget"));
+        if (!httpTarget.isEmpty()) {
+            String uri = string(httpTarget, "uri", "url");
+            if (uri == null) return false;
+            com.google.cloud.scheduler.v1.HttpTarget.Builder target =
+                    com.google.cloud.scheduler.v1.HttpTarget.newBuilder()
+                            .setUri(uri)
+                            .setHttpMethod(parseSchedulerHttpMethod(stringOr(httpTarget, "GET", "http_method", "httpMethod", "method")))
+                            .putAllHeaders(stringMap(first(httpTarget, "headers")));
+            ByteString body = bytesFrom(httpTarget, "body", "body_base64", "bodyBase64");
+            if (!body.isEmpty()) target.setBody(body);
+            job.setHttpTarget(target);
+            return true;
+        }
+
+        Map<String, Object> pubsubTarget = asMap(first(jobEntry, "pubsub_target", "pubsubTarget", "pubsub"));
+        if (!pubsubTarget.isEmpty()) {
+            String topic = normalizePubSubTopic(projectId, string(pubsubTarget, "topic_name", "topicName", "topic"));
+            if (topic == null) return false;
+            com.google.cloud.scheduler.v1.PubsubTarget.Builder target =
+                    com.google.cloud.scheduler.v1.PubsubTarget.newBuilder()
+                            .setTopicName(topic)
+                            .putAllAttributes(stringMap(first(pubsubTarget, "attributes")));
+            ByteString data = bytesFrom(pubsubTarget, "data", "data_base64", "dataBase64");
+            if (!data.isEmpty()) target.setData(data);
+            job.setPubsubTarget(target);
+            return true;
+        }
+
+        Map<String, Object> appEngineTarget = asMap(first(jobEntry, "app_engine_http_target", "appEngineHttpTarget"));
+        if (!appEngineTarget.isEmpty()) {
+            com.google.cloud.scheduler.v1.AppEngineHttpTarget.Builder target =
+                    com.google.cloud.scheduler.v1.AppEngineHttpTarget.newBuilder()
+                            .setRelativeUri(stringOr(appEngineTarget, "/", "relative_uri", "relativeUri"))
+                            .setHttpMethod(parseSchedulerHttpMethod(stringOr(appEngineTarget, "GET", "http_method", "httpMethod", "method")))
+                            .putAllHeaders(stringMap(first(appEngineTarget, "headers")));
+            ByteString body = bytesFrom(appEngineTarget, "body", "body_base64", "bodyBase64");
+            if (!body.isEmpty()) target.setBody(body);
+            job.setAppEngineHttpTarget(target);
+            return true;
+        }
+        return false;
+    }
+
+    private com.google.cloud.scheduler.v1.RetryConfig buildSchedulerRetryConfig(Map<String, Object> retryConfig) {
+        com.google.cloud.scheduler.v1.RetryConfig.Builder builder =
+                com.google.cloud.scheduler.v1.RetryConfig.newBuilder();
+        if (first(retryConfig, "retry_count", "retryCount") != null) {
+            builder.setRetryCount(intValue(retryConfig, 0, "retry_count", "retryCount"));
+        }
+        setDuration(builder::setMinBackoffDuration, retryConfig, "min_backoff_duration_seconds", "minBackoffDurationSeconds");
+        setDuration(builder::setMaxBackoffDuration, retryConfig, "max_backoff_duration_seconds", "maxBackoffDurationSeconds");
+        setDuration(builder::setMaxRetryDuration, retryConfig, "max_retry_duration_seconds", "maxRetryDurationSeconds");
+        if (first(retryConfig, "max_doublings", "maxDoublings") != null) {
+            builder.setMaxDoublings(intValue(retryConfig, 0, "max_doublings", "maxDoublings"));
+        }
+        return builder.build();
+    }
+
+    private int resetCloudScheduler(String projectId) {
+        int count = 0;
+        try (var conn = dataSource.getConnection()) {
+            List<String> jobNames = new ArrayList<>();
+            try (var ps = conn.prepareStatement(
+                    "SELECT location_id, job_id FROM scheduler_jobs WHERE project_id = ?")) {
+                ps.setString(1, projectId);
+                try (var rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        jobNames.add("projects/" + projectId + "/locations/" + rs.getString(1) + "/jobs/" + rs.getString(2));
+                    }
+                }
+            }
+            if (schedulerEmulator != null) {
+                for (String jobName : jobNames) {
+                    try {
+                        this.<com.google.protobuf.Empty>callGrpc(observer -> schedulerEmulator.getServiceImpl().deleteJob(
+                                com.google.cloud.scheduler.v1.DeleteJobRequest.newBuilder().setName(jobName).build(), observer));
+                        count++;
+                    } catch (Exception e) {
+                        logger.debug("Failed to delete Scheduler job {} via service: {}", jobName, e.getMessage());
+                    }
+                }
+            }
+            try (var ps = conn.prepareStatement("DELETE FROM scheduler_jobs WHERE project_id = ?")) {
+                ps.setString(1, projectId);
+                count += ps.executeUpdate();
+            }
+            try (var ps = conn.prepareStatement("DELETE FROM scheduler_executions WHERE job_name LIKE ?")) {
+                ps.setString(1, "projects/" + projectId + "/locations/%/jobs/%");
+                count += ps.executeUpdate();
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to reset Cloud Scheduler: {}", e.getMessage());
+        }
+        logger.info("Reset Cloud Scheduler: deleted {} resources", count);
+        return count;
+    }
+
+    // ========== Cloud Functions seed/reset ==========
+
+    private int seedCloudFunctions(Object functionsData, String projectId) {
+        if (functionsEmulator == null) {
+            logger.warn("Cloud Functions seed skipped — emulator is not registered");
+            return 0;
+        }
+        Map<String, Object> functionsRoot = asMap(functionsData);
+        int count = 0;
+        for (Map<String, Object> fnEntry : mapList(functionsRoot, "functions")) {
+            try {
+                String locationId = stringOr(fnEntry, "us-central1", "location", "region");
+                String functionId = idFromName(string(fnEntry, "function_id", "functionId", "name"), "functions");
+                Map<String, Object> buildConfigMap = asMap(first(fnEntry, "build_config", "buildConfig"));
+                String runtime = string(fnEntry, "runtime");
+                if (runtime == null) runtime = string(buildConfigMap, "runtime");
+                String entryPoint = string(fnEntry, "entry_point", "entryPoint");
+                if (entryPoint == null) entryPoint = string(buildConfigMap, "entry_point", "entryPoint");
+                if (functionId == null || runtime == null || entryPoint == null) {
+                    logger.warn("Skipping Cloud Functions seed entry missing function_id/name, runtime, or entry_point: {}", fnEntry);
+                    continue;
+                }
+
+                com.google.cloud.functions.v2.BuildConfig.Builder buildConfig =
+                        com.google.cloud.functions.v2.BuildConfig.newBuilder()
+                                .setRuntime(runtime)
+                                .setEntryPoint(entryPoint)
+                                .putAllEnvironmentVariables(stringMap(first(buildConfigMap, "environment_variables", "environmentVariables", "env")));
+                applyFunctionSource(buildConfig, first(fnEntry, "source", "source_uri", "sourceUri"));
+                applyFunctionSource(buildConfig, first(buildConfigMap, "source"));
+
+                com.google.cloud.functions.v2.Function.Builder function =
+                        com.google.cloud.functions.v2.Function.newBuilder()
+                                .setBuildConfig(buildConfig)
+                                .setServiceConfig(buildFunctionServiceConfig(fnEntry));
+
+                Map<String, Object> eventTrigger = asMap(first(fnEntry, "event_trigger", "eventTrigger", "trigger"));
+                if (!eventTrigger.isEmpty()) {
+                    function.setEventTrigger(buildFunctionEventTrigger(projectId, locationId, eventTrigger));
+                }
+
+                String parent = "projects/" + projectId + "/locations/" + locationId;
+                boolean created = this.<com.google.longrunning.Operation>callGrpcIgnoringAlreadyExists(observer ->
+                        functionsEmulator.getServiceImpl().createFunction(
+                                com.google.cloud.functions.v2.CreateFunctionRequest.newBuilder()
+                                        .setParent(parent)
+                                        .setFunctionId(functionId)
+                                        .setFunction(function.build())
+                                        .build(), observer));
+                if (created) count++;
+            } catch (Exception e) {
+                logger.warn("Failed to seed Cloud Function: {}", e.getMessage());
+            }
+        }
+        return count;
+    }
+
+    private com.google.cloud.functions.v2.ServiceConfig buildFunctionServiceConfig(Map<String, Object> fnEntry) {
+        Map<String, Object> serviceConfigMap = asMap(first(fnEntry, "service_config", "serviceConfig"));
+        com.google.cloud.functions.v2.ServiceConfig.Builder serviceConfig =
+                com.google.cloud.functions.v2.ServiceConfig.newBuilder()
+                        .putAllEnvironmentVariables(stringMap(first(serviceConfigMap, "environment_variables", "environmentVariables", "env")));
+        String service = string(serviceConfigMap, "service");
+        if (service == null) service = string(fnEntry, "service");
+        if (service != null) serviceConfig.setService(service);
+        String uri = string(serviceConfigMap, "uri", "endpoint");
+        if (uri == null) uri = string(fnEntry, "uri", "endpoint");
+        if (uri != null) serviceConfig.setUri(uri);
+        String memory = string(serviceConfigMap, "available_memory", "availableMemory", "memory");
+        if (memory != null) serviceConfig.setAvailableMemory(memory);
+        String cpu = string(serviceConfigMap, "available_cpu", "availableCpu", "cpu");
+        if (cpu != null) serviceConfig.setAvailableCpu(cpu);
+        if (first(serviceConfigMap, "timeout_seconds", "timeoutSeconds") != null) {
+            serviceConfig.setTimeoutSeconds(intValue(serviceConfigMap, 60, "timeout_seconds", "timeoutSeconds"));
+        }
+        if (first(serviceConfigMap, "min_instance_count", "minInstanceCount") != null) {
+            serviceConfig.setMinInstanceCount(intValue(serviceConfigMap, 0, "min_instance_count", "minInstanceCount"));
+        }
+        if (first(serviceConfigMap, "max_instance_count", "maxInstanceCount") != null) {
+            serviceConfig.setMaxInstanceCount(intValue(serviceConfigMap, 0, "max_instance_count", "maxInstanceCount"));
+        }
+        return serviceConfig.build();
+    }
+
+    private com.google.cloud.functions.v2.EventTrigger buildFunctionEventTrigger(
+            String projectId, String locationId, Map<String, Object> trigger) {
+        com.google.cloud.functions.v2.EventTrigger.Builder builder =
+                com.google.cloud.functions.v2.EventTrigger.newBuilder()
+                        .setTriggerRegion(stringOr(trigger, locationId, "trigger_region", "triggerRegion", "region"));
+        String topic = string(trigger, "pubsub_topic", "pubsubTopic", "topic");
+        if (topic != null) {
+            builder.setPubsubTopic(normalizePubSubTopic(projectId, topic));
+            builder.setEventType(stringOr(trigger, "google.cloud.pubsub.topic.v1.messagePublished", "event_type", "eventType"));
+        } else {
+            String eventType = string(trigger, "event_type", "eventType");
+            if (eventType != null) builder.setEventType(eventType);
+        }
+        String serviceAccount = string(trigger, "service_account_email", "serviceAccountEmail");
+        if (serviceAccount != null) builder.setServiceAccountEmail(serviceAccount);
+        for (Map<String, Object> filter : mapList(trigger, "event_filters", "eventFilters", "filters")) {
+            String attribute = string(filter, "attribute");
+            String value = string(filter, "value");
+            if (attribute == null || value == null) continue;
+            com.google.cloud.functions.v2.EventFilter.Builder eventFilter =
+                    com.google.cloud.functions.v2.EventFilter.newBuilder()
+                            .setAttribute(attribute)
+                            .setValue(value);
+            String operator = string(filter, "operator");
+            if (operator != null) eventFilter.setOperator(operator);
+            builder.addEventFilters(eventFilter);
+        }
+        return builder.build();
+    }
+
+    private void applyFunctionSource(com.google.cloud.functions.v2.BuildConfig.Builder buildConfig, Object sourceObj) {
+        if (sourceObj == null) return;
+        if (sourceObj instanceof String source) {
+            if (source.startsWith("gs://")) {
+                String rest = source.substring("gs://".length());
+                int slash = rest.indexOf('/');
+                if (slash > 0) {
+                    buildConfig.setSource(com.google.cloud.functions.v2.Source.newBuilder()
+                            .setStorageSource(com.google.cloud.functions.v2.StorageSource.newBuilder()
+                                    .setBucket(rest.substring(0, slash))
+                                    .setObject(rest.substring(slash + 1))));
+                }
+            } else {
+                buildConfig.setSource(com.google.cloud.functions.v2.Source.newBuilder().setGitUri(source));
+            }
+            return;
+        }
+        Map<String, Object> source = asMap(sourceObj);
+        String gitUri = string(source, "git_uri", "gitUri");
+        if (gitUri != null) {
+            buildConfig.setSource(com.google.cloud.functions.v2.Source.newBuilder().setGitUri(gitUri));
+            return;
+        }
+        String bucket = string(source, "bucket");
+        String object = string(source, "object", "name");
+        String uploadUrl = string(source, "source_upload_url", "sourceUploadUrl", "upload_url", "uploadUrl");
+        if (bucket != null || uploadUrl != null) {
+            com.google.cloud.functions.v2.StorageSource.Builder storage =
+                    com.google.cloud.functions.v2.StorageSource.newBuilder();
+            if (bucket != null) storage.setBucket(bucket);
+            if (object != null) storage.setObject(object);
+            if (uploadUrl != null) storage.setSourceUploadUrl(uploadUrl);
+            if (first(source, "generation") != null) {
+                storage.setGeneration(longValue(source, 0, "generation"));
+            }
+            buildConfig.setSource(com.google.cloud.functions.v2.Source.newBuilder().setStorageSource(storage));
+        }
+    }
+
+    private int resetCloudFunctions(String projectId) {
+        int count = 0;
+        try (var conn = dataSource.getConnection()) {
+            List<String> functionNames = new ArrayList<>();
+            try (var ps = conn.prepareStatement(
+                    "SELECT location_id, function_id FROM cloud_functions WHERE project_id = ?")) {
+                ps.setString(1, projectId);
+                try (var rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        functionNames.add("projects/" + projectId + "/locations/" + rs.getString(1) + "/functions/" + rs.getString(2));
+                    }
+                }
+            }
+            if (functionsEmulator != null) {
+                for (String functionName : functionNames) {
+                    try {
+                        this.<com.google.longrunning.Operation>callGrpc(observer -> functionsEmulator.getServiceImpl().deleteFunction(
+                                com.google.cloud.functions.v2.DeleteFunctionRequest.newBuilder().setName(functionName).build(), observer));
+                        count++;
+                    } catch (Exception e) {
+                        logger.debug("Failed to delete Cloud Function {} via service: {}", functionName, e.getMessage());
+                    }
+                }
+            }
+            try (var ps = conn.prepareStatement("DELETE FROM cloud_functions WHERE project_id = ?")) {
+                ps.setString(1, projectId);
+                count += ps.executeUpdate();
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to reset Cloud Functions: {}", e.getMessage());
+        }
+        logger.info("Reset Cloud Functions: deleted {} resources", count);
+        return count;
+    }
+
+    // ========== AlloyDB seed/reset ==========
+
+    private int seedAlloyDB(Object alloyData, String projectId) {
+        Map<String, Object> alloy = asMap(alloyData);
+        int count = 0;
+        for (Map<String, Object> cluster : mapList(alloy, "clusters")) {
+            String locationId = stringOr(cluster, "us-central1", "location", "region");
+            String clusterId = idFromName(string(cluster, "cluster_id", "clusterId", "name"), "clusters");
+            if (clusterId == null) {
+                logger.warn("Skipping AlloyDB cluster seed entry missing cluster_id/name: {}", cluster);
+                continue;
+            }
+            if (seedAlloyDBCluster(projectId, locationId, clusterId)) count++;
+            for (Map<String, Object> instance : mapList(cluster, "instances")) {
+                if (seedAlloyDBInstance(projectId, locationId, clusterId, instance)) count++;
+            }
+            for (Map<String, Object> database : mapList(cluster, "databases")) {
+                String databaseName = idFromName(string(database, "database", "database_name", "databaseName", "name"), "databases");
+                if (databaseName != null && seedAlloyDBDatabase(projectId, locationId, clusterId, databaseName)) count++;
+                for (Map<String, Object> table : mapList(database, "tables")) {
+                    if (seedAlloyDBTable(projectId, locationId, clusterId, databaseName, table)) count++;
+                }
+            }
+            for (Map<String, Object> table : mapList(cluster, "tables")) {
+                if (seedAlloyDBTable(projectId, locationId, clusterId, table)) count++;
+            }
+            for (Map<String, Object> backup : mapList(cluster, "backups")) {
+                if (seedAlloyDBBackup(projectId, locationId, clusterId, backup)) count++;
+            }
+            for (Map<String, Object> user : mapList(cluster, "users")) {
+                if (seedAlloyDBUser(projectId, locationId, clusterId, user)) count++;
+            }
+        }
+        for (Map<String, Object> instance : mapList(alloy, "instances")) {
+            String locationId = stringOr(instance, "us-central1", "location", "region");
+            String clusterId = idFromName(string(instance, "cluster_id", "clusterId", "cluster", "parent"), "clusters");
+            if (clusterId != null && seedAlloyDBInstance(projectId, locationId, clusterId, instance)) count++;
+        }
+        for (Map<String, Object> backup : mapList(alloy, "backups")) {
+            String locationId = stringOr(backup, "us-central1", "location", "region");
+            String clusterId = idFromName(string(backup, "cluster_id", "clusterId", "cluster", "cluster_name", "clusterName"), "clusters");
+            if (clusterId != null && seedAlloyDBBackup(projectId, locationId, clusterId, backup)) count++;
+        }
+        for (Map<String, Object> user : mapList(alloy, "users")) {
+            String locationId = stringOr(user, "us-central1", "location", "region");
+            String clusterId = idFromName(string(user, "cluster_id", "clusterId", "cluster", "parent"), "clusters");
+            if (clusterId != null && seedAlloyDBUser(projectId, locationId, clusterId, user)) count++;
+        }
+        return count;
+    }
+
+    private boolean seedAlloyDBCluster(String projectId, String locationId, String clusterId) {
+        String parent = "projects/" + projectId + "/locations/" + locationId;
+        try {
+            if (alloyDBEmulator != null) {
+                return this.<com.google.longrunning.Operation>callGrpcIgnoringAlreadyExists(observer ->
+                        alloyDBEmulator.getServiceImpl().createCluster(
+                                com.google.cloud.alloydb.v1.CreateClusterRequest.newBuilder()
+                                        .setParent(parent)
+                                        .setClusterId(clusterId)
+                                        .setCluster(com.google.cloud.alloydb.v1.Cluster.newBuilder().build())
+                                        .build(), observer));
+            }
+            String fullName = parent + "/clusters/" + clusterId;
+            String databaseName = com.localcloud.emulators.common.GrpcSupport.safeDatabaseName(clusterId);
+            var now = java.time.Instant.now();
+            var cluster = com.google.cloud.alloydb.v1.Cluster.newBuilder()
+                    .setName(fullName)
+                    .setState(com.google.cloud.alloydb.v1.Cluster.State.READY)
+                    .setCreateTime(com.localcloud.emulators.common.GrpcSupport.timestamp(now))
+                    .setUpdateTime(com.localcloud.emulators.common.GrpcSupport.timestamp(now))
+                    .build();
+            int inserted;
+            try (var conn = dataSource.getConnection();
+                 var ps = conn.prepareStatement("""
+                         INSERT INTO alloydb_clusters
+                         (project_id, location_id, cluster_id, database_name, cluster_proto)
+                         VALUES (?, ?, ?, ?, ?)
+                         ON CONFLICT (project_id, location_id, cluster_id) DO NOTHING
+                         """)) {
+                ps.setString(1, projectId);
+                ps.setString(2, locationId);
+                ps.setString(3, clusterId);
+                ps.setString(4, databaseName);
+                ps.setBytes(5, cluster.toByteArray());
+                inserted = ps.executeUpdate();
+            }
+            createAlloyDBPhysicalDatabase(databaseName);
+            seedAlloyDBDatabase(projectId, locationId, clusterId, databaseName);
+            return inserted > 0;
+        } catch (Exception e) {
+            logger.warn("Failed to seed AlloyDB cluster {}: {}", clusterId, e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean seedAlloyDBInstance(String projectId, String locationId, String clusterId, Map<String, Object> instance) {
+        String instanceId = idFromName(string(instance, "instance_id", "instanceId", "name"), "instances");
+        if (instanceId == null) return false;
+        String parent = "projects/" + projectId + "/locations/" + locationId + "/clusters/" + clusterId;
+        try {
+            if (alloyDBEmulator != null) {
+                return this.<com.google.longrunning.Operation>callGrpcIgnoringAlreadyExists(observer ->
+                        alloyDBEmulator.getServiceImpl().createInstance(
+                                com.google.cloud.alloydb.v1.CreateInstanceRequest.newBuilder()
+                                        .setParent(parent)
+                                        .setInstanceId(instanceId)
+                                        .setInstance(com.google.cloud.alloydb.v1.Instance.newBuilder().build())
+                                        .build(), observer));
+            }
+            var now = java.time.Instant.now();
+            var seededInstance = com.google.cloud.alloydb.v1.Instance.newBuilder()
+                    .setName(parent + "/instances/" + instanceId)
+                    .setState(com.google.cloud.alloydb.v1.Instance.State.READY)
+                    .setCreateTime(com.localcloud.emulators.common.GrpcSupport.timestamp(now))
+                    .setUpdateTime(com.localcloud.emulators.common.GrpcSupport.timestamp(now))
+                    .build();
+            try (var conn = dataSource.getConnection();
+                 var ps = conn.prepareStatement("""
+                         INSERT INTO alloydb_instances
+                         (project_id, location_id, cluster_id, instance_id, instance_proto)
+                         VALUES (?, ?, ?, ?, ?)
+                         ON CONFLICT (project_id, location_id, cluster_id, instance_id) DO NOTHING
+                         """)) {
+                ps.setString(1, projectId);
+                ps.setString(2, locationId);
+                ps.setString(3, clusterId);
+                ps.setString(4, instanceId);
+                ps.setBytes(5, seededInstance.toByteArray());
+                return ps.executeUpdate() > 0;
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to seed AlloyDB instance {}: {}", instanceId, e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean seedAlloyDBDatabase(String projectId, String locationId, String clusterId, String databaseName) {
+        String physicalName = com.localcloud.emulators.common.GrpcSupport.safeDatabaseName(clusterId).equals(databaseName)
+                ? databaseName
+                : com.localcloud.emulators.common.GrpcSupport.safeDatabaseName(clusterId + "_" + databaseName);
+        try (var conn = dataSource.getConnection()) {
+            try (var find = conn.prepareStatement("""
+                    SELECT 1 FROM alloydb_databases
+                    WHERE project_id = ? AND location_id = ? AND cluster_id = ? AND database_name = ?
+                    """)) {
+                find.setString(1, projectId);
+                find.setString(2, locationId);
+                find.setString(3, clusterId);
+                find.setString(4, databaseName);
+                try (var rs = find.executeQuery()) {
+                    if (rs.next()) {
+                        createAlloyDBPhysicalDatabase(physicalName);
+                        return false;
+                    }
+                }
+            }
+            try (var ps = conn.prepareStatement("""
+                     INSERT INTO alloydb_databases
+                     (project_id, location_id, cluster_id, database_name, physical_name)
+                     VALUES (?, ?, ?, ?, ?)
+                     """)) {
+                ps.setString(1, projectId);
+                ps.setString(2, locationId);
+                ps.setString(3, clusterId);
+                ps.setString(4, databaseName);
+                ps.setString(5, physicalName);
+                int inserted = ps.executeUpdate();
+                createAlloyDBPhysicalDatabase(physicalName);
+                return inserted > 0;
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to seed AlloyDB database {}: {}", databaseName, e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean seedAlloyDBTable(String projectId, String locationId, String clusterId, Map<String, Object> table) {
+        return seedAlloyDBTable(projectId, locationId, clusterId, null, table);
+    }
+
+    private boolean seedAlloyDBTable(String projectId, String locationId, String clusterId, String logicalDatabaseName,
+                                     Map<String, Object> table) {
+        String tableName = idFromName(string(table, "table", "table_name", "tableName", "name"), "tables");
+        if (tableName == null || !tableName.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            logger.warn("Skipping AlloyDB table seed entry with invalid table name: {}", table);
+            return false;
+        }
+        String databaseName = findAlloyDBDatabaseName(projectId, locationId, clusterId, logicalDatabaseName);
+        if (databaseName == null) return false;
+
+        List<Map<String, Object>> rows = mapList(table, "rows");
+        List<Map<String, Object>> columns = mapList(table, "columns");
+        if (columns.isEmpty()) {
+            columns = inferAlloyDBColumns(rows);
+        }
+        if (columns.isEmpty()) {
+            logger.warn("Skipping AlloyDB table {} with no columns or rows", tableName);
+            return false;
+        }
+
+        try (var conn = dataSource.getConnection(databaseName);
+             var stmt = conn.createStatement()) {
+            String ddl = "CREATE TABLE IF NOT EXISTS " + quoteIdentifier(tableName) + " (" +
+                    columns.stream()
+                            .map(c -> quoteIdentifier(string(c, "name")) + " " + alloyDBColumnType(string(c, "type")))
+                            .reduce((a, b) -> a + ", " + b)
+                            .orElse("") + ")";
+            stmt.execute(ddl);
+            if (!rows.isEmpty()) {
+                insertAlloyDBRows(conn, tableName, columns, rows);
+            }
+            return true;
+        } catch (Exception e) {
+            logger.warn("Failed to seed AlloyDB table {}.{}: {}", databaseName, tableName, e.getMessage());
+            return false;
+        }
+    }
+
+    private String findAlloyDBDatabaseName(String projectId, String locationId, String clusterId) {
+        return findAlloyDBDatabaseName(projectId, locationId, clusterId, null);
+    }
+
+    private String findAlloyDBDatabaseName(String projectId, String locationId, String clusterId, String logicalDatabaseName) {
+        if (logicalDatabaseName != null) {
+            try (var conn = dataSource.getConnection();
+                 var ps = conn.prepareStatement("""
+                         SELECT physical_name FROM alloydb_databases
+                         WHERE project_id = ? AND location_id = ? AND cluster_id = ? AND database_name = ?
+                         """)) {
+                ps.setString(1, projectId);
+                ps.setString(2, locationId);
+                ps.setString(3, clusterId);
+                ps.setString(4, logicalDatabaseName);
+                try (var rs = ps.executeQuery()) {
+                    if (rs.next()) return rs.getString(1);
+                }
+            } catch (Exception e) {
+                logger.warn("Failed to resolve AlloyDB database {} for cluster {}: {}", logicalDatabaseName, clusterId, e.getMessage());
+                return null;
+            }
+        }
+        try (var conn = dataSource.getConnection();
+             var ps = conn.prepareStatement("""
+                     SELECT physical_name FROM alloydb_databases
+                     WHERE project_id = ? AND location_id = ? AND cluster_id = ?
+                     ORDER BY database_name
+                     LIMIT 1
+                     """)) {
+            ps.setString(1, projectId);
+            ps.setString(2, locationId);
+            ps.setString(3, clusterId);
+            try (var rs = ps.executeQuery()) {
+                if (rs.next()) return rs.getString(1);
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to resolve AlloyDB database for cluster {}: {}", clusterId, e.getMessage());
+            return null;
+        }
+        try (var conn = dataSource.getConnection();
+             var ps = conn.prepareStatement("""
+                     SELECT database_name FROM alloydb_clusters
+                     WHERE project_id = ? AND location_id = ? AND cluster_id = ?
+                     """)) {
+            ps.setString(1, projectId);
+            ps.setString(2, locationId);
+            ps.setString(3, clusterId);
+            try (var rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to resolve AlloyDB fallback database for cluster {}: {}", clusterId, e.getMessage());
+            return null;
+        }
+    }
+
+    private List<Map<String, Object>> inferAlloyDBColumns(List<Map<String, Object>> rows) {
+        Set<String> names = new LinkedHashSet<>();
+        for (Map<String, Object> row : rows) names.addAll(row.keySet());
+        List<Map<String, Object>> columns = new ArrayList<>();
+        for (String name : names) {
+            Object sample = null;
+            for (Map<String, Object> row : rows) {
+                if (row.get(name) != null) {
+                    sample = row.get(name);
+                    break;
+                }
+            }
+            columns.add(Map.of("name", name, "type", inferAlloyDBType(sample)));
+        }
+        return columns;
+    }
+
+    private String inferAlloyDBType(Object value) {
+        if (value instanceof Integer || value instanceof Long) return "BIGINT";
+        if (value instanceof Number) return "NUMERIC";
+        if (value instanceof Boolean) return "BOOLEAN";
+        return "TEXT";
+    }
+
+    private String alloyDBColumnType(String type) {
+        if (type == null || type.isBlank()) return "TEXT";
+        String normalized = type.trim().toUpperCase(Locale.ROOT);
+        if (normalized.matches("VARCHAR\\([0-9]{1,4}\\)")
+                || normalized.matches("NUMERIC\\([0-9]{1,3},[0-9]{1,3}\\)")
+                || normalized.equals("TEXT")
+                || normalized.equals("INTEGER")
+                || normalized.equals("BIGINT")
+                || normalized.equals("NUMERIC")
+                || normalized.equals("BOOLEAN")
+                || normalized.equals("TIMESTAMP")
+                || normalized.equals("DATE")
+                || normalized.equals("DOUBLE PRECISION")
+                || normalized.equals("REAL")) {
+            return normalized;
+        }
+        return "TEXT";
+    }
+
+    private void insertAlloyDBRows(java.sql.Connection conn, String tableName, List<Map<String, Object>> columns,
+                                   List<Map<String, Object>> rows) throws Exception {
+        List<String> columnNames = columns.stream().map(c -> string(c, "name")).toList();
+        String sql = "INSERT INTO " + quoteIdentifier(tableName) + " (" +
+                columnNames.stream().map(this::quoteIdentifier).reduce((a, b) -> a + ", " + b).orElse("") +
+                ") VALUES (" + columnNames.stream().map(c -> "?").reduce((a, b) -> a + ", " + b).orElse("") + ")";
+        try (var ps = conn.prepareStatement(sql)) {
+            for (Map<String, Object> row : rows) {
+                for (int i = 0; i < columnNames.size(); i++) {
+                    Object value = row.get(columnNames.get(i));
+                    if (value instanceof Map || value instanceof List) {
+                        ps.setString(i + 1, jsonMapper.writeValueAsString(value));
+                    } else {
+                        ps.setObject(i + 1, value);
+                    }
+                }
+                ps.addBatch();
+            }
+            ps.executeBatch();
+        }
+    }
+
+    private void createAlloyDBPhysicalDatabase(String databaseName) {
+        try (var conn = dataSource.getConnection(); var stmt = conn.createStatement()) {
+            stmt.execute("CREATE DATABASE " + quoteIdentifier(databaseName));
+        } catch (Exception e) {
+            logger.debug("AlloyDB database {} may already exist or cannot be created: {}", databaseName, e.getMessage());
+        }
+        try (var conn = dataSource.getConnection(databaseName); var stmt = conn.createStatement()) {
+            stmt.execute("CREATE EXTENSION IF NOT EXISTS vector");
+        } catch (Exception e) {
+            logger.debug("AlloyDB database {} pgvector setup skipped: {}", databaseName, e.getMessage());
+        }
+    }
+
+    private void dropAlloyDBPhysicalDatabase(String databaseName) {
+        try (var conn = dataSource.getConnection(); var stmt = conn.createStatement()) {
+            stmt.execute("DROP DATABASE IF EXISTS " + quoteIdentifier(databaseName));
+        } catch (Exception e) {
+            logger.debug("AlloyDB database {} drop skipped: {}", databaseName, e.getMessage());
+        }
+    }
+
+    private String quoteIdentifier(String identifier) {
+        return "\"" + identifier.replace("\"", "\"\"") + "\"";
+    }
+
+    private boolean seedAlloyDBBackup(String projectId, String locationId, String clusterId, Map<String, Object> backup) {
+        String backupId = idFromName(string(backup, "backup_id", "backupId", "name"), "backups");
+        if (backupId == null) return false;
+        String parent = "projects/" + projectId + "/locations/" + locationId;
+        String clusterName = "projects/" + projectId + "/locations/" + locationId + "/clusters/" + clusterId;
+        try {
+            return this.<com.google.longrunning.Operation>callGrpcIgnoringAlreadyExists(observer ->
+                    alloyDBEmulator.getServiceImpl().createBackup(
+                            com.google.cloud.alloydb.v1.CreateBackupRequest.newBuilder()
+                                    .setParent(parent)
+                                    .setBackupId(backupId)
+                                    .setBackup(com.google.cloud.alloydb.v1.Backup.newBuilder().setClusterName(clusterName).build())
+                                    .build(), observer));
+        } catch (Exception e) {
+            logger.warn("Failed to seed AlloyDB backup {}: {}", backupId, e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean seedAlloyDBUser(String projectId, String locationId, String clusterId, Map<String, Object> user) {
+        String userId = idFromName(string(user, "user_id", "userId", "name"), "users");
+        if (userId == null) return false;
+        String parent = "projects/" + projectId + "/locations/" + locationId + "/clusters/" + clusterId;
+        try {
+            this.<com.google.cloud.alloydb.v1.User>callGrpc(observer -> alloyDBEmulator.getServiceImpl().createUser(
+                    com.google.cloud.alloydb.v1.CreateUserRequest.newBuilder()
+                            .setParent(parent)
+                            .setUserId(userId)
+                            .setUser(com.google.cloud.alloydb.v1.User.newBuilder().build())
+                            .build(), observer));
+            return true;
+        } catch (Exception e) {
+            if (Status.fromThrowable(e).getCode() != Status.Code.ALREADY_EXISTS) {
+                logger.warn("Failed to seed AlloyDB user {}: {}", userId, e.getMessage());
+            }
+            return false;
+        }
+    }
+
+    private int resetAlloyDB(String projectId) {
+        int count = 0;
+        try (var conn = dataSource.getConnection()) {
+            List<String> clusterNames = new ArrayList<>();
+            List<String> databaseNames = new ArrayList<>();
+            try (var ps = conn.prepareStatement(
+                    "SELECT DISTINCT c.location_id, c.cluster_id, COALESCE(d.physical_name, c.database_name) AS physical_name " +
+                    "FROM alloydb_clusters c LEFT JOIN alloydb_databases d " +
+                    "ON d.project_id = c.project_id AND d.location_id = c.location_id AND d.cluster_id = c.cluster_id " +
+                    "WHERE c.project_id = ?")) {
+                ps.setString(1, projectId);
+                try (var rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        clusterNames.add("projects/" + projectId + "/locations/" + rs.getString(1) + "/clusters/" + rs.getString(2));
+                        databaseNames.add(rs.getString(3));
+                    }
+                }
+            }
+            if (alloyDBEmulator != null) {
+                for (String clusterName : clusterNames) {
+                    try {
+                        this.<com.google.longrunning.Operation>callGrpc(observer -> alloyDBEmulator.getServiceImpl().deleteCluster(
+                                com.google.cloud.alloydb.v1.DeleteClusterRequest.newBuilder().setName(clusterName).build(), observer));
+                        count++;
+                    } catch (Exception e) {
+                        logger.debug("Failed to delete AlloyDB cluster {} via service: {}", clusterName, e.getMessage());
+                    }
+                }
+            }
+            if (alloyDBEmulator == null) {
+                for (String databaseName : databaseNames) {
+                    dropAlloyDBPhysicalDatabase(databaseName);
+                }
+            }
+            try (var ps = conn.prepareStatement("DELETE FROM alloydb_backups WHERE project_id = ?")) {
+                ps.setString(1, projectId);
+                count += ps.executeUpdate();
+            }
+            try (var ps = conn.prepareStatement("DELETE FROM alloydb_clusters WHERE project_id = ?")) {
+                ps.setString(1, projectId);
+                count += ps.executeUpdate();
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to reset AlloyDB: {}", e.getMessage());
+        }
+        logger.info("Reset AlloyDB: deleted {} resources", count);
+        return count;
+    }
+
+    // ========== Dataproc seed/reset ==========
+
+    private int seedDataproc(Object dataprocData, String projectId) {
+        if (dataprocEmulator == null) {
+            logger.warn("Dataproc seed skipped — emulator is not registered");
+            return 0;
+        }
+        Map<String, Object> dataproc = asMap(dataprocData);
+        int count = 0;
+        for (Map<String, Object> cluster : mapList(dataproc, "clusters")) {
+            String region = stringOr(cluster, "us-central1", "region", "location");
+            String clusterName = idFromName(string(cluster, "cluster_name", "clusterName", "name"), "clusters");
+            if (clusterName == null) {
+                logger.warn("Skipping Dataproc cluster seed entry missing cluster_name/name: {}", cluster);
+                continue;
+            }
+            if (seedDataprocCluster(projectId, region, clusterName)) count++;
+            for (Map<String, Object> job : mapList(cluster, "jobs")) {
+                if (seedDataprocJob(projectId, region, clusterName, job)) count++;
+            }
+        }
+        for (Map<String, Object> job : mapList(dataproc, "jobs")) {
+            String region = stringOr(job, "us-central1", "region", "location");
+            String clusterName = idFromName(string(job, "cluster_name", "clusterName", "cluster"), "clusters");
+            if (seedDataprocJob(projectId, region, clusterName, job)) count++;
+        }
+        return count;
+    }
+
+    private boolean seedDataprocCluster(String projectId, String region, String clusterName) {
+        try {
+            return this.<com.google.longrunning.Operation>callGrpcIgnoringAlreadyExists(observer ->
+                    dataprocEmulator.getClusterService().createCluster(
+                            com.google.cloud.dataproc.v1.CreateClusterRequest.newBuilder()
+                                    .setProjectId(projectId)
+                                    .setRegion(region)
+                                    .setCluster(com.google.cloud.dataproc.v1.Cluster.newBuilder()
+                                            .setClusterName(clusterName)
+                                            .build())
+                                    .build(), observer));
+        } catch (Exception e) {
+            logger.warn("Failed to seed Dataproc cluster {}: {}", clusterName, e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean seedDataprocJob(String projectId, String region, String defaultClusterName,
+                                    Map<String, Object> jobEntry) {
+        String clusterName = defaultClusterName;
+        if (clusterName == null) {
+            clusterName = idFromName(string(jobEntry, "cluster_name", "clusterName", "cluster"), "clusters");
+        }
+        String jobId = idFromName(string(jobEntry, "job_id", "jobId", "name"), "jobs");
+        if (clusterName == null || jobId == null) {
+            logger.warn("Skipping Dataproc job seed entry missing cluster_name/cluster or job_id/name: {}", jobEntry);
+            return false;
+        }
+        com.google.cloud.dataproc.v1.Job.Builder job = com.google.cloud.dataproc.v1.Job.newBuilder()
+                .setReference(com.google.cloud.dataproc.v1.JobReference.newBuilder()
+                        .setProjectId(projectId)
+                        .setJobId(jobId))
+                .setPlacement(com.google.cloud.dataproc.v1.JobPlacement.newBuilder()
+                        .setClusterName(clusterName));
+        if (!applyDataprocJobType(jobEntry, job)) {
+            logger.warn("Skipping Dataproc job {} without spark_job, pyspark_job, or spark_sql_job", jobId);
+            return false;
+        }
+        try {
+            this.<com.google.cloud.dataproc.v1.Job>callGrpc(observer -> dataprocEmulator.getJobService().submitJob(
+                    com.google.cloud.dataproc.v1.SubmitJobRequest.newBuilder()
+                            .setProjectId(projectId)
+                            .setRegion(region)
+                            .setJob(job)
+                            .build(), observer));
+            return true;
+        } catch (Exception e) {
+            logger.warn("Failed to seed Dataproc job {}: {}", jobId, e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean applyDataprocJobType(Map<String, Object> jobEntry, com.google.cloud.dataproc.v1.Job.Builder job) {
+        Map<String, Object> sparkJob = asMap(first(jobEntry, "spark_job", "sparkJob"));
+        if (!sparkJob.isEmpty()) {
+            com.google.cloud.dataproc.v1.SparkJob.Builder spark =
+                    com.google.cloud.dataproc.v1.SparkJob.newBuilder()
+                            .addAllArgs(stringList(first(sparkJob, "args")))
+                            .addAllJarFileUris(stringList(first(sparkJob, "jar_file_uris", "jarFileUris", "jars")))
+                            .addAllFileUris(stringList(first(sparkJob, "file_uris", "fileUris", "files")))
+                            .putAllProperties(stringMap(first(sparkJob, "properties")));
+            String mainJar = string(sparkJob, "main_jar_file_uri", "mainJarFileUri", "main_jar");
+            if (mainJar != null) spark.setMainJarFileUri(mainJar);
+            String mainClass = string(sparkJob, "main_class", "mainClass");
+            if (mainClass != null) spark.setMainClass(mainClass);
+            job.setSparkJob(spark);
+            return true;
+        }
+        Map<String, Object> pysparkJob = asMap(first(jobEntry, "pyspark_job", "pysparkJob", "py_spark_job", "pySparkJob"));
+        if (!pysparkJob.isEmpty()) {
+            String mainPython = string(pysparkJob, "main_python_file_uri", "mainPythonFileUri", "main_python_file");
+            if (mainPython == null) return false;
+            com.google.cloud.dataproc.v1.PySparkJob.Builder pyspark =
+                    com.google.cloud.dataproc.v1.PySparkJob.newBuilder()
+                            .setMainPythonFileUri(mainPython)
+                            .addAllArgs(stringList(first(pysparkJob, "args")))
+                            .addAllPythonFileUris(stringList(first(pysparkJob, "python_file_uris", "pythonFileUris", "python_files")))
+                            .addAllJarFileUris(stringList(first(pysparkJob, "jar_file_uris", "jarFileUris", "jars")))
+                            .addAllFileUris(stringList(first(pysparkJob, "file_uris", "fileUris", "files")))
+                            .putAllProperties(stringMap(first(pysparkJob, "properties")));
+            job.setPysparkJob(pyspark);
+            return true;
+        }
+        Map<String, Object> sparkSqlJob = asMap(first(jobEntry, "spark_sql_job", "sparkSqlJob"));
+        if (!sparkSqlJob.isEmpty()) {
+            com.google.cloud.dataproc.v1.SparkSqlJob.Builder sparkSql =
+                    com.google.cloud.dataproc.v1.SparkSqlJob.newBuilder()
+                            .addAllJarFileUris(stringList(first(sparkSqlJob, "jar_file_uris", "jarFileUris", "jars")))
+                            .putAllProperties(stringMap(first(sparkSqlJob, "properties")));
+            String queryFile = string(sparkSqlJob, "query_file_uri", "queryFileUri", "query_file");
+            if (queryFile != null) sparkSql.setQueryFileUri(queryFile);
+            job.setSparkSqlJob(sparkSql);
+            return queryFile != null;
+        }
+        return false;
+    }
+
+    private int resetDataproc(String projectId) {
+        int count = 0;
+        try (var conn = dataSource.getConnection()) {
+            try (var ps = conn.prepareStatement("DELETE FROM dataproc_jobs WHERE project_id = ?")) {
+                ps.setString(1, projectId);
+                count += ps.executeUpdate();
+            }
+            try (var ps = conn.prepareStatement("DELETE FROM dataproc_clusters WHERE project_id = ?")) {
+                ps.setString(1, projectId);
+                count += ps.executeUpdate();
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to reset Dataproc: {}", e.getMessage());
+        }
+        logger.info("Reset Dataproc: deleted {} resources", count);
+        return count;
+    }
+
+    // ========== Cloud IAM seed/reset ==========
+
+    private int seedCloudIAM(Object iamData) {
+        if (iamEmulator == null) {
+            logger.warn("Cloud IAM seed skipped — emulator is not registered");
+            return 0;
+        }
+        Map<String, Object> iam = asMap(iamData);
+        int count = 0;
+        for (Map<String, Object> policyEntry : mapList(iam, "policies")) {
+            try {
+                String resource = string(policyEntry, "resource");
+                if (resource == null) {
+                    logger.warn("Skipping IAM seed entry missing resource: {}", policyEntry);
+                    continue;
+                }
+                com.google.iam.v1.Policy.Builder policy = com.google.iam.v1.Policy.newBuilder();
+                for (Map<String, Object> binding : mapList(policyEntry, "bindings")) {
+                    String role = string(binding, "role");
+                    if (role == null) continue;
+                    policy.addBindings(com.google.iam.v1.Binding.newBuilder()
+                            .setRole(role)
+                            .addAllMembers(stringList(first(binding, "members"))));
+                }
+                this.<com.google.iam.v1.Policy>callGrpc(observer -> iamEmulator.getServiceImpl().setIamPolicy(
+                        com.google.iam.v1.SetIamPolicyRequest.newBuilder()
+                                .setResource(resource)
+                                .setPolicy(policy)
+                                .build(), observer));
+                count++;
+            } catch (Exception e) {
+                logger.warn("Failed to seed IAM policy: {}", e.getMessage());
+            }
+        }
+        return count;
+    }
+
+    private int resetCloudIAM(String projectId) {
+        int count = 0;
+        try (var conn = dataSource.getConnection();
+             var ps = conn.prepareStatement("""
+                     DELETE FROM iam_policies
+                     WHERE resource_type = 'projects' AND (resource_id = ? OR resource_id LIKE ?)
+                     """)) {
+            ps.setString(1, projectId);
+            ps.setString(2, projectId + "/%");
+            count = ps.executeUpdate();
+        } catch (Exception e) {
+            logger.warn("Failed to reset Cloud IAM: {}", e.getMessage());
+        }
+        logger.info("Reset Cloud IAM: deleted {} resources", count);
+        return count;
+    }
+
+    // ========== Seed parsing helpers ==========
+
+    private static void addResult(Map<String, Object> results, String service, int count) {
+        results.put(service, results.containsKey(service) ? ((int) results.get(service)) + count : count);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> asMap(Object value) {
+        if (!(value instanceof Map<?, ?> raw)) return Map.of();
+        Map<String, Object> typed = new LinkedHashMap<>();
+        raw.forEach((key, val) -> typed.put(String.valueOf(key), val));
+        return typed;
+    }
+
+    private static List<Map<String, Object>> mapList(Map<String, Object> map, String... keys) {
+        Object value = first(map, keys);
+        if (!(value instanceof List<?> list)) return List.of();
+        List<Map<String, Object>> typed = new ArrayList<>();
+        for (Object item : list) {
+            Map<String, Object> itemMap = asMap(item);
+            if (!itemMap.isEmpty()) typed.add(itemMap);
+        }
+        return typed;
+    }
+
+    private static Object first(Map<String, Object> map, String... keys) {
+        if (map == null) return null;
+        for (String key : keys) {
+            if (map.containsKey(key) && map.get(key) != null) {
+                return map.get(key);
+            }
+        }
+        return null;
+    }
+
+    private static String string(Map<String, Object> map, String... keys) {
+        Object value = first(map, keys);
+        if (value == null) return null;
+        String str = String.valueOf(value);
+        return str.isBlank() ? null : str;
+    }
+
+    private static String stringOr(Map<String, Object> map, String defaultValue, String... keys) {
+        String value = string(map, keys);
+        return value != null ? value : defaultValue;
+    }
+
+    private static int intValue(Map<String, Object> map, int defaultValue, String... keys) {
+        Object value = first(map, keys);
+        if (value instanceof Number n) return n.intValue();
+        if (value != null) {
+            try {
+                return Integer.parseInt(String.valueOf(value));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return defaultValue;
+    }
+
+    private static long longValue(Map<String, Object> map, long defaultValue, String... keys) {
+        Object value = first(map, keys);
+        if (value instanceof Number n) return n.longValue();
+        if (value != null) {
+            try {
+                return Long.parseLong(String.valueOf(value));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return defaultValue;
+    }
+
+    private static List<String> stringList(Object value) {
+        if (value == null) return List.of();
+        if (value instanceof List<?> list) {
+            List<String> strings = new ArrayList<>();
+            for (Object item : list) {
+                if (item != null) strings.add(String.valueOf(item));
+            }
+            return strings;
+        }
+        String str = String.valueOf(value);
+        return str.isBlank() ? List.of() : List.of(str);
+    }
+
+    private static Map<String, String> stringMap(Object value) {
+        if (!(value instanceof Map<?, ?> raw)) return Map.of();
+        Map<String, String> strings = new LinkedHashMap<>();
+        raw.forEach((key, val) -> {
+            if (key != null && val != null) strings.put(String.valueOf(key), String.valueOf(val));
+        });
+        return strings;
+    }
+
+    private static String idFromName(String value, String collection) {
+        if (value == null) return null;
+        String marker = "/" + collection + "/";
+        int markerIndex = value.indexOf(marker);
+        if (markerIndex >= 0) return value.substring(markerIndex + marker.length());
+        int slash = value.lastIndexOf('/');
+        return slash >= 0 ? value.substring(slash + 1) : value;
+    }
+
+    private static ByteString bytesFrom(Map<String, Object> map, String plainKey, String... base64Keys) {
+        Object encoded = first(map, base64Keys);
+        if (encoded != null) {
+            return ByteString.copyFrom(Base64.getDecoder().decode(String.valueOf(encoded)));
+        }
+        Object plain = first(map, plainKey);
+        return plain == null ? ByteString.EMPTY : ByteString.copyFromUtf8(String.valueOf(plain));
+    }
+
+    private static String normalizePubSubTopic(String projectId, String topic) {
+        if (topic == null) return null;
+        return topic.startsWith("projects/") ? topic : "projects/" + projectId + "/topics/" + topic;
+    }
+
+    private static com.google.cloud.scheduler.v1.HttpMethod parseSchedulerHttpMethod(String method) {
+        try {
+            return com.google.cloud.scheduler.v1.HttpMethod.valueOf(method.toUpperCase(Locale.ROOT).replace('-', '_'));
+        } catch (Exception e) {
+            return com.google.cloud.scheduler.v1.HttpMethod.GET;
+        }
+    }
+
+    private static void setDuration(Consumer<com.google.protobuf.Duration> setter, Map<String, Object> map, String... keys) {
+        Object value = first(map, keys);
+        if (value == null) return;
+        setter.accept(com.google.protobuf.Duration.newBuilder()
+                .setSeconds(longValue(map, 0, keys))
+                .build());
+    }
+
+    private <T> boolean callGrpcIgnoringAlreadyExists(Consumer<StreamObserver<T>> call) {
+        try {
+            callGrpc(call);
+            return true;
+        } catch (RuntimeException e) {
+            if (Status.fromThrowable(e).getCode() == Status.Code.ALREADY_EXISTS) {
+                return false;
+            }
+            throw e;
+        }
+    }
+
+    private <T> T callGrpc(Consumer<StreamObserver<T>> call) {
+        GrpcCaptureObserver<T> observer = new GrpcCaptureObserver<>();
+        call.accept(observer);
+        return observer.valueOrThrow();
+    }
+
+    private static final class GrpcCaptureObserver<T> implements StreamObserver<T> {
+        private T value;
+        private Throwable error;
+        private boolean completed;
+
+        @Override
+        public void onNext(T value) {
+            this.value = value;
+        }
+
+        @Override
+        public void onError(Throwable error) {
+            this.error = error;
+        }
+
+        @Override
+        public void onCompleted() {
+            this.completed = true;
+        }
+
+        T valueOrThrow() {
+            if (error != null) {
+                if (error instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                throw new RuntimeException(error);
+            }
+            if (!completed) {
+                throw new IllegalStateException("gRPC call did not complete");
+            }
+            return value;
         }
     }
 

@@ -62,13 +62,15 @@ Java 21 (LTS, primary): Follow standard conventions
 - Container needs `-m 4g` memory limit for stable operation
 
 ## Recent Changes
+- 003-scheduler-functions-alloydb-dataproc-iam: Added 5 new gRPC facade emulators (Cloud Scheduler, Cloud Functions 2nd gen, AlloyDB, Dataproc, Cloud IAM) with PostgreSQL-backed state, browse API support, and Solid.js console views.
+
 - 002-memorystore-emulator: Added Java 21 LTS (primary) + Netty codec-redis (RESP2 parser), Armeria (lifecycle), HikariCP (PostgreSQL pool), Jackson (JSONB)
 
 - 001-gcp-local-emulator: Java 21 + Armeria (API gateway, gRPC+REST, console static files), PostgreSQL (persistence), proto-google-cloud-* (gRPC stubs), HikariCP, Solid.js (web console). 14 GCP services emulated (GCS, Pub/Sub, Firestore, BigQuery, Secret Manager, Cloud Tasks, Spanner, Bigtable, Logging, Monitoring, GKE, Compute Engine, Cloud Run, Memorystore).
 
 ## Test Counts
 
-- Java server: 187 unit tests (JUnit 5 + Mockito)
+- Java server: 250+ unit tests (JUnit 5 + Mockito)
 - Console: esbuild (no test suite)
 
 <!-- MANUAL ADDITIONS START -->
@@ -100,6 +102,11 @@ Java 21 (LTS, primary): Follow standard conventions
 - Spanner emulator has a known LevelDB race condition on persistence — verify data survives restarts.
 - Secret Manager seeding uses direct PostgreSQL inserts, not gRPC — so emulator `incrementRequestCount()` is NOT called from seed/browse paths. Usage metrics for admin API operations are tracked directly via `UsageMetricsRepository`.
 - Usage metrics are persisted to PostgreSQL (`usage_metrics` table) with UPSERT semantics — one row per project+service, flushed every 30 seconds from in-memory counters.
+- **Cloud Scheduler**: Uses `cron-utils` library for cron parsing + `ScheduledExecutorService` for job dispatch. Supports HTTP, Pub/Sub, and App Engine targets. Pub/Sub target publishes to local Pub/Sub emulator via gRPC. Jobs survive restarts (re-scheduled from DB on startup). Env var: `CLOUD_SCHEDULER_EMULATOR_HOST`.
+- **Cloud Functions (2nd gen)**: Metadata-only facade — CRUD for function configs. Developers run functions locally using Functions Framework. Trigger routing: Pub/Sub topics auto-create subscriptions that forward to the function's local URL. Build config stored but not executed. Env var: `CLOUD_FUNCTIONS_EMULATOR_HOST`.
+- **AlloyDB**: PostgreSQL-compatible at wire level. Each cluster maps to a dedicated PostgreSQL database (`alloydb_<cluster_id>`). `GetConnectionInfo` returns localhost:5432. pgvector extension installed automatically. Env var: `ALLOYDB_EMULATOR_HOST`.
+- **Dataproc**: Spark 3.5.x runs via `spark-submit` in local mode (`--master local[*]`). Cluster CRUD is metadata-only. Jobs are submitted by forking `spark-submit` processes tracked via `Process`. Requires Spark installed on host at `SPARK_HOME`. Env var: `DATAPROC_EMULATOR_HOST`.
+- **Cloud IAM**: Permissive policy stub. `testIamPermissions` returns ALL requested permissions as allowed. `getIamPolicy`/`setIamPolicy` manage JSONB policies per resource in PostgreSQL. No role validation or condition support. Env var: `IAM_EMULATOR_HOST`.
 
 ## Project Management / Specs
 
@@ -114,36 +121,39 @@ Java 21 (LTS, primary): Follow standard conventions
 
 | Area | Description | Skill |
 |------|-------------|-------|
-| Get | 219 symbols | `/gortex-get` |
-| Handle | 186 symbols | `/gortex-handle` |
-| Build | 138 symbols | `/gortex-build` |
-| Admin | 136 symbols | `/gortex-admin` |
+| Get | 257 symbols | `/gortex-get` |
+| Get | 199 symbols | `/gortex-get` |
+| Seed | 196 symbols | `/gortex-seed` |
+| Get | 182 symbols | `/gortex-get` |
+| List | 141 symbols | `/gortex-list` |
 | Stdlib | 80 symbols | `/gortex-stdlib` |
+| Licensing | 75 symbols | `/gortex-licensing` |
 | Bigtablesql | 74 symbols | `/gortex-bigtablesql` |
 | Expression | 64 symbols | `/gortex-expression` |
-| Bigtablesql | 60 symbols | `/gortex-bigtablesql` |
-| Engine | 52 symbols | `/gortex-engine` |
-| Adapters | 40 symbols | `/gortex-adapters` |
-| Engine | 37 symbols | `/gortex-engine` |
+| Generate | 60 symbols | `/gortex-generate` |
+| Adapters | 49 symbols | `/gortex-adapters` |
+| Build | 46 symbols | `/gortex-build` |
+| Bigtablesql | 45 symbols | `/gortex-bigtablesql` |
+| Pages | 45 symbols | `/gortex-pages` |
+| Services | 45 symbols | `/gortex-services` |
+| Gateway | 44 symbols | `/gortex-gateway` |
+| Engine | 43 symbols | `/gortex-engine` |
+| Localcloud | 32 symbols | `/gortex-localcloud` |
 | Expression | 32 symbols | `/gortex-expression` |
-| Test | 30 symbols | `/gortex-test` |
-| Gateway | 30 symbols | `/gortex-gateway` |
-| Adapters | 29 symbols | `/gortex-adapters` |
-| Pages | 27 symbols | `/gortex-pages` |
-| Engine | 27 symbols | `/gortex-engine` |
-| Get | 27 symbols | `/gortex-get` |
-| Gateway | 27 symbols | `/gortex-gateway` |
-| Localcloud | 26 symbols | `/gortex-localcloud` |
+| Get | 32 symbols | `/gortex-get` |
 <!-- gortex:skills:end -->
 
 <!-- gortex:communities:end -->
 
 ## graphify
 
-This project has a graphify knowledge graph at graphify-out/.
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+When the user types `/graphify`, invoke the `skill` tool with `skill: "graphify"` before doing anything else.
 
 Rules:
-- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
-- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
-- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files
-- After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

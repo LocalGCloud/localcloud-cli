@@ -41,11 +41,11 @@ const NAV_ITEMS = [
 
 const SERVICE_GROUPS = [
     { name: 'Storage', tone: 'green', services: [{ id: 'gcs', label: 'Cloud Storage' }, { id: 'secretmanager', label: 'Secret Manager' }] },
-    { name: 'Databases', tone: 'blue', services: [{ id: 'firestore', label: 'Firestore', tag: 'Coming up' }, { id: 'spanner', label: 'Spanner' }, { id: 'bigtable', label: 'Bigtable' }, { id: 'memorystore', label: 'Memorystore' }, { id: 'cloudsql', label: 'Cloud SQL' }] },
+    { name: 'Databases', tone: 'blue', services: [{ id: 'firestore', label: 'Firestore', tag: 'Coming up' }, { id: 'spanner', label: 'Spanner' }, { id: 'bigtable', label: 'Bigtable' }, { id: 'memorystore', label: 'Memorystore' }, { id: 'cloudsql', label: 'Cloud SQL' }, { id: 'alloydb', label: 'AlloyDB' }] },
     { name: 'Analytics', tone: 'amber', services: [{ id: 'bigquery', label: 'BigQuery' }, { id: 'pubsub', label: 'Pub/Sub' }] },
-    { name: 'AI/ML', tone: 'violet', services: [{ id: 'vertexai', label: 'Vertex AI' }] },
-    { name: 'Security', tone: 'green', services: [{ id: 'kms', label: 'Cloud KMS' }] },
-    { name: 'Compute', tone: 'red', services: [{ id: 'cloudrun', label: 'Cloud Run' }, { id: 'gke', label: 'GKE' }, { id: 'compute', label: 'Compute Engine' }, { id: 'cloudtasks', label: 'Cloud Tasks' }, { id: 'workflows', label: 'Workflows' }] },
+    { name: 'AI/ML', tone: 'violet', services: [{ id: 'vertexai', label: 'Vertex AI', tag: 'Coming up' }] },
+    { name: 'Security', tone: 'green', services: [{ id: 'kms', label: 'Cloud KMS' }, { id: 'cloudiam', label: 'Cloud IAM' }] },
+    { name: 'Compute', tone: 'red', services: [{ id: 'cloudrun', label: 'Cloud Run' }, { id: 'gke', label: 'GKE' }, { id: 'compute', label: 'Compute Engine' }, { id: 'dataproc', label: 'Dataproc' }, { id: 'cloudtasks', label: 'Cloud Tasks' }, { id: 'workflows', label: 'Workflows' }, { id: 'cloudscheduler', label: 'Cloud Scheduler' }, { id: 'cloudfunctions', label: 'Cloud Functions' }] },
     { name: 'Operations', tone: 'violet', services: [{ id: 'logging', label: 'Logging' }, { id: 'monitoring', label: 'Monitoring' }] },
 ];
 const FLAT_SERVICES = SERVICE_GROUPS.flatMap(group => group.services.map(svc => ({ ...svc, group: group.name, tone: group.tone })));
@@ -67,23 +67,38 @@ function parseBuildDate(health) {
     return Number.isFinite(parsed) ? parsed : null;
 }
 
-function parseHash() {
-    const hash = window.location.hash.replace(/^#\/?/, '');
-    if (!hash) return { page: 'dashboard', service: null, subpath: [] };
-    const parts = hash.split('/');
-    return { page: parts[0] || 'dashboard', service: parts[1] || null, subpath: parts.slice(2) };
+const STANDALONE_PAGES = ['dashboard', 'logs', 'usage', 'settings'];
+const SERVICE_PAGES = ['explorer', 'editor'];
+
+function parsePath() {
+    const pathname = window.location.pathname.replace(/\/$/, '').replace(/\/+$/, '');
+    const parts = pathname.split('/').filter(Boolean);
+    if (parts.length === 0) return { page: 'dashboard', service: null };
+    const first = decodeURIComponent(parts[0]);
+    if (STANDALONE_PAGES.includes(first)) return { page: first, service: null };
+    if (parts.length >= 2 && SERVICE_PAGES.includes(parts[1])) {
+        return { page: parts[1], service: first, subpath: parts.slice(2) };
+    }
+    return { page: 'explorer', service: first, subpath: parts.slice(1) };
 }
 
-function setHash(page, service, subpath) {
-    const segments = [page];
-    if (service) segments.push(service);
+function buildPath(page, service, subpath) {
+    const segments = [];
+    if (service) segments.push(service, page);
+    else segments.push(page);
     if (subpath && subpath.length > 0) segments.push(...subpath);
-    const next = `#/${segments.join('/')}`;
-    if (decodeURIComponent(window.location.hash) !== decodeURIComponent(next)) window.location.hash = next;
+    return '/' + segments.join('/');
+}
+
+function navigate(path) {
+    const full = path + window.location.search;
+    if (window.location.pathname + window.location.search !== full) {
+        history.pushState(null, '', full);
+    }
 }
 
 function App() {
-    const initial = parseHash();
+    const initial = parsePath();
     const [currentPage, setCurrentPage] = createSignal(initial.page);
     const [selectedService, setSelectedService] = createSignal(initial.service);
     const [subpath, setSubpath] = createSignal(initial.subpath || []);
@@ -179,18 +194,21 @@ function App() {
         const page = currentPage();
         const svc = selectedService();
         const sp = subpath();
-        setHash(page, page === 'data' && svc ? svc : null, page === 'data' && svc ? sp : undefined);
+        const path = buildPath(page, svc, sp) + window.location.search;
+        if (window.location.pathname + window.location.search !== path) {
+            history.replaceState(null, '', path);
+        }
     });
 
-    const onHashChange = () => {
-        const { page, service, subpath: sp } = parseHash();
+    const onPopState = () => {
+        const { page, service, subpath: sp } = parsePath();
         setCurrentPage(page);
         if (service) setSelectedService(service);
-        else if (page !== 'data') setSelectedService(null);
+        else setSelectedService(null);
         setSubpath(sp || []);
     };
-    window.addEventListener('hashchange', onHashChange);
-    onCleanup(() => window.removeEventListener('hashchange', onHashChange));
+    window.addEventListener('popstate', onPopState);
+    onCleanup(() => window.removeEventListener('popstate', onPopState));
 
     const onKeyDown = (e) => {
         const isCommandK = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k';
@@ -252,8 +270,10 @@ function App() {
     });
 
     const navigateTo = (page) => {
-        if (page !== 'data') setSelectedService(null);
+        setSelectedService(null);
         setCurrentPage(page);
+        setSubpath([]);
+        navigate(buildPath(page, null));
         setSearchOpen(false);
         setSettingsMenuOpen(false);
         setMobileSidebarOpen(false);
@@ -261,7 +281,9 @@ function App() {
 
     const handleServiceClick = (serviceId) => {
         setSelectedService(serviceId);
-        setCurrentPage('data');
+        setCurrentPage('explorer');
+        setSubpath([]);
+        navigate(buildPath('explorer', serviceId));
         setSearchOpen(false);
         setSettingsMenuOpen(false);
         setMobileSidebarOpen(false);
@@ -338,7 +360,9 @@ function App() {
                             datastore: svcName,
                             action: () => {
                                 setSearchOpen(false);
-                                setHash('data', svc);
+                                setCurrentPage('explorer');
+                                setSelectedService(svc);
+                                navigate(buildPath('explorer', svc));
                             }
                         });
                         if (n.children && n.children.length > 0) {
@@ -367,8 +391,9 @@ function App() {
                 return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={activeProject} />;
             case 'logs':
                 return <Logs activeProject={activeProject} />;
-            case 'data':
-                return <ServiceExplorer selectedService={selectedService} onTabChange={setSelectedService} activeProject={activeProject} subpath={subpath} onSubpathChange={setSubpath} />;
+            case 'explorer':
+            case 'editor':
+                return <ServiceExplorer selectedService={selectedService} activeView={currentPage} onViewChange={setCurrentPage} onTabChange={setSelectedService} activeProject={activeProject} subpath={subpath} onSubpathChange={setSubpath} />;
             case 'usage':
                 return <Usage activeProject={activeProject} />;
             case 'settings':
@@ -496,7 +521,7 @@ function App() {
                             <Show when={!collapsedGroups()[group.name]}>
                                 <div class="aura-group-services">
                                     <For each={group.services}>
-                                        {(svc) => <button class={`sidebar-sub-item ${selectedService() === svc.id && currentPage() === 'data' ? 'active' : ''}`} onClick={() => handleServiceClick(svc.id)}>
+                                        {(svc) => <button class={`sidebar-sub-item ${selectedService() === svc.id && SERVICE_PAGES.includes(currentPage()) ? 'active' : ''}`} onClick={() => handleServiceClick(svc.id)}>
                                             <img src={`/icons/${svc.id}.svg`} alt="" width="20" height="20" class="sidebar-sub-item-icon" />
                                             <span class="sidebar-sub-item-label">{svc.label}</span>
                                             <Show when={svc.tag}><span class="badge badge-coming-up">{svc.tag}</span></Show>
@@ -521,7 +546,7 @@ function App() {
                     <div class="aura-command-menu" onClick={(e) => e.stopPropagation()}>
                         <div class="aura-command-input">
                             <Icon name="search" size={18} />
-                            <input autofocus value={searchQuery()} onInput={(e) => setSearchQuery(e.currentTarget.value)} aria-label="Command search" name="command-search" autocomplete="off" placeholder="Jump to a service, page, table, or log surface…" />
+                            <input autofocus value={searchQuery()} onInput={(e) => setSearchQuery(e.currentTarget.value)} aria-label="Command search" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck={false} data-lpignore="true" data-1p-ignore="true" placeholder="Jump to a service, page, table, or log surface…" />
                         </div>
                         <div class="aura-command-list">
                             <For each={searchResults()}>

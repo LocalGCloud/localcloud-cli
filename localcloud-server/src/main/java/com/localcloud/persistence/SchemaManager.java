@@ -411,6 +411,79 @@ public class SchemaManager {
                 ")"
             );
 
+            // AlloyDB: Admin API control-plane metadata. The data-plane tables live in
+            // the dedicated PostgreSQL database named by alloydb_clusters.database_name.
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS alloydb_clusters (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    cluster_id VARCHAR(255) NOT NULL," +
+                "    database_name VARCHAR(255) NOT NULL," +
+                "    metadata JSONB DEFAULT '{}'," +
+                "    cluster_proto BYTEA NOT NULL," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location_id, cluster_id)" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS alloydb_instances (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    cluster_id VARCHAR(255) NOT NULL," +
+                "    instance_id VARCHAR(255) NOT NULL," +
+                "    metadata JSONB DEFAULT '{}'," +
+                "    instance_proto BYTEA NOT NULL," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location_id, cluster_id, instance_id)," +
+                "    FOREIGN KEY (project_id, location_id, cluster_id) " +
+                "        REFERENCES alloydb_clusters(project_id, location_id, cluster_id) ON DELETE CASCADE" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS alloydb_databases (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    cluster_id VARCHAR(255) NOT NULL," +
+                "    database_name VARCHAR(255) NOT NULL," +
+                "    physical_name VARCHAR(255) NOT NULL," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location_id, cluster_id, database_name)," +
+                "    FOREIGN KEY (project_id, location_id, cluster_id) " +
+                "        REFERENCES alloydb_clusters(project_id, location_id, cluster_id) ON DELETE CASCADE" +
+                ")"
+            );
+            stmt.execute(
+                "INSERT INTO alloydb_databases (project_id, location_id, cluster_id, database_name, physical_name) " +
+                "SELECT project_id, location_id, cluster_id, database_name, database_name FROM alloydb_clusters " +
+                "ON CONFLICT (project_id, location_id, cluster_id, database_name) DO NOTHING"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS alloydb_backups (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    backup_id VARCHAR(255) NOT NULL," +
+                "    cluster_name VARCHAR(1024) NOT NULL," +
+                "    metadata JSONB DEFAULT '{}'," +
+                "    backup_proto BYTEA NOT NULL," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location_id, backup_id)" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS alloydb_users (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    cluster_id VARCHAR(255) NOT NULL," +
+                "    user_id VARCHAR(255) NOT NULL," +
+                "    metadata JSONB DEFAULT '{}'," +
+                "    user_proto BYTEA NOT NULL," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location_id, cluster_id, user_id)," +
+                "    FOREIGN KEY (project_id, location_id, cluster_id) " +
+                "        REFERENCES alloydb_clusters(project_id, location_id, cluster_id) ON DELETE CASCADE" +
+                ")"
+            );
+
             // Telemetry queue: unsent events persisted for retry
             stmt.execute(
                 "CREATE TABLE IF NOT EXISTS telemetry_queue (" +

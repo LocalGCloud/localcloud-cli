@@ -35,12 +35,80 @@ function matchesStatusFilter(status, filter) {
     }
 }
 
+function requestKey(req, idx) {
+    return req.id || req.traceId || req.trace_id || `${req.timestamp || ''}:${req.method || ''}:${req.path || ''}:${idx}`;
+}
+
+function requestStatus(req) {
+    return req.status ?? req.statusCode ?? req.status_code;
+}
+
+function requestLatency(req) {
+    return req.latency_ms ?? req.durationMs ?? req.duration_ms;
+}
+
+function requestMatchesSearch(req, query) {
+    if (!query) return true;
+    const haystack = [
+        req.path,
+        req.service,
+        req.method,
+        req.traceId,
+        req.trace_id,
+        req.requestBody,
+        req.request_body,
+        req.responseBody,
+        req.response_body,
+    ].filter(Boolean).join('\n').toLowerCase();
+    return haystack.includes(query);
+}
+
+function prettyValue(value) {
+    if (value == null || value === '') return '—';
+    if (typeof value === 'object') return JSON.stringify(value, null, 2);
+    const text = String(value);
+    const trimmed = text.trim();
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try { return JSON.stringify(JSON.parse(trimmed), null, 2); } catch {}
+    }
+    return text;
+}
+
+function LogDetailSection(props) {
+    const [copied, setCopied] = createSignal(false);
+    const text = () => prettyValue(props.value);
+    const copy = async (e) => {
+        e.stopPropagation();
+        try {
+            await navigator.clipboard.writeText(text());
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1600);
+        } catch {}
+    };
+    return (
+        <div class="log-detail-section">
+            <div class="log-detail-title">
+                <span>{props.title}</span>
+                <button class="btn btn-icon log-copy-btn" onClick={copy} title={`Copy ${props.title}`} aria-label={`Copy ${props.title}`}>
+                    {copied() ? <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> : <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>}
+                </button>
+            </div>
+            <pre>{text()}</pre>
+        </div>
+    );
+}
+
 export default function Logs(props) {
     const [requests, setRequests] = createSignal([]);
     const [loading, setLoading] = createSignal(true);
     const [error, setError] = createSignal(null);
     const [methodFilter, setMethodFilter] = createSignal('ALL');
     const [statusFilter, setStatusFilter] = createSignal('ALL');
+    const [searchQuery, setSearchQuery] = createSignal('');
+    const [expandedKey, setExpandedKey] = createSignal(null);
+    const [tailMode, setTailMode] = createSignal((() => {
+        try { return localStorage.getItem('localcloud-logs-tail') === 'true'; } catch { return false; }
+    })());
     const [autoRefresh, setAutoRefresh] = createSignal((() => {
         try { return localStorage.getItem('localcloud-logs-autorefresh') !== 'false'; } catch { return true; }
     })());
@@ -49,6 +117,7 @@ export default function Logs(props) {
     })());
     const [page, setPage] = createSignal(1);
     let isInitialLoad = true;
+    let tableScrollRef;
 
     const fetchRequests = async () => {
         if (isInitialLoad) setLoading(true);
@@ -85,6 +154,12 @@ export default function Logs(props) {
         try { localStorage.setItem('localcloud-logs-autorefresh', String(checked)); } catch {}
     };
 
+    const toggleTailMode = (checked) => {
+        setTailMode(checked);
+        setPage(1);
+        try { localStorage.setItem('localcloud-logs-tail', String(checked)); } catch {}
+    };
+
     const applyInterval = (seconds) => {
         if (seconds < 1 || seconds > 60) return;
         setRefreshInterval(seconds);
@@ -92,19 +167,29 @@ export default function Logs(props) {
     };
 
     const filteredRequests = createMemo(() => {
+        const q = searchQuery().trim().toLowerCase();
         return requests().filter(r =>
             matchesMethodFilter(r.method, methodFilter()) &&
-            matchesStatusFilter(r.status, statusFilter())
+            matchesStatusFilter(requestStatus(r), statusFilter()) &&
+            requestMatchesSearch(r, q)
         );
     });
     const totalPages = () => Math.max(1, Math.ceil(filteredRequests().length / PAGE_SIZE));
     const pageStart = () => (page() - 1) * PAGE_SIZE;
     const pageEnd = () => Math.min(filteredRequests().length, pageStart() + PAGE_SIZE);
-    const visibleRequests = () => filteredRequests().slice(pageStart(), pageEnd());
+    const orderedRequests = createMemo(() => tailMode() ? [...filteredRequests()].reverse() : filteredRequests());
+    const visibleRequests = () => tailMode() ? filteredRequests().slice(-PAGE_SIZE).reverse() : orderedRequests().slice(pageStart(), pageEnd());
 
     createEffect(() => {
         if (page() > totalPages()) {
             setPage(totalPages());
+        }
+    });
+
+    createEffect(() => {
+        visibleRequests().length;
+        if (tailMode() && tableScrollRef) {
+            queueMicrotask(() => { tableScrollRef.scrollTop = tableScrollRef.scrollHeight; });
         }
     });
 
@@ -123,6 +208,17 @@ export default function Logs(props) {
 
             {/* Filter Bar */}
             <div class="filter-bar">
+                    <input
+                        id="logs-search"
+                        name="logs-search"
+                        type="text"
+                        autocomplete="off"
+                        aria-label="Search log paths and payloads"
+                        placeholder="Search paths and payloads…"
+                        value={searchQuery()}
+                        onInput={e => { setSearchQuery(e.currentTarget.value); setPage(1); }}
+                    />
+
                     <select
                         id="logs-method-filter"
                         name="logs-method-filter"
@@ -150,7 +246,7 @@ export default function Logs(props) {
                     <option value="5xx">5xx Server Error</option>
                 </select>
 
-                    <label for="logs-auto-refresh">
+                <label for="logs-auto-refresh">
                         <input
                             id="logs-auto-refresh"
                             name="logs-auto-refresh"
@@ -159,6 +255,17 @@ export default function Logs(props) {
                             onChange={e => toggleAutoRefresh(e.currentTarget.checked)}
                     />
                     Auto-refresh
+                </label>
+
+                <label for="logs-tail-mode">
+                    <input
+                        id="logs-tail-mode"
+                        name="logs-tail-mode"
+                        type="checkbox"
+                        checked={tailMode()}
+                        onChange={e => toggleTailMode(e.currentTarget.checked)}
+                    />
+                    Tail mode
                 </label>
 
                 <label class="refresh-interval-label" for="logs-refresh-interval">
@@ -204,7 +311,7 @@ export default function Logs(props) {
                         </div>
                     </div>
                 }>
-                    <div class="data-table-wrapper">
+                    <div class={`data-table-wrapper logs-table-wrapper ${tailMode() ? 'tailing' : ''}`} ref={tableScrollRef}>
                         <table class="data-table">
                             <thead>
                                 <tr>
@@ -217,8 +324,19 @@ export default function Logs(props) {
                             </thead>
                             <tbody>
                                 <For each={visibleRequests()}>
-                                    {(req) => (
-                                        <tr>
+                                    {(req, idx) => {
+                                        const key = () => requestKey(req, idx());
+                                        const open = () => expandedKey() === key();
+                                        const status = () => requestStatus(req);
+                                        const latency = () => requestLatency(req);
+                                        return (
+                                        <>
+                                        <tr class={`log-row ${open() ? 'expanded' : ''}`} onClick={() => setExpandedKey(open() ? null : key())} onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                e.preventDefault();
+                                                setExpandedKey(open() ? null : key());
+                                            }
+                                        }} role="button" tabIndex="0" aria-expanded={open()}>
                                             <td style={{ "white-space": "nowrap", "font-family": "var(--font-mono)", "font-size": "11px", color: "var(--text-secondary)" }}>
                                                 {formatTime(req.timestamp) || '--'}
                                             </td>
@@ -231,20 +349,42 @@ export default function Logs(props) {
                                                 {req.path}
                                             </td>
                                             <td>
-                                                <span class={statusClass(req.status)} style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>
-                                                    {req.status}
+                                                <span class={statusClass(status())} style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>
+                                                    {status()}
                                                 </span>
                                             </td>
                                             <td style={{ "font-family": "var(--font-mono)", "font-size": "11px", color: "var(--text-secondary)" }}>
-                                                {req.latency_ms != null ? `${req.latency_ms}ms` : '--'}
+                                                {latency() != null ? `${latency()}ms` : '--'}
                                             </td>
                                         </tr>
-                                    )}
+                                        <Show when={open()}>
+                                            <tr class="log-detail-row">
+                                                <td colSpan="5">
+                                                    <div class="log-detail-drawer">
+                                                        <div class="log-detail-meta">
+                                                            <span>{req.service || 'gateway'}</span>
+                                                            <Show when={req.traceId || req.trace_id}><code>{req.traceId || req.trace_id}</code></Show>
+                                                            <Show when={req.requestSize || req.request_size}><span>{req.requestSize || req.request_size} B request</span></Show>
+                                                            <Show when={req.responseSize || req.response_size}><span>{req.responseSize || req.response_size} B response</span></Show>
+                                                        </div>
+                                                        <div class="log-detail-grid">
+                                                            <LogDetailSection title="Request" value={req.requestBody || req.request_body || req.body} />
+                                                            <LogDetailSection title="Response" value={req.responseBody || req.response_body} />
+                                                            <Show when={req.headers || req.requestHeaders || req.request_headers}>
+                                                                <LogDetailSection title="Headers" value={req.headers || req.requestHeaders || req.request_headers} />
+                                                            </Show>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        </Show>
+                                        </>
+                                    );}}
                                 </For>
                             </tbody>
                         </table>
                     </div>
-                    <Show when={filteredRequests().length > PAGE_SIZE}>
+                    <Show when={!tailMode() && filteredRequests().length > PAGE_SIZE}>
                         <div class="pagination-controls" aria-label="Log pagination">
                             <span>{pageStart() + 1}-{pageEnd()} of {filteredRequests().length}</span>
                             <button class="btn btn-secondary" onClick={() => setPage(Math.max(1, page() - 1))} disabled={page() <= 1}>Previous</button>

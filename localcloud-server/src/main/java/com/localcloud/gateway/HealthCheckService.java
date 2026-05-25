@@ -385,17 +385,28 @@ public class HealthCheckService {
                 Map<String, Long> persistedCounts = usageMetrics.getGlobalCounts();
 
                 // Get all supervisor process PIDs for per-process memory
-                Map<String, Map<String, String>> allProcs = supervisorClient.getAllProcesses();
+                Map<String, Map<String, String>> allProcs;
+                try {
+                    allProcs = supervisorClient.getAllProcesses();
+                } catch (Exception e) {
+                    logger.warn("Failed to query supervisor for process info: {}", e.getMessage());
+                    allProcs = Map.of();
+                }
                 Map<String, Long> procMemory = new LinkedHashMap<>();
                 for (var entry : allProcs.entrySet()) {
                     String pidStr = entry.getValue().getOrDefault("pid", "0");
                     try {
                         long pid = Long.parseLong(pidStr);
-                        procMemory.put(entry.getKey(), SupervisorClient.getProcessMemoryMb(pid));
+                        long memMb = SupervisorClient.getProcessMemoryMb(pid);
+                        procMemory.put(entry.getKey(), memMb);
+                        if (memMb > 0) {
+                            logger.debug("Process {} (pid={}): {} MB", entry.getKey(), pid, memMb);
+                        }
                     } catch (NumberFormatException e) {
                         procMemory.put(entry.getKey(), 0L);
                     }
                 }
+                logger.debug("Collected memory for {} supervisor processes", procMemory.size());
 
                 List<Map<String, Object>> serviceList = new ArrayList<>();
                 for (Map.Entry<String, ServiceDefinition> entry : registry.getAllServices().entrySet()) {
@@ -421,6 +432,9 @@ public class HealthCheckService {
                     String programName = SERVICE_TO_PROGRAM.get(serviceName);
                     if (programName != null) {
                         memoryMb = procMemory.getOrDefault(programName, 0L);
+                        if (memoryMb > 0) {
+                            logger.debug("Service {} (program={}): memory={} MB", serviceName, programName, memoryMb);
+                        }
                     }
 
                     String envValue = def.envValue("localhost");

@@ -6,7 +6,10 @@ import java.util.Map;
 
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
+import com.linecorp.armeria.common.HttpMethod;
 import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.common.HttpData;
+import com.linecorp.armeria.common.ResponseHeaders;
 import com.linecorp.armeria.server.Route;
 import com.linecorp.armeria.server.Server;
 import com.linecorp.armeria.server.ServerBuilder;
@@ -31,6 +34,11 @@ import com.localcloud.admin.UsageMetricsRepository;
 import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.emulators.secretmanager.SecretManagerEmulator;
 import com.localcloud.emulators.cloudtasks.CloudTasksEmulator;
+import com.localcloud.emulators.scheduler.CloudSchedulerEmulator;
+import com.localcloud.emulators.functions.CloudFunctionsEmulator;
+import com.localcloud.emulators.alloydb.AlloyDBEmulator;
+import com.localcloud.emulators.dataproc.DataprocEmulator;
+import com.localcloud.emulators.iam.IAMEmulator;
 import com.localcloud.emulators.logging.LoggingEmulator;
 import com.localcloud.emulators.monitoring.MonitoringEmulator;
 import com.localcloud.emulators.compute.ComputeEmulator;
@@ -305,191 +313,71 @@ public class LocalCloudApplication {
                 new SpannerIamService());
         logger.info("Spanner IAM stubs registered (permissive mode)");
 
-        // Dashboard static files (served from classpath resources)
-        sb.serviceUnder("/dashboard/",
-                FileService.of(ClassLoader.getSystemClassLoader(), "dashboard"));
+        // Legacy dashboard route - redirect to console root
+        sb.service("/dashboard/", (ctx, req) -> {
+            ResponseHeaders headers = ResponseHeaders.builder(HttpStatus.MOVED_PERMANENTLY)
+                    .add("Location", "/")
+                    .add("Cache-Control", "no-cache")
+                    .build();
+            return HttpResponse.of(headers);
+        });
 
-        // Console static files (served from filesystem in Docker container)
-        // Armeria matches most-specific routes first, so API routes take priority.
+        // Global catch-all: SPA routing when console is available, 501 fallback otherwise
         Path consoleDist = Path.of("/opt/localcloud/console/dist");
-        if (Files.isDirectory(consoleDist)) {
-            sb.serviceUnder("/", FileService.of(consoleDist));
-            logger.info("Console UI served from {}", consoleDist);
-        }
         boolean consoleAvailable = Files.isDirectory(consoleDist);
+        if (consoleAvailable) {
+            String spaIndex = Files.readString(consoleDist.resolve("index.html"));
+            FileService fileService = FileService.of(consoleDist);
 
-        // Register facade gRPC services (backed by PostgreSQL, running in-process)
-        // Enable HTTP/JSON transcoding so gRPC services are also accessible via REST
-        // (uses google.api.http annotations from proto files — enables gcloud CLI support).
-        //
-        // DUAL REGISTRATION: Secret Manager and Cloud Tasks register both gRPC (here)
-        // and explicit REST services (annotatedService below). The explicit REST handlers
-        // are registered FIRST and take priority in Armeria's route resolution, handling
-        // Terraform-compatible CRUD operations. gRPC transcoding handles remaining
-        // operations (e.g. secret versions, task operations) that the REST services
-        // don't explicitly cover.
-        var grpcBuilder = GrpcService.builder()
-                .enableHttpJsonTranscoding(true);
-        boolean hasGrpcServices = false;
+            // Explicit SPA route for /dashboard to avoid auto-redirect
+            sb.service("/dashboard", (ctx, req) -> {
+                if (req.method() != HttpMethod.GET) {
+                    return HttpResponse.of(HttpStatus.METHOD_NOT_ALLOWED);
+                }
+                ResponseHeaders h = ResponseHeaders.builder(HttpStatus.OK)
+                        .add("Content-Type", "text/html; charset=utf-8")
+                        .add("Cache-Control", "no-cache")
+                        .build();
+                return HttpResponse.of(h, HttpData.ofUtf8(spaIndex));
+            });
 
-        if (config.isServiceEnabled("secretmanager")) {
-            SecretManagerEmulator secretManagerEmulator = new SecretManagerEmulator(dataSource);
-            secretManagerEmulator.start();
-            grpcBuilder.addService(secretManagerEmulator.getServiceImpl());
-            gateway.registerGrpcEmulator(secretManagerEmulator, secretManagerEmulator.getServiceImpl());
-            // REST endpoints for Terraform compatibility
-            sb.annotatedService("/v1", new com.localcloud.emulators.secretmanager.SecretManagerRestService(
-                    secretManagerEmulator.getStore(), secretManagerEmulator));
-            hasGrpcServices = true;
-            logger.info("Secret Manager facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        if (config.isServiceEnabled("cloudtasks")) {
-            CloudTasksEmulator cloudTasksEmulator = new CloudTasksEmulator(dataSource);
-            cloudTasksEmulator.start();
-            grpcBuilder.addService(cloudTasksEmulator.getServiceImpl());
-            gateway.registerGrpcEmulator(cloudTasksEmulator, cloudTasksEmulator.getServiceImpl());
-            // REST endpoints for Terraform compatibility
-            sb.annotatedService("/v2", new com.localcloud.emulators.cloudtasks.CloudTasksRestService(
-                    cloudTasksEmulator.getStore(), cloudTasksEmulator));
-            hasGrpcServices = true;
-            logger.info("Cloud Tasks facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        if (config.isServiceEnabled("logging")) {
-            LoggingEmulator loggingEmulator = new LoggingEmulator(dataSource);
-            loggingEmulator.start();
-            grpcBuilder.addService(loggingEmulator.getLoggingService());
-            gateway.registerGrpcEmulator(loggingEmulator, loggingEmulator.getLoggingService());
-            hasGrpcServices = true;
-            logger.info("Cloud Logging facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        if (config.isServiceEnabled("monitoring")) {
-            MonitoringEmulator monitoringEmulator = new MonitoringEmulator(dataSource);
-            monitoringEmulator.start();
-            grpcBuilder.addService(monitoringEmulator.getMonitoringService());
-            gateway.registerGrpcEmulator(monitoringEmulator, monitoringEmulator.getMonitoringService());
-            hasGrpcServices = true;
-            logger.info("Cloud Monitoring facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        // Infrastructure services (require Docker socket)
-        ContainerManager containerManager = null;
-        boolean needsDocker = config.isServiceEnabled("compute")
-                || config.isServiceEnabled("cloudrun")
-                || config.isServiceEnabled("gke");
-        if (needsDocker) {
-            try {
-                containerManager = new ContainerManager(DockerClientProvider.getClient());
-                logger.info("Docker client initialized for infrastructure services");
-            } catch (Exception e) {
-                logger.warn("Docker not available — infrastructure services will use simulated mode: {}", e.getMessage());
-            }
-        }
-
-        if (config.isServiceEnabled("compute")) {
-            ContainerManager cm = containerManager != null ? containerManager : new ContainerManager(null);
-            ComputeEmulator computeEmulator = new ComputeEmulator(dataSource, cm, credentialBroker);
-            computeEmulator.start();
-            sb.annotatedService("/compute/v1", computeEmulator.getRestService());
-            gateway.registerRestEmulator("/compute/v1", computeEmulator, null);
-            logger.info("Compute Engine facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        if (config.isServiceEnabled("cloudrun")) {
-            ContainerManager cm = containerManager != null ? containerManager : new ContainerManager(null);
-            CloudRunEmulator cloudRunEmulator = new CloudRunEmulator(dataSource, cm, credentialBroker);
-            cloudRunEmulator.start();
-            grpcBuilder.addService(cloudRunEmulator.getServicesService());
-            grpcBuilder.addService(cloudRunEmulator.getRevisionsService());
-            gateway.registerGrpcEmulator(cloudRunEmulator,
-                    cloudRunEmulator.getServicesService(), cloudRunEmulator.getRevisionsService());
-            hasGrpcServices = true;
-            logger.info("Cloud Run facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        if (config.isServiceEnabled("gke")) {
-            K3dManager k3dManager = new K3dManager(credentialBroker);
-            GkeEmulator gkeEmulator = new GkeEmulator(dataSource, k3dManager);
-            gkeEmulator.start();
-            grpcBuilder.addService(gkeEmulator.getClusterManagerService());
-            gateway.registerGrpcEmulator(gkeEmulator, gkeEmulator.getClusterManagerService());
-            hasGrpcServices = true;
-            logger.info("GKE facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        if (config.isServiceEnabled("memorystore")) {
-            int redisPort = config.getServiceRegistry().getService("memorystore").port();
-            logger.info("Memorystore (Valkey) running as external process on port {}", redisPort);
-        }
-
-        if (config.isServiceEnabled("workflows")) {
-            WorkflowsEmulator workflowsEmulator = new WorkflowsEmulator(dataSource);
-            workflowsEmulator.start();
-            var workflowsGrpc = new com.localcloud.emulators.workflows.WorkflowsGrpcServiceImpl(workflowsEmulator.getWorkflowsService());
-            var executionsGrpc = new com.localcloud.emulators.workflows.ExecutionsGrpcServiceImpl(workflowsEmulator.getWorkflowsService());
-            grpcBuilder.addService(workflowsGrpc);
-            grpcBuilder.addService(executionsGrpc);
-            gateway.registerGrpcEmulator(workflowsEmulator, workflowsGrpc, executionsGrpc);
-
-            // Workflow env vars and connector services (register before callbacks to avoid path conflicts)
-            var envVarsRepo = new WorkflowEnvVarsRepository(dataSource);
-            workflowsEmulator.getWorkflowsService().setEnvVarsRepository(envVarsRepo);
-            var envVarsService = new WorkflowEnvVarsService(config, envVarsRepo);
-            sb.annotatedService("/workflow-env", envVarsService);
-            var connectorService = new WorkflowConnectorService(config, envVarsRepo,
-                    workflowsEmulator.getWorkflowsService().getStore());
-            sb.annotatedService("/workflow", connectorService);
-            sb.annotatedService("/v1", new com.localcloud.emulators.workflows.WorkflowsRestService(
-                    workflowsEmulator.getWorkflowsService(), workflowsEmulator));
-
-            // Register callback HTTP endpoint so external systems can wake waiting executions
-            WorkflowsCallbackService callbackService = new WorkflowsCallbackService(
-                    workflowsEmulator.getWorkflowsService().getCallbackManager());
-            sb.annotatedService("/workflows", callbackService);
-
-            // Wire WorkflowsServiceImpl into MutateService so console executions
-            // route through the full execution path (connectors, callbacks, env vars)
-            mutateService.setWorkflowsService(workflowsEmulator.getWorkflowsService());
-
-            hasGrpcServices = true;
-            logger.info("Cloud Workflows facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        if (config.isServiceEnabled("vertexai")) {
-            VertexAiEmulator vertexAiEmulator = new VertexAiEmulator(dataSource, config.getGatewayPort());
-            vertexAiEmulator.start();
-            sb.annotatedService("/v1", vertexAiEmulator.getRestService());
-            gateway.registerRestEmulator("/v1/projects/*/locations/*/publishers/*/models", vertexAiEmulator, null);
-            logger.info("Vertex AI facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        if (config.isServiceEnabled("kms")) {
-            KmsEmulator kmsEmulator = new KmsEmulator(dataSource, config.getGatewayPort());
-            kmsEmulator.start();
-            sb.annotatedService("/v1", kmsEmulator.getRestService());
-            gateway.registerRestEmulator("/v1/projects/*/locations/*/keyRings", kmsEmulator, null);
-            logger.info("Cloud KMS facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        if (config.isServiceEnabled("cloudsql")) {
-            CloudSqlEmulator cloudSqlEmulator = new CloudSqlEmulator(dataSource, config.getGatewayPort());
-            cloudSqlEmulator.start();
-            sb.annotatedService("/sql/v1beta4", cloudSqlEmulator.getRestService());
-            sb.annotatedService("/sql/v1", cloudSqlEmulator.getRestService());
-            gateway.registerRestEmulator("/sql", cloudSqlEmulator, null);
-            logger.info("Cloud SQL Admin API facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        if (hasGrpcServices) {
-            sb.service(grpcBuilder.build());
-        }
-
-        // Global fallback for unsupported GCP API paths (Principle IV: Transparent Limitations)
-        // Only registered when console is not serving from / (to avoid duplicate serviceUnder)
-        if (!consoleAvailable) {
-            sb.serviceUnder("/", (ctx, req) -> {
+            sb.service("prefix:/", (ctx, req) -> {
+                String path = ctx.path();
+                Path filePath = consoleDist.resolve(path.startsWith("/") ? path.substring(1) : path).normalize();
+                if (!filePath.startsWith(consoleDist)) {
+                    return HttpResponse.of(HttpStatus.NOT_FOUND);
+                }
+                if (Files.isRegularFile(filePath) && !Files.isHidden(filePath)) {
+                    return fileService.serve(ctx, req);
+                }
+                Path indexPath = filePath.resolve("index.html");
+                if (Files.isRegularFile(indexPath)) {
+                    return fileService.serve(ctx, req);
+                }
+                if (req.method() != HttpMethod.GET || looksLikeApiOrAssetPath(path)) {
+                    String method = req.method().toString().replace("\\", "\\\\").replace("\"", "\\\"");
+                    String unsupportedPath = ctx.path().replace("\\", "\\\\").replace("\"", "\\\"");
+                    return HttpResponse.of(HttpStatus.NOT_IMPLEMENTED, MediaType.JSON,
+                        """
+                        {
+                          "error": {
+                            "code": 501,
+                            "message": "LocalCloud does not emulate this API endpoint yet",
+                            "method": "%s",
+                            "path": "%s"
+                          }
+                        }
+                        """.formatted(method, unsupportedPath));
+                }
+                ResponseHeaders spaHeaders = ResponseHeaders.builder(HttpStatus.OK)
+                        .add("Content-Type", "text/html; charset=utf-8")
+                        .add("Cache-Control", "no-cache")
+                        .build();
+                return HttpResponse.of(spaHeaders, HttpData.ofUtf8(spaIndex));
+            });
+            logger.info("Console UI with SPA routing served from {}", consoleDist);
+        } else {
+            sb.service("prefix:/", (ctx, req) -> {
                 String method = req.method().toString().replace("\\", "\\\\").replace("\"", "\\\"");
                 String path = ctx.path().replace("\\", "\\\\").replace("\"", "\\\"");
                 return HttpResponse.of(HttpStatus.NOT_IMPLEMENTED, MediaType.JSON,
@@ -537,6 +425,31 @@ public class LocalCloudApplication {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             stop();
         }, "localcloud-shutdown"));
+    }
+
+    private static boolean looksLikeApiOrAssetPath(String path) {
+        if (path == null || path.isBlank() || "/".equals(path)) return false;
+        String normalized = path.startsWith("/") ? path : "/" + path;
+        if (normalized.startsWith("/browse/")
+                || normalized.startsWith("/mutate/")
+                || normalized.startsWith("/query")
+                || normalized.startsWith("/schema/")
+                || normalized.startsWith("/reset")
+                || normalized.startsWith("/services")
+                || normalized.startsWith("/health")
+                || normalized.startsWith("/requests")
+                || normalized.startsWith("/env")
+                || normalized.startsWith("/usage")
+                || normalized.startsWith("/projects")
+                || normalized.startsWith("/routing")
+                || normalized.startsWith("/credentials")
+                || normalized.startsWith("/sync/")
+                || normalized.startsWith("/workflow")
+                || normalized.startsWith("/graphql")) {
+            return true;
+        }
+        String lastSegment = normalized.substring(normalized.lastIndexOf('/') + 1);
+        return lastSegment.contains(".");
     }
 
     private static final String GREEN = "\033[32m";

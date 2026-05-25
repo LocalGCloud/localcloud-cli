@@ -507,8 +507,14 @@
   gap: 16px;
   align-items: center;
   background: color-mix(in srgb, var(--surface) 88%, transparent);
-  backdrop-filter: blur(18px);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom-color: rgba(255, 255, 255, 0.06);
   box-shadow: var(--shadow);
+}
+
+[data-theme="light"] .aura-topbar {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
 }
 
 .aura-topbar-left {
@@ -669,12 +675,13 @@
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background var(--transition), color var(--transition);
+  transition: background var(--transition), color var(--transition), transform var(--transition);
 }
 
 .aura-top-icon:hover {
   color: var(--text);
   background: var(--surface-variant);
+  transform: scale(1.05);
 }
 
 /* ── User avatar ── */
@@ -689,7 +696,7 @@
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background var(--transition), color var(--transition);
+  transition: background var(--transition), color var(--transition), transform var(--transition);
   flex-shrink: 0;
   padding: 0;
 }
@@ -697,6 +704,7 @@
 .aura-user-btn:hover {
   color: var(--primary);
   background: var(--surface-variant);
+  transform: scale(1.05);
 }
 
 .aura-settings-wrap {
@@ -730,10 +738,16 @@
   padding: 14px 10px 12px;
   overflow-x: hidden;
   background: color-mix(in srgb, var(--surface) 92%, transparent);
-  backdrop-filter: blur(18px);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-right-color: rgba(255, 255, 255, 0.06);
   box-shadow: var(--shadow);
   transition: width var(--transition);
   z-index: 100;
+}
+
+[data-theme="light"] .aura-sidebar {
+  border-right-color: rgba(0, 0, 0, 0.08);
 }
 
 .aura-sidebar-header {
@@ -774,7 +788,7 @@
   font-size: var(--font-size-sm);;
   font-weight: 600;
   cursor: pointer;
-  transition: background var(--transition), color var(--transition);
+  transition: background var(--transition), color var(--transition), transform var(--transition);
   flex: 1;
   position: relative;
 }
@@ -782,11 +796,23 @@
 .aura-sidebar-nav-item:hover {
   background: var(--surface-hover);
   color: var(--text);
+  transform: scale(1.02);
 }
 
 .aura-sidebar-nav-item.active {
   background: var(--primary-soft);
   color: var(--primary);
+}
+
+.aura-sidebar-nav-item.active::before,
+.sidebar-sub-item.active::before {
+  content: '';
+  position: absolute;
+  inset: -10px -6px;
+  border-radius: 16px;
+  background: radial-gradient(circle at left center, var(--primary-soft), transparent 66%);
+  pointer-events: none;
+  z-index: -1;
 }
 
 .aura-sidebar-nav-label {
@@ -867,11 +893,25 @@
   border-radius: 12px;
   padding: 0 10px;
   gap: 14px;
+  transition: background var(--transition), color var(--transition), transform var(--transition);
+}
+
+.aura-sidebar .sidebar-sub-item:hover {
+  transform: scale(1.02);
+}
+
+.aura-sidebar .sidebar-sub-item-icon {
+  transition: transform 0.2s ease;
 }
 
 .aura-sidebar .sidebar-sub-item-icon {
   width: 28px;
   height: 28px;
+}
+
+.aura-sidebar .sidebar-sub-item:hover .sidebar-sub-item-icon,
+.aura-sidebar .sidebar-sub-item.active .sidebar-sub-item-icon {
+  transform: scale(1.05);
 }
 
 .aura-sidebar .sidebar-sub-item-dot {

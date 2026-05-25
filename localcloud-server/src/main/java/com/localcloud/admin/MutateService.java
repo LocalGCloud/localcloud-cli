@@ -189,6 +189,11 @@ public class MutateService {
                 case "pubsub" -> mutatePubSub(operation, null, json);
                 case "cloudtasks" -> mutateCloudTasks(operation, null, json);
                 case "workflows" -> mutateWorkflows(operation, null, json);
+                case "cloudscheduler" -> mutateCloudScheduler(operation, null, json);
+                case "cloudfunctions" -> mutateCloudFunctions(operation, null, json);
+                case "alloydb" -> mutateAlloyDB(operation, null, json);
+                case "dataproc" -> mutateDataproc(operation, null, json);
+                case "cloudiam" -> mutateCloudIAM(operation, null, json);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unknown service: " + service));
@@ -221,6 +226,11 @@ public class MutateService {
                 case "pubsub" -> mutatePubSub(operation, subOp, json);
                 case "cloudtasks" -> mutateCloudTasks(operation, subOp, json);
                 case "workflows" -> mutateWorkflows(operation, subOp, json);
+                case "cloudscheduler" -> mutateCloudScheduler(operation, subOp, json);
+                case "cloudfunctions" -> mutateCloudFunctions(operation, subOp, json);
+                case "alloydb" -> mutateAlloyDB(operation, subOp, json);
+                case "dataproc" -> mutateDataproc(operation, subOp, json);
+                case "cloudiam" -> mutateCloudIAM(operation, subOp, json);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unknown service: " + service));
@@ -232,7 +242,660 @@ public class MutateService {
         }
     }
 
+    // ========== New facade metadata CRUD ==========
+
+    private String mutateCloudScheduler(String operation, String subOp, Map<String, Object> json) throws Exception {
+        String projectId = config.getProjectId();
+        if ("jobs".equals(operation) && subOp == null) {
+            String name = stringValue(json, "name");
+            String schedule = stringValue(json, "schedule");
+            if (name == null || schedule == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "name and schedule are required"));
+            }
+            String locationId = locationFromResource(name, "us-central1");
+            String jobId = idFromResource(name, "jobs");
+            String parent = "projects/" + projectId + "/locations/" + locationId;
+            com.google.cloud.scheduler.v1.Job.Builder job = com.google.cloud.scheduler.v1.Job.newBuilder()
+                    .setName(parent + "/jobs/" + jobId)
+                    .setSchedule(schedule)
+                    .setTimeZone(defaultString(stringValue(json, "timeZone"), "UTC"))
+                    .setState(com.google.cloud.scheduler.v1.Job.State.ENABLED);
+            String targetUrl = stringValue(json, "targetUrl");
+            if (targetUrl != null) {
+                job.setHttpTarget(com.google.cloud.scheduler.v1.HttpTarget.newBuilder()
+                        .setUri(targetUrl)
+                        .setHttpMethod(com.google.cloud.scheduler.v1.HttpMethod.GET));
+            }
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement("""
+                         INSERT INTO scheduler_jobs
+                         (project_id, location_id, job_id, schedule, time_zone, state, job_proto)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)
+                         """)) {
+                ps.setString(1, projectId);
+                ps.setString(2, locationId);
+                ps.setString(3, jobId);
+                ps.setString(4, schedule);
+                ps.setString(5, job.getTimeZone());
+                ps.setString(6, job.getState().name());
+                ps.setBytes(7, job.build().toByteArray());
+                ps.executeUpdate();
+            }
+            return mapper.writeValueAsString(Map.of("status", "created", "name", parent + "/jobs/" + jobId));
+        }
+        if ("jobs".equals(operation) && "delete".equals(subOp)) {
+            String name = stringValue(json, "name");
+            if (name == null) return mapper.writeValueAsString(Map.of("error", true, "message", "name is required"));
+            String jobId = idFromResource(name, "jobs");
+            try (Connection conn = dataSource.getConnection()) {
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM scheduler_executions WHERE job_name = ? OR job_name LIKE ?")) {
+                    ps.setString(1, name);
+                    ps.setString(2, "%/jobs/" + jobId);
+                    ps.executeUpdate();
+                }
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM scheduler_jobs WHERE project_id = ? AND job_id = ?")) {
+                    ps.setString(1, projectId);
+                    ps.setString(2, jobId);
+                    int count = ps.executeUpdate();
+                    return mapper.writeValueAsString(Map.of("status", "deleted", "count", count));
+                }
+            }
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown Cloud Scheduler operation: " + operation));
+    }
+
+    private String mutateCloudFunctions(String operation, String subOp, Map<String, Object> json) throws Exception {
+        String projectId = config.getProjectId();
+        if ("functions".equals(operation) && subOp == null) {
+            String name = stringValue(json, "name");
+            String runtime = stringValue(json, "runtime");
+            String entryPoint = stringValue(json, "entryPoint");
+            if (name == null || runtime == null || entryPoint == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "name, runtime, and entryPoint are required"));
+            }
+            String locationId = locationFromResource(name, "us-central1");
+            String functionId = idFromResource(name, "functions");
+            String fullName = "projects/" + projectId + "/locations/" + locationId + "/functions/" + functionId;
+            com.google.cloud.functions.v2.Function function = com.google.cloud.functions.v2.Function.newBuilder()
+                    .setName(fullName)
+                    .setBuildConfig(com.google.cloud.functions.v2.BuildConfig.newBuilder()
+                            .setRuntime(runtime)
+                            .setEntryPoint(entryPoint))
+                    .setState(com.google.cloud.functions.v2.Function.State.ACTIVE)
+                    .setCreateTime(com.localcloud.emulators.common.GrpcSupport.timestamp(java.time.Instant.now()))
+                    .setUpdateTime(com.localcloud.emulators.common.GrpcSupport.timestamp(java.time.Instant.now()))
+                    .build();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement("""
+                         INSERT INTO cloud_functions
+                         (project_id, location_id, function_id, runtime, entry_point, state, function_proto)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)
+                         """)) {
+                ps.setString(1, projectId);
+                ps.setString(2, locationId);
+                ps.setString(3, functionId);
+                ps.setString(4, runtime);
+                ps.setString(5, entryPoint);
+                ps.setString(6, function.getState().name());
+                ps.setBytes(7, function.toByteArray());
+                ps.executeUpdate();
+            }
+            return mapper.writeValueAsString(Map.of("status", "created", "name", fullName));
+        }
+        if ("functions".equals(operation) && "delete".equals(subOp)) {
+            String name = stringValue(json, "name");
+            if (name == null) return mapper.writeValueAsString(Map.of("error", true, "message", "name is required"));
+            String functionId = idFromResource(name, "functions");
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                         "DELETE FROM cloud_functions WHERE project_id = ? AND function_id = ?")) {
+                ps.setString(1, projectId);
+                ps.setString(2, functionId);
+                return mapper.writeValueAsString(Map.of("status", "deleted", "count", ps.executeUpdate()));
+            }
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown Cloud Functions operation: " + operation));
+    }
+
+    private String mutateAlloyDB(String operation, String subOp, Map<String, Object> json) throws Exception {
+        String projectId = config.getProjectId();
+        if ("clusters".equals(operation) && subOp == null) {
+            String name = stringValue(json, "name");
+            if (name == null) return mapper.writeValueAsString(Map.of("error", true, "message", "name is required"));
+            String locationId = locationFromResource(name, "us-central1");
+            String clusterId = idFromResource(name, "clusters");
+            String fullName = "projects/" + projectId + "/locations/" + locationId + "/clusters/" + clusterId;
+            String databaseName = com.localcloud.emulators.common.GrpcSupport.safeDatabaseName(clusterId);
+            com.google.cloud.alloydb.v1.Cluster cluster = com.google.cloud.alloydb.v1.Cluster.newBuilder()
+                    .setName(fullName)
+                    .setState(com.google.cloud.alloydb.v1.Cluster.State.READY)
+                    .setCreateTime(com.localcloud.emulators.common.GrpcSupport.timestamp(java.time.Instant.now()))
+                    .setUpdateTime(com.localcloud.emulators.common.GrpcSupport.timestamp(java.time.Instant.now()))
+                    .build();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement("""
+                         INSERT INTO alloydb_clusters
+                         (project_id, location_id, cluster_id, database_name, cluster_proto)
+                         VALUES (?, ?, ?, ?, ?)
+                         """)) {
+                ps.setString(1, projectId);
+                ps.setString(2, locationId);
+                ps.setString(3, clusterId);
+                ps.setString(4, databaseName);
+                ps.setBytes(5, cluster.toByteArray());
+                ps.executeUpdate();
+            }
+            createAlloyDBDatabaseMetadata(projectId, locationId, clusterId, databaseName, databaseName);
+            createAlloyDBPhysicalDatabase(databaseName);
+            return mapper.writeValueAsString(Map.of("status", "created", "name", fullName));
+        }
+        if ("clusters".equals(operation) && "delete".equals(subOp)) {
+            String name = stringValue(json, "name");
+            if (name == null) return mapper.writeValueAsString(Map.of("error", true, "message", "name is required"));
+            String locationId = locationFromResource(name, "us-central1");
+            String clusterId = idFromResource(name, "clusters");
+            List<String> databaseNames = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement find = conn.prepareStatement(
+                         "SELECT physical_name FROM alloydb_databases WHERE project_id = ? AND location_id = ? AND cluster_id = ?")) {
+                find.setString(1, projectId);
+                find.setString(2, locationId);
+                find.setString(3, clusterId);
+                try (var rs = find.executeQuery()) {
+                    while (rs.next()) databaseNames.add(rs.getString(1));
+                }
+            }
+            if (databaseNames.isEmpty()) {
+                Map<String, String> cluster = findAlloyDBCluster(projectId, clusterId);
+                if (cluster != null) databaseNames.add(cluster.get("database_name"));
+            }
+            int count;
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                         "DELETE FROM alloydb_clusters WHERE project_id = ? AND location_id = ? AND cluster_id = ?")) {
+                ps.setString(1, projectId);
+                ps.setString(2, locationId);
+                ps.setString(3, clusterId);
+                count = ps.executeUpdate();
+            }
+            for (String databaseName : databaseNames) dropAlloyDBPhysicalDatabase(databaseName);
+            return mapper.writeValueAsString(Map.of("status", "deleted", "count", count));
+        }
+        if ("instances".equals(operation) && subOp == null) {
+            String clusterId = stringValue(json, "clusterId");
+            String name = stringValue(json, "name");
+            if (clusterId == null || name == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "clusterId and name are required"));
+            }
+            Map<String, String> cluster = findAlloyDBCluster(projectId, clusterId);
+            if (cluster == null) return mapper.writeValueAsString(Map.of("error", true, "message", "cluster not found"));
+            String locationId = cluster.get("location_id");
+            String instanceId = idFromResource(name, "instances");
+            String parent = "projects/" + projectId + "/locations/" + locationId + "/clusters/" + clusterId;
+            String fullName = parent + "/instances/" + instanceId;
+            var now = java.time.Instant.now();
+            com.google.cloud.alloydb.v1.Instance instance = com.google.cloud.alloydb.v1.Instance.newBuilder()
+                    .setName(fullName)
+                    .setState(com.google.cloud.alloydb.v1.Instance.State.READY)
+                    .setCreateTime(com.localcloud.emulators.common.GrpcSupport.timestamp(now))
+                    .setUpdateTime(com.localcloud.emulators.common.GrpcSupport.timestamp(now))
+                    .build();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement("""
+                         INSERT INTO alloydb_instances
+                         (project_id, location_id, cluster_id, instance_id, instance_proto)
+                         VALUES (?, ?, ?, ?, ?)
+                         """)) {
+                ps.setString(1, projectId);
+                ps.setString(2, locationId);
+                ps.setString(3, clusterId);
+                ps.setString(4, instanceId);
+                ps.setBytes(5, instance.toByteArray());
+                ps.executeUpdate();
+            }
+            return mapper.writeValueAsString(Map.of("status", "created", "name", fullName));
+        }
+        if ("instances".equals(operation) && "delete".equals(subOp)) {
+            String clusterId = stringValue(json, "clusterId");
+            String name = stringValue(json, "name");
+            if (clusterId == null || name == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "clusterId and name are required"));
+            }
+            String instanceId = idFromResource(name, "instances");
+            int count;
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                         "DELETE FROM alloydb_instances WHERE project_id = ? AND cluster_id = ? AND instance_id = ?")) {
+                ps.setString(1, projectId);
+                ps.setString(2, clusterId);
+                ps.setString(3, instanceId);
+                count = ps.executeUpdate();
+            }
+            return mapper.writeValueAsString(Map.of("status", "deleted", "count", count));
+        }
+        if ("databases".equals(operation) && subOp == null) {
+            String clusterId = stringValue(json, "clusterId");
+            String databaseName = stringValue(json, "name");
+            if (clusterId == null || databaseName == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "clusterId and name are required"));
+            }
+            Map<String, String> cluster = findAlloyDBCluster(projectId, clusterId);
+            if (cluster == null) return mapper.writeValueAsString(Map.of("error", true, "message", "cluster not found"));
+            String physicalName = safeAlloyDBPhysicalDatabaseName(clusterId, databaseName);
+            createAlloyDBPhysicalDatabase(physicalName);
+            createAlloyDBDatabaseMetadata(projectId, cluster.get("location_id"), clusterId, databaseName, physicalName);
+            return mapper.writeValueAsString(Map.of("status", "created", "database", databaseName));
+        }
+        if ("databases".equals(operation) && "delete".equals(subOp)) {
+            String clusterId = stringValue(json, "clusterId");
+            String databaseName = stringValue(json, "name");
+            if (clusterId == null || databaseName == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "clusterId and name are required"));
+            }
+            Map<String, String> database = findAlloyDBDatabase(projectId, clusterId, databaseName);
+            if (database == null) return mapper.writeValueAsString(Map.of("error", true, "message", "database not found"));
+            int count;
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement("""
+                         DELETE FROM alloydb_databases
+                         WHERE project_id = ? AND location_id = ? AND cluster_id = ? AND database_name = ?
+                         """)) {
+                ps.setString(1, projectId);
+                ps.setString(2, database.get("location_id"));
+                ps.setString(3, clusterId);
+                ps.setString(4, databaseName);
+                count = ps.executeUpdate();
+            }
+            dropAlloyDBPhysicalDatabase(database.get("physical_name"));
+            return mapper.writeValueAsString(Map.of("status", "deleted", "count", count));
+        }
+        if ("tables".equals(operation) && subOp == null) {
+            String clusterId = stringValue(json, "clusterId");
+            String databaseName = stringValue(json, "database");
+            String ddl = stringValue(json, "ddl");
+            if (clusterId == null || databaseName == null || ddl == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "clusterId, database, and ddl are required"));
+            }
+            String physicalName = findAlloyDBPhysicalDatabase(projectId, clusterId, databaseName);
+            if (physicalName == null) return mapper.writeValueAsString(Map.of("error", true, "message", "database not found"));
+            List<String> statements = splitSqlStatements(ddl);
+            try (Connection conn = dataSource.getConnection(physicalName); var stmt = conn.createStatement()) {
+                for (String statement : statements) stmt.execute(statement);
+            }
+            return mapper.writeValueAsString(Map.of("status", "created", "count", statements.size()));
+        }
+        if ("tables".equals(operation) && "delete".equals(subOp)) {
+            String clusterId = stringValue(json, "clusterId");
+            String databaseName = stringValue(json, "database");
+            String table = stringValue(json, "table");
+            if (clusterId == null || databaseName == null || table == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "clusterId, database, and table are required"));
+            }
+            String physicalName = findAlloyDBPhysicalDatabase(projectId, clusterId, databaseName);
+            if (physicalName == null) return mapper.writeValueAsString(Map.of("error", true, "message", "database not found"));
+            try (Connection conn = dataSource.getConnection(physicalName); var stmt = conn.createStatement()) {
+                stmt.execute("DROP TABLE IF EXISTS " + quoteIdentifier(table));
+            }
+            return mapper.writeValueAsString(Map.of("status", "deleted", "table", table));
+        }
+        if ("rows".equals(operation) && subOp == null) {
+            String clusterId = stringValue(json, "clusterId");
+            String databaseName = stringValue(json, "database");
+            String table = stringValue(json, "table");
+            Map<String, Object> row = objectMap(json.get("row"));
+            if (clusterId == null || databaseName == null || table == null || row.isEmpty()) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "clusterId, database, table, and row are required"));
+            }
+            String physicalName = findAlloyDBPhysicalDatabase(projectId, clusterId, databaseName);
+            if (physicalName == null) return mapper.writeValueAsString(Map.of("error", true, "message", "database not found"));
+            insertAlloyDBRow(physicalName, table, row);
+            return mapper.writeValueAsString(Map.of("status", "inserted", "count", 1));
+        }
+        if ("rows".equals(operation) && "update".equals(subOp)) {
+            String clusterId = stringValue(json, "clusterId");
+            String databaseName = stringValue(json, "database");
+            String table = stringValue(json, "table");
+            String keyColumn = stringValue(json, "keyColumn");
+            Object keyValue = json.get("keyValue");
+            Map<String, Object> row = objectMap(json.get("row"));
+            if (clusterId == null || databaseName == null || table == null || keyColumn == null || row.isEmpty()) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "clusterId, database, table, keyColumn, and row are required"));
+            }
+            String physicalName = findAlloyDBPhysicalDatabase(projectId, clusterId, databaseName);
+            if (physicalName == null) return mapper.writeValueAsString(Map.of("error", true, "message", "database not found"));
+            int count = updateAlloyDBRow(physicalName, table, keyColumn, keyValue, row);
+            return mapper.writeValueAsString(Map.of("status", "updated", "count", count));
+        }
+        if ("rows".equals(operation) && "delete".equals(subOp)) {
+            String clusterId = stringValue(json, "clusterId");
+            String databaseName = stringValue(json, "database");
+            String table = stringValue(json, "table");
+            String keyColumn = stringValue(json, "keyColumn");
+            Object keyValue = json.get("keyValue");
+            if (clusterId == null || databaseName == null || table == null || keyColumn == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "clusterId, database, table, and keyColumn are required"));
+            }
+            String physicalName = findAlloyDBPhysicalDatabase(projectId, clusterId, databaseName);
+            if (physicalName == null) return mapper.writeValueAsString(Map.of("error", true, "message", "database not found"));
+            int count = deleteAlloyDBRow(physicalName, table, keyColumn, keyValue);
+            return mapper.writeValueAsString(Map.of("status", "deleted", "count", count));
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown AlloyDB operation: " + operation));
+    }
+
+    private void createAlloyDBDatabaseMetadata(String projectId, String locationId, String clusterId,
+                                               String databaseName, String physicalName) throws Exception {
+        try (Connection conn = dataSource.getConnection()) {
+            try (PreparedStatement find = conn.prepareStatement("""
+                    SELECT 1 FROM alloydb_databases
+                    WHERE project_id = ? AND location_id = ? AND cluster_id = ? AND database_name = ?
+                    """)) {
+                find.setString(1, projectId);
+                find.setString(2, locationId);
+                find.setString(3, clusterId);
+                find.setString(4, databaseName);
+                try (var rs = find.executeQuery()) {
+                    if (rs.next()) return;
+                }
+            }
+            try (PreparedStatement ps = conn.prepareStatement("""
+                     INSERT INTO alloydb_databases
+                     (project_id, location_id, cluster_id, database_name, physical_name)
+                     VALUES (?, ?, ?, ?, ?)
+                     """)) {
+                ps.setString(1, projectId);
+                ps.setString(2, locationId);
+                ps.setString(3, clusterId);
+                ps.setString(4, databaseName);
+                ps.setString(5, physicalName);
+                ps.executeUpdate();
+            }
+        }
+    }
+
+    private Map<String, String> findAlloyDBCluster(String projectId, String clusterId) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement("""
+                     SELECT location_id, cluster_id, database_name
+                     FROM alloydb_clusters
+                     WHERE project_id = ? AND cluster_id = ?
+                     """)) {
+            ps.setString(1, projectId);
+            ps.setString(2, clusterId);
+            try (var rs = ps.executeQuery()) {
+                if (!rs.next()) return null;
+                Map<String, String> cluster = new LinkedHashMap<>();
+                cluster.put("location_id", rs.getString("location_id"));
+                cluster.put("cluster_id", rs.getString("cluster_id"));
+                cluster.put("database_name", rs.getString("database_name"));
+                return cluster;
+            }
+        }
+    }
+
+    private Map<String, String> findAlloyDBDatabase(String projectId, String clusterId, String databaseName) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement("""
+                     SELECT location_id, database_name, physical_name
+                     FROM alloydb_databases
+                     WHERE project_id = ? AND cluster_id = ? AND database_name = ?
+                     """)) {
+            ps.setString(1, projectId);
+            ps.setString(2, clusterId);
+            ps.setString(3, databaseName);
+            try (var rs = ps.executeQuery()) {
+                if (!rs.next()) return null;
+                Map<String, String> database = new LinkedHashMap<>();
+                database.put("location_id", rs.getString("location_id"));
+                database.put("database_name", rs.getString("database_name"));
+                database.put("physical_name", rs.getString("physical_name"));
+                return database;
+            }
+        }
+    }
+
+    private String findAlloyDBPhysicalDatabase(String projectId, String clusterId, String databaseName) throws Exception {
+        Map<String, String> database = findAlloyDBDatabase(projectId, clusterId, databaseName);
+        if (database != null) return database.get("physical_name");
+        Map<String, String> cluster = findAlloyDBCluster(projectId, clusterId);
+        if (cluster != null && databaseName.equals(cluster.get("database_name"))) return cluster.get("database_name");
+        return null;
+    }
+
+    private String safeAlloyDBPhysicalDatabaseName(String clusterId, String databaseName) {
+        return com.localcloud.emulators.common.GrpcSupport.safeDatabaseName(clusterId + "_" + databaseName);
+    }
+
+    private List<String> splitSqlStatements(String text) {
+        if (text == null || text.isBlank()) return List.of();
+        List<String> statements = new ArrayList<>();
+        for (String statement : text.split(";")) {
+            String trimmed = statement.trim();
+            if (!trimmed.isEmpty()) statements.add(trimmed);
+        }
+        return statements;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> objectMap(Object value) {
+        if (value instanceof Map<?, ?> source) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            source.forEach((k, v) -> result.put(String.valueOf(k), v));
+            return result;
+        }
+        return Map.of();
+    }
+
+    private void insertAlloyDBRow(String databaseName, String table, Map<String, Object> row) throws Exception {
+        List<String> columns = new ArrayList<>(row.keySet());
+        String sql = "INSERT INTO " + quoteIdentifier(table) + " (" +
+                columns.stream().map(this::quoteIdentifier).reduce((a, b) -> a + ", " + b).orElse("") +
+                ") VALUES (" + columns.stream().map(c -> "?").reduce((a, b) -> a + ", " + b).orElse("") + ")";
+        try (Connection conn = dataSource.getConnection(databaseName);
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < columns.size(); i++) {
+                setAlloyDBValue(ps, i + 1, row.get(columns.get(i)));
+            }
+            ps.executeUpdate();
+        }
+    }
+
+    private int updateAlloyDBRow(String databaseName, String table, String keyColumn, Object keyValue,
+                                 Map<String, Object> row) throws Exception {
+        List<String> columns = new ArrayList<>(row.keySet());
+        String sql = "UPDATE " + quoteIdentifier(table) + " SET " +
+                columns.stream().map(c -> quoteIdentifier(c) + " = ?").reduce((a, b) -> a + ", " + b).orElse("") +
+                " WHERE " + quoteIdentifier(keyColumn) + " = ?";
+        try (Connection conn = dataSource.getConnection(databaseName);
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < columns.size(); i++) {
+                setAlloyDBValue(ps, i + 1, row.get(columns.get(i)));
+            }
+            setAlloyDBValue(ps, columns.size() + 1, keyValue);
+            return ps.executeUpdate();
+        }
+    }
+
+    private int deleteAlloyDBRow(String databaseName, String table, String keyColumn, Object keyValue) throws Exception {
+        String sql = "DELETE FROM " + quoteIdentifier(table) + " WHERE " + quoteIdentifier(keyColumn) + " = ?";
+        try (Connection conn = dataSource.getConnection(databaseName);
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            setAlloyDBValue(ps, 1, keyValue);
+            return ps.executeUpdate();
+        }
+    }
+
+    private void setAlloyDBValue(PreparedStatement ps, int index, Object value) throws Exception {
+        if (value instanceof Map<?, ?> || value instanceof List<?>) {
+            ps.setString(index, mapper.writeValueAsString(value));
+            return;
+        }
+        ps.setObject(index, value);
+    }
+
+    private void createAlloyDBPhysicalDatabase(String databaseName) {
+        try (Connection conn = dataSource.getConnection(); var stmt = conn.createStatement()) {
+            stmt.execute("CREATE DATABASE " + quoteIdentifier(databaseName));
+        } catch (Exception e) {
+            logger.debug("AlloyDB database {} may already exist or cannot be created: {}", databaseName, e.getMessage());
+        }
+        try (Connection conn = dataSource.getConnection(databaseName); var stmt = conn.createStatement()) {
+            stmt.execute("CREATE EXTENSION IF NOT EXISTS vector");
+        } catch (Exception e) {
+            logger.debug("AlloyDB database {} pgvector setup skipped: {}", databaseName, e.getMessage());
+        }
+    }
+
+    private void dropAlloyDBPhysicalDatabase(String databaseName) {
+        try (Connection conn = dataSource.getConnection(); var stmt = conn.createStatement()) {
+            stmt.execute("DROP DATABASE IF EXISTS " + quoteIdentifier(databaseName));
+        } catch (Exception e) {
+            logger.debug("AlloyDB database {} drop skipped: {}", databaseName, e.getMessage());
+        }
+    }
+
+    private String quoteIdentifier(String identifier) {
+        return "\"" + identifier.replace("\"", "\"\"") + "\"";
+    }
+
+    private String mutateDataproc(String operation, String subOp, Map<String, Object> json) throws Exception {
+        String projectId = config.getProjectId();
+        if ("clusters".equals(operation) && subOp == null) {
+            String clusterName = stringValue(json, "name");
+            if (clusterName == null) return mapper.writeValueAsString(Map.of("error", true, "message", "name is required"));
+            String region = defaultString(stringValue(json, "region"), "us-central1");
+            com.google.cloud.dataproc.v1.Cluster cluster = com.google.cloud.dataproc.v1.Cluster.newBuilder()
+                    .setProjectId(projectId)
+                    .setClusterName(clusterName)
+                    .setStatus(com.google.cloud.dataproc.v1.ClusterStatus.newBuilder()
+                            .setState(com.google.cloud.dataproc.v1.ClusterStatus.State.RUNNING)
+                            .setStateStartTime(com.localcloud.emulators.common.GrpcSupport.timestamp(java.time.Instant.now())))
+                    .build();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                         "INSERT INTO dataproc_clusters (project_id, region, cluster_name, cluster_proto) VALUES (?, ?, ?, ?)")) {
+                ps.setString(1, projectId);
+                ps.setString(2, region);
+                ps.setString(3, clusterName);
+                ps.setBytes(4, cluster.toByteArray());
+                ps.executeUpdate();
+            }
+            return mapper.writeValueAsString(Map.of("status", "created", "name", clusterName));
+        }
+        if ("clusters".equals(operation) && "delete".equals(subOp)) {
+            String clusterName = stringValue(json, "name");
+            if (clusterName == null) return mapper.writeValueAsString(Map.of("error", true, "message", "name is required"));
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                         "DELETE FROM dataproc_clusters WHERE project_id = ? AND cluster_name = ?")) {
+                ps.setString(1, projectId);
+                ps.setString(2, clusterName);
+                return mapper.writeValueAsString(Map.of("status", "deleted", "count", ps.executeUpdate()));
+            }
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown Dataproc operation: " + operation));
+    }
+
+    private String mutateCloudIAM(String operation, String subOp, Map<String, Object> json) throws Exception {
+        if ("policies".equals(operation) && subOp == null) {
+            String resource = stringValue(json, "resource");
+            String role = stringValue(json, "role");
+            if (resource == null || role == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "resource and role are required"));
+            }
+            com.google.iam.v1.Policy policy = com.google.iam.v1.Policy.newBuilder()
+                    .addBindings(com.google.iam.v1.Binding.newBuilder()
+                            .setRole(role)
+                            .addAllMembers(splitMembers(stringValue(json, "members"))))
+                    .build();
+            String[] parts = splitIamResource(resource);
+            try (Connection conn = dataSource.getConnection()) {
+                try (PreparedStatement update = conn.prepareStatement("""
+                        UPDATE iam_policies
+                        SET policy_proto = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE resource_type = ? AND resource_id = ?
+                        """)) {
+                    update.setBytes(1, policy.toByteArray());
+                    update.setString(2, parts[0]);
+                    update.setString(3, parts[1]);
+                    if (update.executeUpdate() > 0) {
+                        return mapper.writeValueAsString(Map.of("status", "updated", "resource", resource));
+                    }
+                }
+                try (PreparedStatement insert = conn.prepareStatement(
+                        "INSERT INTO iam_policies (resource_type, resource_id, policy_proto) VALUES (?, ?, ?)")) {
+                    insert.setString(1, parts[0]);
+                    insert.setString(2, parts[1]);
+                    insert.setBytes(3, policy.toByteArray());
+                    insert.executeUpdate();
+                }
+            }
+            return mapper.writeValueAsString(Map.of("status", "created", "resource", resource));
+        }
+        if ("policies".equals(operation) && "delete".equals(subOp)) {
+            String resource = stringValue(json, "resource");
+            if (resource == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "resource is required"));
+            }
+            String[] parts = splitIamResource(resource);
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                         "DELETE FROM iam_policies WHERE resource_type = ? AND resource_id = ?")) {
+                ps.setString(1, parts[0]);
+                ps.setString(2, parts[1]);
+                return mapper.writeValueAsString(Map.of("status", "deleted", "count", ps.executeUpdate()));
+            }
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown Cloud IAM operation: " + operation));
+    }
+
+    private static String stringValue(Map<String, Object> json, String key) {
+        Object value = json.get(key);
+        if (value == null) return null;
+        String string = String.valueOf(value).trim();
+        return string.isEmpty() ? null : string;
+    }
+
+    private static String defaultString(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private static String idFromResource(String value, String collection) {
+        String marker = "/" + collection + "/";
+        int markerIndex = value.indexOf(marker);
+        if (markerIndex >= 0) return value.substring(markerIndex + marker.length());
+        int slash = value.lastIndexOf('/');
+        return slash >= 0 ? value.substring(slash + 1) : value;
+    }
+
+    private static String locationFromResource(String value, String fallback) {
+        String[] parts = value.split("/");
+        for (int i = 0; i < parts.length - 1; i++) {
+            if ("locations".equals(parts[i])) return parts[i + 1];
+        }
+        return fallback;
+    }
+
+    private static List<String> splitMembers(String members) {
+        if (members == null) return List.of();
+        List<String> values = new ArrayList<>();
+        for (String member : members.split(",")) {
+            String trimmed = member.trim();
+            if (!trimmed.isEmpty()) values.add(trimmed);
+        }
+        return values;
+    }
+
+    private static String[] splitIamResource(String resource) {
+        int index = resource.indexOf('/');
+        if (index <= 1) return new String[] {"resource", resource};
+        return new String[] {resource.substring(0, index), resource.substring(index + 1)};
+    }
+
     // ========== GCS ==========
+
 
     @SuppressWarnings("unchecked")
     private String mutateGcs(String operation, String subOp, Map<String, Object> json) throws Exception {

@@ -28,6 +28,7 @@ import com.linecorp.armeria.server.annotation.Post;
 import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.config.ServiceRegistry;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
+import redis.clients.jedis.Jedis;
 import com.localcloud.persistence.PostgresDataSource;
 
 import org.slf4j.Logger;
@@ -48,7 +49,8 @@ public class QueryService {
     private static final Set<String> POSTGRES_SERVICES = Set.of(
             "secretmanager", "cloudtasks", "logging", "monitoring",
             "bigtable", "compute", "cloudrun", "gke", "memorystore", "workflows",
-            "vertexai", "kms", "cloudsql"
+            "vertexai", "kms", "cloudsql", "alloydb", "cloudscheduler",
+            "cloudfunctions", "dataproc", "cloudiam"
     );
 
     private final LocalCloudConfig config;
@@ -127,6 +129,8 @@ public class QueryService {
 
             if ("bigtable".equals(service)) {
                 return executeBigtableQuery(sql, projectId, startTime);
+            } else if ("memorystore".equals(service)) {
+                return executeMemorystoreQuery(sql, projectId, startTime);
             } else if (POSTGRES_SERVICES.contains(service)) {
                 return executePostgresQuery(sql, projectId, startTime);
             } else if ("bigquery".equals(service)) {
@@ -180,9 +184,13 @@ public class QueryService {
             String project = ctx.queryParams().get("project");
             String projectId = (project != null && !project.isBlank()) ? project : config.getProjectId();
 
+            String rewrittenSql = sql.replaceAll("\\b" + Pattern.quote(projectId) + "__([\\w-]+)\\.([\\w-]+)",
+                    projectId + ".$1.$2");
+            rewrittenSql = rewrittenSql.replaceAll("\\b([\\w-]+)__([\\w-]+)\\.([\\w-]+)", "$1.$2.$3");
+
             String queryUrl = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/queries";
             String queryPayload = mapper.writeValueAsString(Map.of(
-                    "query", sql,
+                    "query", rewrittenSql,
                     "useLegacySql", false,
                     "dryRun", true));
             String responseBody = proxyPost(queryUrl, queryPayload);
@@ -201,13 +209,7 @@ public class QueryService {
                                 "estimatedCostUsd", 0.0)));
             }
 
-            long totalBytes = 0L;
-            Object bytesObj = queryResp.get("totalBytesProcessed");
-            if (bytesObj instanceof Number) {
-                totalBytes = ((Number) bytesObj).longValue();
-            } else if (bytesObj instanceof String) {
-                try { totalBytes = Long.parseLong((String) bytesObj); } catch (NumberFormatException nfe) { totalBytes = 0L; }
-            }
+            long totalBytes = longValueOrDefault(queryResp.get("totalBytesProcessed"), 0L);
             double costPerTb = 5.0;
             double estimatedCost = costPerTb * totalBytes / (1024.0 * 1024.0 * 1024.0 * 1024.0);
 
@@ -558,6 +560,18 @@ public class QueryService {
 
     private HttpResponse executeBigQueryQuery(String sql, String projectId, long startTime) {
         try {
+            // BigQuery emulator v2 stores schemas as "project__dataset" in DuckDB
+            // internally, but queries must use standard BigQuery notation:
+            // "project.dataset.table" or "dataset.table". Users copy table names
+            // from the schema tree which shows "local_project__app_analytics.persons".
+            // Strip the projectId__ prefix so the emulator can resolve by dataset alone.
+            String projectPrefix = Pattern.quote(projectId) + "__";
+            sql = sql.replaceAll("\\b" + projectPrefix + "([\\w-]+)\\.([\\w-]+)\\b",
+                    projectId + ".$1.$2");
+            // Also rewrite any other project__dataset compact refs (from copy-paste)
+            // to standard project.dataset.table format
+            sql = sql.replaceAll("\\b([\\w-]+)__([\\w-]+)\\.([\\w-]+)\\b", "$1.$2.$3");
+
             String queryUrl = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/queries";
             String queryPayload = mapper.writeValueAsString(Map.of(
                     "query", sql,
@@ -684,8 +698,10 @@ public class QueryService {
                 // Strip comments and hints first for cleaner parsing
                 String sqlForParsing = sql.replaceAll("/\\*.*?\\*/", " ").replaceAll("--[^\n]*", " ");
                 Set<String> referencedTables = new java.util.LinkedHashSet<>();
+                // Capture both plain names (Table) and dotted names (db.Table)
                 java.util.regex.Matcher tableMatcher = java.util.regex.Pattern.compile(
-                        "(?i)(?:FROM|INTO|UPDATE|JOIN)\\s+([A-Za-z_][A-Za-z0-9_]*)").matcher(sqlForParsing);
+                        "(?i)(?:FROM|INTO|UPDATE|JOIN)\\s+((?:[A-Za-z_][A-Za-z0-9_-]*\\.)?[A-Za-z_][A-Za-z0-9_]*)")
+                        .matcher(sqlForParsing);
                 while (tableMatcher.find()) {
                     referencedTables.add(tableMatcher.group(1).toUpperCase());
                 }
@@ -717,7 +733,13 @@ public class QueryService {
                             // Count how many referenced tables exist in this database
                             int matchCount = 0;
                             for (String refTable : referencedTables) {
-                                if (dbTables.contains(refTable)) matchCount++;
+                                // Handle dotted refs like "jay-db.Users1" → compare just "USERS1"
+                                String bareTable = refTable;
+                                int dotIdx = refTable.lastIndexOf('.');
+                                if (dotIdx >= 0) {
+                                    bareTable = refTable.substring(dotIdx + 1);
+                                }
+                                if (dbTables.contains(bareTable)) matchCount++;
                             }
                             if (matchCount > bestMatchCount) {
                                 bestMatchCount = matchCount;
@@ -771,6 +793,7 @@ public class QueryService {
         // Spanner SQL doesn't support database.table syntax.
         // If the SQL contains "database_name.TableName", extract the database and strip the prefix.
         // This lets users copy table names from the schema tree (which shows "orders_db.Products").
+        boolean prefixStripped = false;
         try {
             String url = spannerBase + "/v1/projects/" + projectId + "/instances/" + instance + "/databases";
             String body = proxyGet(url);
@@ -794,13 +817,110 @@ public class QueryService {
                     if (!insideQuote) {
                         database = dbName;
                         sql = sql.replaceAll(dbPattern, "");
+                        prefixStripped = true;
                         logger.info("Spanner SQL rewrite: stripped '{}.' prefix, using database '{}'", dbName, database);
                         break;
                     }
                 }
             }
         } catch (Exception e) {
-            logger.debug("Failed to check database prefixes in SQL: {}", e.getMessage());
+            logger.warn("Failed to list Spanner databases for prefix stripping: {}", e.getMessage());
+        }
+
+        // Fallback: if no prefix was stripped via database listing (e.g., REST API unavailable,
+        // or the database name isn't in the listing yet), try to extract dotted db.Table
+        // references directly from SQL and strip them.
+        // This handles cases like "SELECT * FROM jay-db.Users1 LIMIT 10" where the database
+        // name contains hyphens that the emulator's ZetaSQL parser rejects.
+        if (!prefixStripped) {
+            java.util.regex.Matcher dottedMatcher = java.util.regex.Pattern.compile(
+                    "(?i)(?:FROM|INTO|UPDATE|JOIN)\\s+([A-Za-z_][A-Za-z0-9_-]*)\\.([A-Za-z_][A-Za-z0-9_]*)")
+                    .matcher(sql);
+            if (dottedMatcher.find()) {
+                String sqlDb = dottedMatcher.group(1);
+                String sqlTable = dottedMatcher.group(2);
+                String prefix = sqlDb + "." + sqlTable;
+                int matchPos = sql.indexOf(prefix);
+                boolean insideQuote = false;
+                for (int i = 0; i < matchPos && i < sql.length(); i++) {
+                    if (sql.charAt(i) == '\'') insideQuote = !insideQuote;
+                }
+                if (!insideQuote) {
+                    if (database == null || database.isBlank()) {
+                        database = sqlDb;
+                    }
+                    // Also set databaseAutoResolved flag so user gets the note
+                    if (!databaseAutoResolved) {
+                        databaseAutoResolved = true;
+                    }
+                    sql = sql.replaceAll(Pattern.quote(prefix), sqlTable);
+                    logger.info("Spanner SQL rewrite: extracted database '{}' from dotted reference '{}'",
+                            sqlDb, prefix);
+                }
+            }
+        }
+
+        // If database was resolved from a dotted reference and may not exist
+        // in the current instance, scan all instances to find the right one.
+        // This handles the case where the database is in a different instance than
+        // the one auto-selected by the frontend (which picks the instance with most tables).
+        try {
+            String url = spannerBase + "/v1/projects/" + projectId + "/instances/" + instance + "/databases";
+            String body = proxyGet(url);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> resp = mapper.readValue(body, Map.class);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> dbs = (List<Map<String, Object>>) resp.getOrDefault("databases", List.of());
+            boolean dbFoundInInstance = false;
+            for (Map<String, Object> db : dbs) {
+                String dbName = ((String) db.get("name"));
+                dbName = dbName.substring(dbName.lastIndexOf('/') + 1);
+                if (dbName.equals(database)) {
+                    dbFoundInInstance = true;
+                    break;
+                }
+            }
+            if (!dbFoundInInstance) {
+                // Database not in current instance — scan all instances
+                logger.info("Database '{}' not in instance '{}', scanning all instances...", database, instance);
+                String instUrl = spannerBase + "/v1/projects/" + projectId + "/instances";
+                String instBody = proxyGet(instUrl);
+                @SuppressWarnings("unchecked")
+                Map<String, Object> instResp = mapper.readValue(instBody, Map.class);
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> allInsts = (List<Map<String, Object>>)
+                        instResp.getOrDefault("instances", List.of());
+                for (Map<String, Object> inst : allInsts) {
+                    String instName = ((String) inst.get("name"));
+                    instName = instName.substring(instName.lastIndexOf('/') + 1);
+                    if (instName.equals(instance)) continue;
+                    try {
+                        String crossUrl = spannerBase + "/v1/projects/" + projectId
+                                + "/instances/" + instName + "/databases";
+                        String crossBody = proxyGet(crossUrl);
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> crossResp = mapper.readValue(crossBody, Map.class);
+                        @SuppressWarnings("unchecked")
+                        List<Map<String, Object>> crossDbs = (List<Map<String, Object>>)
+                                crossResp.getOrDefault("databases", List.of());
+                        for (Map<String, Object> db : crossDbs) {
+                            String crossDbName = ((String) db.get("name"));
+                            crossDbName = crossDbName.substring(crossDbName.lastIndexOf('/') + 1);
+                            if (crossDbName.equals(database)) {
+                                instance = instName;
+                                dbFoundInInstance = true;
+                                logger.info("Redirected Spanner query to instance '{}' (database '{}' found)", instance, database);
+                                break;
+                            }
+                        }
+                    } catch (Exception ignored) {
+                        // Instance unreachable, skip
+                    }
+                    if (dbFoundInInstance) break;
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to cross-check instance for database '{}': {}", database, e.getMessage());
         }
 
         // Strip statement-level optimizer hints (@{OPTIMIZER_VERSION=...}, @{USE_ADDITIONAL_PARALLELISM=...}, etc.)
@@ -885,10 +1005,19 @@ public class QueryService {
                         // Extract table name from SQL for a helpful error message
                         String tableName = sql.replaceAll("(?i).*?(?:FROM|INTO)\\s+(\\S+).*", "$1").trim();
                         tableName = tableName.replaceAll("[(`@\\{\\s].*", "");  // Also strip @{hint} syntax
+                        // If table name contains a dot (db prefix), strip it for clarity
+                        int dotIdx = tableName.lastIndexOf('.');
+                        if (dotIdx >= 0) {
+                            tableName = tableName.substring(dotIdx + 1);
+                        }
                         errorMsg = "Table '" + tableName + "' not found in database '" + database + "'";
                     } else if (code == 13 && message.contains("marshal") && message.contains("not found")) {
                         String tableName = sql.replaceAll("(?i).*?(?:FROM|INTO)\\s+(\\S+).*", "$1").trim();
                         tableName = tableName.replaceAll("[(`@\\{\\s].*", "");
+                        int dotIdx = tableName.lastIndexOf('.');
+                        if (dotIdx >= 0) {
+                            tableName = tableName.substring(dotIdx + 1);
+                        }
                         errorMsg = "Table '" + tableName + "' does not exist in database '" + database + "'. "
                                 + "Check that the table name and database are correct.";
                     } else {
@@ -1472,6 +1601,10 @@ public class QueryService {
                 return schemaBigtable(projectId);
             }
 
+            if ("memorystore".equals(service)) {
+                return schemaMemorystore();
+            }
+
             if (service == null || !POSTGRES_SERVICES.contains(service)) {
                 return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
                         mapper.writeValueAsString(Map.of("tables", List.of())));
@@ -1489,14 +1622,21 @@ public class QueryService {
                 Map.entry("compute", List.of()),
                 Map.entry("cloudrun", List.of()),
                 Map.entry("gke", List.of()),
-                Map.entry("memorystore", List.of()),
-                Map.entry("workflows", List.of("workflows", "workflow_executions", "workflow_step_entries"))
+                Map.entry("cloudsql", List.of("cloudsql_instances", "cloudsql_databases",
+                        "cloudsql_users", "cloudsql_operations", "cloudsql_flags")),
+                Map.entry("workflows", List.of("workflows", "workflow_executions", "workflow_step_entries")),
+                Map.entry("alloydb", List.of("alloydb_clusters", "alloydb_instances",
+                        "alloydb_backups", "alloydb_users")),
+                Map.entry("cloudscheduler", List.of("scheduler_jobs", "scheduler_executions")),
+                Map.entry("cloudfunctions", List.of("cloud_functions")),
+                Map.entry("dataproc", List.of("dataproc_clusters", "dataproc_jobs")),
+                Map.entry("cloudiam", List.of("iam_policies"))
             );
 
             List<String> allowedTables = serviceTables.getOrDefault(service, List.of());
             String tableFilter = "";
             if (!allowedTables.isEmpty()) {
-                tableFilter = " AND table_name IN (" +
+                tableFilter = " AND LOWER(table_name) IN (" +
                     allowedTables.stream().map(t -> "'" + t + "'").collect(java.util.stream.Collectors.joining(",")) + ")";
             }
 
@@ -1506,9 +1646,9 @@ public class QueryService {
                  Statement stmt = conn.createStatement()) {
 
                 ResultSet rs = stmt.executeQuery(
-                        "SELECT table_name, column_name, data_type " +
+                        "SELECT LOWER(table_name) AS table_name, LOWER(column_name) AS column_name, data_type " +
                         "FROM information_schema.columns " +
-                        "WHERE table_schema = 'public'" + tableFilter +
+                        "WHERE LOWER(table_schema) = 'public'" + tableFilter +
                         " ORDER BY table_name, ordinal_position");
 
                 String currentTable = null;
@@ -1539,6 +1679,47 @@ public class QueryService {
         } catch (Exception e) {
             logger.warn("Schema fetch failed: {}", e.getMessage());
             return errorResponse("Schema fetch failed: " + e.getMessage());
+        }
+    }
+
+    private HttpResponse schemaMemorystore() {
+        try {
+            int redisPort = config.getServiceRegistry().getService("memorystore") != null
+                    ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+
+            List<Map<String, Object>> tables = new ArrayList<>();
+            try (Jedis jedis = new Jedis("localhost", redisPort)) {
+                int dbCount = 16;
+                try {
+                    Map<String, String> dbConfig = jedis.configGet("databases");
+                    String val = dbConfig.get("databases");
+                    if (val != null) {
+                        dbCount = Integer.parseInt(val);
+                    }
+                } catch (Exception ignored) {}
+
+                for (int i = 0; i < dbCount; i++) {
+                    jedis.select(i);
+                    long keyCount = jedis.dbSize();
+                    Map<String, Object> table = new LinkedHashMap<>();
+                    table.put("name", "db" + i);
+                    List<Map<String, String>> columns = List.of(
+                            Map.of("name", "key", "type", "STRING"),
+                            Map.of("name", "type", "type", "STRING"),
+                            Map.of("name", "value", "type", "STRING"),
+                            Map.of("name", "ttl", "type", "INTEGER")
+                    );
+                    table.put("columns", columns);
+                    table.put("keyCount", keyCount);
+                    tables.add(table);
+                }
+            }
+
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of("tables", tables)));
+        } catch (Exception e) {
+            logger.warn("Memorystore schema fetch failed: {}", e.getMessage());
+            return errorResponse("Memorystore schema fetch failed: " + e.getMessage());
         }
     }
 
@@ -1582,6 +1763,13 @@ public class QueryService {
                     String tableId = tblRef != null ? (String) tblRef.get("tableId") : null;
                     if (tableId == null) continue;
 
+                    // Strip projectId__ prefix for display: "local_project__dataset.table" → "dataset.table"
+                    // The emulator uses DuckDB schemas named "project__dataset" internally,
+                    // but queries use "dataset.table" (project is in the URL path).
+                    String displayDataset = datasetId.startsWith(projectId + "__")
+                            ? datasetId.substring(projectId.length() + 2)
+                            : datasetId;
+
                     // Get table schema and metadata
                     String schemaUrl = bigqueryBase + "/bigquery/v2/projects/" + projectId
                             + "/datasets/" + datasetId + "/tables/" + tableId;
@@ -1616,12 +1804,8 @@ public class QueryService {
                         Map<String, Object> tableLabels = (Map<String, Object>) schemaResp.get("labels");
 
                         // Row and byte counts
-                        long numRows = 0;
-                        long numBytes = 0;
-                        Object numRowsObj = schemaResp.get("numRows");
-                        Object numBytesObj = schemaResp.get("numBytes");
-                        if (numRowsObj != null) numRows = ((Number) numRowsObj).longValue();
-                        if (numBytesObj != null) numBytes = ((Number) numBytesObj).longValue();
+                        long numRows = longValueOrDefault(schemaResp.get("numRows"), 0L);
+                        long numBytes = longValueOrDefault(schemaResp.get("numBytes"), 0L);
 
                         // Partitioning info
                         @SuppressWarnings("unchecked")
@@ -1630,7 +1814,7 @@ public class QueryService {
                         List<String> clustering = (List<String>) schemaResp.get("clustering");
 
                         Map<String, Object> tableMeta = new LinkedHashMap<>();
-                        tableMeta.put("name", datasetId + "." + tableId);
+                        tableMeta.put("name", displayDataset + "." + tableId);
                         tableMeta.put("columns", columns);
                         tableMeta.put("type", tableType);
                         tableMeta.put("numRows", numRows);
@@ -1648,7 +1832,7 @@ public class QueryService {
                         allTables.add(tableMeta);
                     } catch (Exception e) {
                         // Skip tables we can't get schema for
-                        allTables.add(Map.of("name", datasetId + "." + tableId, "columns", List.of()));
+                        allTables.add(Map.of("name", displayDataset + "." + tableId, "columns", List.of()));
                     }
                 }
             }
@@ -1905,7 +2089,9 @@ public class QueryService {
             "log_entries", "time_series", "metric_points", "bigtable_data",
             "compute_instances", "cloudrun_services", "cloudrun_revisions",
             "gke_clusters", "redis_data", "workflows", "workflow_executions",
-            "workflow_step_entries", "usage_metrics", "projects", "gcs_bucket_projects"
+            "workflow_step_entries", "usage_metrics", "projects", "gcs_bucket_projects",
+            "alloydb_clusters", "alloydb_instances", "alloydb_backups", "alloydb_users",
+            "scheduler_jobs", "cloud_functions", "dataproc_clusters", "dataproc_jobs"
         };
 
         // Check if query references any of these tables (word-boundary match to avoid
@@ -2087,6 +2273,137 @@ public class QueryService {
         }
 
         return rawError;
+    }
+
+    private static long longValueOrDefault(Object value, long defaultValue) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value instanceof String stringValue) {
+            try {
+                return Long.parseLong(stringValue.trim());
+            } catch (NumberFormatException ignored) {
+                return defaultValue;
+            }
+        }
+        return defaultValue;
+    }
+
+    private HttpResponse executeMemorystoreQuery(String sql, String projectId, long startTime) {
+        try {
+            int redisPort = config.getServiceRegistry().getService("memorystore") != null
+                    ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+
+            String trimmed = sql.trim();
+            String upper = trimmed.toUpperCase();
+
+            if (!upper.startsWith("SELECT")) {
+                return errorResponse("Only SELECT queries are supported for memorystore");
+            }
+
+            // Parse: SELECT * FROM db0 [WHERE key = 'xxx' | WHERE key LIKE 'xxx'] [LIMIT n]
+            java.util.regex.Matcher fromMatcher = java.util.regex.Pattern.compile(
+                    "(?i)FROM\\s+(db\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(trimmed);
+            if (!fromMatcher.find()) {
+                return errorResponse("Invalid query. Expected: SELECT * FROM dbN [WHERE ...] [LIMIT n]");
+            }
+            String dbName = fromMatcher.group(1);
+            int dbIndex = Integer.parseInt(dbName.substring(2));
+
+            java.util.regex.Matcher limitMatcher = java.util.regex.Pattern.compile(
+                    "(?i)LIMIT\\s+(\\d+)").matcher(trimmed);
+            int limit = limitMatcher.find() ? Integer.parseInt(limitMatcher.group(1)) : 100;
+
+            java.util.regex.Matcher keyEqMatcher = java.util.regex.Pattern.compile(
+                    "(?i)WHERE\\s+KEY\\s*=\\s*'([^']*)'").matcher(trimmed);
+            String keyEquals = keyEqMatcher.find() ? keyEqMatcher.group(1) : null;
+
+            java.util.regex.Matcher keyLikeMatcher = java.util.regex.Pattern.compile(
+                    "(?i)WHERE\\s+KEY\\s+LIKE\\s+'([^']*)'").matcher(trimmed);
+            String keyLike = keyLikeMatcher.find() ? keyLikeMatcher.group(1) : null;
+
+            List<String> columns = List.of("key", "type", "value", "ttl");
+            List<List<Object>> rows = new ArrayList<>();
+
+            try (Jedis jedis = new Jedis("localhost", redisPort)) {
+                jedis.select(dbIndex);
+
+                if (keyEquals != null) {
+                    String type = jedis.type(keyEquals);
+                    if (!"none".equals(type)) {
+                        Object value = getRedisValue(jedis, keyEquals, type);
+                        long ttl = jedis.ttl(keyEquals);
+                        rows.add(List.of(keyEquals, type, value, ttl));
+                    }
+                } else {
+                    String cursor = "0";
+                    java.util.regex.Pattern likePattern = keyLike != null ?
+                            java.util.regex.Pattern.compile(globToRegex(keyLike), java.util.regex.Pattern.CASE_INSENSITIVE) : null;
+                    do {
+                        redis.clients.jedis.resps.ScanResult<String> scanResult = jedis.scan(
+                                cursor, new redis.clients.jedis.params.ScanParams().count(Math.min(limit, 1000)));
+                        cursor = scanResult.getCursor();
+                        for (String key : scanResult.getResult()) {
+                            if (likePattern != null && !likePattern.matcher(key).matches()) continue;
+                            String type = jedis.type(key);
+                            Object value = getRedisValue(jedis, key, type);
+                            long ttl = jedis.ttl(key);
+                            rows.add(List.of(key, type, value, ttl));
+                            if (rows.size() >= limit) break;
+                        }
+                    } while (!"0".equals(cursor) && rows.size() < limit);
+                }
+            }
+
+            long elapsed = System.currentTimeMillis() - startTime;
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("columns", columns);
+            result.put("rows", rows);
+            result.put("row_count", rows.size());
+            result.put("execution_time_ms", elapsed);
+
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
+        } catch (Exception e) {
+            logger.warn("Memorystore query failed: {}", e.getMessage());
+            return errorResponse(e.getMessage());
+        }
+    }
+
+    private Object getRedisValue(Jedis jedis, String key, String type) {
+        return switch (type) {
+            case "string" -> jedis.get(key);
+            case "hash" -> jedis.hgetAll(key);
+            case "list" -> jedis.lrange(key, 0, -1);
+            case "set" -> jedis.smembers(key);
+            case "zset" -> jedis.zrangeWithScores(key, 0, -1);
+            case "stream" -> jedis.xrange(key, "0", "-");
+            default -> jedis.get(key);
+        };
+    }
+
+    private String globToRegex(String glob) {
+        StringBuilder sb = new StringBuilder("^");
+        for (char c : glob.toCharArray()) {
+            sb.append(switch (c) {
+                case '*' -> ".*";
+                case '?' -> ".";
+                case '.' -> "\\.";
+                case '[' -> "\\[";
+                case ']' -> "\\]";
+                case '(' -> "\\(";
+                case ')' -> "\\)";
+                case '+' -> "\\+";
+                case '^' -> "\\^";
+                case '$' -> "\\$";
+                case '{' -> "\\{";
+                case '}' -> "\\}";
+                case '|' -> "\\|";
+                default -> String.valueOf(c);
+            });
+        }
+        sb.append("$");
+        return sb.toString();
     }
 
     private HttpResponse errorResponse(String message) {

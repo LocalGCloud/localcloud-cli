@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <!-- Hexagon base representing database cluster -->
+  <path d="M12 2L20 7v10l-8 5-8-5V7l8-5z" fill="#aecbfa"/>
+  <path d="M12 4L18 7.5v7L12 18l-6-3.5v-7L12 4z" fill="#669df6"/>
+  <!-- Database nodes inside -->
+  <rect x="9" y="9" width="6" height="4" rx="1" fill="#fff"/>
+  <rect x="9" y="14" width="6" height="3" rx="1" fill="#4285f4"/>
+  <!-- Connection lines -->
+  <circle cx="12" cy="7" r="1.5" fill="#fff"/>
+</svg>

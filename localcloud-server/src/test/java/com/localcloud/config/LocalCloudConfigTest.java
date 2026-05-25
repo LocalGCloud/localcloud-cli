@@ -244,13 +244,18 @@ class LocalCloudConfigTest {
         assertTrue(services.contains("bigquery"));
         assertTrue(services.contains("secretmanager"));
         assertTrue(services.contains("cloudtasks"));
+        assertTrue(services.contains("cloudscheduler"));
+        assertTrue(services.contains("cloudfunctions"));
+        assertTrue(services.contains("alloydb"));
+        assertTrue(services.contains("dataproc"));
+        assertTrue(services.contains("cloudiam"));
         assertTrue(services.contains("spanner"));
         assertTrue(services.contains("bigtable"));
         assertTrue(services.contains("logging"));
         assertTrue(services.contains("monitoring"));
         assertTrue(services.contains("memorystore"));
         assertTrue(services.contains("workflows"));
-        assertEquals(12, services.size());
+        assertEquals(17, services.size());
     }
 
     // -----------------------------------------------------------------------
@@ -352,6 +357,11 @@ class LocalCloudConfigTest {
         assertTrue(allServices.containsKey("bigtable"));
         assertTrue(allServices.containsKey("secretmanager"));
         assertTrue(allServices.containsKey("cloudtasks"));
+        assertTrue(allServices.containsKey("cloudscheduler"));
+        assertTrue(allServices.containsKey("cloudfunctions"));
+        assertTrue(allServices.containsKey("alloydb"));
+        assertTrue(allServices.containsKey("dataproc"));
+        assertTrue(allServices.containsKey("cloudiam"));
         assertTrue(allServices.containsKey("logging"));
         assertTrue(allServices.containsKey("monitoring"));
         assertTrue(allServices.containsKey("gke"));
@@ -362,7 +372,7 @@ class LocalCloudConfigTest {
         assertTrue(allServices.containsKey("vertexai"));
         assertTrue(allServices.containsKey("kms"));
         assertTrue(allServices.containsKey("cloudsql"));
-        assertEquals(18, allServices.size(), "services.yaml should define exactly 18 services");
+        assertEquals(23, allServices.size(), "services.yaml should define exactly 23 services");
         assertFalse(config.isServiceEnabled("vertexai"), "vertexai should be disabled by default");
         assertFalse(config.isServiceEnabled("kms"), "kms should be disabled by default");
         assertFalse(config.isServiceEnabled("cloudsql"), "cloudsql should be disabled by default");

@@ -4,26 +4,26 @@
 
 | Area | Description | Skill |
 |------|-------------|-------|
+| Get | 257 symbols | `/gortex-get` |
+| Get | 199 symbols | `/gortex-get` |
+| Seed | 196 symbols | `/gortex-seed` |
 | Get | 182 symbols | `/gortex-get` |
-| Handle | 177 symbols | `/gortex-handle` |
-| Get | 144 symbols | `/gortex-get` |
-| Admin | 135 symbols | `/gortex-admin` |
-| Stdlib | 74 symbols | `/gortex-stdlib` |
-| Expression | 62 symbols | `/gortex-expression` |
-| Workflows | 61 symbols | `/gortex-workflows` |
-| Engine | 50 symbols | `/gortex-engine` |
-| Get | 36 symbols | `/gortex-get` |
-| Gateway | 30 symbols | `/gortex-gateway` |
-| Admin | 30 symbols | `/gortex-admin` |
-| Expression | 29 symbols | `/gortex-expression` |
-| Engine | 28 symbols | `/gortex-engine` |
-| Localcloud | 27 symbols | `/gortex-localcloud` |
-| Engine | 26 symbols | `/gortex-engine` |
-| Pages | 26 symbols | `/gortex-pages` |
-| Memorystore | 25 symbols | `/gortex-memorystore` |
-| Sync | 25 symbols | `/gortex-sync` |
-| Gateway | 25 symbols | `/gortex-gateway` |
-| Adapters | 24 symbols | `/gortex-adapters` |
+| List | 141 symbols | `/gortex-list` |
+| Stdlib | 80 symbols | `/gortex-stdlib` |
+| Licensing | 75 symbols | `/gortex-licensing` |
+| Bigtablesql | 74 symbols | `/gortex-bigtablesql` |
+| Expression | 64 symbols | `/gortex-expression` |
+| Generate | 60 symbols | `/gortex-generate` |
+| Adapters | 49 symbols | `/gortex-adapters` |
+| Build | 46 symbols | `/gortex-build` |
+| Bigtablesql | 45 symbols | `/gortex-bigtablesql` |
+| Pages | 45 symbols | `/gortex-pages` |
+| Services | 45 symbols | `/gortex-services` |
+| Gateway | 44 symbols | `/gortex-gateway` |
+| Engine | 43 symbols | `/gortex-engine` |
+| Localcloud | 32 symbols | `/gortex-localcloud` |
+| Expression | 32 symbols | `/gortex-expression` |
+| Get | 32 symbols | `/gortex-get` |
 <!-- gortex:skills:end -->
 
 <!-- gortex:communities:end -->

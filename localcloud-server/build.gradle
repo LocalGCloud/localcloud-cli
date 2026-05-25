@@ -46,6 +46,17 @@ dependencies {
     implementation 'com.google.api.grpc:grpc-google-cloud-logging-v2:0.116.0'
     implementation 'com.google.api.grpc:proto-google-cloud-monitoring-v3:3.87.0'
     implementation 'com.google.api.grpc:grpc-google-cloud-monitoring-v3:3.87.0'
+    implementation 'com.google.api.grpc:proto-google-cloud-scheduler-v1:2.53.0'
+    implementation 'com.google.api.grpc:grpc-google-cloud-scheduler-v1:2.53.0'
+    implementation 'com.google.api.grpc:proto-google-cloud-functions-v2:2.94.0'
+    implementation 'com.google.api.grpc:grpc-google-cloud-functions-v2:2.94.0'
+    implementation 'com.google.api.grpc:proto-google-cloud-alloydb-v1:0.40.0'
+    implementation 'com.google.api.grpc:grpc-google-cloud-alloydb-v1:0.40.0'
+    implementation 'com.google.api.grpc:proto-google-cloud-dataproc-v1:4.33.0'
+    implementation 'com.google.api.grpc:grpc-google-cloud-dataproc-v1:4.33.0'
+    implementation 'com.google.api.grpc:proto-google-iam-v1:1.36.0'
+    implementation 'com.google.api.grpc:grpc-google-iam-v1:1.36.0'
+    implementation 'com.cronutils:cron-utils:9.2.1'
 
     // GKE Container API stubs
     implementation 'com.google.api.grpc:proto-google-cloud-container-v1:2.55.0'
