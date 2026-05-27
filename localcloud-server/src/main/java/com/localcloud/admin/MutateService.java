@@ -1860,6 +1860,47 @@ public class MutateService {
             logger.debug("Deleted secret: {}", name);
             return mapper.writeValueAsString(Map.of("status", "deleted", "name", name));
         }
+
+        // Version management
+        if ("versions".equals(operation) && "add".equals(subOp)) {
+            String name = (String) json.get("name");
+            String value = (String) json.get("value");
+            if (value == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "Secret value is required"));
+            }
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO secret_versions (project_id, secret_id, version_number, payload, state) " +
+                     "VALUES (?, ?, COALESCE((SELECT MAX(version_number) FROM secret_versions " +
+                     "WHERE project_id = ? AND secret_id = ?), 0) + 1, ?, 'ENABLED') ")) {
+                ps.setString(1, projectId);
+                ps.setString(2, name);
+                ps.setString(3, projectId);
+                ps.setString(4, name);
+                ps.setBytes(5, value.getBytes(StandardCharsets.UTF_8));
+                ps.executeUpdate();
+            }
+            logger.debug("Added version to secret: {}", name);
+            return mapper.writeValueAsString(Map.of("status", "created", "name", name));
+        }
+        if ("versions".equals(operation) && ("enable".equals(subOp) || "disable".equals(subOp) || "destroy".equals(subOp))) {
+            String name = (String) json.get("name");
+            int version = ((Number) json.get("version")).intValue();
+            String newState = "enable".equals(subOp) ? "ENABLED" : "disable".equals(subOp) ? "DISABLED" : "DESTROYED";
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE secret_versions SET state = ? " +
+                     "WHERE project_id = ? AND secret_id = ? AND version_number = ?")) {
+                ps.setString(1, newState);
+                ps.setString(2, projectId);
+                ps.setString(3, name);
+                ps.setInt(4, version);
+                ps.executeUpdate();
+            }
+            logger.debug("Updated version {} of secret {} to {}", version, name, newState);
+            return mapper.writeValueAsString(Map.of("status", "updated", "name", name, "version", version, "state", newState));
+        }
+
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Secret Manager operation: " + operation));
     }
 

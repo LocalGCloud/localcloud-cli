@@ -1586,8 +1586,225 @@ function CloudIAMView(props) {
 // -- Secret Manager View --
 function SecretManagerView(props) {
     const d = () => props.data();
+    const [selectedSecret, setSelectedSecret] = createSignal(null);
+    const [versions, setVersions] = createSignal([]);
+    const [versionsLoading, setVersionsLoading] = createSignal(false);
+    const [viewError, setViewError] = createSignal(null);
+    // Map of version -> revealed payload value
+    const [revealedValues, setRevealedValues] = createSignal({});
+    const [loadingValue, setLoadingValue] = createSignal(null); // version number being loaded
+
+    async function loadVersions(secretName) {
+        setSelectedSecret(secretName);
+        setVersionsLoading(true);
+        setViewError(null);
+        setRevealedValues({});
+        try {
+            const data = await api.secretManagerVersions(secretName);
+            setVersions(data?.versions || []);
+        } catch (e) {
+            setViewError('Failed to load versions: ' + e.message);
+            setVersions([]);
+        } finally {
+            setVersionsLoading(false);
+        }
+    }
+
+    function goBack() {
+        setSelectedSecret(null);
+        setVersions([]);
+        setViewError(null);
+        setRevealedValues({});
+    }
+
+    // Optimistic update: changes local state immediately, no list re-fetch
+    async function handleVersionAction(secretName, version, action) {
+        setViewError(null);
+        const newState = action === 'enable' ? 'ENABLED' : action === 'disable' ? 'DISABLED' : 'DESTROYED';
+
+        // Save original state before optimistic update for potential revert
+        const original = versions().find(v => v.version === version);
+        const originalState = original?.state;
+
+        // Optimistic local update
+        setVersions(prev => prev.map(v =>
+            v.version === version ? { ...v, state: newState } : v
+        ));
+
+        try {
+            if (action === 'destroy') {
+                if (!confirm(`Destroy version ${version} of "${secretName}"? This cannot be undone.`)) {
+                    // Revert optimistic update using saved original state
+                    if (originalState) {
+                        setVersions(prev => prev.map(v =>
+                            v.version === version ? { ...v, state: originalState } : v
+                        ));
+                    }
+                    return;
+                }
+                await api.destroySecretVersion(secretName, version);
+            } else if (action === 'enable') {
+                await api.enableSecretVersion(secretName, version);
+            } else if (action === 'disable') {
+                await api.disableSecretVersion(secretName, version);
+            }
+        } catch (e) {
+            setViewError('Failed: ' + e.message);
+            // Revert optimistic update on failure
+            await loadVersions(secretName);
+        }
+    }
+
+    async function toggleSecretValue(secretName, version) {
+        // If already revealed, hide it
+        if (revealedValues()[version] !== undefined) {
+            setRevealedValues(prev => { const n = { ...prev }; delete n[version]; return n; });
+            return;
+        }
+        // Fetch and reveal
+        setLoadingValue(version);
+        try {
+            const data = await api.getSecretVersionPayload(secretName, version);
+            setRevealedValues(prev => ({ ...prev, [version]: data?.value || '(empty)' }));
+        } catch (e) {
+            setViewError('Failed to load value: ' + e.message);
+        } finally {
+            setLoadingValue(null);
+        }
+    }
+
+    const stateBadge = (state) => {
+        const s = (state || '').toUpperCase();
+        if (s === 'ENABLED') return 'badge-healthy';
+        if (s === 'DISABLED') return 'badge-warning';
+        if (s === 'DESTROYED') return 'badge-unhealthy';
+        return 'badge-neutral';
+    };
+
+    // Versions sub-view
     return (
-        <div>
+        <Show when={!selectedSecret()} fallback={
+            <div>
+                <button class="back-link" onClick={goBack}>
+                    {'\u2190'} Back to secrets
+                </button>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                    <h2 style="margin:0">Secret: {selectedSecret()}</h2>
+                    <Show when={props.onAdd}>
+                        <button onClick={() => props.onAdd('Add Version to ' + selectedSecret(), [
+                            { name: 'value', type: 'textarea' }
+                        ], async (formData) => {
+                            await api.addSecretVersion(selectedSecret(), formData.value);
+                            await loadVersions(selectedSecret());
+                        })} class="btn btn-primary" style={{ "font-size": '13px', height: '34px' }}>
+                            + Add Version
+                        </button>
+                    </Show>
+                </div>
+                <Show when={viewError()}>
+                    <div class="alert alert-error" role="alert">{viewError()}</div>
+                </Show>
+                <Show when={!versionsLoading()} fallback={
+                    <div class="loading-state"><div class="loading-spinner" /> Loading versions…</div>
+                }>
+                    <Show when={versions().length > 0} fallback={
+                        <div class="empty-state">
+                            <div class="empty-state-title">No versions found</div>
+                            <div class="empty-state-text">Add a version to get started.</div>
+                        </div>
+                    }>
+                        <div class="data-table-wrapper">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Version</th>
+                                        <th>State</th>
+                                        <th>Value</th>
+                                        <th>Created</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <For each={versions()}>
+                                        {(v) => {
+                                            const isRevealed = () => revealedValues()[v.version] !== undefined;
+                                            const isLoadingThis = () => loadingValue() === v.version;
+                                            return (
+                                            <tr>
+                                                <td style={{ "font-family": 'var(--font-mono)', "font-weight": '600' }}>
+                                                    v{v.version}
+                                                </td>
+                                                <td>
+                                                    <span class={`badge ${stateBadge(v.state)}`}>{v.state || 'UNKNOWN'}</span>
+                                                </td>
+                                                <td style={{ "min-width": '180px' }}>
+                                                    <Show when={isRevealed()} fallback={
+                                                        <button class="btn btn-secondary"
+                                                            style={{ height: '26px', "font-size": '11px', padding: '0 8px', "font-family": 'var(--font-mono)', "letter-spacing": '2px' }}
+                                                            onClick={() => toggleSecretValue(selectedSecret(), v.version)}
+                                                            disabled={isLoadingThis()}>
+                                                            {isLoadingThis() ? '…' : '••••••••'}
+                                                        </button>
+                                                    }>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                            <code style={{
+                                                                "font-family": 'var(--font-mono)',
+                                                                "font-size": '12px',
+                                                                color: 'var(--text)',
+                                                                padding: '2px 6px',
+                                                                background: 'var(--bg-subtle)',
+                                                                "border-radius": '4px',
+                                                                "word-break": 'break-all',
+                                                                "max-width": '280px',
+                                                                overflow: 'hidden',
+                                                                "text-overflow": 'ellipsis',
+                                                                "white-space": 'nowrap',
+                                                            }}>{revealedValues()[v.version]}</code>
+                                                            <button class="btn btn-secondary"
+                                                                style={{ height: '22px', "font-size": '10px', padding: '0 6px', "flex-shrink": '0' }}
+                                                                onClick={() => toggleSecretValue(selectedSecret(), v.version)}>
+                                                                Hide
+                                                            </button>
+                                                        </div>
+                                                    </Show>
+                                                </td>
+                                                <td style={{ "font-size": '12px', color: 'var(--text-secondary)' }}>
+                                                    {formatDate(v.created_at)}
+                                                </td>
+                                                <td>
+                                                    <div style="display:flex;gap:4px">
+                                                        <Show when={v.state === 'DISABLED'}>
+                                                            <button class="btn btn-secondary" style={{ height: '26px', "font-size": '11px', padding: '0 8px' }}
+                                                                onClick={() => handleVersionAction(selectedSecret(), v.version, 'enable')}>
+                                                                Enable
+                                                            </button>
+                                                        </Show>
+                                                        <Show when={v.state === 'ENABLED'}>
+                                                            <button class="btn btn-secondary" style={{ height: '26px', "font-size": '11px', padding: '0 8px' }}
+                                                                onClick={() => handleVersionAction(selectedSecret(), v.version, 'disable')}>
+                                                                Disable
+                                                            </button>
+                                                        </Show>
+                                                        <Show when={v.state !== 'DESTROYED'}>
+                                                            <button class="btn btn-danger" style={{ height: '26px', "font-size": '11px', padding: '0 8px' }}
+                                                                onClick={() => handleVersionAction(selectedSecret(), v.version, 'destroy')}>
+                                                                Destroy
+                                                            </button>
+                                                        </Show>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        );}}
+                                    </For>
+                                </tbody>
+                            </table>
+                        </div>
+                    </Show>
+                </Show>
+            </div>
+        }>
+            {/* Secrets list */}
+            <div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
                 <div />
                 <Show when={props.onAdd}>
@@ -1605,7 +1822,7 @@ function SecretManagerView(props) {
                 <div class="empty-state">
                     <div class="empty-state-icon">{'\u2205'}</div>
                     <div class="empty-state-title">No secrets found</div>
-                    <div class="empty-state-text">Create a secret to see it here.</div>
+                    <div class="empty-state-text">Create a secret to store API keys, passwords, and certificates.</div>
                 </div>
             }>
                 <div class="data-table-wrapper">
@@ -1621,18 +1838,18 @@ function SecretManagerView(props) {
                         <tbody>
                             <For each={d().secrets}>
                                 {(secret) => (
-                                    <tr>
+                                    <tr class="clickable-row" onClick={() => loadVersions(secret.name)} onKeyDown={onActivate(() => loadVersions(secret.name))} role="button" tabIndex="0">
                                         <td style={{ "font-weight": "500" }}>
                                             <img src="/icons/secretmanager.svg" alt="" width="14" height="14" style={{ "margin-right": "6px", "vertical-align": "middle" }} />
                                             {secret.name}
                                         </td>
                                         <td>
-                                            <Show when={secret.versionCount != null} fallback="--">
-                                                <span class="badge badge-neutral">{secret.versionCount}</span>
+                                            <Show when={secret.version_count != null} fallback="--">
+                                                <span class="badge badge-neutral">{secret.version_count}</span>
                                             </Show>
                                         </td>
                                         <td>{formatDate(secret.created_at || secret.createTime)}</td>
-                                        <td>
+                                        <td onClick={(e) => e.stopPropagation()}>
                                             <Show when={props.onDelete}>
                                                 <button onClick={() => props.onDelete('Delete secret "' + secret.name + '"?', async () => {
                                                     await api.mutate('secretmanager', 'secrets/delete', { name: secret.name });
@@ -1646,7 +1863,8 @@ function SecretManagerView(props) {
                     </table>
                 </div>
             </Show>
-        </div>
+            </div>
+        </Show>
     );
 }
 

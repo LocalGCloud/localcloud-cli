@@ -42,11 +42,11 @@ const NAV_ITEMS = [
 ];
 
 const SERVICE_GROUPS = [
-    { name: 'Storage', tone: 'green', services: [{ id: 'gcs', label: 'Cloud Storage' }, { id: 'secretmanager', label: 'Secret Manager' }] },
+    { name: 'Storage', tone: 'green', services: [{ id: 'gcs', label: 'Cloud Storage' }] },
     { name: 'Databases', tone: 'blue', services: [{ id: 'firestore', label: 'Firestore', tag: 'Coming up' }, { id: 'spanner', label: 'Spanner' }, { id: 'bigtable', label: 'Bigtable' }, { id: 'memorystore', label: 'Memorystore' }, { id: 'cloudsql', label: 'Cloud SQL' }, { id: 'alloydb', label: 'AlloyDB' }] },
     { name: 'Analytics', tone: 'amber', services: [{ id: 'bigquery', label: 'BigQuery' }, { id: 'pubsub', label: 'Pub/Sub' }] },
     { name: 'AI/ML', tone: 'violet', services: [{ id: 'vertexai', label: 'Vertex AI', tag: 'Coming up' }] },
-    { name: 'Security', tone: 'green', services: [{ id: 'kms', label: 'Cloud KMS' }, { id: 'cloudiam', label: 'Cloud IAM' }] },
+    { name: 'Security', tone: 'teal', services: [{ id: 'secretmanager', label: 'Secret Manager' }, { id: 'kms', label: 'Cloud KMS' }, { id: 'cloudiam', label: 'Cloud IAM' }] },
     { name: 'Compute', tone: 'red', services: [{ id: 'cloudrun', label: 'Cloud Run' }, { id: 'gke', label: 'GKE' }, { id: 'compute', label: 'Compute Engine' }, { id: 'dataproc', label: 'Dataproc' }, { id: 'cloudtasks', label: 'Cloud Tasks' }, { id: 'workflows', label: 'Workflows' }, { id: 'cloudscheduler', label: 'Cloud Scheduler' }, { id: 'cloudfunctions', label: 'Cloud Functions' }] },
     { name: 'Operations', tone: 'violet', services: [{ id: 'logging', label: 'Logging' }, { id: 'monitoring', label: 'Monitoring' }] },
 ];

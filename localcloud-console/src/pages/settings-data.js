@@ -11,7 +11,7 @@ export const SERVICE_META = {
     BIGTABLE_EMULATOR_HOST:         { id: 'bigtable',      displayName: 'Bigtable',         hasGcloud: false },
     SPANNER_EMULATOR_HOST:          { id: 'spanner',       displayName: 'Spanner',          hasGcloud: true },
     BIGQUERY_EMULATOR_HOST:         { id: 'bigquery',      displayName: 'BigQuery',         hasGcloud: true },
-    SECRET_MANAGER_EMULATOR_HOST:   { id: 'secretmanager', displayName: 'Secret Manager',   hasGcloud: false },
+    SECRET_MANAGER_EMULATOR_HOST:   { id: 'secretmanager', displayName: 'Secret Manager',   hasGcloud: true },
     CLOUD_TASKS_EMULATOR_HOST:      { id: 'cloudtasks',    displayName: 'Cloud Tasks',      hasGcloud: false },
     CLOUD_LOGGING_EMULATOR_HOST:    { id: 'logging',       displayName: 'Cloud Logging',    hasGcloud: false },
     CLOUD_MONITORING_EMULATOR_HOST: { id: 'monitoring',    displayName: 'Cloud Monitoring', hasGcloud: false },
@@ -199,15 +199,35 @@ bq query --use_legacy_sql=false 'SELECT 1 AS num'`,
     },
     secretmanager: {
         python: `from google.cloud import secretmanager
+
 client = secretmanager.SecretManagerServiceClient()
 parent = f"projects/local-project"
+
+# Create a secret
 secret = client.create_secret(request={
     "parent": parent, "secret_id": "my-secret",
     "secret": {"replication": {"automatic": {}}}})
-client.add_secret_version(request={
-    "parent": secret.name,
-    "payload": {"data": b"s3cret-value"}})
-print(f"Created: {secret.name}")`,
+print(f"Created: {secret.name}")
+
+# Add a new version
+version = client.add_secret_version(request={
+    "parent": secret.name, "payload": {"data": b"s3cret-value"}})
+print(f"Version: {version.name}")
+
+# Access latest version value
+response = client.access_secret_version(
+    request={"name": f"{secret.name}/versions/latest"})
+print(f"Value: {response.payload.data.decode()}")
+
+# Enable/disable versions
+client.enable_secret_version(
+    request={"name": f"{secret.name}/versions/2"})
+client.disable_secret_version(
+    request={"name": f"{secret.name}/versions/1"})
+
+# Destroy a version
+client.destroy_secret_version(
+    request={"name": f"{secret.name}/versions/1"})`,
         nodejs: `const {SecretManagerServiceClient} = require('@google-cloud/secret-manager');
 const client = new SecretManagerServiceClient();
 const [secret] = await client.createSecret({
@@ -340,14 +360,25 @@ bq mk --table test_dataset.users name:STRING,age:INTEGER`,
     },
     secretmanager: {
         label: 'Secret Manager',
-        commands: `# Create a secret
+        commands: `# Create a secret with initial value
 gcloud secrets create my-secret --data-file=- <<< "s3cr3t-value"
 
-# List secrets
-gcloud secrets list
+# Add a new version
+echo "updated-value" | gcloud secrets versions add my-secret --data-file=-
 
-# Access a secret version
-gcloud secrets versions access latest --secret=my-secret`,
+# List secrets and versions
+gcloud secrets list
+gcloud secrets versions list my-secret
+
+# Access latest version
+gcloud secrets versions access latest --secret=my-secret
+
+# Enable / disable a version
+gcloud secrets versions enable 2 --secret=my-secret
+gcloud secrets versions disable 1 --secret=my-secret
+
+# Destroy a version
+gcloud secrets versions destroy 1 --secret=my-secret`,
     },
 };
 

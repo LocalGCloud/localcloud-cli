@@ -48,12 +48,13 @@ function JsonCell(props) {
 }
 
 // ─── Services without SQL support ────────────────────────────────────────
-const NON_SQL_SERVICES = new Set(['firestore']);
+const NON_SQL_SERVICES = new Set(['firestore', 'secretmanager']);
 
 // ─── Non-SQL service descriptions for the "no SQL" placeholder ───────────
 const NON_SQL_INFO = {
     pubsub:    { label: 'Pub/Sub',        hint: 'Pub/Sub uses topic-based messaging. Use the Data Explorer tab to browse topics and subscriptions.' },
     firestore: { label: 'Firestore',      hint: 'Firestore uses document-based NoSQL storage. Use the Data Explorer tab to browse collections and documents.' },
+    secretmanager: { label: 'Secret Manager', hint: 'Secret Manager stores API keys, passwords, and certificates. Use the Data Explorer tab to manage secrets and versions.' },
 };
 
 // ─── GCS File Query Helpers ──────────────────────────────────────────────
@@ -1668,6 +1669,7 @@ export default function ServiceExplorer(props) {
                 {/* Mode Toggle + Action Buttons */}
                 <div class="se-mode-bar">
                     <div class="se-mode-tabs">
+                        <Show when={!NON_SQL_SERVICES.has(activeService())}>
                         <button
                             class={`se-mode-tab ${mode() === 'editor' ? 'active' : ''}`}
                             onClick={() => switchPrimaryMode('editor')}
@@ -1677,6 +1679,7 @@ export default function ServiceExplorer(props) {
                             </svg>
                             SQL Editor
                         </button>
+                        </Show>
                         <button
                             class={`se-mode-tab ${mode() === 'explorer' ? 'active' : ''}`}
                             onClick={() => switchPrimaryMode('explorer')}
@@ -1686,6 +1689,17 @@ export default function ServiceExplorer(props) {
                             </svg>
                             Data Explorer
                         </button>
+                        <Show when={activeService() === 'secretmanager'}>
+                            <button
+                                class={`se-mode-tab ${mode() === 'stats' ? 'active' : ''}`}
+                                onClick={() => setMode('stats')}
+                            >
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                    <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
+                                </svg>
+                                Stats
+                            </button>
+                        </Show>
                         <Show when={activeService() === 'cloudfunctions'}>
                             <button
                                 class={`se-mode-tab ${mode() === 'trigger' ? 'active' : ''}`}
@@ -1833,6 +1847,79 @@ export default function ServiceExplorer(props) {
                 <Show when={(mode() === 'db-history' || mode() === 'db-stats') && SQL_SERVICES.some(s => s.id === activeService())}>
                     <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '16px' }}>
                         <DatabasePanels serviceId={activeService()} modeSignal={mode} />
+                    </div>
+                </Show>
+                <Show when={activeService() === 'secretmanager' && mode() === 'stats'}>
+                    <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '16px' }}>
+                        <SecretManagerStats activeProject={props.activeProject} />
+                    </div>
+                </Show>
+            </Show>
+        </div>
+    );
+}
+
+// ─── Secret Manager Stats Component ────────────────────────────────────
+function SecretManagerStats(props) {
+    const [stats, setStats] = createSignal(null);
+    const [loading, setLoading] = createSignal(true);
+
+    createEffect(() => {
+        loadStats();
+    });
+
+    async function loadStats() {
+        setLoading(true);
+        try {
+            const data = await api.secretManagerStats();
+            setStats(data?.stats || null);
+        } catch {
+            setStats(null);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    return (
+        <div>
+            <h3 style={{ margin: '0 0 16px', "font-size": '16px', "font-weight": '600' }}>Secret Manager</h3>
+            <Show when={loading()}>
+                <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
+            </Show>
+            <Show when={!loading()}>
+                <Show when={stats()} fallback={
+                    <div class="empty-state">
+                        <div class="empty-state-title">No statistics available</div>
+                        <div class="empty-state-text">Create a secret to see usage data.</div>
+                    </div>
+                }>
+                    <div style={{ display: 'grid', "grid-template-columns": 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', "margin-bottom": '20px' }}>
+                        <div class="stat-card">
+                            <div class="stat-card-main">
+                                <span class="stat-card-label">Secrets</span>
+                                <span class="stat-card-value">{stats()?.total_secrets || 0}</span>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-main">
+                                <span class="stat-card-label">Versions</span>
+                                <span class="stat-card-value">{stats()?.total_versions || 0}</span>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-main">
+                                <span class="stat-card-label">Enabled</span>
+                                <span class="stat-card-value" style={{ color: 'var(--success)' }}>{stats()?.enabled_versions || 0}</span>
+                            </div>
+                        </div>
+                        <Show when={stats()?.disabled_versions > 0}>
+                            <div class="stat-card">
+                                <div class="stat-card-main">
+                                    <span class="stat-card-label">Disabled</span>
+                                    <span class="stat-card-value" style={{ color: 'var(--warning)' }}>{stats()?.disabled_versions}</span>
+                                </div>
+                            </div>
+                        </Show>
                     </div>
                 </Show>
             </Show>

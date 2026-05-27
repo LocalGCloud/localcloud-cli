@@ -751,12 +751,29 @@ curl -X POST http://localhost:8080/reset \\
                                         <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/projects</td><td>List all projects</td></tr>
                                         <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/projects</td><td>Create a project</td></tr>
                                         <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/browse/{'{'} service {'}'}</td><td>Browse service data</td></tr>
+                                        <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/mutate/secretmanager/secrets</td><td>Create or delete a secret</td></tr>
+                                        <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/mutate/secretmanager/versions/add</td><td>Add a new version to a secret</td></tr>
+                                        <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/mutate/secretmanager/versions/enable|disable|destroy</td><td>Manage version state</td></tr>
                                         <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/seed</td><td>Load seed data (YAML)</td></tr>
                                         <tr><td>POST</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/reset</td><td>Reset all data</td></tr>
                                         <tr><td>GET</td><td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>/requests</td><td>Recent request log</td></tr>
                                     </tbody>
                                 </table>
                             </div>
+                        </Section>
+                        <Section title="Secret Manager browse API">
+                            <Text>Browse endpoints for inspecting secrets and their versions:</Text>
+                            <CopyableCodeBlock>{`# List all secrets (with version counts)
+curl http://localhost:8080/browse/secretmanager
+
+# List versions for a specific secret
+curl http://localhost:8080/browse/secretmanager/versions/api-key
+
+# View a specific version's value
+curl http://localhost:8080/browse/secretmanager/versions/api-key/3
+
+# Get stats (counts by state)
+curl http://localhost:8080/browse/secretmanager/stats`}</CopyableCodeBlock>
                         </Section>
                         <Section title="Project-scoped queries">
                             <Text>Add ?project= to browse, env, and reset endpoints to scope to a specific project:</Text>

@@ -147,6 +147,17 @@ export const api = {
     bigqueryInfoSchema: (viewType) => get(appendProject(`/browse/bigquery/information_schema${viewType ? '/' + encodeURIComponent(viewType) : ''}`)),
     // GCS file schema detection
     gcsFileSchema: (bucket, object) => get(appendProject(`/gcs/file-schema?bucket=${encodeURIComponent(bucket)}&object=${encodeURIComponent(object)}`)),
+    // Secret Manager stats
+    secretManagerStats: () => get(appendProject('/browse/secretmanager/stats')),
+    // Secret Manager versions
+    secretManagerVersions: (secretId) => get(appendProject(`/browse/secretmanager/versions/${encodeURIComponent(secretId)}`)),
+    // Secret Manager version payload
+    getSecretVersionPayload: (secretId, version) => get(appendProject(`/browse/secretmanager/versions/${encodeURIComponent(secretId)}/${version}`)),
+    // Secret Manager version management
+    addSecretVersion: (name, value) => postJson(appendProject('/mutate/secretmanager/versions/add'), { name, value }),
+    enableSecretVersion: (name, version) => postJson(appendProject('/mutate/secretmanager/versions/enable'), { name, version }),
+    disableSecretVersion: (name, version) => postJson(appendProject('/mutate/secretmanager/versions/disable'), { name, version }),
+    destroySecretVersion: (name, version) => postJson(appendProject('/mutate/secretmanager/versions/destroy'), { name, version }),
     // Usage metrics (persistent cumulative counts)
     usage: () => get(appendProject('/usage')),
     // Spanner system insights / per-database statistics

@@ -194,6 +194,14 @@ public class BrowseService {
             String json = switch (service) {
                 case "spanner" -> browseSpannerDatabase(a, b, c, projectId);
                 case "bigquery" -> browseBigQueryTables(a, b, c, projectId);
+                case "secretmanager" -> {
+                    if ("versions".equals(a)) {
+                        yield browseSecretVersionPayload(b, Integer.parseInt(c), projectId);
+                    }
+                    yield mapper.writeValueAsString(Map.of(
+                            "error", true,
+                            "message", "Invalid Secret Manager browse path"));
+                }
                 case "bigtable" -> {
                     if ("tables".equals(a)) {
                         yield browseBigtableTableRows(b, c, projectId);
@@ -692,11 +700,19 @@ public class BrowseService {
             return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
         }
 
-        if (resourceType == null || "secrets".equals(resourceType) && resourceId == null) {
+        // List secrets
+        if (resourceType == null || ("secrets".equals(resourceType) && resourceId == null)) {
             List<Map<String, Object>> secrets = new ArrayList<>();
             try (Connection conn = dataSource.getConnection();
                  PreparedStatement ps = conn.prepareStatement(
-                     "SELECT secret_id, labels, created_at FROM secrets WHERE project_id = ?")) {
+                     "SELECT s.secret_id, s.labels, s.created_at, " +
+                     "COUNT(sv.version_number) AS version_count, " +
+                     "MAX(CASE WHEN sv.state = 'ENABLED' THEN sv.version_number END) AS latest_enabled " +
+                     "FROM secrets s LEFT JOIN secret_versions sv " +
+                     "ON s.project_id = sv.project_id AND s.secret_id = sv.secret_id " +
+                     "WHERE s.project_id = ? " +
+                     "GROUP BY s.project_id, s.secret_id, s.labels, s.created_at " +
+                     "ORDER BY s.created_at DESC")) {
                 ps.setString(1, projectId);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
@@ -704,13 +720,106 @@ public class BrowseService {
                         s.put("name", rs.getString("secret_id"));
                         s.put("labels", rs.getString("labels"));
                         s.put("created_at", rs.getTimestamp("created_at").toString());
+                        s.put("version_count", rs.getInt("version_count"));
+                        s.put("latest_version", rs.getObject("latest_enabled") != null ? rs.getInt("latest_enabled") : null);
                         secrets.add(s);
                     }
                 }
             }
             return mapper.writeValueAsString(Map.of("secrets", secrets));
         }
+
+        // List versions for a specific secret
+        if ("versions".equals(resourceType) && resourceId != null) {
+            List<Map<String, Object>> versions = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT sv.version_number, sv.state, sv.created_at, " +
+                     "CASE WHEN sv.payload IS NOT NULL THEN true ELSE false END AS has_payload " +
+                     "FROM secret_versions sv " +
+                     "WHERE sv.project_id = ? AND sv.secret_id = ? " +
+                     "ORDER BY sv.version_number DESC")) {
+                ps.setString(1, projectId);
+                ps.setString(2, resourceId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> v = new LinkedHashMap<>();
+                        v.put("version", rs.getInt("version_number"));
+                        v.put("state", rs.getString("state"));
+                        v.put("created_at", rs.getTimestamp("created_at").toString());
+                        v.put("has_payload", rs.getBoolean("has_payload"));
+                        versions.add(v);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("secret_id", resourceId, "versions", versions));
+        }
+
+        // Stats
+        if ("stats".equals(resourceType)) {
+            Map<String, Object> stats = new LinkedHashMap<>();
+            try (Connection conn = dataSource.getConnection()) {
+                // Total secrets
+                try (PreparedStatement ps = conn.prepareStatement(
+                     "SELECT COUNT(*) FROM secrets WHERE project_id = ?")) {
+                    ps.setString(1, projectId);
+                    ResultSet rs = ps.executeQuery();
+                    rs.next();
+                    stats.put("total_secrets", rs.getInt(1));
+                }
+                // Total versions
+                try (PreparedStatement ps = conn.prepareStatement(
+                     "SELECT COUNT(*) FROM secret_versions sv JOIN secrets s " +
+                     "ON sv.project_id = s.project_id AND sv.secret_id = s.secret_id " +
+                     "WHERE sv.project_id = ?")) {
+                    ps.setString(1, projectId);
+                    ResultSet rs = ps.executeQuery();
+                    rs.next();
+                    stats.put("total_versions", rs.getInt(1));
+                }
+                // By state
+                try (PreparedStatement ps = conn.prepareStatement(
+                     "SELECT sv.state, COUNT(*) FROM secret_versions sv JOIN secrets s " +
+                     "ON sv.project_id = s.project_id AND sv.secret_id = s.secret_id " +
+                     "WHERE sv.project_id = ? GROUP BY sv.state")) {
+                    ps.setString(1, projectId);
+                    ResultSet rs = ps.executeQuery();
+                    while (rs.next()) {
+                        stats.put(rs.getString(1).toLowerCase() + "_versions", rs.getInt(2));
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("stats", stats));
+        }
+
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid browse path"));
+    }
+
+    private String browseSecretVersionPayload(String secretId, int versionNumber, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "SELECT payload, state FROM secret_versions " +
+                 "WHERE project_id = ? AND secret_id = ? AND version_number = ?")) {
+            ps.setString(1, projectId);
+            ps.setString(2, secretId);
+            ps.setInt(3, versionNumber);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    byte[] payload = rs.getBytes("payload");
+                    String value = payload != null ? new String(payload, java.nio.charset.StandardCharsets.UTF_8) : null;
+                    Map<String, Object> result = new LinkedHashMap<>();
+                    result.put("secret_id", secretId);
+                    result.put("version", versionNumber);
+                    result.put("state", rs.getString("state"));
+                    result.put("value", value);
+                    return mapper.writeValueAsString(result);
+                }
+            }
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Version not found"));
     }
 
     // ========== Cloud Tasks (in-process, query PostgreSQL) ==========
