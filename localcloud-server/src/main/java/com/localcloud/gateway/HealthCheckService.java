@@ -21,7 +21,9 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.common.HttpData;
 import com.linecorp.armeria.common.QueryParams;
+import com.linecorp.armeria.common.ResponseHeaders;
 import com.linecorp.armeria.server.ServiceRequestContext;
 import com.linecorp.armeria.server.annotation.Get;
 import com.linecorp.armeria.server.annotation.Param;
@@ -51,6 +53,7 @@ public class HealthCheckService {
     private final ServiceRegistry registry;
     private final ScheduledExecutorService flushScheduler;
     private final SupervisorClient supervisorClient = new SupervisorClient();
+    private volatile String spaHtml;
 
     // Map service IDs to supervisord program names (external services only)
     private static final Map<String, String> SERVICE_TO_PROGRAM = Map.ofEntries(
@@ -83,6 +86,14 @@ public class HealthCheckService {
             return t;
         });
         this.flushScheduler.scheduleAtFixedRate(this::flushMetrics, 30, 30, TimeUnit.SECONDS);
+    }
+
+    /**
+     * Sets the SPA HTML content, used to serve the console for browser GET requests
+     * that would otherwise match API endpoints (e.g. /usage, /logs, /settings).
+     */
+    public void setSpaHtml(String html) {
+        this.spaHtml = html;
     }
 
     /**
@@ -603,6 +614,19 @@ public class HealthCheckService {
      */
     @Get("/usage")
     public HttpResponse usage(ServiceRequestContext ctx) {
+        // Serve SPA HTML for browser navigation (hard refresh of /usage)
+        String spa = this.spaHtml;
+        if (spa != null) {
+            String acceptHeader = ctx.request().headers().get("accept");
+            if (acceptHeader != null && acceptHeader.contains("text/html")) {
+                ResponseHeaders headers = ResponseHeaders.builder(HttpStatus.OK)
+                        .contentType(MediaType.HTML_UTF_8)
+                        .add("Cache-Control", "no-cache")
+                        .build();
+                return HttpResponse.of(headers, HttpData.ofUtf8(spa));
+            }
+        }
+
         return HttpResponse.of(CompletableFuture.supplyAsync(() -> {
             try {
                 String projectParam = ctx.queryParams().get("project");

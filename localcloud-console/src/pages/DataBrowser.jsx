@@ -383,20 +383,20 @@ function PubSubView(props) {
                                                                  </button>
                                                                  <Show when={publishMenuOpen() === topicName}>
                                                                      <div style="position:absolute;right:0;top:calc(100% + 4px);z-index:20;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.15);min-width:200px;padding:4px;overflow:hidden">
-                                                                         <button onClick={() => publishMockMessages(topicName, 1)} style="width:100%;border:none;background:transparent;color:var(--text);padding:8px 12px;text-align:left;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;border-radius:4px" onmouseenter="this.style.background='var(--surface-variant)'" onmouseleave="this.style.background='transparent'">
+                                                                         <button onClick={() => publishMockMessages(topicName, 1)} class="publish-option-item">
                                                                              <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
                                                                              Publish 1 mock message
                                                                          </button>
-                                                                         <button onClick={() => publishMockMessages(topicName, 10)} style="width:100%;border:none;background:transparent;color:var(--text);padding:8px 12px;text-align:left;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;border-radius:4px" onmouseenter="this.style.background='var(--surface-variant)'" onmouseleave="this.style.background='transparent'">
+                                                                         <button onClick={() => publishMockMessages(topicName, 10)} class="publish-option-item">
                                                                              <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" transform="translate(4,0)" opacity="0.5"/></svg>
                                                                              Publish 10 mock messages
                                                                          </button>
-                                                                         <button onClick={() => publishMockMessages(topicName, 50)} style="width:100%;border:none;background:transparent;color:var(--text);padding:8px 12px;text-align:left;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;border-radius:4px" onmouseenter="this.style.background='var(--surface-variant)'" onmouseleave="this.style.background='transparent'">
+                                                                         <button onClick={() => publishMockMessages(topicName, 50)} class="publish-option-item">
                                                                              <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" transform="translate(3,0)" opacity="0.5"/><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" transform="translate(6,0)" opacity="0.3"/></svg>
                                                                              Publish 50 mock messages
                                                                          </button>
                                                                          <div style="height:1px;background:var(--border);margin:4px 8px"></div>
-                                                                         <button onClick={() => { setPublishMenuOpen(null); props.onAdd('Publish Message to ' + topicName, [{ name: 'data', type: 'textarea' }], async (formData) => { await api.mutate('pubsub', 'messages', { topic: topicName, ...formData }); }); }} style="width:100%;border:none;background:transparent;color:var(--text);padding:8px 12px;text-align:left;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;border-radius:4px" onmouseenter="this.style.background='var(--surface-variant)'" onmouseleave="this.style.background='transparent'">
+                                                                         <button onClick={() => { setPublishMenuOpen(null); props.onAdd('Publish Message to ' + topicName, [{ name: 'data', type: 'textarea' }], async (formData) => { await api.mutate('pubsub', 'messages', { topic: topicName, ...formData }); }); }} class="publish-option-item">
                                                                              <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--text-secondary)" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
                                                                              Publish manually…
                                                                          </button>
@@ -630,7 +630,7 @@ function BigQueryView(props) {
             await api.mutate('bigquery', 'datasets', { datasetId: formData.datasetId, description: formData.description || '' });
             setShowCreateDataset(false);
             if (props.onRefresh) props.onRefresh();
-        } catch (e) { alert('Failed to create dataset: ' + e.message); }
+        } catch (e) { setError('Failed to create dataset: ' + e.message); }
         finally { setBqActionLoading(false); }
     };
 
@@ -641,7 +641,7 @@ function BigQueryView(props) {
             await api.mutateSub('bigquery', 'datasets', 'delete', { datasetId: dsId, deleteContents: true });
             if (selectedDataset() === dsId) goBackToDatasets();
             if (props.onRefresh) props.onRefresh();
-        } catch (e) { alert('Failed to delete dataset: ' + e.message); }
+        } catch (e) { setError('Failed to delete dataset: ' + e.message); }
         finally { setBqActionLoading(false); }
     };
 
@@ -671,7 +671,7 @@ function BigQueryView(props) {
             setShowCreateTable(false);
             const result = await api.browse('bigquery', 'datasets/' + selectedDataset());
             setTables(result.tables || result.items || []);
-        } catch (e) { alert('Failed to create table: ' + e.message); }
+        } catch (e) { setError('Failed to create table: ' + e.message); }
         finally { setBqActionLoading(false); }
     };
 
@@ -683,7 +683,7 @@ function BigQueryView(props) {
             if (selectedTable() === tblId) goBackToTables();
             const result = await api.browse('bigquery', 'datasets/' + selectedDataset());
             setTables(result.tables || result.items || []);
-        } catch (e) { alert('Failed to delete table: ' + e.message); }
+        } catch (e) { setError('Failed to delete table: ' + e.message); }
         finally { setBqActionLoading(false); }
     };
 
@@ -704,7 +704,7 @@ function BigQueryView(props) {
             setEditingRow(null);
             const result = await api.browse('bigquery', 'datasets/' + selectedDataset() + '/tables/' + selectedTable() + '/data');
             setTableData(result);
-        } catch (e) { alert('Failed to update row: ' + e.message); }
+        } catch (e) { setError('Failed to update row: ' + e.message); }
         finally { setBqActionLoading(false); }
     };
 
@@ -715,7 +715,7 @@ function BigQueryView(props) {
         try {
             const data = await api.bigqueryInfoSchema(vn);
             setInfoSchemaData(data);
-        } catch (e) { alert('Failed to load INFORMATION_SCHEMA: ' + e.message); }
+        } catch (e) { setError('Failed to load INFORMATION_SCHEMA: ' + e.message); }
         finally { setBqActionLoading(false); }
     };
 
@@ -740,7 +740,7 @@ function BigQueryView(props) {
             setShowMerge(false);
             const result = await api.browse('bigquery', 'datasets/' + selectedDataset() + '/tables/' + selectedTable() + '/data');
             setTableData(result);
-        } catch (e) { alert('Merge failed: ' + e.message); }
+        } catch (e) { setError('Merge failed: ' + e.message); }
         finally { setBqActionLoading(false); }
     };
 
@@ -853,14 +853,12 @@ function BigQueryView(props) {
                             <div style="display:flex;gap:6px">
                                 <button onClick={() => setShowCsvImport(true)}
                                     style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
-                                    onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
-                                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                                    class="btn-hover-border">
                                     {'\u2191'} Import CSV
                                 </button>
                                 <button onClick={() => setShowMerge(true)}
                                     style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:all 0.15s"
-                                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--warning)'; e.currentTarget.style.color = 'var(--warning)'; }}
-                                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                                    class="btn-hover-warn"
                                     title="MERGE upsert from a source query">
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M17 20.41L18.41 19 15 15.59 13.59 17M7.5 8H11v5.59L5.59 19 7 20.41l6-6V8h3.5L12 3.5"/></svg>
                                     Upsert
@@ -983,8 +981,7 @@ function BigQueryView(props) {
                         <div style="display:flex;gap:6px">
                             <button onClick={() => { setShowInfoSchema(!showInfoSchema()); if (showInfoSchema()) loadInfoSchema('tables'); }}
                                 style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:all 0.15s"
-                                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.color = 'var(--primary)'; }}
-                                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                                class="btn-hover-accent"
                                 title="Browse system INFORMATION_SCHEMA views">
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
                                 {showInfoSchema() ? 'Datasets' : 'INFORMATION_SCHEMA'}
@@ -2142,7 +2139,7 @@ function SpannerView(props) {
 
             await selectTable(selectedTable());
         } catch (e) {
-            alert("Failed to insert mock data: " + e.message);
+            setError("Failed to insert mock data: " + e.message);
         }
     };
 
@@ -2600,8 +2597,8 @@ function SpannerView(props) {
                                     <For each={historyEntries()}>
                                         {(entry) => (
                                             <tr style="border-bottom:1px solid var(--border);transition:background 0.1s"
-                                                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-secondary)'}
-                                                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                                                class="btn-hover-bg"
+                                               >
                                                 <td style="padding:8px 10px;white-space:nowrap;color:var(--text-secondary);font-size:12px">
                                                     {entry.executed_at ? entry.executed_at.replace('T', ' ').substring(0, 19) : ''}
                                                 </td>
@@ -2646,8 +2643,7 @@ function SpannerView(props) {
                                                             fontSize:'11px',
                                                             transition:'border-color 0.15s',
                                                         }}
-                                                            onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
-                                                            onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                                                            class="btn-hover-border">
                                                             Rerun
                                                         </button>
                                                     </Show>
@@ -2673,8 +2669,7 @@ function SpannerView(props) {
                                     fontWeight:'500',
                                     transition:'border-color 0.15s',
                                 }}
-                                    onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
-                                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                                    class="btn-hover-border">
                                     Load More
                                 </button>
                             </Show>
@@ -2794,20 +2789,17 @@ function SpannerView(props) {
                             <div style="display:flex;gap:6px">
                                 <button onClick={() => { setDdlModalText(getTableDdl(selectedTable())); setShowDdlModal(true); }}
                                     style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
-                                    onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
-                                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                                    class="btn-hover-border">
                                     Show DDL
                                 </button>
                                 <button onClick={() => setShowCsvImport(true)}
                                     style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
-                                    onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
-                                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                                    class="btn-hover-border">
                                     {'\u2191'} Import CSV
                                 </button>
                                 <button onClick={handleAddMockRow}
                                     style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
-                                    onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
-                                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                                    class="btn-hover-border">
                                     + Add Mock Row
                                 </button>
                                 <button onClick={() => props.onAdd('Add Spanner Row',
@@ -2826,8 +2818,7 @@ function SpannerView(props) {
                                 </button>
                                 <button onClick={() => handleDeleteTable(selectedTable())}
                                     style="padding:6px 12px;border:1px solid var(--error);border-radius:4px;background:var(--surface);color:var(--error);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
-                                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(234, 67, 53, 0.08)'; }}
-                                    onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; }}>
+                                    class="btn-hover-danger">
                                     Delete Table
                                 </button>
                             </div>
@@ -3273,7 +3264,7 @@ function CloudSqlView(props) {
             setNewInstance({ name: '', databaseVersion: 'POSTGRES_15', tier: 'db-custom-1-3840', region: 'us-central1' });
             if (props.onRefresh) props.onRefresh();
         } catch (e) {
-            alert('Failed to create instance: ' + e.message);
+            setError('Failed to create instance: ' + e.message);
         }
     };
 
@@ -3284,7 +3275,7 @@ function CloudSqlView(props) {
             if (selectedInstance() === instanceId) goBack();
             if (props.onRefresh) props.onRefresh();
         } catch (e) {
-            alert('Failed to delete instance: ' + e.message);
+            setError('Failed to delete instance: ' + e.message);
         }
     };
 
@@ -3298,7 +3289,7 @@ function CloudSqlView(props) {
             setNewDatabase({ name: '', charset: 'UTF8', collation: '' });
             await selectInstance(inst);
         } catch (e) {
-            alert('Failed to create database: ' + e.message);
+            setError('Failed to create database: ' + e.message);
         }
     };
 
@@ -3308,7 +3299,7 @@ function CloudSqlView(props) {
             await api.mutateSub('cloudsql', 'databases', 'delete', { instanceId: selectedInstance(), name: dbName });
             await selectInstance(selectedInstance());
         } catch (e) {
-            alert('Failed to delete database: ' + e.message);
+            setError('Failed to delete database: ' + e.message);
         }
     };
 
@@ -3322,7 +3313,7 @@ function CloudSqlView(props) {
             setNewUser({ name: '', host: '%', password: '' });
             await selectInstance(inst);
         } catch (e) {
-            alert('Failed to create user: ' + e.message);
+            setError('Failed to create user: ' + e.message);
         }
     };
 
@@ -3332,7 +3323,7 @@ function CloudSqlView(props) {
             await api.mutateSub('cloudsql', 'users', 'delete', { instanceId: selectedInstance(), name: userName, host: host || '%' });
             await selectInstance(selectedInstance());
         } catch (e) {
-            alert('Failed to delete user: ' + e.message);
+            setError('Failed to delete user: ' + e.message);
         }
     };
 
@@ -3659,7 +3650,7 @@ function MemorystoreView(props) {
             setShowCreateInstance(false);
             setNewInstance({ instanceId: '', displayName: '', tier: 'BASIC', redisVersion: '7_0', memorySizeGb: 1 });
             if (props.onRefresh) props.onRefresh();
-        } catch (e) { alert('Failed to create instance: ' + e.message); }
+        } catch (e) { setError('Failed to create instance: ' + e.message); }
     };
 
     const handleDeleteInstance = async (instanceId) => {
@@ -3667,7 +3658,7 @@ function MemorystoreView(props) {
         try {
             await api.mutateSub('memorystore', 'instances', 'delete', { instanceId });
             if (props.onRefresh) props.onRefresh();
-        } catch (e) { alert('Failed to delete instance: ' + e.message); }
+        } catch (e) { setError('Failed to delete instance: ' + e.message); }
     };
 
     createEffect(() => {
@@ -4007,8 +3998,7 @@ function FirestoreView(props) {
                             <div style="display:flex;gap:6px">
                                 <button onClick={() => setShowCsvImport(true)}
                                     style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;transition:border-color 0.15s, background 0.15s, color 0.15s"
-                                    onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
-                                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                                    class="btn-hover-border">
                                     {'\u2191'} Import CSV
                                 </button>
                                 <button onClick={() => props.onAdd('Add Document to ' + selectedCollection(), [
@@ -4016,7 +4006,7 @@ function FirestoreView(props) {
                                     { name: 'fields', type: 'textarea', value: '{}' }
                                 ], async (formData) => {
                                     let parsedFields = {};
-                                    try { parsedFields = JSON.parse(formData.fields || '{}'); } catch (e) { alert('Invalid JSON in fields: ' + e.message); return; }
+                                    try { parsedFields = JSON.parse(formData.fields || '{}'); } catch (e) { setError('Invalid JSON in fields: ' + e.message); return; }
                                     await api.mutate('firestore', 'documents', { collection: selectedCollection(), documentId: formData.documentId, fields: parsedFields });
                                 })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
                                     + Add Document
@@ -4060,7 +4050,7 @@ function FirestoreView(props) {
                                                                 ];
                                                                 props.onEdit('Edit Document', editFields, async (formData) => {
                                                                     let parsedFields = {};
-                                                                    try { parsedFields = JSON.parse(formData.fields || '{}'); } catch (e) { alert('Invalid JSON in fields: ' + e.message); return; }
+                                                                    try { parsedFields = JSON.parse(formData.fields || '{}'); } catch (e) { setError('Invalid JSON in fields: ' + e.message); return; }
                                                                     await api.mutate('firestore', 'documents', { collection: selectedCollection(), documentId: formData.documentId, fields: parsedFields });
                                                                 });
                                                             }} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text-secondary);cursor:pointer;font-size:11px" title="Edit">Edit</button>
@@ -4192,7 +4182,7 @@ function BigtableView(props) {
             setShowCreateInstance(false);
             setNewInstance({ instanceId: '', displayName: '', instanceType: 'PRODUCTION' });
             if (props.onRefresh) props.onRefresh();
-        } catch (e) { alert('Failed to create instance: ' + e.message); }
+        } catch (e) { setError('Failed to create instance: ' + e.message); }
     };
 
     const handleDeleteInstance = async (instanceId) => {
@@ -4201,7 +4191,7 @@ function BigtableView(props) {
             await api.mutateSub('bigtable', 'instances', 'delete', { instanceId });
             if (selectedInstance() === instanceId) goBackToInstances();
             if (props.onRefresh) props.onRefresh();
-        } catch (e) { alert('Failed to delete instance: ' + e.message); }
+        } catch (e) { setError('Failed to delete instance: ' + e.message); }
     };
 
     const handleCreateTable = async () => {
@@ -4213,7 +4203,7 @@ function BigtableView(props) {
             setShowCreateTable(false);
             setNewTable({ tableId: '', granularity: 'MILLIS' });
             await selectInstance(inst);
-        } catch (e) { alert('Failed to create table: ' + e.message); }
+        } catch (e) { setError('Failed to create table: ' + e.message); }
     };
 
     const handleDeleteTable = async (tableId) => {
@@ -4221,7 +4211,7 @@ function BigtableView(props) {
         try {
             await api.mutateSub('bigtable', 'tables', 'delete', { instanceId: selectedInstance(), tableId });
             await selectInstance(selectedInstance());
-        } catch (e) { alert('Failed to delete table: ' + e.message); }
+        } catch (e) { setError('Failed to delete table: ' + e.message); }
     };
 
     createEffect(() => {

@@ -431,6 +431,24 @@ function SQLEditor(props) {
         }
     }
 
+    function autoRenameTab(sql) {
+        const id = activeSqlTab();
+        const tab = sqlTabs().find(t => t.id === id);
+        if (!tab || !/^Query \d+$/.test(tab.title)) return; // Only rename default titles
+        const upper = sql.toUpperCase().trim();
+        let title;
+        const fromIdx = upper.indexOf('FROM ');
+        if (fromIdx >= 0) {
+            const afterFrom = sql.substring(fromIdx + 5).trim().split(/\s+/)[0];
+            title = afterFrom.replace(/[`'"]/g, '').replace(/[;,]$/, '');
+        } else {
+            title = sql.replace(/\s+/g, ' ').trim().substring(0, 30);
+        }
+        if (title.length > 30) title = title.substring(0, 30) + '…';
+        if (!title) return;
+        setSqlTabs(prev => prev.map(t => t.id === id ? { ...t, title } : t));
+    }
+
     async function runQuery() {
         const query = sqlText().trim();
         if (!query || running()) return;
@@ -457,6 +475,8 @@ function SQLEditor(props) {
             else {
                 setResult({ columns: data.columns || [], rows: data.rows || [], rowCount: data.row_count ?? (data.rows || []).length, executionTime: data.execution_time_ms || elapsed });
                 setResultPage(1);
+                // Auto-rename tab from default "Query N" to something meaningful
+                autoRenameTab(query);
                 // Refresh schema tree after DDL statements (CREATE, DROP, ALTER)
                 const trimmedUpper = query.trim().toUpperCase();
                 if (trimmedUpper.startsWith('CREATE ') || trimmedUpper.startsWith('DROP ') || trimmedUpper.startsWith('ALTER ')) {
@@ -1381,6 +1401,7 @@ function DatabasePanels(props) {
     const [statsData, setStatsData] = createSignal(null);
     const [statsLoading, setStatsLoading] = createSignal(false);
 
+    const currentMode = () => props.modeSignal?.();
     const canShowHistory = () => QUERY_HISTORY_SERVICES.has(props.serviceId);
 
     const loadHistory = async () => {
@@ -1422,11 +1443,12 @@ function DatabasePanels(props) {
     };
 
     createEffect(() => {
-        if (props.mode === 'db-history') loadHistory();
-        if (props.mode === 'db-stats') loadStats();
+        const m = currentMode();
+        if (m === 'db-history') loadHistory();
+        if (m === 'db-stats') loadStats();
     });
 
-    if (props.mode === 'db-history') {
+    if (currentMode() === 'db-history') {
         return (
             <div>
                 <h3 style={{ margin: '0 0 16px', "font-size": '16px', "font-weight": '600' }}>Query History</h3>
@@ -1501,7 +1523,7 @@ function DatabasePanels(props) {
         );
     }
 
-    if (props.mode === 'db-stats') {
+    if (currentMode() === 'db-stats') {
         return (
             <div>
                 <h3 style={{ margin: '0 0 16px', "font-size": '16px', "font-weight": '600' }}>Database Statistics</h3>
@@ -1810,7 +1832,7 @@ export default function ServiceExplorer(props) {
 
                 <Show when={(mode() === 'db-history' || mode() === 'db-stats') && SQL_SERVICES.some(s => s.id === activeService())}>
                     <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '16px' }}>
-                        <DatabasePanels serviceId={activeService()} mode={mode()} />
+                        <DatabasePanels serviceId={activeService()} modeSignal={mode} />
                     </div>
                 </Show>
             </Show>

@@ -6,7 +6,9 @@ import Logs from './pages/Logs.jsx';
 import ServiceExplorer from './pages/ServiceExplorer.jsx';
 import Settings from './pages/Settings.jsx';
 import Usage from './pages/Usage.jsx';
+import { trapFocus } from './utils/a11y.js';
 import { normalizeLocalSchema, normalizeRemoteBrowse } from './components/SchemaExplorer.jsx';
+import Onboarding from './components/Onboarding.jsx';
 
 const ICON_PATHS = {
     dashboard: 'M4 13h6a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1zm-1 7h6a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1zm10 0h6a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1zM13 4v4a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1z',
@@ -33,7 +35,7 @@ function Icon(props) {
 }
 
 const NAV_ITEMS = [
-    { id: 'dashboard', label: 'Nerve Center', icon: 'dashboard' },
+    { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
     { id: 'logs', label: 'Logs', icon: 'logs' },
     { id: 'usage', label: 'Cost Analysis', icon: 'usage' },
     { id: 'settings', label: 'User Docs', icon: 'docs' },
@@ -68,7 +70,7 @@ function parseBuildDate(health) {
 }
 
 const STANDALONE_PAGES = ['dashboard', 'logs', 'usage', 'settings'];
-const SERVICE_PAGES = ['explorer', 'editor'];
+const SERVICE_PAGES = ['explorer', 'editor', 'db-history', 'db-stats'];
 
 function parsePath() {
     const pathname = window.location.pathname.replace(/\/$/, '').replace(/\/+$/, '');
@@ -112,10 +114,22 @@ function App() {
     const [mobileSidebarOpen, setMobileSidebarOpen] = createSignal(false);
     const [searchOpen, setSearchOpen] = createSignal(false);
     const [searchQuery, setSearchQuery] = createSignal('');
+    let searchInputEl;
+
+    createEffect(() => {
+        if (searchOpen()) {
+            requestAnimationFrame(() => searchInputEl?.focus());
+        }
+    });
     const [globalSearchIndex, setGlobalSearchIndex] = createSignal([]);
     const [updateDismissed, setUpdateDismissed] = createSignal(false);
     const [imageUpdateInfo, setImageUpdateInfo] = createSignal(null);
     const [settingsMenuOpen, setSettingsMenuOpen] = createSignal(false);
+    const [shortcutsOpen, setShortcutsOpen] = createSignal(false);
+    const [onboardingVisible, setOnboardingVisible] = createSignal((() => {
+        try { return localStorage.getItem('localcloud-onboarding-complete') !== 'true'; } catch { return true; }
+    })());
+    // All groups expanded by default
     const [collapsedGroups, setCollapsedGroups] = createSignal({});
     let healthFailCount = 0;
     let imageUpdateCheckStarted = false;
@@ -167,7 +181,7 @@ function App() {
             switchProject(id);
         } catch (err) {
             setProjectError('Failed to create project: ' + err.message);
-            setTimeout(() => setProjectError(null), 5000);
+            setTimeout(() => setProjectError(null), 8000);
         }
     };
 
@@ -287,6 +301,11 @@ function App() {
             setCurrentPage('explorer');
             setSubpath([]);
         });
+        // Expand the sidebar group containing this service
+        const svc = FLAT_SERVICES.find(s => s.id === serviceId);
+        if (svc) {
+            setCollapsedGroups(prev => ({ ...prev, [svc.group]: false }));
+        }
         navigate(buildPath('explorer', serviceId));
         setSearchOpen(false);
         setSettingsMenuOpen(false);
@@ -397,6 +416,8 @@ function App() {
                 return <Logs activeProject={activeProject} />;
             case 'explorer':
             case 'editor':
+            case 'db-history':
+            case 'db-stats':
                 return <ServiceExplorer selectedService={selectedService} activeView={currentPage} onViewChange={setCurrentPage} onTabChange={setSelectedService} activeProject={activeProject} subpath={subpath} onSubpathChange={setSubpath} />;
             case 'usage':
                 return <Usage activeProject={activeProject} />;
@@ -409,6 +430,9 @@ function App() {
 
     return (
         <>
+            <Show when={onboardingVisible()}>
+                <Onboarding onDone={() => setOnboardingVisible(false)} />
+            </Show>
             <a class="skip-link" href="#main-content">Skip to content</a>
             <Show when={updateAvailable()}>
                 {() => {
@@ -469,6 +493,9 @@ function App() {
                     </button>
                 </div>
                 <div class="topbar-right">
+                    <button class="aura-top-icon" onClick={() => setShortcutsOpen(true)} title="Keyboard shortcuts" aria-label="Keyboard shortcuts">
+                        <span style={{ "font-weight": "800", "font-size": "16px" }}>?</span>
+                    </button>
                     <button class="aura-top-icon" onClick={() => navigateTo('settings')} title="Documentation" aria-label="Open documentation">
                         <Icon name="docs" size={22} />
                     </button>
@@ -506,8 +533,8 @@ function App() {
                 <div class="aura-sidebar-header">
                     <button class={`aura-sidebar-nav-item ${currentPage() === 'dashboard' ? 'active' : ''}`} onClick={() => navigateTo('dashboard')}>
                         <Icon name="dashboard" size={18} />
-                        <span class="aura-sidebar-nav-label">Nerve Center</span>
-                        <div class="aura-tooltip">Nerve Center</div>
+                        <span class="aura-sidebar-nav-label">Dashboard</span>
+                        <div class="aura-tooltip">Dashboard</div>
                     </button>
                     <button class="aura-sidebar-pin-btn" onClick={() => setSidebarPinned(!sidebarPinned())} aria-label={sidebarPinned() ? 'Unpin sidebar' : 'Pin sidebar'} aria-pressed={sidebarPinned()}>
                         <Icon name="pin" size={16} />
@@ -525,7 +552,13 @@ function App() {
                             <Show when={!collapsedGroups()[group.name]}>
                                 <div class="aura-group-services">
                                     <For each={group.services}>
-                                        {(svc) => <button class={`sidebar-sub-item ${selectedService() === svc.id && SERVICE_PAGES.includes(currentPage()) ? 'active' : ''}`} onClick={() => handleServiceClick(svc.id)}>
+                                        {(svc) => <button
+                                            class={`sidebar-sub-item ${selectedService() === svc.id && SERVICE_PAGES.includes(currentPage()) ? 'active' : ''} ${svc.tag === 'Coming up' ? 'coming-up' : ''}`}
+                                            onClick={() => svc.tag !== 'Coming up' && handleServiceClick(svc.id)}
+                                            disabled={svc.tag === 'Coming up'}
+                                            aria-disabled={svc.tag === 'Coming up'}
+                                            title={svc.tag === 'Coming up' ? `${svc.label} — coming soon` : svc.label}
+                                        >
                                             <img src={`/icons/${svc.id}.svg`} alt="" width="20" height="20" class="sidebar-sub-item-icon" />
                                             <span class="sidebar-sub-item-label">{svc.label}</span>
                                             <Show when={svc.tag}><span class="badge badge-coming-up">{svc.tag}</span></Show>
@@ -550,7 +583,7 @@ function App() {
                     <div class="aura-command-menu" onClick={(e) => e.stopPropagation()}>
                         <div class="aura-command-input">
                             <Icon name="search" size={18} />
-                            <input autofocus value={searchQuery()} onInput={(e) => setSearchQuery(e.currentTarget.value)} aria-label="Command search" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck={false} data-lpignore="true" data-1p-ignore="true" placeholder="Jump to a service, page, table, or log surface…" />
+                            <input ref={searchInputEl} value={searchQuery()} onInput={(e) => setSearchQuery(e.currentTarget.value)} aria-label="Command search" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck={false} data-lpignore="true" data-1p-ignore="true" placeholder="Jump to a service, page, table, or log surface…" />
                         </div>
                         <div class="aura-command-list">
                             <For each={searchResults()}>
@@ -571,9 +604,50 @@ function App() {
                 </div>
             </Show>
 
+            <Show when={shortcutsOpen()}>
+                <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" onClick={(e) => { if (e.target === e.currentTarget) setShortcutsOpen(false); }}>
+                    <div class="create-dialog" ref={el => { if (el) requestAnimationFrame(() => trapFocus(el, () => setShortcutsOpen(false))); }}
+                        style={{ width: "420px", padding: "0" }} onClick={(e) => e.stopPropagation()}>
+                        <div class="create-dialog-accent" style="background:var(--primary)" />
+                        <div class="create-dialog-header">
+                            <h2 class="create-dialog-title">Keyboard Shortcuts</h2>
+                        </div>
+                        <div class="create-dialog-body" style={{ "padding-bottom": "20px" }}>
+                            <div style={{ display: "flex", "flex-direction": "column", gap: "12px" }}>
+                                {[
+                                    { keys: navigator.platform?.includes('Mac') ? '⌘K' : 'Ctrl+K', desc: 'Command palette — search services, tables, logs' },
+                                    { keys: '⌘Enter', desc: 'Run current SQL query' },
+                                    { keys: 'Esc', desc: 'Close command palette / modals' },
+                                ].map(s => (
+                                    <div style={{ display: "flex", "align-items": "center", gap: "12px" }}>
+                                        <kbd style={{
+                                            "min-width": "64px",
+                                            display: "inline-flex",
+                                            "align-items": "center",
+                                            "justify-content": "center",
+                                            padding: "3px 8px",
+                                            "font-family": "var(--font-mono)",
+                                            "font-size": "12px",
+                                            "font-weight": "700",
+                                            "border-radius": "6px",
+                                            border: "1px solid var(--border)",
+                                            background: "var(--surface-variant)",
+                                            color: "var(--text)",
+                                        }}>{s.keys}</kbd>
+                                        <span style={{ "font-size": "13px", color: "var(--text-secondary)" }}>{s.desc}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </Show>
+
             <Show when={showNewProjectDialog()}>
                 <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="new-project-title" onClick={(e) => { if (e.target === e.currentTarget) { setShowNewProjectDialog(false); setProjectError(null); } }}>
-                    <div class="create-dialog" onClick={(e) => e.stopPropagation()}>
+                    <div class="create-dialog" onClick={(e) => e.stopPropagation()} ref={el => {
+                        if (el) requestAnimationFrame(() => trapFocus(el, () => { setShowNewProjectDialog(false); setProjectError(null); }));
+                    }}>
                         <div class="create-dialog-accent" style="background:var(--purple)" />
                         <div class="create-dialog-header">
                             <div class="create-dialog-header-icon" style="color:var(--purple);border-color:var(--purple-soft);background:var(--purple-soft)">

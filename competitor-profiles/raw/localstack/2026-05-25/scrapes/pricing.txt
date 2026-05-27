@@ -1,0 +1,300 @@
+LocalStack PricingWebFont.load({  google: {    families: ["Oswald:200,300,400,500,600,700","Bitter:400,700,400italic"]  }});!function(o,c){var n=c.documentElement,t=" w-mod-";n.className+=t+"js",("ontouchstart"in o||o.DocumentTouch&&c instanceof DocumentTouch)&&(n.className+=t+"touch")}(window,document);
+{
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "name": "LocalStack Pricing",
+  "url": "/pricing",
+  "description": "Review LocalStack's pricing for powerful local cloud development features. See how our plans support individual developers and enterprise teams.",
+  "inLanguage": "en",
+  "about": {
+    "@type": "Organization",
+    "name": "LocalStack",
+    "url": "https://www.localstack.cloud",
+    "description": "LocalStack provides local cloud development emulators for AWS and Snowflake services",
+    "sameAs": [
+      "https://localstack.cloud/slack"
+    ],
+    "offers": [
+      {
+        "@type": "Offer",
+        "name": "LocalStack for AWS - Free",
+        "description": "Experiment safely. No risk, no cost. Free forever, no credit card required",
+        "price": "0",
+        "priceCurrency": "USD",
+        "category": "LocalStack for AWS Emulator",
+        "itemOffered": {
+          "@type": "Service",
+          "name": "LocalStack for AWS - Free Plan",
+          "description": "30+ emulated AWS services with basic support"
+        }
+      },
+      {
+        "@type": "Offer",
+        "name": "LocalStack for AWS - Base",
+        "description": "Built for testing your simple applications",
+        "price": "39",
+        "priceCurrency": "USD",
+        "priceSpecification": {
+          "@type": "UnitPriceSpecification",
+          "price": "39",
+          "priceCurrency": "USD",
+          "unitText": "per license/monthly (billed annually)"
+        },
+        "category": "LocalStack for AWS Emulator",
+        "itemOffered": {
+          "@type": "Service",
+          "name": "LocalStack for AWS - Base Plan",
+          "description": "55+ emulated AWS services, 300 CI credits, local state persistence, emulator enhancements, Stack Insights, Cloud pods (300 MB storage), Cloud Sandbox previews (100 monthly minutes), IAM Policy Enforcement, basic extensions, team-level analytics, standard support"
+        }
+      },
+      {
+        "@type": "Offer",
+        "name": "LocalStack for AWS - Ultimate",
+        "description": "Built for perfecting complex applications",
+        "price": "89",
+        "priceCurrency": "USD",
+        "priceSpecification": {
+          "@type": "UnitPriceSpecification",
+          "price": "89",
+          "priceCurrency": "USD",
+          "unitText": "per license/monthly (billed annually)"
+        },
+        "category": "LocalStack for AWS Emulator",
+        "itemOffered": {
+          "@type": "Service",
+          "name": "LocalStack for AWS - Ultimate Plan",
+          "description": "110+ emulated AWS services, 1000 CI credits, local state persistence, emulator enhancements, Stack Insights, Cloud pods (3 GB storage), Cloud Sandbox previews (500 monthly minutes), IAM Policy Enforcement, IAM Policy Streams, AWS Replicator, advanced extensions, team-level analytics, priority support, add-ons for Chaos Engineering and Kubernetes Pack"
+        }
+      },
+      {
+        "@type": "Offer",
+        "name": "LocalStack for AWS - Enterprise",
+        "description": "Have organizational security requirements?",
+        "price": "Custom",
+        "priceCurrency": "USD",
+        "category": "LocalStack for AWS Emulator",
+        "itemOffered": {
+          "@type": "Service",
+          "name": "LocalStack for AWS - Enterprise Plan",
+          "description": "Flexibility in AWS emulator deployment, flexible usage, fully offline operation, enhanced compliance controls, additional compliance controls, single sign-on (SSO) controls, Cloud Pods end-to-end encryption, emulation of non-default AWS regions, dedicated onboarding, dedicated customer support manager, enterprise support"
+        }
+      },
+      {
+        "@type": "Offer",
+        "name": "LocalStack for Snowflake - Base",
+        "description": "Need to test your queries in an isolated sandbox without cloud dependencies?",
+        "price": "29",
+        "priceCurrency": "USD",
+        "priceSpecification": {
+          "@type": "UnitPriceSpecification",
+          "price": "29",
+          "priceCurrency": "USD",
+          "unitText": "per license/monthly (billed annually)"
+        },
+        "category": "LocalStack for Snowflake Emulator",
+        "itemOffered": {
+          "@type": "Service",
+          "name": "LocalStack for Snowflake - Base Plan",
+          "description": "300 CI credits monthly per workspace, local state persistence, initialization hooks, standard support"
+        }
+      },
+      {
+        "@type": "Offer",
+        "name": "LocalStack for Snowflake - Enterprise",
+        "description": "Have organizational security requirements?",
+        "price": "Custom",
+        "priceCurrency": "USD",
+        "category": "LocalStack for Snowflake Emulator",
+        "itemOffered": {
+          "@type": "Service",
+          "name": "LocalStack for Snowflake - Enterprise Plan",
+          "description": "Flexibility in Snowflake Emulator deployment, customized usage, fully offline operation, enterprise-grade compliance, additional compliance controls, single sign-on (SSO) controls, customer success manager, customized onboarding, enterprise support"
+        }
+      }
+    ],
+    "contactPoint": {
+      "@type": "ContactPoint",
+      "contactType": "Sales",
+      "url": "https://www.localstack.cloud/demo"
+    }
+  },
+  "mainEntity": {
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What services are emulated in each LocalStack for AWS license?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Details about emulated services are available in the LocalStack documentation."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What features are emulated in the LocalStack for Snowflake license?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Details about emulated features are available in the LocalStack for Snowflake documentation."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Are monthly payment options available?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What do I need to start a free trial?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "To start a free trial we only require your preferred email up front. Please make sure you use an active email as you will be asked to validate your account in order to log-in. When your trial ends, you will be able to choose your desired plan."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What are CI credits and how many are included with each plan?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Contact sales for information about CI credits."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What are ephemeral instances and what are minutes?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Ephemeral Instances allow you to run a LocalStack instance in the cloud. You can interact with these instances via the LocalStack Web Application, or by configuring your integrations and developer tools with the endpoint URL of the Ephemeral Instance. Use of this functionality is based on a credit model, where a number of minutes are allocated per subscription. A single Ephemeral Instance running for 1 minute counts as 1 minute of credit used."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How do I add more licenses to my workspace?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "You can add more licenses through billing settings. See the Managing Users and Licenses documentation for details."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What tools are supported by LocalStack?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "See the LocalStack integration page for supported tools."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What is the difference between the LocalStack for AWS Community Emulator and Pro Emulator?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Our Community Emulator is available as a part of our open source project and free for anyone to use - you can access our community emulator through GitHub or by signing up for an account above. Our Pro Emulator is closed source and requires a paid license to unlock. It contains over 100 AWS services and is enhanced further with LocalStack tools and technologies. Please note, we do not have a LocalStack for Snowflake community emulator."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "I currently use the open source edition of LocalStack for AWS, what does purchasing LocalStack offer me?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Reach out to us for information about upgrading from the open source edition."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What is the difference between Basic, Standard, Priority, and Enterprise support?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "See the documentation for details about support levels."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How do I join the LocalStack slack community?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Visit localstack.cloud/slack to join the community."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How can I purchase and pay for LocalStack?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Contact the support team for purchasing and payment options."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "I am a student, what plan is best for me?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "See the LocalStack for Students page for student-specific plans."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can I use my LocalStack features on a computer not connected to the internet?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "See the Auth Token documentation for offline usage information."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can licenses be shared by more than one developer at a time?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "LocalStack user licenses are bound to one individual developer. As per our terms of use, individual user licenses are not offered as a license pool and are not available to be used in CI Systems. You can reassign licenses on a monthly basis."
+        }
+      }
+    ]
+  }
+}
+.anti-flicker, .anti-flicker * {visibility: hidden !important; opacity: 0 !important;}[data-wf-hidden-variation], [data-wf-hidden-variation] * {
+        display: none !important;
+      }localStorage.removeItem('intellimize_opt_out_117462489'); if (localStorage.getItem('intellimize_data_tracking_type') !== 'always') { localStorage.setItem('intellimize_data_tracking_type', 'always'); }(function(e){var s={r:[]};e.wf={r:s.r,ready:t=>{s.r.push(t)}}})(window)(function(e,t,p){var n=document.documentElement,s={p:[],r:[]},u={p:s.p,r:s.r,push:function(e){s.p.push(e)},ready:function(e){s.r.push(e)}};e.intellimize=u,n.className+=" "+p,setTimeout(function(){n.className=n.className.replace(RegExp(" ?"+p),"")},t)})(window, 4000, 'anti-flicker')var wfClientScript=document.createElement("script");wfClientScript.src="https://cdn.intellimize.co/snippet/117462489.js",wfClientScript.async=!0,wfClientScript.onerror=function(){document.documentElement.className=document.documentElement.className.replace(RegExp(" ?anti-flicker"),"")},document.head.appendChild(wfClientScript);(function(w,i,g){w[g]=w[g]||[];if(typeof w[g].push=='function')w[g].push.apply(w[g],Array.isArray(i)?i:[i]);})(window,['G-4G82Z1TR2R'],'google_tags_first_party');window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('set', 'developer_id.dZGVlNj', true);gtag('set', 'developer_id.dYWYxNW', true);gtag('js', new Date());gtag('config', 'G-4G82Z1TR2R');
+      !function(){var e,t,n;e="f528d4d390d322d",t=function(){Reo.init({clientID:"f528d4d390d322d"})},(n=document.createElement("script")).src="https://static.reo.dev/"+e+"/reo.js",n.defer=!0,n.onload=t,document.head.appendChild(n)}();
+ (function(ss,ex){ window.ldfdr=window.ldfdr||function(){(ldfdr._q=ldfdr._q||[]).push([].slice.call(arguments));}; (function(d,s){ fs=d.getElementsByTagName(s)[0]; function ce(src){ var cs=d.createElement(s); cs.src=src; cs.async=1; fs.parentNode.insertBefore(cs,fs); }; ce('https://sc.lfeeder.com/lftracker_v1_'+ss+(ex?'_'+ex:'')+'.js'); })(document,'script'); })('lYNOR8xJ0Aq4WQJZ'); 
+body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-smoothing: antialiased;
+}
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/tippy.js@6/animations/scale.css"
+/>
+.aws_tab_link.w--current .pricing_tab_content{
+	background-color:#3A3C47 !important;
+	border: 1px solid #4B4E5C;
+}
+.aws_tab_link.w--current .aws_svg path:nth-child(1){
+    fill:#FF9900
+}
+.aws_tab_link.w--current .aws_svg path:nth-child(2){
+    fill:#FF9900
+}
+.aws_tab_link.w--current .aws_svg path:nth-child(3){
+    fill:#FCFDFF
+}
+.snowflake_tab_link.w--current .pricing_tab_content{
+	background-color:#3A3C47 !important;
+	border: 1px solid #4B4E5C;
+}
+.snowflake_tab_link.w--current .snowflake_svg path:nth-child(1){
+    fill:#29B5E8
+}
+.snowflake_tab_link.w--current .snowflake_svg path:nth-child(2){
+    fill:#29B5E8
+}
+.snowflake_tab_link.w--current .snowflake_svg path:nth-child(3){
+    fill:#29B5E8
+}
+.snowflake_tab_link.w--current .snowflake_svg path:nth-child(4){
+    fill:#29B5E8
+}
+.snowflake_tab_link.w--current .snowflake_svg path:nth-child(5){
+    fill:#29B5E8
+}

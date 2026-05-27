@@ -367,7 +367,7 @@ export default function Dashboard(props) {
       await fetchServices();
     } catch (err) {
       setToggleError(`Failed to ${currentlyEnabled ? 'disable' : 'enable'} ${SERVICE_NAMES[serviceId] || serviceId}`);
-      setTimeout(() => setToggleError(null), 3000);
+      setTimeout(() => setToggleError(null), 8000);
     } finally {
       setTogglingService(null);
     }

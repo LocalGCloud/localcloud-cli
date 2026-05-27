@@ -1,7 +1,7 @@
 import { createSignal, createEffect, Show, For } from 'solid-js';
 import { api } from '../api.js';
 import { SERVICE_META, SDK_ORDER, SAMPLE_CODE, CLI_COMMANDS, DOCKER_RUN_PORTS, DATABASE_EXAMPLES } from './settings-data.js';
-import { onActivate } from '../utils/a11y.js';
+import { onActivate, trapFocus } from '../utils/a11y.js';
 
 // --- SVG Icons ---
 const CopyIcon = () => (
@@ -565,6 +565,7 @@ function UserGuideModal(props) {
         <div role="dialog" aria-modal="true" aria-labelledby="user-guide-title" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", "z-index": 300, display: "flex", "align-items": "stretch", "justify-content": "center", "padding": "24px", "overscroll-behavior": "contain" }}
             onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
             <div style={{ background: "var(--surface)", "border-radius": "var(--radius)", width: "100%", "max-width": "860px", display: "flex", "flex-direction": "column", overflow: "hidden", "box-shadow": "var(--shadow-hover)" }}
+                ref={el => { if (el) requestAnimationFrame(() => trapFocus(el, props.onClose)); }}
                 onClick={(e) => e.stopPropagation()}>
                 {/* Header */}
                 <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", padding: "16px 24px", "border-bottom": "1px solid var(--border)" }}>

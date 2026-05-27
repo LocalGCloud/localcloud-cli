@@ -173,8 +173,7 @@ button,
 }
 
 .data-table tbody tr {
-  transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
-  border-left: 3px solid transparent;
+  transition: background var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
 .data-table tbody tr:nth-child(even) {
@@ -183,8 +182,7 @@ button,
 
 .data-table tbody tr:hover {
   background: var(--surface-hover);
-  border-left-color: var(--primary);
-  box-shadow: inset 3px 0 0 var(--primary), 0 12px 24px -18px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 12px 24px -18px rgba(0, 0, 0, 0.5);
   transform: translateY(-1px);
 }
 
@@ -1106,11 +1104,6 @@ button,
   gap: 6px;
 }
 
-/* ---------- Gradient Text ---------- */
-.gradient-text {
-  color: var(--primary);
-}
-
 /* ---------- Environment Variable Rows ---------- */
 .env-var-row {
   display: flex;
@@ -1186,7 +1179,7 @@ button,
 .env-quick-setup {
   background: var(--primary-softer);
   border: 1px solid var(--primary-soft);
-  border-left: 3px solid var(--primary);
+  border-top: 3px solid var(--primary);
   border-radius: var(--radius);
   padding: 16px 20px;
   margin-bottom: 20px;
@@ -4417,3 +4410,25 @@ input:checked + .toggle-slider::before {
   overflow: auto;
   padding: 0 12px;
 }
+
+/* ── Hover utility classes (replaces inline onmouseenter/onmouseleave) ── */
+.btn-hover-border:hover { border-color: var(--primary) !important; }
+.btn-hover-warn:hover { border-color: var(--warning) !important; color: var(--warning) !important; }
+.btn-hover-accent:hover { border-color: var(--primary) !important; color: var(--primary) !important; }
+.btn-hover-danger:hover { background: rgba(234, 67, 53, 0.08); }
+.publish-option-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 12px;
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 4px;
+}
+.publish-option-item:hover { background: var(--surface-variant); }
+.btn-hover-bg:hover { background: var(--bg-subtle) !important; }

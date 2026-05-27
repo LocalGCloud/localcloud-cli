@@ -278,13 +278,6 @@ h1, h2, h3, .stat-card-value, .service-card-name {
   box-shadow: var(--shadow-hover);
 }
 
-/* --- Savings Banner --- */
-.savings-banner {
-  background: linear-gradient(135deg, var(--primary-softer) 0%, var(--success-soft) 100%);
-  border: 1px solid var(--primary-soft);
-  border-radius: var(--radius);
-}
-
 /* --- Keyframes --- */
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }

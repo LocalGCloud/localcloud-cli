@@ -627,6 +627,38 @@ services:
           - { member: "frank", score: 1200 }
           - { member: "henry", score: 1050 }
 
+  # AlloyDB: PostgreSQL-compatible cluster metadata
+  alloydb:
+    clusters:
+      - name: "app-primary"
+        location: "us-central1"
+        instances:
+          - name: "primary"
+          - name: "read-pool-1"
+        databases:
+          - name: "alloydb_cluster_app_primary"
+            tables:
+              - name: "customers"
+                columns:
+                  - { name: "customer_id", type: "BIGINT" }
+                  - { name: "email", type: "TEXT" }
+                  - { name: "plan", type: "TEXT" }
+                  - { name: "active", type: "BOOLEAN" }
+                rows:
+                  - { customer_id: 1001, email: "ana@example.test", plan: "pro", active: true }
+                  - { customer_id: 1002, email: "dev@example.test", plan: "starter", active: true }
+                  - { customer_id: 1003, email: "ops@example.test", plan: "enterprise", active: false }
+              - name: "orders"
+                columns:
+                  - { name: "order_id", type: "BIGINT" }
+                  - { name: "customer_id", type: "BIGINT" }
+                  - { name: "amount", type: "NUMERIC" }
+                  - { name: "status", type: "TEXT" }
+                rows:
+                  - { order_id: 5001, customer_id: 1001, amount: 149.99, status: "paid" }
+                  - { order_id: 5002, customer_id: 1002, amount: 29.00, status: "pending" }
+                  - { order_id: 5003, customer_id: 1001, amount: 89.50, status: "paid" }
+
   # Cloud Workflows: workflow definitions
   workflows:
     workflows:
@@ -735,7 +767,39 @@ services:
                   call: sys.log
                   args:
                     text: ${"Found " + len(secrets_response.body) + " secrets to audit"}
-              - complete:
-                  return:
-                    secrets_audited: true
-                    timestamp: ${sys.now()}
+               - complete:
+                   return:
+                     secrets_audited: true
+                     timestamp: ${sys.now()}
+
+  # Cloud SQL: PostgreSQL and MySQL instances with databases and users
+  cloudsql:
+    instances:
+      - name: "local-postgres"
+        databaseVersion: "POSTGRES_15"
+        tier: "db-custom-1-3840"
+        region: "us-central1"
+        databases:
+          - name: "app_db"
+            charset: "UTF8"
+            collation: "en_US.UTF-8"
+          - name: "analytics_db"
+            charset: "UTF8"
+        users:
+          - name: "admin"
+            password: "localcloud-dev"
+            host: "%"
+          - name: "app_user"
+            password: "app-secret"
+            host: "localhost"
+      - name: "local-mysql"
+        databaseVersion: "MYSQL_8_0"
+        tier: "db-custom-1-3840"
+        region: "us-central1"
+        databases:
+          - name: "wordpress_db"
+            charset: "utf8mb4"
+        users:
+          - name: "wp_admin"
+            password: "wp-secret"
+            host: "%"

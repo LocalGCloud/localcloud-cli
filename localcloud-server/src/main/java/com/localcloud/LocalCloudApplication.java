@@ -234,6 +234,15 @@ public class LocalCloudApplication {
         ServerBuilder sb = Server.builder();
         sb.http(config.getGatewayPort());
 
+        // Load console SPA HTML early so we can use it in the routing decorator
+        Path consoleDist = Path.of("/opt/localcloud/console/dist");
+        boolean consoleAvailable = Files.isDirectory(consoleDist);
+        String spaIndex = null;
+        if (consoleAvailable) {
+            spaIndex = Files.readString(consoleDist.resolve("index.html"));
+            healthCheckService.setSpaHtml(spaIndex);
+        }
+
         // IAM middleware — applied to all services
         iamMiddleware = new IamMiddleware(config);
         sb.decorator(iamMiddleware);
@@ -243,6 +252,34 @@ public class LocalCloudApplication {
 
         // Fault injection — optional local failures for resilience testing
         sb.decorator(new FaultInjectionDecorator(faultInjectionRegistry));
+
+        // SPA routing decorator: serve index.html for browser GET requests before
+        // they reach annotated services. This makes hard refresh work for /usage,
+        // /logs, /settings, and all client-side routes.
+        if (spaIndex != null) {
+            final String spaHtml = spaIndex;
+            sb.decorator((delegate, ctx, req) -> {
+                if (req.method() != HttpMethod.GET) {
+                    return delegate.serve(ctx, req);
+                }
+                String path = ctx.path();
+                String lastSegment = path.substring(path.lastIndexOf('/') + 1);
+                // Let static assets through (they have file extensions)
+                if (lastSegment.contains(".")) {
+                    return delegate.serve(ctx, req);
+                }
+                // Check if browser is requesting HTML (not an API call)
+                String acceptHeader = req.headers().get("accept");
+                if (acceptHeader == null || !acceptHeader.contains("text/html")) {
+                    return delegate.serve(ctx, req);
+                }
+                ResponseHeaders spaHeaders = ResponseHeaders.builder(HttpStatus.OK)
+                        .add("Content-Type", "text/html; charset=utf-8")
+                        .add("Cache-Control", "no-cache")
+                        .build();
+                return HttpResponse.of(spaHeaders, HttpData.ofUtf8(spaHtml));
+            });
+        }
 
         // Register developer-facing admin services at root-level paths.
         sb.annotatedService("/", healthCheckService);
@@ -374,11 +411,10 @@ public class LocalCloudApplication {
         });
 
         // Global catch-all: SPA routing when console is available, 501 fallback otherwise
-        Path consoleDist = Path.of("/opt/localcloud/console/dist");
-        boolean consoleAvailable = Files.isDirectory(consoleDist);
+        // spaIndex and consoleAvailable were loaded earlier before the SPA decorator.
         if (consoleAvailable) {
-            String spaIndex = Files.readString(consoleDist.resolve("index.html"));
             FileService fileService = FileService.of(consoleDist);
+            final String spaHtml = spaIndex;
 
             // Explicit SPA route for /dashboard to avoid auto-redirect
             sb.service("/dashboard", (ctx, req) -> {
@@ -389,7 +425,7 @@ public class LocalCloudApplication {
                         .add("Content-Type", "text/html; charset=utf-8")
                         .add("Cache-Control", "no-cache")
                         .build();
-                return HttpResponse.of(h, HttpData.ofUtf8(spaIndex));
+                return HttpResponse.of(h, HttpData.ofUtf8(spaHtml));
             });
 
             sb.service("prefix:/", (ctx, req) -> {
@@ -424,7 +460,7 @@ public class LocalCloudApplication {
                         .add("Content-Type", "text/html; charset=utf-8")
                         .add("Cache-Control", "no-cache")
                         .build();
-                return HttpResponse.of(spaHeaders, HttpData.ofUtf8(spaIndex));
+                return HttpResponse.of(spaHeaders, HttpData.ofUtf8(spaHtml));
             });
             logger.info("Console UI with SPA routing served from {}", consoleDist);
         } else {

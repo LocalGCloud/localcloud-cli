@@ -170,7 +170,7 @@ ENV GOPRIVATE=github.com/jhsenjaliya/* \
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod init bigtable-build && \
     GOPROXY=direct go get github.com/jhsenjaliya/little_bigtable@${LITTLE_BIGTABLE_VERSION}
-RUN --mount=type=cache,target=/go/pkg/mod \ww
+RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -linkmode external -extldflags -static" \
     -o /out/localcloud-bigtable-emulator github.com/jhsenjaliya/little_bigtable

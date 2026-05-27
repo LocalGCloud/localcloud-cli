@@ -166,8 +166,8 @@ export default function Usage(props) {
                 </p>
             </div>
 
-            {/* Refresh Controls */}
-            <div class="filter-bar" style="margin-bottom:16px">
+            {/* Refresh Controls — right-aligned */}
+            <div class="filter-bar" style={{ "margin-bottom": "16px", "justify-content": "flex-end" }}>
                 <label for="usage-auto-refresh">
                     <input
                         id="usage-auto-refresh"
@@ -216,30 +216,31 @@ export default function Usage(props) {
                         <button class="btn btn-secondary" onClick={fetchUsage}>Retry</button>
                     </div>
                 }>
-                    {/* Savings Banner */}
-                    <div class="card savings-banner" style={{
-                        "margin-bottom": "24px",
-                        "text-align": "center",
-                        "padding": "28px 20px",
-                    }}>
-                        <div style={{ "font-size": "11px", "font-weight": "600", "text-transform": "uppercase", "letter-spacing": "0.06em", color: "var(--text-tertiary)", "margin-bottom": "8px" }}>
-                            Estimated GCP Cost Saved (Lifetime)
+                    {/* Summary bar: replaces hero-metric with restrained stat cards */}
+                    <div class="summary-bar" style={{ "margin-bottom": "24px" }}>
+                        <div class="stat-card">
+                            <div class="stat-card-main">
+                                <span class="stat-card-label">Saved (lifetime)</span>
+                                <span class="stat-card-value">{formatCost(totalCost())}</span>
+                                <span class="stat-card-sublabel">{formatNumber(totalRequests())} requests</span>
+                            </div>
                         </div>
-                        <div class="gradient-text" style={{
-                            "font-size": "40px",
-                            "font-weight": "700",
-                            "font-family": "var(--font-display)",
-                            "letter-spacing": "-0.03em",
-                            "line-height": "1",
-                            "margin-bottom": "8px",
-                        }}>
-                            {formatCost(totalCost())}
+                        <div class="stat-card">
+                            <div class="stat-card-main">
+                                <span class="stat-card-label">Active services</span>
+                                <span class="stat-card-value">{serviceUsage().filter(s => s.requestCount > 0).length}</span>
+                                <span class="stat-card-sublabel">with usage</span>
+                            </div>
                         </div>
-                        <div style={{ "font-size": "12px", color: "var(--text-secondary)" }}>
-                            {formatNumber(totalRequests())} total requests (all time)
-                            <Show when={lastUpdated()}>
-                                {' '}&middot; updated {formatTime(lastUpdated())}
-                            </Show>
+                        <div class="stat-card">
+                            <div class="stat-card-main">
+                                <span class="stat-card-label">Last updated</span>
+                                <span class="stat-card-value" style={{ "font-size": "var(--font-size-md)" }}>
+                                    <Show when={lastUpdated()} fallback="--">
+                                        {formatTime(lastUpdated())}
+                                    </Show>
+                                </span>
+                            </div>
                         </div>
                     </div>
 
@@ -251,50 +252,55 @@ export default function Usage(props) {
                         "align-items": "start",
                     }}>
                         {/* Left: Usage Table */}
-                        <div class="data-table-wrapper">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>Service</th>
-                                        <th style={{ "text-align": "right" }}>Requests</th>
-                                        <th>Protocol</th>
-                                        <th style={{ "text-align": "right" }}>Est. Cost</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <For each={serviceUsage()}>
-                                        {(svc) => (
-                                            <tr>
-                                                <td style={{ "font-weight": "500" }}>{svc.name}</td>
-                                                <td style={{ "text-align": "right", "font-family": "var(--font-mono)", "font-size": "12px" }}>
-                                                    {formatNumber(svc.requestCount)}
-                                                </td>
-                                                <td>
-                                                    <span class="badge badge-neutral">{svc.protocol}</span>
-                                                </td>
-                                                <td style={{ "text-align": "right", "font-family": "var(--font-mono)", "font-size": "12px" }}>
-                                                    {formatCost(svc.cost)}
-                                                </td>
-                                            </tr>
-                                        )}
-                                    </For>
-                                    {/* Total row */}
-                                    <tr style={{ "background": "var(--surface-active)" }}>
-                                        <td style={{ "font-weight": "700" }}>Total</td>
-                                        <td style={{ "text-align": "right", "font-weight": "600", "font-family": "var(--font-mono)", "font-size": "12px" }}>
-                                            {formatNumber(totalRequests())}
-                                        </td>
-                                        <td></td>
-                                        <td style={{ "text-align": "right", "font-weight": "700", "font-family": "var(--font-mono)", "font-size": "12px" }}>
-                                            {formatCost(totalCost())}
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
+                        <div>
+                            <h2 style={{ "margin-bottom": "14px", "font-size": "var(--font-size-lg)" }}>Service Usage</h2>
+                            <div class="data-table-wrapper">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Service</th>
+                                            <th style={{ "text-align": "right" }}>Requests</th>
+                                            <th>Protocol</th>
+                                            <th style={{ "text-align": "right" }}>Est. Cost</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <For each={serviceUsage()}>
+                                            {(svc) => (
+                                                <tr>
+                                                    <td style={{ "font-weight": "500" }}>{svc.name}</td>
+                                                    <td style={{ "text-align": "right", "font-family": "var(--font-mono)", "font-size": "12px" }}>
+                                                        {formatNumber(svc.requestCount)}
+                                                    </td>
+                                                    <td>
+                                                        <span class="badge badge-neutral">{svc.protocol}</span>
+                                                    </td>
+                                                    <td style={{ "text-align": "right", "font-family": "var(--font-mono)", "font-size": "12px" }}>
+                                                        {formatCost(svc.cost)}
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </For>
+                                        {/* Total row */}
+                                        <tr style={{ "background": "var(--surface-active)" }}>
+                                            <td style={{ "font-weight": "700" }}>Total</td>
+                                            <td style={{ "text-align": "right", "font-weight": "600", "font-family": "var(--font-mono)", "font-size": "12px" }}>
+                                                {formatNumber(totalRequests())}
+                                            </td>
+                                            <td></td>
+                                            <td style={{ "text-align": "right", "font-weight": "700", "font-family": "var(--font-mono)", "font-size": "12px" }}>
+                                                {formatCost(totalCost())}
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
 
                         {/* Right: Pricing Reference */}
-                        <div class="card" style={{ padding: "16px" }}>
+                        <div>
+                            <h2 style={{ "margin-bottom": "14px", "font-size": "var(--font-size-lg)" }}>Pricing Reference</h2>
+                            <div class="card" style={{ padding: "16px" }}>
                             <h3 style={{ "margin-bottom": "12px" }}>API Pricing</h3>
                             <div style={{ "display": "flex", "flex-direction": "column", "gap": "6px", "margin-bottom": "20px" }}>
                                 <For each={Object.entries(GCP_PRICING)}>
@@ -358,6 +364,7 @@ export default function Usage(props) {
                                 </For>
                             </div>
                         </div>
+                    </div>
                     </div>
                 </Show>
             </Show>
