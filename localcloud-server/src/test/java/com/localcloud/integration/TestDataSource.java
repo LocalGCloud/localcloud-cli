@@ -308,6 +308,119 @@ public final class TestDataSource {
                 ")"
             );
 
+            // Cloud Scheduler (matches SchedulerRepository schema)
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS scheduler_jobs (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    job_id VARCHAR(255) NOT NULL," +
+                "    schedule VARCHAR(255) NOT NULL," +
+                "    time_zone VARCHAR(255) NOT NULL," +
+                "    target_config TEXT DEFAULT '{}'," +
+                "    state VARCHAR(32) NOT NULL," +
+                "    next_execution_time TIMESTAMP," +
+                "    job_proto BYTEA NOT NULL," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location_id, job_id)" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS scheduler_executions (" +
+                "    id BIGSERIAL PRIMARY KEY," +
+                "    job_name VARCHAR(1024) NOT NULL," +
+                "    status VARCHAR(32) NOT NULL," +
+                "    executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    output TEXT DEFAULT ''" +
+                ")"
+            );
+
+            // Cloud Functions 2nd gen (matches CloudFunctionsRepository schema)
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS cloud_functions (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    function_id VARCHAR(255) NOT NULL," +
+                "    runtime VARCHAR(128) DEFAULT ''," +
+                "    entry_point VARCHAR(255) DEFAULT ''," +
+                "    build_config TEXT DEFAULT '{}'," +
+                "    service_config TEXT DEFAULT '{}'," +
+                "    event_trigger TEXT DEFAULT '{}'," +
+                "    state VARCHAR(32) DEFAULT 'ACTIVE'," +
+                "    function_proto BYTEA NOT NULL," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location_id, function_id)" +
+                ")"
+            );
+
+            // IAM policies (matches IAMRepository schema)
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS iam_policies (" +
+                "    resource_type VARCHAR(255) NOT NULL," +
+                "    resource_id VARCHAR(1024) NOT NULL," +
+                "    policy TEXT DEFAULT '{}'," +
+                "    policy_proto BYTEA NOT NULL," +
+                "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (resource_type, resource_id)" +
+                ")"
+            );
+
+            // Dataproc (matches DataprocRepository schema)
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS dataproc_clusters (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    region VARCHAR(255) NOT NULL," +
+                "    cluster_name VARCHAR(255) NOT NULL," +
+                "    metadata TEXT DEFAULT '{}'," +
+                "    cluster_proto BYTEA NOT NULL," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, region, cluster_name)" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS dataproc_jobs (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    region VARCHAR(255) NOT NULL," +
+                "    job_id VARCHAR(255) NOT NULL," +
+                "    cluster_name VARCHAR(255) NOT NULL," +
+                "    status VARCHAR(64) NOT NULL," +
+                "    driver_output_path VARCHAR(2048) DEFAULT ''," +
+                "    job_proto BYTEA NOT NULL," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, region, job_id)" +
+                ")"
+            );
+
+            // AlloyDB (matches AlloyDBRepository schema, with FOREIGN KEY constraints)
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS alloydb_clusters (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    cluster_id VARCHAR(255) NOT NULL," +
+                "    database_name VARCHAR(255) NOT NULL," +
+                "    metadata TEXT DEFAULT '{}'," +
+                "    cluster_proto BYTEA NOT NULL," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location_id, cluster_id)" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS alloydb_instances (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location_id VARCHAR(255) NOT NULL," +
+                "    cluster_id VARCHAR(255) NOT NULL," +
+                "    instance_id VARCHAR(255) NOT NULL," +
+                "    metadata TEXT DEFAULT '{}'," +
+                "    instance_proto BYTEA NOT NULL," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location_id, cluster_id, instance_id)," +
+                "    FOREIGN KEY (project_id, location_id, cluster_id)" +
+                "        REFERENCES alloydb_clusters(project_id, location_id, cluster_id) ON DELETE CASCADE" +
+                ")"
+            );
+
         } catch (SQLException e) {
             throw new RuntimeException("Failed to initialize test schema", e);
         }

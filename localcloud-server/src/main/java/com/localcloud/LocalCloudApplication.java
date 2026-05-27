@@ -55,6 +55,11 @@ import com.localcloud.emulators.workflows.WorkflowsEmulator;
 import com.localcloud.emulators.workflows.WorkflowEnvVarsRepository;
 import com.localcloud.emulators.workflows.WorkflowEnvVarsService;
 import com.localcloud.emulators.workflows.WorkflowConnectorService;
+import com.localcloud.emulators.workflows.WorkflowsGrpcServiceImpl;
+import com.localcloud.emulators.workflows.ExecutionsGrpcServiceImpl;
+import com.localcloud.emulators.workflows.WorkflowsRestService;
+import com.localcloud.emulators.secretmanager.SecretManagerRestService;
+import com.localcloud.emulators.cloudtasks.CloudTasksRestService;
 import com.localcloud.docker.ContainerManager;
 import com.localcloud.docker.DockerClientProvider;
 import com.localcloud.gateway.ApiGateway;
@@ -334,6 +339,227 @@ public class LocalCloudApplication {
             seedService.setMemorystoreEmulator(memorystoreEmulator);
             mutateService.setMemorystoreEmulator(memorystoreEmulator);
             logger.info("Memorystore Admin API facade registered at /redis/v1");
+        }
+
+        // =============================================================================
+        // Register facade gRPC services (backed by PostgreSQL, running in-process).
+        // Enable HTTP/JSON transcoding so gRPC services are also accessible via REST
+        // (uses google.api.http annotations from proto files — enables gcloud CLI support).
+        //
+        // DUAL REGISTRATION: Secret Manager and Cloud Tasks register both gRPC (here)
+        // and explicit REST annotated services. The explicit REST handlers handle
+        // Terraform-compatible CRUD operations. gRPC transcoding handles remaining
+        // operations (e.g. secret versions, task operations) that the REST services
+        // don't explicitly cover.
+        // =============================================================================
+
+        // Infrastructure services (Compute, Cloud Run, GKE) require Docker socket
+        ContainerManager containerManager = null;
+        boolean needsDocker = config.isServiceEnabled("compute")
+                || config.isServiceEnabled("cloudrun")
+                || config.isServiceEnabled("gke");
+        if (needsDocker) {
+            try {
+                containerManager = new ContainerManager(DockerClientProvider.getClient());
+                logger.info("Docker client initialized for infrastructure services");
+            } catch (Exception e) {
+                logger.warn("Docker not available — infrastructure services will use simulated mode: {}", e.getMessage());
+            }
+        }
+
+        var grpcBuilder = GrpcService.builder()
+                .enableHttpJsonTranscoding(true);
+        boolean hasGrpcServices = false;
+
+        // Secret Manager: gRPC + explicit REST (Terraform compatibility)
+        if (config.isServiceEnabled("secretmanager")) {
+            SecretManagerEmulator secretManagerEmulator = new SecretManagerEmulator(dataSource);
+            secretManagerEmulator.start();
+            grpcBuilder.addService(secretManagerEmulator.getServiceImpl());
+            gateway.registerGrpcEmulator(secretManagerEmulator, secretManagerEmulator.getServiceImpl());
+            sb.annotatedService("/v1", new SecretManagerRestService(
+                    secretManagerEmulator.getStore(), secretManagerEmulator));
+            hasGrpcServices = true;
+            logger.info("Secret Manager facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // Cloud Tasks: gRPC + explicit REST (Terraform compatibility)
+        if (config.isServiceEnabled("cloudtasks")) {
+            CloudTasksEmulator cloudTasksEmulator = new CloudTasksEmulator(dataSource);
+            cloudTasksEmulator.start();
+            grpcBuilder.addService(cloudTasksEmulator.getServiceImpl());
+            gateway.registerGrpcEmulator(cloudTasksEmulator, cloudTasksEmulator.getServiceImpl());
+            sb.annotatedService("/v2", new CloudTasksRestService(
+                    cloudTasksEmulator.getStore(), cloudTasksEmulator));
+            hasGrpcServices = true;
+            logger.info("Cloud Tasks facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // Cloud Scheduler: gRPC only
+        if (config.isServiceEnabled("cloudscheduler")) {
+            CloudSchedulerEmulator schedulerEmulator = new CloudSchedulerEmulator(dataSource);
+            schedulerEmulator.start();
+            grpcBuilder.addService(schedulerEmulator.getServiceImpl());
+            gateway.registerGrpcEmulator(schedulerEmulator, schedulerEmulator.getServiceImpl());
+            seedService.setCloudSchedulerEmulator(schedulerEmulator);
+            hasGrpcServices = true;
+            logger.info("Cloud Scheduler facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // Cloud Functions (2nd gen): gRPC only
+        if (config.isServiceEnabled("cloudfunctions")) {
+            CloudFunctionsEmulator functionsEmulator = new CloudFunctionsEmulator(dataSource);
+            functionsEmulator.start();
+            grpcBuilder.addService(functionsEmulator.getServiceImpl());
+            gateway.registerGrpcEmulator(functionsEmulator, functionsEmulator.getServiceImpl());
+            seedService.setCloudFunctionsEmulator(functionsEmulator);
+            hasGrpcServices = true;
+            logger.info("Cloud Functions facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // AlloyDB: gRPC only
+        if (config.isServiceEnabled("alloydb")) {
+            AlloyDBEmulator alloyDBEmulator = new AlloyDBEmulator(dataSource);
+            alloyDBEmulator.start();
+            grpcBuilder.addService(alloyDBEmulator.getServiceImpl());
+            gateway.registerGrpcEmulator(alloyDBEmulator, alloyDBEmulator.getServiceImpl());
+            seedService.setAlloyDBEmulator(alloyDBEmulator);
+            hasGrpcServices = true;
+            logger.info("AlloyDB facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // Dataproc: gRPC (ClusterController + JobController)
+        if (config.isServiceEnabled("dataproc")) {
+            DataprocEmulator dataprocEmulator = new DataprocEmulator(dataSource);
+            dataprocEmulator.start();
+            grpcBuilder.addService(dataprocEmulator.getClusterService());
+            grpcBuilder.addService(dataprocEmulator.getJobService());
+            gateway.registerGrpcEmulator(dataprocEmulator,
+                    dataprocEmulator.getClusterService(), dataprocEmulator.getJobService());
+            seedService.setDataprocEmulator(dataprocEmulator);
+            hasGrpcServices = true;
+            logger.info("Dataproc facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // Cloud IAM: gRPC only
+        if (config.isServiceEnabled("cloudiam")) {
+            IAMEmulator iamEmulator = new IAMEmulator(dataSource);
+            iamEmulator.start();
+            grpcBuilder.addService(iamEmulator.getServiceImpl());
+            gateway.registerGrpcEmulator(iamEmulator, iamEmulator.getServiceImpl());
+            seedService.setIAMEmulator(iamEmulator);
+            hasGrpcServices = true;
+            logger.info("Cloud IAM facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // Cloud Logging: gRPC only
+        if (config.isServiceEnabled("logging")) {
+            LoggingEmulator loggingEmulator = new LoggingEmulator(dataSource);
+            loggingEmulator.start();
+            grpcBuilder.addService(loggingEmulator.getLoggingService());
+            gateway.registerGrpcEmulator(loggingEmulator, loggingEmulator.getLoggingService());
+            hasGrpcServices = true;
+            logger.info("Cloud Logging facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // Cloud Monitoring: gRPC only
+        if (config.isServiceEnabled("monitoring")) {
+            MonitoringEmulator monitoringEmulator = new MonitoringEmulator(dataSource);
+            monitoringEmulator.start();
+            grpcBuilder.addService(monitoringEmulator.getMonitoringService());
+            gateway.registerGrpcEmulator(monitoringEmulator, monitoringEmulator.getMonitoringService());
+            hasGrpcServices = true;
+            logger.info("Cloud Monitoring facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // Compute Engine: REST only
+        if (config.isServiceEnabled("compute")) {
+            ContainerManager cm = containerManager != null ? containerManager : new ContainerManager(null);
+            ComputeEmulator computeEmulator = new ComputeEmulator(dataSource, cm, credentialBroker);
+            computeEmulator.start();
+            sb.annotatedService("/compute/v1", computeEmulator.getRestService());
+            gateway.registerRestEmulator("/compute/v1", computeEmulator, null);
+            logger.info("Compute Engine facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // Cloud Run: gRPC (Services + Revisions)
+        if (config.isServiceEnabled("cloudrun")) {
+            ContainerManager cm = containerManager != null ? containerManager : new ContainerManager(null);
+            CloudRunEmulator cloudRunEmulator = new CloudRunEmulator(dataSource, cm, credentialBroker);
+            cloudRunEmulator.start();
+            grpcBuilder.addService(cloudRunEmulator.getServicesService());
+            grpcBuilder.addService(cloudRunEmulator.getRevisionsService());
+            gateway.registerGrpcEmulator(cloudRunEmulator,
+                    cloudRunEmulator.getServicesService(), cloudRunEmulator.getRevisionsService());
+            hasGrpcServices = true;
+            logger.info("Cloud Run facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // GKE: gRPC only
+        if (config.isServiceEnabled("gke")) {
+            K3dManager k3dManager = new K3dManager(credentialBroker);
+            GkeEmulator gkeEmulator = new GkeEmulator(dataSource, k3dManager);
+            gkeEmulator.start();
+            grpcBuilder.addService(gkeEmulator.getClusterManagerService());
+            gateway.registerGrpcEmulator(gkeEmulator, gkeEmulator.getClusterManagerService());
+            hasGrpcServices = true;
+            logger.info("GKE facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // Cloud Workflows: gRPC + explicit REST + env vars + connector + callback
+        if (config.isServiceEnabled("workflows")) {
+            WorkflowsEmulator workflowsEmulator = new WorkflowsEmulator(dataSource);
+            workflowsEmulator.start();
+            var workflowsGrpc = new WorkflowsGrpcServiceImpl(workflowsEmulator.getWorkflowsService());
+            var executionsGrpc = new ExecutionsGrpcServiceImpl(workflowsEmulator.getWorkflowsService());
+            grpcBuilder.addService(workflowsGrpc);
+            grpcBuilder.addService(executionsGrpc);
+            gateway.registerGrpcEmulator(workflowsEmulator, workflowsGrpc, executionsGrpc);
+
+            // Workflow env vars and connector services (register before callbacks to avoid path conflicts)
+            var envVarsRepo = new WorkflowEnvVarsRepository(dataSource);
+            workflowsEmulator.getWorkflowsService().setEnvVarsRepository(envVarsRepo);
+            var envVarsService = new WorkflowEnvVarsService(config, envVarsRepo);
+            sb.annotatedService("/workflow-env", envVarsService);
+            var connectorService = new WorkflowConnectorService(config, envVarsRepo,
+                    workflowsEmulator.getWorkflowsService().getStore());
+            sb.annotatedService("/workflow", connectorService);
+            sb.annotatedService("/v1", new WorkflowsRestService(
+                    workflowsEmulator.getWorkflowsService(), workflowsEmulator));
+
+            // Register callback HTTP endpoint so external systems can wake waiting executions
+            WorkflowsCallbackService callbackService = new WorkflowsCallbackService(
+                    workflowsEmulator.getWorkflowsService().getCallbackManager());
+            sb.annotatedService("/workflows", callbackService);
+
+            // Wire WorkflowsServiceImpl into MutateService so console executions
+            // route through the full execution path (connectors, callbacks, env vars)
+            mutateService.setWorkflowsService(workflowsEmulator.getWorkflowsService());
+
+            hasGrpcServices = true;
+            logger.info("Cloud Workflows facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // Vertex AI: REST only
+        if (config.isServiceEnabled("vertexai")) {
+            VertexAiEmulator vertexAiEmulator = new VertexAiEmulator(dataSource, config.getGatewayPort());
+            vertexAiEmulator.start();
+            sb.annotatedService("/v1", vertexAiEmulator.getRestService());
+            gateway.registerRestEmulator("/v1/projects/*/locations/*/publishers/*/models", vertexAiEmulator, null);
+            logger.info("Vertex AI facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // Cloud KMS: REST only
+        if (config.isServiceEnabled("kms")) {
+            KmsEmulator kmsEmulator = new KmsEmulator(dataSource, config.getGatewayPort());
+            kmsEmulator.start();
+            sb.annotatedService("/v1", kmsEmulator.getRestService());
+            gateway.registerRestEmulator("/v1/projects/*/locations/*/keyRings", kmsEmulator, null);
+            logger.info("Cloud KMS facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        if (hasGrpcServices) {
+            sb.service(grpcBuilder.build());
         }
 
         // GraphQL API gateway — exposes a unified GraphQL endpoint at /graphql
