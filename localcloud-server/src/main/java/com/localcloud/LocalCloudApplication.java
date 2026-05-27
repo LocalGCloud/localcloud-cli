@@ -46,6 +46,8 @@ import com.localcloud.emulators.cloudrun.CloudRunEmulator;
 import com.localcloud.emulators.gke.GkeEmulator;
 import com.localcloud.emulators.gke.K3dManager;
 import com.localcloud.emulators.cloudsql.CloudSqlEmulator;
+import com.localcloud.emulators.bigtable.BigtableEmulator;
+import com.localcloud.emulators.memorystore.MemorystoreEmulator;
 import com.localcloud.emulators.kms.KmsEmulator;
 import com.localcloud.emulators.vertexai.VertexAiEmulator;
 import com.localcloud.emulators.workflows.WorkflowsCallbackService;
@@ -110,6 +112,9 @@ public class LocalCloudApplication {
     private final CredentialBroker credentialBroker;
     private final QueryService queryService;
     private final QueryHistoryRepository queryHistoryRepo;
+    private CloudSqlEmulator cloudSqlEmulator;
+    private BigtableEmulator bigtableEmulator;
+    private MemorystoreEmulator memorystoreEmulator;
     private IamMiddleware iamMiddleware;
     private Server server;
 
@@ -139,6 +144,9 @@ public class LocalCloudApplication {
         this.seedService = new SeedService(config, dataSource, config.getServiceRegistry(), workflowsStore);
         this.exportService = new ExportService(config, dataSource, config.getServiceRegistry());
         this.queryService = new QueryService(config, dataSource, config.getServiceRegistry(), usageMetrics, queryHistoryRepo);
+        this.cloudSqlEmulator = new CloudSqlEmulator(dataSource, config.getGatewayPort());
+        this.bigtableEmulator = new BigtableEmulator(dataSource, config.getGatewayPort());
+        this.memorystoreEmulator = new MemorystoreEmulator(dataSource, config.getGatewayPort());
     }
 
     /**
@@ -247,6 +255,49 @@ public class LocalCloudApplication {
         sb.annotatedService("/", new SnapshotService(config, exportService, seedService));
         sb.annotatedService("/", new FaultInjectionService(faultInjectionRegistry));
         sb.annotatedService("/computeMetadata/v1", new MetadataServerService(config));
+
+        // Cloud SQL Admin API facade (REST)
+        if (config.isServiceEnabled("cloudsql")) {
+            cloudSqlEmulator.start();
+            sb.annotatedService("/sql/v1", cloudSqlEmulator.getRestService());
+            sb.annotatedService("/sql/v1beta4", cloudSqlEmulator.getRestService());
+            seedService.setCloudSqlEmulator(cloudSqlEmulator);
+            mutateService.setCloudSqlEmulator(cloudSqlEmulator);
+            logger.info("Cloud SQL Admin API facade registered at /sql/v1, /sql/v1beta4");
+        }
+
+        // Bigtable Admin API facade (REST)
+        if (config.isServiceEnabled("bigtable")) {
+            bigtableEmulator.start();
+            sb.annotatedService("/bigtable/admin/v2", bigtableEmulator.getAdminService());
+            seedService.setBigtableEmulator(bigtableEmulator);
+            mutateService.setBigtableEmulator(bigtableEmulator);
+            logger.info("Bigtable Admin API facade registered at /bigtable/admin/v2");
+
+            // Manual route for modifyColumnFamilies — Armeria's annotation parser treats ':'
+            // as a path-parameter regex delimiter, so {table}:modifyColumnFamilies is invalid.
+            sb.service(
+                Route.builder()
+                    .methods(HttpMethod.POST)
+                    .path("regex:^/bigtable/admin/v2/projects/(?<project>[^/]+)/instances/(?<instance>[^/]+)/tables/(?<table>[^/]+):modifyColumnFamilies$")
+                    .build(),
+                (ctx, req) -> {
+                    var aggregated = req.aggregate().join();
+                    return bigtableEmulator.getAdminService().modifyColumnFamilies(
+                        ctx.pathParam("project"), ctx.pathParam("instance"), ctx.pathParam("table"),
+                        aggregated.contentUtf8());
+                });
+            logger.info("Bigtable modifyColumnFamilies route registered");
+        }
+
+        // Memorystore Admin API facade (REST)
+        if (config.isServiceEnabled("memorystore")) {
+            memorystoreEmulator.start();
+            sb.annotatedService("/redis/v1", memorystoreEmulator.getAdminService());
+            seedService.setMemorystoreEmulator(memorystoreEmulator);
+            mutateService.setMemorystoreEmulator(memorystoreEmulator);
+            logger.info("Memorystore Admin API facade registered at /redis/v1");
+        }
 
         // GraphQL API gateway — exposes a unified GraphQL endpoint at /graphql
         // that stitches together Spanner, BigQuery, Logging, Monitoring, and query history.

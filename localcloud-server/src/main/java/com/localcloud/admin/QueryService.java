@@ -5,6 +5,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.Statement;
@@ -131,8 +132,14 @@ public class QueryService {
                 return executeBigtableQuery(sql, projectId, startTime);
             } else if ("memorystore".equals(service)) {
                 return executeMemorystoreQuery(sql, projectId, startTime);
+            } else if ("alloydb".equals(service)) {
+                String database = (String) request.get("database");
+                if (database != null && !database.matches("^[a-zA-Z0-9_-]+$")) {
+                    return errorResponse("Invalid database name");
+                }
+                return executePostgresQuery(sql, projectId, database, startTime);
             } else if (POSTGRES_SERVICES.contains(service)) {
-                return executePostgresQuery(sql, projectId, startTime);
+                return executePostgresQuery(sql, projectId, null, startTime);
             } else if ("bigquery".equals(service)) {
                 return executeBigQueryQuery(sql, projectId, startTime);
             } else if ("spanner".equals(service)) {
@@ -485,14 +492,14 @@ public class QueryService {
 
     // ─── PostgreSQL Direct Query ───────────────────────────────────────
 
-    private HttpResponse executePostgresQuery(String sql, String projectId, long startTime) {
+    private HttpResponse executePostgresQuery(String sql, String projectId, String database, long startTime) {
         // Safety: only allow SELECT and EXPLAIN
         String trimmed = sql.trim().toUpperCase();
         if (!trimmed.startsWith("SELECT") && !trimmed.startsWith("EXPLAIN") && !trimmed.startsWith("WITH")) {
             return errorResponse("Only SELECT, EXPLAIN, and WITH (CTE) queries are allowed");
         }
 
-        try (Connection conn = dataSource.getConnection()) {
+        try (Connection conn = database != null ? dataSource.getConnection(database) : dataSource.getConnection()) {
             // Use read-only transaction to prevent DML inside CTEs
             // (e.g., "WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d")
             conn.setAutoCommit(false);
@@ -1593,6 +1600,12 @@ public class QueryService {
                 return schemaSpanner(projectId, instance, database);
             }
 
+            if ("alloydb".equals(service)) {
+                String clusterFilter = ctx.queryParams().get("cluster");
+                String databaseFilter = ctx.queryParams().get("database");
+                return schemaAlloyDB(projectId, clusterFilter, databaseFilter);
+            }
+
             if ("pubsub".equals(service)) {
                 return schemaPubSub(projectId);
             }
@@ -1625,8 +1638,6 @@ public class QueryService {
                 Map.entry("cloudsql", List.of("cloudsql_instances", "cloudsql_databases",
                         "cloudsql_users", "cloudsql_operations", "cloudsql_flags")),
                 Map.entry("workflows", List.of("workflows", "workflow_executions", "workflow_step_entries")),
-                Map.entry("alloydb", List.of("alloydb_clusters", "alloydb_instances",
-                        "alloydb_backups", "alloydb_users")),
                 Map.entry("cloudscheduler", List.of("scheduler_jobs", "scheduler_executions")),
                 Map.entry("cloudfunctions", List.of("cloud_functions")),
                 Map.entry("dataproc", List.of("dataproc_clusters", "dataproc_jobs")),
@@ -1720,6 +1731,90 @@ public class QueryService {
         } catch (Exception e) {
             logger.warn("Memorystore schema fetch failed: {}", e.getMessage());
             return errorResponse("Memorystore schema fetch failed: " + e.getMessage());
+        }
+    }
+
+    // ─── AlloyDB Schema (dynamic discovery of physical databases) ─────
+
+    private HttpResponse schemaAlloyDB(String projectId, String clusterFilter, String databaseFilter) {
+        try {
+            List<Map<String, Object>> tables = new ArrayList<>();
+
+            // Query all alloydb databases to discover physical databases
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement("""
+                         SELECT cluster_id, database_name, physical_name
+                         FROM alloydb_databases
+                         WHERE project_id = ?
+                         ORDER BY cluster_id, database_name
+                         """)) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        String clusterId = rs.getString("cluster_id");
+                        String databaseName = rs.getString("database_name");
+                        String physicalName = rs.getString("physical_name");
+
+                        if (clusterFilter != null && !clusterFilter.equals(clusterId)) continue;
+                        if (databaseFilter != null && !databaseFilter.equals(databaseName)) continue;
+
+                        if (physicalName == null || physicalName.isEmpty()) {
+                            physicalName = databaseName;
+                        }
+
+                        // Query the physical database for user tables
+                        try (Connection physConn = dataSource.getConnection(physicalName);
+                             Statement stmt = physConn.createStatement()) {
+                            ResultSet tableRs = stmt.executeQuery("""
+                                    SELECT table_name, column_name, data_type, ordinal_position
+                                    FROM information_schema.columns
+                                    WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+                                    ORDER BY table_name, ordinal_position
+                                    """);
+
+                            String currentTable = null;
+                            List<Map<String, String>> currentColumns = null;
+
+                            while (tableRs.next()) {
+                                String tableName = tableRs.getString("table_name");
+                                if (!tableName.equals(currentTable)) {
+                                    if (currentTable != null) {
+                                        Map<String, Object> tableObj = new LinkedHashMap<>();
+                                        tableObj.put("name", clusterId + "." + databaseName + "." + currentTable);
+                                        tableObj.put("columns", currentColumns);
+                                        tableObj.put("cluster", clusterId);
+                                        tableObj.put("database", databaseName);
+                                        tables.add(tableObj);
+                                    }
+                                    currentTable = tableName;
+                                    currentColumns = new ArrayList<>();
+                                }
+                                currentColumns.add(Map.of(
+                                        "name", tableRs.getString("column_name"),
+                                        "type", tableRs.getString("data_type").toUpperCase()
+                                ));
+                            }
+                            if (currentTable != null) {
+                                Map<String, Object> tableObj = new LinkedHashMap<>();
+                                tableObj.put("name", clusterId + "." + databaseName + "." + currentTable);
+                                tableObj.put("columns", currentColumns);
+                                tableObj.put("cluster", clusterId);
+                                tableObj.put("database", databaseName);
+                                tables.add(tableObj);
+                            }
+                        } catch (Exception e) {
+                            logger.debug("Could not read tables from AlloyDB physical DB {}: {}", physicalName, e.getMessage());
+                        }
+                    }
+                }
+            }
+
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of("tables", tables)));
+
+        } catch (Exception e) {
+            logger.warn("AlloyDB schema fetch failed: {}", e.getMessage());
+            return errorResponse("AlloyDB schema fetch failed: " + e.getMessage());
         }
     }
 

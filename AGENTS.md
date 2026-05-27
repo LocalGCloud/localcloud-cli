@@ -1,12 +1,12 @@
 # localcloud Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-07
+Auto-generated from all feature plans. Last updated: 2026-05-26
 
 ## Active Technologies
-- Java 21 LTS (primary) + Netty codec-redis (RESP2 parser), Armeria (lifecycle), HikariCP (PostgreSQL pool), Jackson (JSONB) (002-memorystore-emulator)
-- PostgreSQL — single `redis_data` table with JSONB values for all 5 data types (002-memorystore-emulator)
+- Java 25 (jlink JRE) + Netty codec-redis (RESP2 parser), Armeria (lifecycle), HikariCP (PostgreSQL pool), Jackson (JSONB) (002-memorystore-emulator)
+- PostgreSQL 17 — single `redis_data` table with JSONB values for all 5 data types (002-memorystore-emulator)
 
-- Java 21 (LTS, primary) + Armeria (API gateway, gRPC+REST, console static files), proto-google-cloud-* (gRPC stubs), PostgreSQL (persistence), HikariCP (connection pooling), Solid.js (console frontend) (001-gcp-local-emulator)
+- Java 21 LTS (primary) + Armeria (API gateway, gRPC+REST, console static files), proto-google-cloud-* (gRPC stubs), PostgreSQL 17 (persistence), HikariCP (connection pooling), Solid.js (console frontend) (001-gcp-local-emulator)
 
 ## Project Structure
 
@@ -54,6 +54,7 @@ Java 21 (LTS, primary): Follow standard conventions
 - JVM tuned to `-Xmx512m -Xms128m` to coexist with emulators in container
 - Docker image uses debian:trixie-slim base with custom Java 25 JRE (jlink, ~72 MB) — no gcloud SDK at runtime
 - Emulators (Firestore, Pub/Sub, Bigtable) run as direct JAR/binary execution, not via gcloud CLI
+- Bigtable emulator: `github.com/jhsenjaliya/little_bigtable@v0.0.1` — pulled and built from published Go module during `docker build`
 - PostgreSQL 17 (matching Debian Trixie's glibc requirements)
 - `/services` returns array format with id, name, status, port, protocol, endpoint, env_var, env_value, request_count
 - `/reset` reads `restore_seed` from JSON body (not query params)
@@ -70,7 +71,7 @@ Java 21 (LTS, primary): Follow standard conventions
 
 ## Test Counts
 
-- Java server: 250+ unit tests (JUnit 5 + Mockito)
+- Java server: 930+ unit tests (JUnit 5 + Mockito)
 - Console: esbuild (no test suite)
 
 <!-- MANUAL ADDITIONS START -->

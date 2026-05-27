@@ -32,6 +32,11 @@ public class PostgresDataSource {
         hikari.setMinimumIdle(2);
         hikari.setPoolName("localcloud-pg");
         hikari.setConnectionTestQuery("SELECT 1");
+        // Wait up to 10s for the initial connection during pool creation.
+        // The default (1ms) is too aggressive — PostgreSQL TCP listener may not
+        // be ready immediately after pg_isready reports success on Unix sockets,
+        // causing PoolInitializationException → System.exit(1) crash loop.
+        hikari.setInitializationFailTimeout(10000);
         this.dataSource = new HikariDataSource(hikari);
         logger.info("PostgreSQL connection pool initialized: {}:{}/{}", host, port, db);
     }

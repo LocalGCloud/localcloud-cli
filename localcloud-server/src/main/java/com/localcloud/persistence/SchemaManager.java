@@ -232,6 +232,52 @@ public class SchemaManager {
                 ")"
             );
 
+            // Bigtable: Admin API control-plane metadata
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS bigtable_instances (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    instance_id VARCHAR(255) NOT NULL," +
+                "    display_name VARCHAR(255)," +
+                "    instance_type VARCHAR(32) DEFAULT 'PRODUCTION'," +
+                "    state VARCHAR(32) DEFAULT 'READY'," +
+                "    clusters_json JSONB DEFAULT '[]'," +
+                "    labels_json JSONB DEFAULT '{}'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, instance_id)" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS bigtable_tables (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    instance_id VARCHAR(255) NOT NULL," +
+                "    table_id VARCHAR(255) NOT NULL," +
+                "    column_families_json JSONB DEFAULT '[]'," +
+                "    granularity VARCHAR(32) DEFAULT 'MILLIS'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, instance_id, table_id)," +
+                "    FOREIGN KEY (project_id, instance_id) REFERENCES bigtable_instances(project_id, instance_id) ON DELETE CASCADE" +
+                ")"
+            );
+
+            // Memorystore: Admin API control-plane metadata
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS memorystore_instances (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    instance_id VARCHAR(255) NOT NULL," +
+                "    display_name VARCHAR(255)," +
+                "    tier VARCHAR(32) DEFAULT 'BASIC'," +
+                "    engine VARCHAR(32) DEFAULT 'REDIS'," +
+                "    redis_version VARCHAR(32) DEFAULT '7_0'," +
+                "    port INT DEFAULT 6379," +
+                "    memory_size_gb INT DEFAULT 1," +
+                "    state VARCHAR(32) DEFAULT 'READY'," +
+                "    host VARCHAR(255) DEFAULT 'localhost'," +
+                "    labels_json JSONB DEFAULT '{}'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, instance_id)" +
+                ")"
+            );
+
             // GCS bucket ownership: track which project created each bucket
             // (fake-gcs-server doesn't enforce project isolation natively)
             stmt.execute(

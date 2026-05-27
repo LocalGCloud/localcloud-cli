@@ -1,8 +1,10 @@
 # LocalCloud Developer Guide
 
+> **Last updated:** 2026-05-26
+
 **Google Cloud Platform — In-a-Box.**
 
-LocalCloud emulates 15 GCP services in a single Docker container. Develop and test locally without cloud access, approvals, or costs. Zero code changes — just set environment variables.
+LocalCloud emulates 23 GCP services in a single Docker container. Develop and test locally without cloud access, approvals, or costs. Zero code changes — just set environment variables.
 
 ---
 
@@ -186,7 +188,7 @@ See `terraform/examples/` for complete configs and pipeline examples.
 
 | Port | Service | Protocol |
 |------|---------|----------|
-| 8080 | Gateway (Admin API, Secret Manager, Cloud Tasks, Logging, Monitoring, GKE, Compute, Cloud Run, Cloud Workflows) | REST + gRPC |
+| 8080 | Gateway (Admin API, Secret Manager, Cloud Tasks, Logging, Monitoring, GKE, Compute, Cloud Run, Cloud Workflows, Cloud Scheduler, Cloud Functions, AlloyDB, Dataproc, Cloud IAM, Vertex AI, Cloud KMS, Cloud SQL) | REST + gRPC |
 | 4443 | Cloud Storage | HTTP |
 | 8085 | Pub/Sub | gRPC |
 | 8086 | Firestore | gRPC |
@@ -216,6 +218,14 @@ See `terraform/examples/` for complete configs and pipeline examples.
 | **Compute Engine** | Instance CRUD, start/stop (Docker containers as VMs) | Disks, snapshots, templates, networking |
 | **Cloud Run** | Service CRUD, revisions (real Docker containers) | Traffic splitting, custom domains, Jobs |
 | **Cloud Workflows** | YAML workflow definitions, expression language, all step types (assign, call, switch, for, parallel, try/except, raise, return), standard library (http, sys, json, base64, math, text, list, map), connector shims to other LocalCloud emulators, callback support | Persistent execution checkpointing (in-flight executions lost on restart), KMS encryption, IAM enforcement |
+| **Cloud Scheduler** | Job CRUD, cron scheduling (cron-utils), HTTP/Pub/Sub/App Engine targets, persistent across restarts | Timezone rules beyond cron-utils support |
+| **Cloud Functions (2nd gen)** | Function CRUD, trigger routing (Pub/Sub → auto-create subscriptions), metadata persistence | Build/container execution (use Functions Framework locally) |
+| **AlloyDB** | Cluster/instance CRUD, PostgreSQL wire compatibility, pgvector extension, `GetConnectionInfo` → localhost:5432 | Backup/restore, PSC, cross-region replication |
+| **Dataproc** | Cluster CRUD (metadata), job submission via local `spark-submit` (Spark 3.5.x, `--master local[*]`) | Autoscaling, YARN/K8s cluster mode, requires Spark installed on host |
+| **Cloud IAM** | Permissive policy management (`getIamPolicy`/`setIamPolicy`), `testIamPermissions` returns all as allowed | Role validation, condition support, deny policies |
+| **Vertex AI** (_disabled by default_) | Metadata stubs | Model serving, prediction, training pipelines |
+| **Cloud KMS** (_disabled by default_) | Key ring and crypto key CRUD, encrypt/decrypt (local), Terraform-compatible REST API | HSM, EKM, import jobs, Cloud HSM level enforcement |
+| **Cloud SQL** (_disabled by default_) | Instance/database/user CRUD, PostgreSQL data plane on port 5432, MySQL metadata stub | MySQL data plane, read replicas, PSC, backup/restore |
 
 GKE, Compute, and Cloud Run are disabled by default (require Docker socket). Enable with:
 ```bash
@@ -366,7 +376,7 @@ Open **http://localhost:8080** — no separate server needed.
 | Page | What It Does |
 |------|-------------|
 | **Dashboard** | Service health, project info, uptime, request counts |
-| **APIs & Services** | All 15 services with status, ports, routing, env vars |
+| **APIs & Services** | All 23 services with status, ports, routing, env vars |
 | **Service Explorer** | SQL editor with schema browser, data explorer for all services |
 | **Logs** | Real-time request log viewer with filtering |
 | **Usage** | Cumulative API usage per service, estimated GCP cost savings |
@@ -447,7 +457,7 @@ volumes:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOCALCLOUD_PROJECT` | `local-project` | GCP project ID |
-| `LOCALCLOUD_SERVICES` | all 11 enabled | Comma-separated service list |
+| `LOCALCLOUD_SERVICES` | all 17 enabled | Comma-separated service list |
 | `LOCALCLOUD_DATA_DIR` | `/var/lib/localcloud` | Persistent data directory |
 | `LOCALCLOUD_IAM_MODE` | `permissive` | `permissive`, `strict`, or `gcp-live` |
 | `JAVA_OPTS` | `-Xmx512m -Xms128m` | JVM tuning (override for more memory) |
@@ -485,7 +495,7 @@ Docker Container
 │   ├── Bigtable emulator (port 8087)
 │   ├── Spanner emulator (port 9010)
 │   └── BigQuery emulator (port 9050, DuckDB+SQLGlot)
-└── PostgreSQL 15 (internal persistence)
+└── PostgreSQL 17 (internal persistence)
 ```
 
 > **Building from source?** See [README.md](README.md) for build instructions using `./gradlew shadowJar` and `docker compose build`.

@@ -1,19 +1,20 @@
-# LocalCloud Console Gemini
+# LocalCloud Console
 
-An Aura/Gemini redesign of the LocalCloud Console with the same admin API functionality and a higher-fidelity platform UI.
+> **Last updated:** 2026-05-26
+
+A Solid.js web console for the LocalCloud GCP emulator.
 
 ## Overview
 
-LocalCloud Console Gemini is a production-ready web UI for the LocalCloud GCP emulator. It provides:
+LocalCloud Console is a production-ready web UI served directly by the Armeria gateway. It provides:
 
-- **Aura Shell**: Icon-first navigation, command palette, project status center, health rail, and intelligence widget
-- **Service Management**: Monitor all emulated GCP services
+- **Dashboard**: Service health, project info, uptime, request counts
+- **APIs & Services**: Monitor all 23 emulated GCP services with status, ports, routing, and env vars
 - **Service Explorer**: Deep-dive into service data with SQL queries, file browsing, and schema views
-- **Log Viewer**: Real-time request log viewing with filtering and auto-tail
-- **Data Browser**: Read-only preview of data across all services
-- **Usage Tracking**: API usage per service with estimated GCP cost savings
-- **System Monitoring**: Health status, uptime, request counts, and service ports
-- **User Preferences**: Dark/light mode, configurable auto-refresh interval
+- **Data Browser**: Browse and mutate data across all services (BigQuery, GCS, Spanner, Firestore, Pub/Sub, Memorystore, Secret Manager)
+- **Logs**: Real-time request log viewer with filtering and auto-tail
+- **Usage**: API usage per service with estimated GCP cost savings
+- **Settings**: Environment variable export (shell/Terraform/Docker Compose), SDK examples, cloud routing, auto-refresh, theme
 
 ### Architecture
 
@@ -23,21 +24,21 @@ Browser (http://localhost:8080)
     Solid.js SPA
     ↓
 Armeria Gateway (port 8080)
-    ├─ Static file serving from /opt/localcloud/console/dist/
-    ├─ Admin API (/*)
-    └─ gRPC facade services
-         ↓
-    PostgreSQL (internal persistence)
+    ├─ Static file serving (Solid.js SPA)
+    ├─ Admin REST API
+    ├─ In-process gRPC/REST facades (17 services)
+    ├─ External emulator routing (GCS:4443, Pub/Sub:8085, Firestore:8086,
+    │  Bigtable:8087, Spanner:9010, BigQuery:9050, Memorystore:6379)
+    └─ PostgreSQL 17 (persistence)
 ```
 
-The console is served directly by the Armeria gateway — no separate backend process needed. In the Docker container, the built frontend files are at `/opt/localcloud/console/dist/` and served at the root path (`/`).
+The console is served directly by the Armeria gateway — no separate backend process needed.
 
 ### Tech Stack
 
 - **Frontend**: Solid.js (fine-grained reactivity), vanilla CSS
 - **Server**: Armeria (Java) — serves static files + API
 - **Build**: esbuild (bundler), npm
-- **Design**: Aura/Gemini console theme with layered modules and local/remote visual modes
 
 ## Installation
 
@@ -83,35 +84,37 @@ localcloud console
 
 ### 1. Dashboard
 - System health status and uptime
-- Grid of all 14 services with status indicators
+- Grid of all 23 services with status indicators, ports, and request counts
 - Quick action buttons (Refresh, Reset All)
 - Environment variable export
 
-### 2. Services
-- Table view of all services
-- Status indicators, port numbers, protocols
+### 2. APIs & Services
+- Table view of all 23 services with status, ports, protocols, routing mode
 - Request count tracking per service
+- Enable/disable toggle per service
 
 ### 3. Service Explorer
 - Deep-dive view for each service's data
-- SQL query editor for BigQuery datasets
+- SQL query editor for BigQuery and Spanner
 - File browser for GCS buckets
 - Schema detection and display
-- Spanner instance and database browsing
+- Workflows definitions and executions browser
 
 ### 4. Data Browser
-- Read-only preview across all services
-- Firestore: collections and document preview
-- BigQuery: datasets and table schemas
+- Browse and mutate data across all services
+- BigQuery: datasets, table schemas, row add/edit/delete
 - GCS: buckets and object listing
-- Spanner: instances and database details
-- Secret Manager: secret names (values redacted)
-- Pub/Sub: topics and subscriptions
-- Memorystore: key browser
+- Spanner: instances, databases, table data with add/edit/delete
+- Firestore: collections and document preview
+- Secret Manager: secrets and versions
+- Pub/Sub: topics, subscriptions, and message browsing
+- Memorystore: key browser with Redis data types
+- Cloud Tasks: queue listing and management
+- AlloyDB: cluster and database browsing
+- Bigtable: table and row browsing
 
 ### 5. Logs
-- Real-time request log viewer
-- Auto-tail with configurable refresh rate
+- Real-time request log viewer with configurable refresh
 - Service filtering and limit control
 - Color-coded HTTP status codes
 
@@ -121,10 +124,11 @@ localcloud console
 - Pricing reference table
 
 ### 7. Settings
-- Dark/Light mode toggle (dark is default)
-- Auto-refresh interval control (1-60 seconds)
-- Environment variable export (shell, Docker Compose, JSON)
-- SDK setup examples for Python and Node.js
+- Dark/Light mode toggle
+- Auto-refresh interval control (per-page, configurable 1-60 seconds)
+- Environment variable export (shell, Terraform, Docker Compose, JSON)
+- SDK setup examples for Python, Java, Node.js, Go
+- Cloud routing configuration (local vs remote per service)
 
 ## Development
 
@@ -207,4 +211,4 @@ localcloud-console/
 
 ## License
 
-See ../localcloud-site/LICENSE - Proprietary. Free for individual developers for personal use, learning, and evaluation. No production or commercial use permitted.
+Proprietary. Free for individual developers for personal use, learning, and evaluation. No production or commercial use permitted.

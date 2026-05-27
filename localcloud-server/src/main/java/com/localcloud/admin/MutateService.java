@@ -9,6 +9,7 @@ import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -26,6 +27,9 @@ import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.config.ServiceRegistry;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
 import com.localcloud.emulators.workflows.WorkflowsServiceImpl;
+import com.localcloud.emulators.cloudsql.CloudSqlEmulator;
+import com.localcloud.emulators.bigtable.BigtableEmulator;
+import com.localcloud.emulators.memorystore.MemorystoreEmulator;
 import com.localcloud.persistence.PostgresDataSource;
 
 import org.slf4j.Logger;
@@ -48,6 +52,9 @@ public class MutateService {
 
     // Delegate for workflow execution (set after construction to break circular dependency)
     private WorkflowsServiceImpl workflowsService;
+    private CloudSqlEmulator cloudSqlEmulator;
+    private BigtableEmulator bigtableEmulator;
+    private MemorystoreEmulator memorystoreEmulator;
 
     // Base URLs computed from registry
     private final String gcsBase;
@@ -83,6 +90,18 @@ public class MutateService {
 
     public void setWorkflowsService(WorkflowsServiceImpl service) {
         this.workflowsService = service;
+    }
+
+    public void setCloudSqlEmulator(CloudSqlEmulator emulator) {
+        this.cloudSqlEmulator = emulator;
+    }
+
+    public void setBigtableEmulator(BigtableEmulator emulator) {
+        this.bigtableEmulator = emulator;
+    }
+
+    public void setMemorystoreEmulator(MemorystoreEmulator emulator) {
+        this.memorystoreEmulator = emulator;
     }
 
     private static String baseUrl(ServiceDefinition def) {
@@ -194,6 +213,7 @@ public class MutateService {
                 case "alloydb" -> mutateAlloyDB(operation, null, json);
                 case "dataproc" -> mutateDataproc(operation, null, json);
                 case "cloudiam" -> mutateCloudIAM(operation, null, json);
+                case "cloudsql" -> mutateCloudSql(operation, null, json);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unknown service: " + service));
@@ -231,6 +251,7 @@ public class MutateService {
                 case "alloydb" -> mutateAlloyDB(operation, subOp, json);
                 case "dataproc" -> mutateDataproc(operation, subOp, json);
                 case "cloudiam" -> mutateCloudIAM(operation, subOp, json);
+                case "cloudsql" -> mutateCloudSql(operation, subOp, json);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unknown service: " + service));
@@ -851,11 +872,307 @@ public class MutateService {
         return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown Cloud IAM operation: " + operation));
     }
 
+    private String mutateCloudSql(String operation, String subOp, Map<String, Object> json) throws Exception {
+        String projectId = config.getProjectId();
+        if ("instances".equals(operation) && subOp == null) {
+            String name = stringValue(json, "name");
+            String region = stringValue(json, "region", "us-central1");
+            String databaseVersion = stringValue(json, "databaseVersion", "POSTGRES_15");
+            String tier = stringValue(json, "tier", "db-custom-1-3840");
+            if (name == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "name is required"));
+            }
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO cloudsql_instances (project_id, instance_id, region, database_version, tier, state, backend_type, connection_name, settings_json) " +
+                     "VALUES (?, ?, ?, ?, ?, 'RUNNABLE', ?, ?, ?)")) {
+                String backendType = databaseVersion.startsWith("MYSQL") ? "OPENHALO_MYSQL_COMPAT" : "POSTGRES";
+                String connectionName = projectId + ":" + region + ":" + name;
+                ps.setString(1, projectId);
+                ps.setString(2, name);
+                ps.setString(3, region);
+                ps.setString(4, databaseVersion);
+                ps.setString(5, tier);
+                ps.setString(6, backendType);
+                ps.setString(7, connectionName);
+                ps.setString(8, "{}");
+                ps.executeUpdate();
+            }
+            if (cloudSqlEmulator != null) cloudSqlEmulator.incrementRequestCount();
+            return mapper.writeValueAsString(Map.of("status", "created", "instance", name, "databaseVersion", databaseVersion));
+        }
+        if ("instances".equals(operation) && "delete".equals(subOp)) {
+            String name = stringValue(json, "name");
+            if (name == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "name is required"));
+            }
+            try (Connection conn = dataSource.getConnection()) {
+                conn.setAutoCommit(false);
+                try {
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "DELETE FROM cloudsql_users WHERE project_id = ? AND instance_id = ?")) {
+                        ps.setString(1, projectId);
+                        ps.setString(2, name);
+                        ps.executeUpdate();
+                    }
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "DELETE FROM cloudsql_databases WHERE project_id = ? AND instance_id = ?")) {
+                        ps.setString(1, projectId);
+                        ps.setString(2, name);
+                        ps.executeUpdate();
+                    }
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "DELETE FROM cloudsql_instances WHERE project_id = ? AND instance_id = ?")) {
+                        ps.setString(1, projectId);
+                        ps.setString(2, name);
+                        ps.executeUpdate();
+                    }
+                    conn.commit();
+                } catch (SQLException e) {
+                    conn.rollback();
+                    throw e;
+                } finally {
+                    conn.setAutoCommit(true);
+                }
+            }
+            if (cloudSqlEmulator != null) cloudSqlEmulator.incrementRequestCount();
+            return mapper.writeValueAsString(Map.of("status", "deleted", "instance", name));
+        }
+        if ("databases".equals(operation) && subOp == null) {
+            String instanceId = stringValue(json, "instanceId");
+            String name = stringValue(json, "name");
+            String charset = stringValue(json, "charset", "UTF8");
+            String collation = stringValue(json, "collation", "");
+            if (instanceId == null || name == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "instanceId and name are required"));
+            }
+            String physical = ("lc_" + projectId + "_" + instanceId + "_" + name).toLowerCase().replaceAll("[^a-z0-9_]", "_");
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO cloudsql_databases (project_id, instance_id, database_name, charset, \"collation\", physical_name) " +
+                     "VALUES (?, ?, ?, ?, ?, ?)")) {
+                ps.setString(1, projectId);
+                ps.setString(2, instanceId);
+                ps.setString(3, name);
+                ps.setString(4, charset);
+                ps.setString(5, collation);
+                ps.setString(6, physical);
+                ps.executeUpdate();
+            }
+            if (cloudSqlEmulator != null) cloudSqlEmulator.incrementRequestCount();
+            return mapper.writeValueAsString(Map.of("status", "created", "database", name, "instance", instanceId));
+        }
+        if ("databases".equals(operation) && "delete".equals(subOp)) {
+            String instanceId = stringValue(json, "instanceId");
+            String name = stringValue(json, "name");
+            if (instanceId == null || name == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "instanceId and name are required"));
+            }
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "DELETE FROM cloudsql_databases WHERE project_id = ? AND instance_id = ? AND database_name = ?")) {
+                ps.setString(1, projectId);
+                ps.setString(2, instanceId);
+                ps.setString(3, name);
+                ps.executeUpdate();
+            }
+            if (cloudSqlEmulator != null) cloudSqlEmulator.incrementRequestCount();
+            return mapper.writeValueAsString(Map.of("status", "deleted", "database", name, "instance", instanceId));
+        }
+        if ("users".equals(operation) && subOp == null) {
+            String instanceId = stringValue(json, "instanceId");
+            String name = stringValue(json, "name");
+            String host = stringValue(json, "host", "%");
+            String password = stringValue(json, "password", null);
+            if (instanceId == null || name == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "instanceId and name are required"));
+            }
+            String passwordHash = password == null ? null : java.util.HexFormat.of().formatHex(
+                    java.security.MessageDigest.getInstance("SHA-256").digest(password.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO cloudsql_users (project_id, instance_id, user_name, host, password_hash) VALUES (?, ?, ?, ?, ?)")) {
+                ps.setString(1, projectId);
+                ps.setString(2, instanceId);
+                ps.setString(3, name);
+                ps.setString(4, host);
+                ps.setString(5, passwordHash);
+                ps.executeUpdate();
+            }
+            if (cloudSqlEmulator != null) cloudSqlEmulator.incrementRequestCount();
+            return mapper.writeValueAsString(Map.of("status", "created", "user", name, "instance", instanceId));
+        }
+        if ("users".equals(operation) && "delete".equals(subOp)) {
+            String instanceId = stringValue(json, "instanceId");
+            String name = stringValue(json, "name");
+            String host = stringValue(json, "host", "%");
+            if (instanceId == null || name == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "instanceId and name are required"));
+            }
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "DELETE FROM cloudsql_users WHERE project_id = ? AND instance_id = ? AND user_name = ? AND host = ?")) {
+                ps.setString(1, projectId);
+                ps.setString(2, instanceId);
+                ps.setString(3, name);
+                ps.setString(4, host);
+                ps.executeUpdate();
+            }
+            if (cloudSqlEmulator != null) cloudSqlEmulator.incrementRequestCount();
+            return mapper.writeValueAsString(Map.of("status", "deleted", "user", name, "instance", instanceId));
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown Cloud SQL operation: " + operation));
+    }
+
+    private String mutateBigtableAdmin(String operation, String subOp, Map<String, Object> json) throws Exception {
+        String projectId = config.getProjectId();
+        if ("instances".equals(operation) && subOp == null) {
+            String instanceId = stringValue(json, "instanceId");
+            String displayName = stringValue(json, "displayName", instanceId);
+            String instanceType = stringValue(json, "instanceType", "PRODUCTION");
+            if (instanceId == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "instanceId is required"));
+            }
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO bigtable_instances (project_id, instance_id, display_name, instance_type, state, clusters_json) " +
+                     "VALUES (?, ?, ?, ?, 'READY', ?)")) {
+                ps.setString(1, projectId);
+                ps.setString(2, instanceId);
+                ps.setString(3, displayName);
+                ps.setString(4, instanceType);
+                ps.setString(5, "[]");
+                ps.executeUpdate();
+            }
+            if (bigtableEmulator != null) bigtableEmulator.incrementRequestCount();
+            return mapper.writeValueAsString(Map.of("status", "created", "instance", instanceId));
+        }
+        if ("instances".equals(operation) && "delete".equals(subOp)) {
+            String instanceId = stringValue(json, "instanceId");
+            if (instanceId == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "instanceId is required"));
+            }
+            try (Connection conn = dataSource.getConnection()) {
+                conn.setAutoCommit(false);
+                try {
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "DELETE FROM bigtable_tables WHERE project_id = ? AND instance_id = ?")) {
+                        ps.setString(1, projectId);
+                        ps.setString(2, instanceId);
+                        ps.executeUpdate();
+                    }
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "DELETE FROM bigtable_instances WHERE project_id = ? AND instance_id = ?")) {
+                        ps.setString(1, projectId);
+                        ps.setString(2, instanceId);
+                        ps.executeUpdate();
+                    }
+                    conn.commit();
+                } catch (SQLException e) {
+                    conn.rollback();
+                    throw e;
+                } finally {
+                    conn.setAutoCommit(true);
+                }
+            }
+            if (bigtableEmulator != null) bigtableEmulator.incrementRequestCount();
+            return mapper.writeValueAsString(Map.of("status", "deleted", "instance", instanceId));
+        }
+        if ("tables".equals(operation) && subOp == null) {
+            String instanceId = stringValue(json, "instanceId");
+            String tableId = stringValue(json, "tableId");
+            String granularity = stringValue(json, "granularity", "MILLIS");
+            if (instanceId == null || tableId == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "instanceId and tableId are required"));
+            }
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO bigtable_tables (project_id, instance_id, table_id, column_families_json, granularity) " +
+                     "VALUES (?, ?, ?, ?, ?)")) {
+                ps.setString(1, projectId);
+                ps.setString(2, instanceId);
+                ps.setString(3, tableId);
+                ps.setString(4, "[]");
+                ps.setString(5, granularity);
+                ps.executeUpdate();
+            }
+            if (bigtableEmulator != null) bigtableEmulator.incrementRequestCount();
+            return mapper.writeValueAsString(Map.of("status", "created", "table", tableId, "instance", instanceId));
+        }
+        if ("tables".equals(operation) && "delete".equals(subOp)) {
+            String instanceId = stringValue(json, "instanceId");
+            String tableId = stringValue(json, "tableId");
+            if (instanceId == null || tableId == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "instanceId and tableId are required"));
+            }
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "DELETE FROM bigtable_tables WHERE project_id = ? AND instance_id = ? AND table_id = ?")) {
+                ps.setString(1, projectId);
+                ps.setString(2, instanceId);
+                ps.setString(3, tableId);
+                ps.executeUpdate();
+            }
+            if (bigtableEmulator != null) bigtableEmulator.incrementRequestCount();
+            return mapper.writeValueAsString(Map.of("status", "deleted", "table", tableId, "instance", instanceId));
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown Bigtable operation: " + operation));
+    }
+
+    private String mutateMemorystoreAdmin(String operation, String subOp, Map<String, Object> json) throws Exception {
+        String projectId = config.getProjectId();
+        if ("instances".equals(operation) && subOp == null) {
+            String instanceId = stringValue(json, "instanceId");
+            String displayName = stringValue(json, "displayName", instanceId);
+            String tier = stringValue(json, "tier", "BASIC");
+            String redisVersion = stringValue(json, "redisVersion", "7_0");
+            int memorySizeGb = json.containsKey("memorySizeGb") ? ((Number) json.get("memorySizeGb")).intValue() : 1;
+            if (instanceId == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "instanceId is required"));
+            }
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO memorystore_instances (project_id, instance_id, display_name, tier, engine, redis_version, port, memory_size_gb, state, host) " +
+                     "VALUES (?, ?, ?, ?, 'REDIS', ?, 6379, ?, 'READY', 'localhost')")) {
+                ps.setString(1, projectId);
+                ps.setString(2, instanceId);
+                ps.setString(3, displayName);
+                ps.setString(4, tier);
+                ps.setString(5, redisVersion);
+                ps.setInt(6, memorySizeGb);
+                ps.executeUpdate();
+            }
+            if (memorystoreEmulator != null) memorystoreEmulator.incrementRequestCount();
+            return mapper.writeValueAsString(Map.of("status", "created", "instance", instanceId));
+        }
+        if ("instances".equals(operation) && "delete".equals(subOp)) {
+            String instanceId = stringValue(json, "instanceId");
+            if (instanceId == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "instanceId is required"));
+            }
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "DELETE FROM memorystore_instances WHERE project_id = ? AND instance_id = ?")) {
+                ps.setString(1, projectId);
+                ps.setString(2, instanceId);
+                ps.executeUpdate();
+            }
+            if (memorystoreEmulator != null) memorystoreEmulator.incrementRequestCount();
+            return mapper.writeValueAsString(Map.of("status", "deleted", "instance", instanceId));
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown Memorystore operation: " + operation));
+    }
+
     private static String stringValue(Map<String, Object> json, String key) {
         Object value = json.get(key);
         if (value == null) return null;
         String string = String.valueOf(value).trim();
         return string.isEmpty() ? null : string;
+    }
+
+    private static String stringValue(Map<String, Object> json, String key, String defaultValue) {
+        String value = stringValue(json, key);
+        return value != null ? value : defaultValue;
     }
 
     private static String defaultString(String value, String fallback) {
@@ -1796,6 +2113,43 @@ public class MutateService {
             return response;
         }
 
+        if ("messages".equals(operation) && "mock".equals(subOp)) {
+            // Publish mock messages in batch
+            String topicName = (String) json.get("topic");
+            if (topicName != null && topicName.contains("/")) topicName = topicName.substring(topicName.lastIndexOf("/") + 1);
+            int count = json.containsKey("count") ? ((Number) json.get("count")).intValue() : 1;
+            count = Math.min(Math.max(count, 1), 100); // clamp 1-100
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> template = (Map<String, Object>) json.get("template");
+
+            List<Map<String, Object>> messages = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                Map<String, Object> payload = generateMockPubSubPayload(topicName, template);
+                String dataStr = mapper.writeValueAsString(payload);
+                String encodedData = java.util.Base64.getEncoder().encodeToString(
+                        dataStr.getBytes(StandardCharsets.UTF_8));
+
+                Map<String, Object> message = new LinkedHashMap<>();
+                message.put("data", encodedData);
+
+                Map<String, String> attrs = new LinkedHashMap<>();
+                attrs.put("event-type", (String) payload.get("event"));
+                attrs.put("source", (String) payload.get("source"));
+                attrs.put("region", (String) payload.get("region"));
+                attrs.put("content-type", "application/json");
+                attrs.put("generated-by", "localcloud-mock-generator");
+                message.put("attributes", attrs);
+
+                messages.add(message);
+            }
+
+            Map<String, Object> publishBody = Map.of("messages", messages);
+            String url = pubsubBase + "/v1/projects/" + projectId + "/topics/" + topicName + ":publish";
+            String response = httpPostAndReturn(url, mapper.writeValueAsString(publishBody), "application/json");
+            return mapper.writeValueAsString(Map.of("status", "published", "count", count, "response", mapper.readValue(response, Object.class)));
+        }
+
         return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown Pub/Sub operation: " + operation));
     }
 
@@ -2088,5 +2442,129 @@ public class MutateService {
         }
 
         return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown workflows operation: " + operation));
+    }
+
+    // ========== Pub/Sub mock payload generation ==========
+
+    private static final String[] EVENT_TYPES = {
+        "user.login", "user.logout", "user.signup", "user.profile.updated", "user.deleted",
+        "order.created", "order.updated", "order.cancelled", "order.shipped", "order.delivered", "order.refunded",
+        "payment.succeeded", "payment.failed", "payment.refunded", "payment.authorized",
+        "product.created", "product.updated", "product.deleted", "product.stock.low",
+        "invoice.generated", "invoice.sent", "invoice.paid", "invoice.overdue",
+        "notification.email.sent", "notification.sms.sent", "notification.push.sent",
+        "cart.abandoned", "cart.updated", "cart.checked_out",
+        "review.created", "review.updated", "review.flagged",
+        "session.started", "session.ended", "page.viewed", "button.clicked",
+        "api.request", "api.error", "api.rate_limited",
+        "system.health_check", "system.alert", "system.config.changed"
+    };
+
+    private static final String[] SOURCES = {
+        "auth-service", "order-service", "payment-service", "notification-service",
+        "api-gateway", "web-app", "mobile-app", "admin-panel", "cron-job", "webhook"
+    };
+
+    private static final String[] REGIONS = {
+        "us-central1", "us-east1", "us-west1", "europe-west1", "europe-west4",
+        "asia-east1", "asia-northeast1", "australia-southeast1"
+    };
+
+    private static final String[] USER_AGENTS = {
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)",
+        "localcloud-sdk/1.0"
+    };
+
+    private static final String[] DOMAINS = {"gmail.com", "yahoo.com", "outlook.com", "example.com", "localcloud.dev"};
+    private static final String[] FIRST_NAMES = {"John", "Jane", "Alex", "Emily", "Michael", "Sarah", "David", "Jessica", "Robert", "Lisa"};
+    private static final String[] LAST_NAMES = {"Smith", "Doe", "Johnson", "Williams", "Brown", "Jones", "Miller", "Davis", "Wilson", "Anderson"};
+    private static final String[] COUNTRIES = {"US", "GB", "CA", "DE", "FR", "IN", "JP", "AU"};
+    private static final String[] CURRENCIES = {"USD", "EUR", "GBP", "JPY", "INR"};
+    private static final String[] PAYMENT_METHODS = {"credit_card", "debit_card", "paypal", "bank_transfer", "crypto"};
+    private static final String[] CHANNELS = {"email", "sms", "push", "in_app"};
+    private static final String[] TEMPLATES = {"welcome", "reset_password", "order_confirm", "shipping_update", "promo"};
+    private static final String[] PAGES = {"home", "products", "checkout", "account", "settings", "help"};
+    private static final String[] API_RESOURCES = {"users", "orders", "products", "payments", "auth"};
+    private static final String[] HTTP_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH"};
+    private static final int[] STATUS_CODES = {200, 201, 400, 401, 403, 404, 500, 502, 503};
+
+    private static final java.util.Random MOCK_RANDOM = new java.util.Random();
+
+    private static String pickRandom(String[] arr) {
+        return arr[MOCK_RANDOM.nextInt(arr.length)];
+    }
+
+    private static int pickRandomInt(int[] arr) {
+        return arr[MOCK_RANDOM.nextInt(arr.length)];
+    }
+
+    private static String uuid() {
+        return java.util.UUID.randomUUID().toString();
+    }
+
+    /**
+     * Generates a mock Pub/Sub message payload.
+     */
+    private Map<String, Object> generateMockPubSubPayload(String topicName, Map<String, Object> template) {
+        String topic = (topicName != null ? topicName : "events").toLowerCase().replace('-', ' ').replace('_', ' ');
+        String event = pickRandom(EVENT_TYPES);
+        String source = pickRandom(SOURCES);
+        String region = pickRandom(REGIONS);
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("event", event);
+        payload.put("id", uuid());
+        payload.put("timestamp", java.time.Instant.now().minusSeconds(MOCK_RANDOM.nextInt(604800)).toString());
+        payload.put("source", source);
+        payload.put("region", region);
+
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("traceId", uuid().substring(0, 16));
+        metadata.put("userAgent", pickRandom(USER_AGENTS));
+        metadata.put("version", (MOCK_RANDOM.nextInt(3) + 1) + "." + MOCK_RANDOM.nextInt(10) + "." + MOCK_RANDOM.nextInt(20));
+        payload.put("metadata", metadata);
+
+        if (topic.contains("user") || event.startsWith("user.")) {
+            payload.put("userId", uuid());
+            payload.put("email", (pickRandom(FIRST_NAMES).toLowerCase() + "." + pickRandom(LAST_NAMES).toLowerCase() + "@" + pickRandom(DOMAINS)));
+            payload.put("country", pickRandom(COUNTRIES));
+        }
+
+        if (topic.contains("order") || event.startsWith("order.")) {
+            payload.put("orderId", uuid());
+            payload.put("amount", Math.round((MOCK_RANDOM.nextDouble() * 500 + 10) * 100.0) / 100.0);
+            payload.put("currency", pickRandom(CURRENCIES));
+            payload.put("itemCount", MOCK_RANDOM.nextInt(10) + 1);
+        }
+
+        if (topic.contains("payment") || event.startsWith("payment.")) {
+            payload.put("paymentId", uuid());
+            payload.put("amount", Math.round((MOCK_RANDOM.nextDouble() * 1000 + 5) * 100.0) / 100.0);
+            payload.put("currency", pickRandom(CURRENCIES));
+            payload.put("method", pickRandom(PAYMENT_METHODS));
+        }
+
+        if (topic.contains("notification") || event.startsWith("notification.")) {
+            payload.put("channel", pickRandom(CHANNELS));
+            payload.put("recipient", (pickRandom(FIRST_NAMES).toLowerCase() + "." + pickRandom(LAST_NAMES).toLowerCase() + "@" + pickRandom(DOMAINS)));
+            payload.put("template", pickRandom(TEMPLATES));
+        }
+
+        if (topic.contains("analytics") || topic.contains("tracking") || event.startsWith("session.") || event.startsWith("page.") || event.startsWith("button.")) {
+            payload.put("pageUrl", "https://example.com/" + pickRandom(PAGES));
+            payload.put("sessionId", uuid().substring(0, 16));
+            payload.put("durationMs", MOCK_RANDOM.nextInt(30000) + 100);
+        }
+
+        if (topic.contains("api") || event.startsWith("api.")) {
+            payload.put("endpoint", "/api/v" + (MOCK_RANDOM.nextInt(3) + 1) + "/" + pickRandom(API_RESOURCES));
+            payload.put("method", pickRandom(HTTP_METHODS));
+            payload.put("statusCode", pickRandomInt(STATUS_CODES));
+            payload.put("latencyMs", MOCK_RANDOM.nextInt(2000) + 10);
+        }
+
+        return payload;
     }
 }

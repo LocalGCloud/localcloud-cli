@@ -1,6 +1,10 @@
 # LocalCloud Console - Quick Start Guide
 
+> **Last updated:** 2026-05-26
+
 Get the LocalCloud Console up and running in 2 minutes.
+
+The console is a Solid.js single-page application served directly by the Armeria gateway — no separate server process needed. It provides a dashboard, service explorer with SQL editor, data browser, log viewer, usage metrics, and settings.
 
 ## Prerequisites
 
@@ -46,13 +50,13 @@ localcloud console
 
 | Feature | Location | What It Does |
 |---------|----------|-------------|
-| **Dashboard** | Home tab | View all 14 services, health status, uptime |
-| **Services** | Services tab | See ports, status, and request counts |
+| **Dashboard** | Home tab | View all 23 services, health status, uptime, request counts |
+| **APIs & Services** | Services tab | See ports, status, routing mode, and env vars per service |
 | **Service Explorer** | Explorer tab | Deep-dive into service data with SQL queries, file browsing, and schema views |
-| **Data Browser** | Data tab | Preview data in Firestore, BigQuery, GCS, Spanner, and more |
-| **Logs** | Logs tab | View request logs in real-time, filter by service |
+| **Data Browser** | Data tab | Preview and mutate data across all services (BigQuery, GCS, Spanner, Firestore, Pub/Sub, Memorystore, Secret Manager) |
+| **Logs** | Logs tab | Real-time request logs with filtering and auto-tail |
 | **Usage** | Usage tab | API usage per service, estimated GCP cost savings |
-| **Settings** | Settings tab | Auto-refresh interval, environment export, about |
+| **Settings** | Settings tab | Env var export (shell/Terraform/Docker Compose), SDK examples, cloud routing, auto-refresh, theme |
 
 ## Troubleshooting
 
@@ -76,10 +80,12 @@ localcloud console
 Browser (http://localhost:8080)
     ↓
 Armeria Gateway (port 8080)
-    ├─ Serves console static files from /opt/localcloud/console/dist/
-    ├─ Admin API at /*
-    ├─ gRPC facade services (Secret Manager, Cloud Tasks, etc.)
-    └─ PostgreSQL (internal persistence)
+    ├─ Serves console static files (Solid.js SPA)
+    ├─ Admin REST API (health, services, browse, seed, reset)
+    ├─ In-process gRPC/REST facades (17 services)
+    ├─ External emulator routing (GCS:4443, Pub/Sub:8085, Firestore:8086,
+    │  Bigtable:8087, Spanner:9010, BigQuery:9050, Memorystore:6379)
+    └─ PostgreSQL 17 (persistence)
 ```
 
 ---

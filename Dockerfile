@@ -170,7 +170,7 @@ ENV GOPRIVATE=github.com/jhsenjaliya/* \
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod init bigtable-build && \
     GOPROXY=direct go get github.com/jhsenjaliya/little_bigtable@${LITTLE_BIGTABLE_VERSION}
-RUN --mount=type=cache,target=/go/pkg/mod \
+RUN --mount=type=cache,target=/go/pkg/mod \ww
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -linkmode external -extldflags -static" \
     -o /out/localcloud-bigtable-emulator github.com/jhsenjaliya/little_bigtable
@@ -335,7 +335,7 @@ RUN echo "${VERSION_VAL}+${BUILD_HASH}.${BUILD_DATE}" > /opt/localcloud/VERSION 
 ENV LOCALCLOUD_VERSION_FILE=/opt/localcloud/VERSION
 
 # 8. Runtime Environment
-ENV JAVA_OPTS="-Xmx256m -Xms64m -XX:+UseSerialGC -Xss256k -XX:MaxMetaspaceSize=96m -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/./urandom" \
+ENV JAVA_OPTS="-Xmx512m -Xms128m -XX:+UseSerialGC -Xss256k -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/./urandom" \
     LOCALCLOUD_PROJECT="local-project" \
     LOCALCLOUD_ENABLE_GCS="true" \
     LOCALCLOUD_ENABLE_PUBSUB="true" \

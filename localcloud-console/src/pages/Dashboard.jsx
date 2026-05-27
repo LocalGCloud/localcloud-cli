@@ -520,10 +520,15 @@ export default function Dashboard(props) {
                         <ServiceIcon id={svc.id} size={18} />
                       </td>
                       <td style={{ "font-weight": "600" }}>
-                        <span style={{ display: 'inline-flex', "align-items": 'center', gap: '8px' }}>
+                        <button
+                          type="button"
+                          class="service-name-link"
+                          onClick={(e) => { e.stopPropagation(); handleRowClick(svc.id); }}
+                          aria-label={`Open ${svc.displayName}`}
+                        >
                           <span>{svc.displayName}</span>
                           <Show when={svc.id === 'firestore' || svc.id === 'vertexai'}><span class="badge badge-coming-up">Coming up</span></Show>
-                        </span>
+                        </button>
                       </td>
                       <td>
                         <span class="status-indicator">

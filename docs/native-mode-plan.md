@@ -21,7 +21,7 @@
 
 ## 1. Why Native Mode?
 
-Currently, LocalCloud runs as a single Docker container managed by supervisord. All 14+ GCP emulated services run inside that container. Native mode removes the Docker dependency and runs each service as a host process.
+Currently, LocalCloud runs as a single Docker container managed by supervisord. All 23 GCP emulated services run inside that container. Native mode removes the Docker dependency and runs each service as a host process.
 
 **Primary motivations:**
 - Faster iteration (no Docker build → restart cycle for Java changes)
@@ -50,6 +50,11 @@ facade      GKE                  (8080)  Java gateway
 facade      Compute Engine       (8080)  Java gateway
 facade      Cloud Run            (8080)  Java gateway
 facade      Cloud Workflows      (8080)  Java gateway
+facade      Cloud Scheduler      (8080)  Java gateway
+facade      Cloud Functions      (8080)  Java gateway
+facade      AlloyDB              (8080)  Java gateway
+facade      Dataproc             (8080)  Java gateway
+facade      Cloud IAM            (8080)  Java gateway
 facade      Vertex AI            (8080)  Java gateway
 facade      Cloud KMS            (8080)  Java gateway
 facade      Cloud SQL            (8080)  Java gateway
@@ -67,7 +72,7 @@ license     License Server       9090    java -jar localcloud-license-server-*.j
 console     Web UI               (8080)  Served by gateway at /
 ```
 
-### Facade Services (14 services, zero external processes)
+### Facade Services (17 services, zero external processes)
 
 These run inside the Java gateway process and require no external binary:
 
@@ -287,7 +292,7 @@ Native mode uses host ports directly. The default port allocations match the Doc
 
 ### 4.1 No Code Changes Required
 
-- All **14 facade services** (in-process Java) — zero changes
+- All **17 facade services** (in-process Java) — zero changes
 - The `services.yaml` registry — still the single source of truth
 - The web console — same build process (`npm run build`)
 - All SDK integration code — same endpoints on `localhost`

@@ -44,6 +44,11 @@ terraform apply
 | `google_secret_manager_secret` | Partial | gRPC works; REST transcoding needed for Terraform |
 | `google_secret_manager_secret_version` | Partial | Same — needs REST transcoding |
 | `google_cloud_tasks_queue` | Partial | gRPC works; REST transcoding needed |
+| `google_workflows_workflow` | Partial | gRPC facade exists; needs REST transcoding for Terraform |
+| `google_cloud_scheduler_job` | Partial | gRPC facade exists; needs REST transcoding |
+| `google_cloudfunctions2_function` | Partial | gRPC facade exists; needs REST transcoding |
+| `google_alloydb_cluster` / `google_alloydb_instance` | Partial | gRPC facade exists; PostgreSQL wire-level data plane works |
+| `google_dataproc_cluster` / `google_dataproc_job` | Partial | gRPC facade exists; local spark-submit for jobs |
 
 ### Planned (Phase 3 — needs CRUD endpoints)
 
@@ -59,11 +64,12 @@ terraform apply
 | Resource | Reason |
 |----------|--------|
 | `google_project` | Projects managed via `/projects` API |
-| `google_project_iam_*` | IAM is permissive by default |
+| `google_project_iam_*` | IAM is permissive by default; use `google_organization_iam_*` stubs |
 | `google_service_account` | Not emulated |
 | `google_dns_*` | DNS not emulated |
-| `google_sql_*` | Cloud SQL not emulated |
 | `google_vpc_*` / `google_compute_network` | Networking not emulated |
+| `google_vertex_ai_*` | Vertex AI facade is metadata-only |
+| `google_kms_*` | KMS facade documentation in progress |
 
 ## Authentication
 

@@ -1,5 +1,5 @@
 import { render } from 'solid-js/web';
-import { createSignal, createEffect, createMemo, onCleanup, Show, For } from 'solid-js';
+import { batch, createSignal, createEffect, createMemo, onCleanup, Show, For } from 'solid-js';
 import { api, setActiveProject } from './api.js';
 import Dashboard from './pages/Dashboard.jsx';
 import Logs from './pages/Logs.jsx';
@@ -84,7 +84,7 @@ function parsePath() {
 
 function buildPath(page, service, subpath) {
     const segments = [];
-    if (service) segments.push(service, page);
+    if (service && SERVICE_PAGES.includes(page)) segments.push(service, page);
     else segments.push(page);
     if (subpath && subpath.length > 0) segments.push(...subpath);
     return '/' + segments.join('/');
@@ -270,9 +270,11 @@ function App() {
     });
 
     const navigateTo = (page) => {
-        setSelectedService(null);
-        setCurrentPage(page);
-        setSubpath([]);
+        batch(() => {
+            setSelectedService(null);
+            setCurrentPage(page);
+            setSubpath([]);
+        });
         navigate(buildPath(page, null));
         setSearchOpen(false);
         setSettingsMenuOpen(false);
@@ -280,9 +282,11 @@ function App() {
     };
 
     const handleServiceClick = (serviceId) => {
-        setSelectedService(serviceId);
-        setCurrentPage('explorer');
-        setSubpath([]);
+        batch(() => {
+            setSelectedService(serviceId);
+            setCurrentPage('explorer');
+            setSubpath([]);
+        });
         navigate(buildPath('explorer', serviceId));
         setSearchOpen(false);
         setSettingsMenuOpen(false);
@@ -569,16 +573,29 @@ function App() {
 
             <Show when={showNewProjectDialog()}>
                 <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="new-project-title" onClick={(e) => { if (e.target === e.currentTarget) { setShowNewProjectDialog(false); setProjectError(null); } }}>
-                    <div class="card modal-card" onClick={(e) => e.stopPropagation()}>
-                        <h2 id="new-project-title">New Project</h2>
-                        <Show when={projectError()}><div class="alert alert-error" role="alert">{projectError()}</div></Show>
-                        <label class="form-label" for="project-id-input">Project ID</label>
-                        <input id="project-id-input" name="project-id" autocomplete="off" class="form-input form-input-mono" value={newProjectId()} onInput={(e) => setNewProjectId(e.currentTarget.value)} placeholder="my-project" />
-                        <label class="form-label" for="project-name-input">Display Name</label>
-                        <input id="project-name-input" name="project-display-name" autocomplete="off" class="form-input" value={newProjectName()} onInput={(e) => setNewProjectName(e.currentTarget.value)} placeholder="My Project" />
-                        <div class="modal-actions">
-                            <button class="btn btn-secondary" onClick={() => { setShowNewProjectDialog(false); setProjectError(null); }}>Cancel</button>
-                            <button class="btn btn-primary" onClick={handleCreateProject} disabled={!newProjectId().trim()}>Create</button>
+                    <div class="create-dialog" onClick={(e) => e.stopPropagation()}>
+                        <div class="create-dialog-accent" style="background:var(--purple)" />
+                        <div class="create-dialog-header">
+                            <div class="create-dialog-header-icon" style="color:var(--purple);border-color:var(--purple-soft);background:var(--purple-soft)">
+                                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                            </div>
+                            <h2 id="new-project-title" class="create-dialog-title">New Project</h2>
+                            <p class="create-dialog-context">Create a new GCP project for local development</p>
+                        </div>
+                        <div class="create-dialog-body">
+                            <Show when={projectError()}><div class="create-dialog-error" role="alert">{projectError()}</div></Show>
+                            <div class="create-dialog-field">
+                                <label class="create-dialog-label" for="project-id-input">Project ID</label>
+                                <input id="project-id-input" name="project-id" autocomplete="off" class="create-dialog-input create-dialog-input-mono" value={newProjectId()} onInput={(e) => setNewProjectId(e.currentTarget.value)} placeholder="my-project" />
+                            </div>
+                            <div class="create-dialog-field">
+                                <label class="create-dialog-label" for="project-name-input">Display Name</label>
+                                <input id="project-name-input" name="project-display-name" autocomplete="off" class="create-dialog-input" value={newProjectName()} onInput={(e) => setNewProjectName(e.currentTarget.value)} placeholder="My Project" />
+                            </div>
+                        </div>
+                        <div class="create-dialog-footer">
+                            <button class="create-dialog-btn-cancel" onClick={() => { setShowNewProjectDialog(false); setProjectError(null); }}>Cancel</button>
+                            <button class="create-dialog-btn-submit" style="background:var(--purple);color:#fff" onClick={handleCreateProject} disabled={!newProjectId().trim()}>Create</button>
                         </div>
                     </div>
                 </div>

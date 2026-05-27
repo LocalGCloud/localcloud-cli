@@ -1,8 +1,8 @@
 # LocalCloud — Tech Debt Register
 
-> Generated: 2026-05-02
-> Last updated: 2026-05-02
-> Scope: All 16 OpenSpec changes + existing codebase
+> Generated: 2026-05-26
+> Last updated: 2026-05-26
+> Scope: All 28+ OpenSpec changes + existing codebase
 > Total items: 30 (18 active, 12 resolved)
 
 ---

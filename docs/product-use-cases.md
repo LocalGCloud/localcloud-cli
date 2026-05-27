@@ -1,14 +1,14 @@
 # LocalCloud Product Use Cases
 
-**Document version:** 1.0
-**Last updated:** 2026-05-21
+**Document version:** 1.1
+**Last updated:** 2026-05-26
 **Status:** Living document
 
 ---
 
 ## Overview
 
-LocalCloud emulates 18 GCP services inside a single Docker container — providing a production-like Google Cloud environment that runs entirely locally. This document captures the primary product use cases, the personas they serve, and concrete examples of how each use case works in practice.
+LocalCloud emulates 23 GCP services inside a single Docker container — providing a production-like Google Cloud environment that runs entirely locally. This document captures the primary product use cases, the personas they serve, and concrete examples of how each use case works in practice.
 
 > **What LocalCloud is:** A full GCP service emulator — same SDKs, same APIs, same protocols. Zero code changes.
 >
@@ -479,7 +479,7 @@ The **local development** use case is the entry point — it gets the tool in fr
 | Bigtable | Pro tier | Pro tier | Pro tier | Pro tier | Pro tier |
 | Cloud Logging | Yes | Yes | --- | Yes | Yes |
 | Cloud Monitoring | Yes | Yes | --- | Yes | Yes |
-| Memorystore (Redis) | Yes | Yes | --- | Yes | Yes |
+| Memorystore (Redis/Valkey) | Yes | Yes | --- | Yes | Yes |
 | Cloud Workflows | Yes | Yes | --- | Yes | Yes |
 | GKE | Pro tier | Pro tier | Pro tier | Pro tier | Pro tier |
 | Compute Engine | Pro tier | Pro tier | Pro tier | Pro tier | Pro tier |
@@ -494,7 +494,7 @@ The **local development** use case is the entry point — it gets the tool in fr
 
 | Tier | Typical Buyer | Covers Use Cases | Services |
 |------|---------------|-------------------|----------|
-| **Community** (Free) | Individual developers | Local Dev, Training (individual) | 11 community-tier services |
-| **Pro** (Per-seat) | Teams, startups | All use cases, individual devs | All 18 services |
+| **Community** (Free) | Individual developers | Local Dev, Training (individual) | 15 community-tier services |
+| **Pro** (Per-seat) | Teams, startups | All use cases, individual devs | All 23 services |
 | **Team** (Per-seat, org-managed) | Engineering teams | CI/CD + Local Dev + Training | All services + team management |
 | **Enterprise** (Site license) | Platform orgs, ISVs | All use cases, unlimited seats | All services + license server + audit |

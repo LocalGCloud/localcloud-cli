@@ -1,8 +1,10 @@
 # LocalCloud
 
+> **Last updated:** 2026-05-26
+
 Google Cloud Platform — in a box.
 
-LocalCloud emulates 20 GCP services inside a single Docker container so you can develop and test locally without cloud access, credentials, or costs. Your application code works against LocalCloud with **zero code changes** — just point your GCP SDKs at localhost.
+LocalCloud emulates 23 GCP services inside a single Docker container so you can develop and test locally without cloud access, credentials, or costs. Your application code works against LocalCloud with **zero code changes** — just point your GCP SDKs at localhost.
 
 ## Emulated Services
 
@@ -22,12 +24,15 @@ LocalCloud emulates 20 GCP services inside a single Docker container so you can 
 | Compute Engine | REST | 8080 |
 | Cloud Run | gRPC | 8080 |
 | Memorystore (Redis) | RESP2 | 6379 |
-| Cloud Workflows | REST | 8080 |
+| Cloud Workflows | gRPC | 8080 |
 | Cloud Scheduler | gRPC | 8080 |
 | Cloud Functions (2nd gen) | gRPC | 8080 |
 | AlloyDB | gRPC | 8080 |
 | Dataproc | gRPC | 8080 |
 | Cloud IAM | gRPC | 8080 |
+| Vertex AI | REST | 8080 |
+| Cloud KMS | REST | 8080 |
+| Cloud SQL | REST | 8080 |
 
 ## Quick Start
 
@@ -75,7 +80,7 @@ blob.upload_from_string("Hello, LocalCloud!")
 
 ### Prerequisites
 
-- Java 21+ (JDK, for building the server JAR)
+- Java 25+ (JDK, for building the server JAR)
 - Docker
 - Node.js 18+ (for the web console)
 
@@ -134,7 +139,7 @@ docker logs -f localcloud
 ### Run Tests
 
 ```bash
-# Java server tests (187 unit tests)
+# Java server tests (930+ unit tests)
 cd localcloud-server && ./gradlew test
 ```
 
@@ -173,9 +178,18 @@ Individual service flags (set to `true` or `false`):
 | `LOCALCLOUD_ENABLE_LOGGING` | `true` |
 | `LOCALCLOUD_ENABLE_MONITORING` | `true` |
 | `LOCALCLOUD_ENABLE_MEMORYSTORE` | `true` |
+| `LOCALCLOUD_ENABLE_WORKFLOWS` | `true` |
+| `LOCALCLOUD_ENABLE_CLOUDSCHEDULER` | `true` |
+| `LOCALCLOUD_ENABLE_CLOUDFUNCTIONS` | `true` |
+| `LOCALCLOUD_ENABLE_ALLOYDB` | `true` |
+| `LOCALCLOUD_ENABLE_DATAPROC` | `true` |
+| `LOCALCLOUD_ENABLE_CLOUDIAM` | `true` |
 | `LOCALCLOUD_ENABLE_GKE` | `false` |
 | `LOCALCLOUD_ENABLE_COMPUTE` | `false` |
 | `LOCALCLOUD_ENABLE_CLOUDRUN` | `false` |
+| `LOCALCLOUD_ENABLE_VERTEXAI` | `false` |
+| `LOCALCLOUD_ENABLE_KMS` | `false` |
+| `LOCALCLOUD_ENABLE_CLOUDSQL` | `false` |
 
 ### Examples
 
@@ -346,19 +360,25 @@ docker run -e LOCALCLOUD_TELEMETRY=false ...
 
 ## Documentation
 
-See the [Developer Guide](DEVELOPER_GUIDE.md) for complete documentation including:
+| Document | Type | Description |
+|----------|------|-------------|
+| [Developer Guide](DEVELOPER_GUIDE.md) | How-to | Complete usage guide: setup, SDK examples, Terraform, Docker Compose, troubleshooting |
+| [Console Quickstart](CONSOLE_QUICKSTART.md) | Tutorial | Get the web console running in 2 minutes |
+| [Service Status Matrix](docs/SERVICE_STATUS.md) | Reference | Canonical per-service coverage, tier, port, and limitation matrix |
+| [Architecture](docs/ARCHITECTURE.md) | Reference | System design, container layout, data flow, key decisions |
+| [Building from Source](docs/BUILDING.md) | How-to | Build server, console, and Docker image |
+| [Glossary](docs/GLOSSARY.md) | Reference | Terminology dictionary |
+| [Contributing](.github/CONTRIBUTING.md) | How-to | Development workflow, code conventions, testing |
+| [Terraform Compatibility](terraform/COMPATIBILITY.md) | Reference | Terraform resource support matrix |
+| [Tech Debt Register](docs/TECH_DEBT.md) | Reference | Known technical debt and architectural concerns |
 
-- All service details and limitations
-- SDK code examples (Python, Java)
-- Terraform integration guide
-- Environment variable reference
-- Docker Compose integration patterns
-- IAM modes (permissive, strict, gcp-live)
-- Seed file format
-- Troubleshooting
-
-Also see: [Terraform Compatibility Matrix](terraform/COMPATIBILITY.md) | [Console Quickstart](CONSOLE_QUICKSTART.md)
+**Service-specific deep dives:**
+- [BigQuery Coverage Gaps](docs/bigquery-coverage-gaps.md)
+- [BigQuery Feature Comparison](docs/bigquery-feature-comparison.md)
+- [Bigtable Feature Coverage](docs/bigtable-feature-coverage.md)
+- [Pub/Sub Comparison](docs/pubsub-comparison.md)
+- [Spanner Feature Gaps](docs/spanner-emulator-feature-gaps.md)
 
 ## License
 
-See [../localcloud-site/LICENSE](../localcloud-site/LICENSE) - Proprietary. Free for individual developers for personal use, learning, and evaluation. No production or commercial use permitted.
+Proprietary. Free for individual developers for personal use, learning, and evaluation. No production or commercial use permitted.

@@ -6,6 +6,21 @@ import { generateMockRow } from '../utils/mockGenerator.js';
 
 const QUERY_HISTORY_SERVICES = new Set(['spanner', 'bigquery', 'alloydb', 'cloudsql', 'bigtable', 'memorystore']);
 
+const SERVICES_WITH_INFO_SCHEMA = new Set(['bigquery', 'spanner', 'alloydb', 'cloudsql']);
+
+const INFO_SCHEMA_VIEWS = {
+    bigquery: ['tables', 'columns', 'schemata', 'views', 'routines', 'partitions', 'table_storage'],
+    spanner: ['tables', 'columns', 'table_statistics'],
+    alloydb: ['tables', 'columns', 'schemata', 'views', 'routines'],
+    cloudsql: ['tables', 'columns', 'schemata', 'views', 'routines'],
+};
+
+const INFO_SCHEMA_VIEW_LABELS = {
+    tables: 'TABLES', columns: 'COLUMNS', schemata: 'SCHEMATA', views: 'VIEWS',
+    routines: 'ROUTINES', partitions: 'PARTITIONS', table_storage: 'TABLE_STORAGE',
+    table_statistics: 'TABLE_STATISTICS',
+};
+
 function idFromName(name) {
     if (!name) return '';
     const s = String(name);
@@ -206,12 +221,30 @@ const adapters = {
             const key = (table.keyColumns?.[0]) || table.columns[0]?.name;
             return api.mutateSub('spanner', 'rows', 'delete', { instance: path[0].id, database: path[1].id, table: path[2].id, keyColumns: [key], keyValues: [[rowValue(row, key)]] });
         },
-        async deleteTable(path) {
+        deleteTable(path) {
             return api.mutate('spanner', 'ddl', { instance: path[0].id, database: path[1].id, statements: [`DROP TABLE ${path[2].id}`] });
         },
         async stats(path) {
             if (path.length >= 2) return api.spannerStats(path[0].id, path[1].id);
             return null;
+        },
+        infoSchema: {
+            views: ['tables', 'columns'],
+            async load(viewType, path) {
+                const viewMap = {
+                    tables: "SELECT t.table_catalog, t.table_schema, t.table_name, t.table_type FROM information_schema.tables t WHERE t.table_schema = '' ORDER BY t.table_name",
+                    columns: "SELECT c.table_name, c.column_name, c.spanner_type, c.is_nullable FROM information_schema.columns c WHERE c.table_schema = '' ORDER BY c.table_name, c.ordinal_position",
+                };
+                const sql = viewMap[viewType] || viewMap.tables;
+                const instanceId = path?.[0]?.id || '';
+                const databaseId = path?.[1]?.id || '';
+                const result = await api.query('spanner', sql, { instance: instanceId, database: databaseId });
+                return { columns: result.columns || [], rows: (result.rows || []).map(row => {
+                    const obj = {};
+                    result.columns.forEach((col, i) => obj[col] = row[i]);
+                    return obj;
+                })};
+            },
         },
     },
     bigquery: {
@@ -254,6 +287,12 @@ const adapters = {
             return api.mutateSub('bigquery', 'rows', 'delete', { dataset: path[0].id, table: path[1].id, whereClause: `${key} = '${String(rowValue(row, key)).replace(/'/g, "''")}'` });
         },
         deleteTable(path) { return api.mutateSub('bigquery', 'tables', 'delete', { datasetId: path[0].id, tableId: path[1].id }); },
+        infoSchema: {
+            views: INFO_SCHEMA_VIEWS.bigquery,
+            async load(viewType) {
+                return api.bigqueryInfoSchema(viewType);
+            },
+        },
     },
     alloydb: {
         serviceName: 'AlloyDB',
@@ -301,23 +340,40 @@ const adapters = {
             return api.mutateSub('alloydb', 'rows', 'delete', { clusterId: path[0].id, database: path[2].id, table: path[3].id, keyColumn: key, keyValue: rowValue(row, key) });
         },
         deleteTable(path) { return api.mutateSub('alloydb', 'tables', 'delete', { clusterId: path[0].id, database: path[2].id, table: path[3].id }); },
+        infoSchema: {
+            views: INFO_SCHEMA_VIEWS.alloydb,
+            async load(viewType, path) {
+                const viewMap = {
+                    tables: "SELECT table_catalog, table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
+                    columns: "SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position",
+                    schemata: "SELECT catalog_name, schema_name, schema_owner FROM information_schema.schemata ORDER BY schema_name",
+                    views: "SELECT table_catalog, table_schema, table_name, view_definition FROM information_schema.views WHERE table_schema = 'public' ORDER BY table_name",
+                    routines: "SELECT routine_name, routine_type, data_type FROM information_schema.routines WHERE routine_schema = 'public' ORDER BY routine_name",
+                };
+                const sql = viewMap[viewType] || viewMap.tables;
+                const database = path?.[2]?.id || null;
+                const result = await api.query('alloydb', sql, database ? { database } : {});
+                return { columns: result.columns || [], rows: (result.rows || []).map(row => {
+                    const obj = {};
+                    result.columns.forEach((col, i) => obj[col] = row[i]);
+                    return obj;
+                })};
+            },
+        },
     },
     bigtable: {
         serviceName: 'Bigtable',
         rootType: 'instance',
         levels: ['instance', 'table'],
         root(data) {
-            if (Array.isArray(data)) return data.map(i => makeNode('instance', i.id, i.id, i));
-            const byInstance = {};
-            (data?.tables || []).forEach(t => {
-                const inst = t.instance || 'default';
-                byInstance[inst] ||= { id: inst, tables: [] };
-                byInstance[inst].tables.push({ id: t.table, name: t.table, columnFamilies: [] });
-            });
-            return Object.values(byInstance).map(i => makeNode('instance', i.id, i.id, i));
+            return (data?.instances || []).map(i => makeNode('instance', i.instanceId, i.instanceId, i, { tables: 0, type: i.instanceType }));
         },
         async children(path) {
-            return (path[0].raw?.tables || []).map(t => makeNode('table', t.id || t.name, t.name || t.id, t));
+            if (path.length === 1) {
+                const result = await api.browse('bigtable', 'instances/' + encodeURIComponent(path[0].id));
+                return (result.tables || []).map(t => makeNode('table', t.tableId, t.tableId, t, { granularity: t.granularity }));
+            }
+            return [];
         },
         async table(path) {
             const result = await api.browse('bigtable', `tables/${path[0].id}/${path[1].id}`);
@@ -388,23 +444,53 @@ const adapters = {
     },
     cloudsql: {
         serviceName: 'Cloud SQL',
-        rootType: 'schema',
-        levels: ['schema', 'table'],
+        rootType: 'instance',
+        levels: ['instance', 'database', 'table'],
         root(data) {
-            return [makeNode('schema', 'public', 'public', { tables: data?.tables || [] }, { tables: (data?.tables || []).length })];
+            return (data?.instances || []).map(inst =>
+                makeNode('instance', inst.instanceId, inst.instanceId, inst, {
+                    databases: 0,
+                    version: inst.databaseVersion,
+                })
+            );
         },
         async children(path) {
-            return (path[0].raw?.tables || []).map(t => makeNode('table', t.name, t.name, t, { columns: (t.columns || []).length }));
+            if (path.length === 1) {
+                const result = await api.browse('cloudsql', 'instances/' + encodeURIComponent(path[0].id));
+                return [
+                    ...((result.databases || []).map(db =>
+                        makeNode('database', db.databaseName, db.databaseName, db, { charset: db.charset })
+                    )),
+                    ...((result.users || []).map(user =>
+                        makeNode('user', user.userName, user.userName, user, { host: user.host })
+                    )),
+                ];
+            }
+            return [];
         },
         async table(path) {
-            const columns = normalizeColumns(path[1].raw?.columns || []);
-            return {
-                columns: [{ name: 'column', type: 'TEXT' }, { name: 'type', type: 'TEXT' }],
-                rows: columns.map(c => ({ column: c.name, type: c.type })),
-                ddl: createTableDdl(path[1].id, columns, { qualifiedName: `"public".${quoteIdent(path[1].id)}` }),
-            };
+            return { columns: [], rows: [], ddl: '-- Cloud SQL metadata view --' };
         },
-        tableActions: { ddl: true },
+        tableActions: {},
+        infoSchema: {
+            views: INFO_SCHEMA_VIEWS.cloudsql,
+            async load(viewType) {
+                const viewMap = {
+                    tables: "SELECT table_catalog, table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
+                    columns: "SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position",
+                    schemata: "SELECT catalog_name, schema_name, schema_owner FROM information_schema.schemata ORDER BY schema_name",
+                    views: "SELECT table_catalog, table_schema, table_name, view_definition FROM information_schema.views WHERE table_schema = 'public' ORDER BY table_name",
+                    routines: "SELECT routine_name, routine_type, data_type FROM information_schema.routines WHERE routine_schema = 'public' ORDER BY routine_name",
+                };
+                const sql = viewMap[viewType] || viewMap.tables;
+                const result = await api.query('cloudsql', sql);
+                return { columns: result.columns || [], rows: (result.rows || []).map(row => {
+                    const obj = {};
+                    result.columns.forEach((col, i) => obj[col] = row[i]);
+                    return obj;
+                })};
+            },
+        },
     },
 };
 
@@ -427,6 +513,10 @@ export default function DatabaseExplorer(props) {
     const [ddlCopied, setDdlCopied] = createSignal(false);
     const [tableError, setTableError] = createSignal(null);
     const [addMenuOpen, setAddMenuOpen] = createSignal(false);
+    const [showInfoSchema, setShowInfoSchema] = createSignal(false);
+    const [infoSchemaView, setInfoSchemaView] = createSignal(null);
+    const [infoSchemaData, setInfoSchemaData] = createSignal(null);
+    const [infoSchemaLoading, setInfoSchemaLoading] = createSignal(false);
 
     const rootNodes = createMemo(() => adapter()?.root(props.data?.()) || []);
     const selected = createMemo(() => path()[path().length - 1] || null);
@@ -511,6 +601,9 @@ export default function DatabaseExplorer(props) {
         setTableError(null);
         setAddMenuOpen(false);
         setActiveTab('browse');
+        setShowInfoSchema(false);
+        setInfoSchemaView(null);
+        setInfoSchemaData(null);
     });
 
     const breadcrumbs = createMemo(() => [
@@ -618,12 +711,49 @@ export default function DatabaseExplorer(props) {
         });
     };
 
+    const infoSchemaAdapter = () => {
+        const a = adapter()?.infoSchema;
+        if (!a) return null;
+        // Spanner Info Schema requires a database (path.length >= 2)
+        if (props.serviceId === 'spanner' && path().length < 2) return null;
+        // AlloyDB Info Schema requires a database (path.length >= 3: cluster > instance > database)
+        if (props.serviceId === 'alloydb' && path().length < 3) return null;
+        return a;
+    };
+
+    const loadInfoSchema = async (viewType) => {
+        const is = infoSchemaAdapter();
+        if (!is) return;
+        setInfoSchemaLoading(true);
+        try {
+            const data = await is.load(viewType, path());
+            setInfoSchemaData(data);
+        } catch (e) {
+            setInfoSchemaData({ columns: ['error'], rows: [{ error: e.message || 'Failed to load' }] });
+        } finally {
+            setInfoSchemaLoading(false);
+        }
+    };
+
+    const toggleInfoSchema = () => {
+        const is = infoSchemaAdapter();
+        if (!is) return;
+        if (showInfoSchema()) {
+            setShowInfoSchema(false);
+        } else {
+            setShowInfoSchema(true);
+            const defaultView = is.views?.[0] || 'tables';
+            setInfoSchemaView(defaultView);
+            loadInfoSchema(defaultView);
+        }
+    };
+
     const tabStyle = (tab) => ({
         padding: '6px 14px',
         border: '1px solid var(--border)',
         'border-radius': '4px',
-        background: activeTab() === tab ? 'var(--primary)' : 'var(--surface)',
-        color: activeTab() === tab ? '#fff' : 'var(--text-secondary)',
+        background: activeTab() === tab || (tab === 'infoSchema' && showInfoSchema()) ? 'var(--primary)' : 'var(--surface)',
+        color: activeTab() === tab || (tab === 'infoSchema' && showInfoSchema()) ? '#fff' : 'var(--text-secondary)',
         cursor: 'pointer',
         'font-size': '13px',
     });
@@ -707,10 +837,11 @@ export default function DatabaseExplorer(props) {
             <DataBreadcrumb crumbs={breadcrumbs()} />
             <div style="display:flex;align-items:center;justify-content:space-between;margin:10px 0 12px;gap:12px;flex-wrap:wrap">
                 <div style="display:flex;gap:8px;flex-wrap:wrap">
-                    <button style={tabStyle('browse')} onClick={() => setActiveTab('browse')}>Browse</button>
+                    <button style={tabStyle('browse')} onClick={() => { setActiveTab('browse'); setShowInfoSchema(false); }}>Browse</button>
                     <button style={tabStyle('stats')} onClick={() => { setActiveTab('stats'); loadStats(); }}>Statistics</button>
                     <Show when={canShowHistory(props.serviceId)}><button style={tabStyle('history')} onClick={() => { setActiveTab('history'); loadHistory(); }}>History</button></Show>
                     <Show when={operations().length > 0}><button style={tabStyle('operations')} onClick={() => setActiveTab('operations')}>Operations</button></Show>
+                    <Show when={infoSchemaAdapter()}><button style={tabStyle('infoSchema')} onClick={toggleInfoSchema}>Info Schema</button></Show>
                 </div>
                 <Show when={action()}><button class="btn btn-primary" onClick={runPrimaryAction}>{action().label}</button></Show>
             </div>
@@ -729,6 +860,18 @@ export default function DatabaseExplorer(props) {
             </Show>
             <Show when={!loading() && activeTab() === 'operations'}>
                 <OperationsPanel operations={operations()} />
+            </Show>
+
+            <Show when={!loading() && showInfoSchema() && infoSchemaAdapter()}>
+                <InfoSchemaBrowser
+                    serviceId={props.serviceId}
+                    views={infoSchemaAdapter().views}
+                    view={infoSchemaView()}
+                    onSelectView={(v) => { setInfoSchemaView(v); loadInfoSchema(v); }}
+                    loading={infoSchemaLoading()}
+                    data={infoSchemaData()}
+                    onClose={() => setShowInfoSchema(false)}
+                />
             </Show>
 
             <Show when={ddlText()}>
@@ -812,6 +955,52 @@ function OperationsPanel(props) {
                 <thead><tr><th>Time</th><th>Operation</th><th>Target</th><th>Status</th><th>Error</th></tr></thead>
                 <tbody><For each={props.operations}>{op => <tr><td>{op.at}</td><td>{op.operation}</td><td>{op.target}</td><td>{op.status}</td><td>{op.error || ''}</td></tr>}</For></tbody>
             </table>
+        </div>
+    );
+}
+
+function InfoSchemaBrowser(props) {
+    const views = () => props.views || [];
+    return (
+        <div style="margin-bottom:20px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface-variant);border-bottom:1px solid var(--border)">
+                <div style="display:flex;align-items:center;gap:8px">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                    <span style="font-size:13px;font-weight:600">INFORMATION_SCHEMA</span>
+                    <span style="font-size:11px;color:var(--text-tertiary);text-transform:uppercase">{props.serviceId}</span>
+                </div>
+                <button onClick={props.onClose} style="padding:2px 8px;border:none;background:none;color:var(--text-tertiary);cursor:pointer;font-size:16px;line-height:1">&times;</button>
+            </div>
+            <div style="display:flex;gap:2px;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--border);overflow-x:auto">
+                <For each={views()}>{v => (
+                    <button onClick={() => props.onSelectView(v)} style={{
+                        padding: '5px 12px', border: 'none', borderRadius: '5px', cursor: 'pointer',
+                        fontSize: '11px', fontWeight: props.view === v ? 600 : 400,
+                        background: props.view === v ? 'var(--primary)' : 'transparent',
+                        color: props.view === v ? '#fff' : 'var(--text-secondary)',
+                        transition: 'all 0.15s', whiteSpace: 'nowrap'
+                    }}>{INFO_SCHEMA_VIEW_LABELS[v] || v}</button>
+                )}</For>
+            </div>
+            <div style="max-height:400px;overflow:auto;padding:12px 14px;background:var(--bg)">
+                <Show when={!props.loading && props.data} fallback={
+                    <Show when={props.loading} fallback={
+                        <div class="empty-state" style="padding:24px;text-align:center;color:var(--text-tertiary);font-size:13px">Select a view above to browse system metadata</div>
+                    }>
+                        <div class="loading-state" style="padding:24px"><div class="loading-spinner" /> Loading…</div>
+                    </Show>
+                }>
+                    <table class="data-table" style="font-size:12px">
+                        <thead><tr><For each={(props.data?.columns || [])}>{(col) => <th style="position:sticky;top:0;background:var(--bg)">{col}</th>}</For></tr></thead>
+                        <tbody>
+                            <For each={(props.data?.rows || [])}>{(row) => (
+                                <tr><For each={(props.data?.columns || [])}>{(col) => <td style="font-family:var(--font-mono);font-size:11px">{row[col] != null ? String(row[col]) : <span style="color:var(--text-tertiary);font-style:italic">NULL</span>}</td>}</For></tr>
+                            )}</For>
+                        </tbody>
+                    </table>
+                    <div style="padding:6px 0;font-size:10px;color:var(--text-tertiary)">{(props.data?.rows || []).length} rows</div>
+                </Show>
+            </div>
         </div>
     );
 }

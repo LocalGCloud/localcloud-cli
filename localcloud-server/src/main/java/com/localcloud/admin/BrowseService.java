@@ -194,7 +194,12 @@ public class BrowseService {
             String json = switch (service) {
                 case "spanner" -> browseSpannerDatabase(a, b, c, projectId);
                 case "bigquery" -> browseBigQueryTables(a, b, c, projectId);
-                case "bigtable" -> browseBigtable(a, b + "/" + c, projectId);
+                case "bigtable" -> {
+                    if ("tables".equals(a)) {
+                        yield browseBigtableTableRows(b, c, projectId);
+                    }
+                    yield browseBigtableAdmin(a, b, projectId);
+                }
                 case "alloydb" -> {
                     if ("tables".equals(a)) {
                         yield browseAlloyDBTables(b, c, projectId);
@@ -272,16 +277,17 @@ public class BrowseService {
                 case "cloudtasks" -> browseCloudTasks(resourceType, resourceId, projectId);
                 case "logging" -> browseLogging(resourceType, resourceId, projectId);
                 case "monitoring" -> browseMonitoring(resourceType, resourceId, projectId);
-                case "memorystore" -> browseMemorystore(resourceType, resourceId, projectId);
+                case "memorystore" -> browseMemorystoreAdmin(resourceType, resourceId, projectId);
                 case "spanner" -> browseSpanner(resourceType, resourceId, projectId);
                 case "firestore" -> browseFirestore(resourceType, resourceId, projectId);
-                case "bigtable" -> browseBigtable(resourceType, resourceId, projectId);
+                case "bigtable" -> browseBigtableAdmin(resourceType, resourceId, projectId);
                 case "workflows" -> browseWorkflows(resourceType, resourceId, projectId);
                 case "cloudscheduler" -> browseCloudScheduler(resourceType, resourceId, projectId);
                 case "cloudfunctions" -> browseCloudFunctions(resourceType, resourceId, projectId);
                 case "alloydb" -> browseAlloyDB(resourceType, resourceId, projectId);
                 case "dataproc" -> browseDataproc(resourceType, resourceId, projectId);
                 case "cloudiam" -> browseCloudIAM(resourceType, resourceId, projectId);
+                case "cloudsql" -> browseCloudSql(resourceType, resourceId, projectId);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unknown service: " + service));
@@ -1968,6 +1974,184 @@ public class BrowseService {
             }
         }
         return mapper.writeValueAsString(Map.of("policies", policies));
+    }
+
+    private String browseCloudSql(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        if (resourceType == null || "instances".equals(resourceType) && resourceId == null) {
+            List<Map<String, Object>> instances = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT instance_id, region, database_version, tier, state, backend_type, connection_name, created_at " +
+                     "FROM cloudsql_instances WHERE project_id = ? ORDER BY instance_id")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> inst = new LinkedHashMap<>();
+                        inst.put("instanceId", rs.getString("instance_id"));
+                        inst.put("region", rs.getString("region"));
+                        inst.put("databaseVersion", rs.getString("database_version"));
+                        inst.put("tier", rs.getString("tier"));
+                        inst.put("state", rs.getString("state"));
+                        inst.put("backendType", rs.getString("backend_type"));
+                        inst.put("connectionName", rs.getString("connection_name"));
+                        inst.put("createdAt", rs.getTimestamp("created_at"));
+                        instances.add(inst);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("instances", instances));
+        }
+        if ("instances".equals(resourceType) && resourceId != null) {
+            List<Map<String, Object>> databases = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT database_name, charset, collation, physical_name, created_at " +
+                     "FROM cloudsql_databases WHERE project_id = ? AND instance_id = ? ORDER BY database_name")) {
+                ps.setString(1, projectId);
+                ps.setString(2, resourceId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> db = new LinkedHashMap<>();
+                        db.put("databaseName", rs.getString("database_name"));
+                        db.put("charset", rs.getString("charset"));
+                        db.put("collation", rs.getString("collation"));
+                        db.put("physicalName", rs.getString("physical_name"));
+                        db.put("createdAt", rs.getTimestamp("created_at"));
+                        databases.add(db);
+                    }
+                }
+            }
+            List<Map<String, Object>> users = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT user_name, host, created_at " +
+                     "FROM cloudsql_users WHERE project_id = ? AND instance_id = ? ORDER BY user_name")) {
+                ps.setString(1, projectId);
+                ps.setString(2, resourceId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> user = new LinkedHashMap<>();
+                        user.put("userName", rs.getString("user_name"));
+                        user.put("host", rs.getString("host"));
+                        user.put("createdAt", rs.getTimestamp("created_at"));
+                        users.add(user);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("instance", resourceId, "databases", databases, "users", users));
+        }
+        if ("databases".equals(resourceType)) {
+            List<Map<String, Object>> databases = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT d.database_name, d.charset, d.collation, d.physical_name, d.instance_id, d.created_at " +
+                     "FROM cloudsql_databases d WHERE d.project_id = ? ORDER BY d.instance_id, d.database_name")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> db = new LinkedHashMap<>();
+                        db.put("databaseName", rs.getString("database_name"));
+                        db.put("instanceId", rs.getString("instance_id"));
+                        db.put("charset", rs.getString("charset"));
+                        db.put("collation", rs.getString("collation"));
+                        db.put("physicalName", rs.getString("physical_name"));
+                        db.put("createdAt", rs.getTimestamp("created_at"));
+                        databases.add(db);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("databases", databases));
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown Cloud SQL browse path: " + resourceType));
+    }
+
+    private String browseBigtableAdmin(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        if (resourceType == null || "instances".equals(resourceType) && resourceId == null) {
+            List<Map<String, Object>> instances = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT instance_id, display_name, instance_type, state, created_at " +
+                     "FROM bigtable_instances WHERE project_id = ? ORDER BY instance_id")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> inst = new LinkedHashMap<>();
+                        inst.put("instanceId", rs.getString("instance_id"));
+                        inst.put("displayName", rs.getString("display_name"));
+                        inst.put("instanceType", rs.getString("instance_type"));
+                        inst.put("state", rs.getString("state"));
+                        inst.put("createdAt", rs.getTimestamp("created_at"));
+                        instances.add(inst);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("instances", instances));
+        }
+        if ("instances".equals(resourceType) && resourceId != null) {
+            List<Map<String, Object>> tables = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT table_id, granularity, created_at " +
+                     "FROM bigtable_tables WHERE project_id = ? AND instance_id = ? ORDER BY table_id")) {
+                ps.setString(1, projectId);
+                ps.setString(2, resourceId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> table = new LinkedHashMap<>();
+                        table.put("tableId", rs.getString("table_id"));
+                        table.put("granularity", rs.getString("granularity"));
+                        table.put("createdAt", rs.getTimestamp("created_at"));
+                        tables.add(table);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("instance", resourceId, "tables", tables));
+        }
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown Bigtable browse path: " + resourceType));
+    }
+
+    private String browseBigtableTableRows(String instanceId, String tableId, String projectId) throws Exception {
+        try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+            return mapper.writeValueAsString(Map.of(
+                    "rows", client.readRows(projectId, instanceId, tableId, 50),
+                    "table", tableId,
+                    "instance", instanceId));
+        }
+    }
+
+    private String browseMemorystoreAdmin(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        List<Map<String, Object>> instances = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "SELECT instance_id, display_name, tier, redis_version, memory_size_gb, state, host, port, created_at " +
+                 "FROM memorystore_instances WHERE project_id = ? ORDER BY instance_id")) {
+            ps.setString(1, projectId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> inst = new LinkedHashMap<>();
+                    inst.put("instanceId", rs.getString("instance_id"));
+                    inst.put("displayName", rs.getString("display_name"));
+                    inst.put("tier", rs.getString("tier"));
+                    inst.put("redisVersion", rs.getString("redis_version"));
+                    inst.put("memorySizeGb", rs.getInt("memory_size_gb"));
+                    inst.put("state", rs.getString("state"));
+                    inst.put("host", rs.getString("host"));
+                    inst.put("port", rs.getInt("port"));
+                    inst.put("createdAt", rs.getTimestamp("created_at"));
+                    instances.add(inst);
+                }
+            }
+        }
+        return mapper.writeValueAsString(Map.of("instances", instances));
     }
 
     // ========== GCS bucket ownership helpers ==========

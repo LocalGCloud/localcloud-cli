@@ -29,6 +29,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 docker run -d --name localcloud \
+  -p 127.0.0.1:80:80 \
   -p 127.0.0.1:8080:8080 \
   -p 127.0.0.1:4443:4443 \
   -p 127.0.0.1:8085:8085 \

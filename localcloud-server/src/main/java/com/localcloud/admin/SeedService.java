@@ -5,6 +5,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -31,7 +34,10 @@ import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.config.ServiceRegistry;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
 import com.localcloud.emulators.alloydb.AlloyDBEmulator;
+import com.localcloud.emulators.bigtable.BigtableEmulator;
+import com.localcloud.emulators.cloudsql.CloudSqlEmulator;
 import com.localcloud.emulators.dataproc.DataprocEmulator;
+import com.localcloud.emulators.memorystore.MemorystoreEmulator;
 import com.localcloud.emulators.functions.CloudFunctionsEmulator;
 import com.localcloud.emulators.iam.IAMEmulator;
 import com.localcloud.emulators.scheduler.CloudSchedulerEmulator;
@@ -66,6 +72,9 @@ public class SeedService {
     private volatile CloudSchedulerEmulator schedulerEmulator;
     private volatile CloudFunctionsEmulator functionsEmulator;
     private volatile AlloyDBEmulator alloyDBEmulator;
+    private volatile CloudSqlEmulator cloudSqlEmulator;
+    private volatile BigtableEmulator bigtableEmulator;
+    private volatile MemorystoreEmulator memorystoreEmulator;
     private volatile DataprocEmulator dataprocEmulator;
     private volatile IAMEmulator iamEmulator;
 
@@ -125,6 +134,18 @@ public class SeedService {
 
     public void setAlloyDBEmulator(AlloyDBEmulator alloyDBEmulator) {
         this.alloyDBEmulator = alloyDBEmulator;
+    }
+
+    public void setCloudSqlEmulator(CloudSqlEmulator cloudSqlEmulator) {
+        this.cloudSqlEmulator = cloudSqlEmulator;
+    }
+
+    public void setBigtableEmulator(BigtableEmulator bigtableEmulator) {
+        this.bigtableEmulator = bigtableEmulator;
+    }
+
+    public void setMemorystoreEmulator(MemorystoreEmulator memorystoreEmulator) {
+        this.memorystoreEmulator = memorystoreEmulator;
     }
 
     public void setDataprocEmulator(DataprocEmulator dataprocEmulator) {
@@ -374,8 +395,23 @@ public class SeedService {
                 addResult(results, "cloudiam", count);
                 totalSeeded += count;
             }
+            if (seedData.containsKey("cloudsql")) {
+                int count = seedCloudSql(seedData.get("cloudsql"), projectId);
+                addResult(results, "cloudsql", count);
+                totalSeeded += count;
+            }
+            if (seedData.containsKey("bigtable")) {
+                int count = seedBigtableAdmin(seedData.get("bigtable"), projectId);
+                addResult(results, "bigtable", count);
+                totalSeeded += count;
+            }
+            if (seedData.containsKey("memorystore")) {
+                int count = seedMemorystoreAdmin(seedData.get("memorystore"), projectId);
+                addResult(results, "memorystore", count);
+                totalSeeded += count;
+            }
         } else {
-            logger.info("Volatile-only seed: skipping persistent services (GCS, BigQuery, Spanner, SecretManager, CloudTasks, Memorystore, Workflows, Scheduler, Functions, AlloyDB, Dataproc, IAM)");
+            logger.info("Volatile-only seed: skipping persistent services (GCS, BigQuery, Spanner, SecretManager, CloudTasks, Memorystore, Workflows, Scheduler, Functions, AlloyDB, Dataproc, IAM, Cloud SQL)");
         }
 
         return totalSeeded;
@@ -461,6 +497,9 @@ public class SeedService {
         cleared += resetAlloyDB(projectId);
         cleared += resetDataproc(projectId);
         cleared += resetCloudIAM(projectId);
+        cleared += resetCloudSql(projectId);
+        cleared += resetBigtableAdmin(projectId);
+        cleared += resetMemorystoreAdmin(projectId);
         return cleared;
     }
 
@@ -523,6 +562,7 @@ public class SeedService {
                 case "alloydb" -> resetAlloyDB(projectId);
                 case "dataproc" -> resetDataproc(projectId);
                 case "cloudiam" -> resetCloudIAM(projectId);
+                case "cloudsql" -> resetCloudSql(projectId);
                 default -> {
                     logger.warn("No reset logic for service: {}", service);
                     yield 0;
@@ -2886,6 +2926,296 @@ public class SeedService {
         return count;
     }
 
+    @SuppressWarnings("unchecked")
+    private int seedCloudSql(Object cloudSqlData, String projectId) {
+        int count = 0;
+        if (!(cloudSqlData instanceof Map<?, ?> raw)) return 0;
+        Map<String, Object> data = new LinkedHashMap<>();
+        raw.forEach((k, v) -> data.put(String.valueOf(k), v));
+
+        List<Map<String, Object>> instances = mapList(data, "instances");
+        for (Map<String, Object> instance : instances) {
+            String name = stringValue(instance, "name");
+            if (name == null) continue;
+            String region = stringValue(instance, "region", "us-central1");
+            String databaseVersion = stringValue(instance, "databaseVersion", "POSTGRES_15");
+            String tier = stringValue(instance, "tier", "db-custom-1-3840");
+            if (seedCloudSqlInstance(projectId, name, region, databaseVersion, tier)) count++;
+
+            List<Map<String, Object>> databases = mapList(instance, "databases");
+            for (Map<String, Object> database : databases) {
+                String dbName = stringValue(database, "name");
+                if (dbName != null && seedCloudSqlDatabase(projectId, name, dbName,
+                        stringValue(database, "charset", "UTF8"),
+                        stringValue(database, "collation", ""))) count++;
+            }
+
+            List<Map<String, Object>> users = mapList(instance, "users");
+            for (Map<String, Object> user : users) {
+                String userName = stringValue(user, "name");
+                if (userName != null && seedCloudSqlUser(projectId, name, userName,
+                        stringValue(user, "host", "%"),
+                        stringValue(user, "password", null))) count++;
+            }
+        }
+        logger.info("Seeded Cloud SQL: {} resources for project {}", count, projectId);
+        return count;
+    }
+
+    private boolean seedCloudSqlInstance(String projectId, String name, String region,
+                                         String databaseVersion, String tier) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "INSERT INTO cloudsql_instances (project_id, instance_id, region, database_version, tier, state, backend_type, connection_name, settings_json) " +
+                 "VALUES (?, ?, ?, ?, ?, 'RUNNABLE', ?, ?, ?) ON CONFLICT DO NOTHING")) {
+            String backendType = databaseVersion.startsWith("MYSQL") ? "OPENHALO_MYSQL_COMPAT" : "POSTGRES";
+            String connectionName = projectId + ":" + region + ":" + name;
+            ps.setString(1, projectId);
+            ps.setString(2, name);
+            ps.setString(3, region);
+            ps.setString(4, databaseVersion);
+            ps.setString(5, tier);
+            ps.setString(6, backendType);
+            ps.setString(7, connectionName);
+            ps.setString(8, "{}");
+            ps.executeUpdate();
+            return true;
+        } catch (Exception e) {
+            logger.warn("Failed to seed Cloud SQL instance {}: {}", name, e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean seedCloudSqlDatabase(String projectId, String instanceId, String name,
+                                         String charset, String collation) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "INSERT INTO cloudsql_databases (project_id, instance_id, database_name, charset, \"collation\", physical_name) " +
+                 "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")) {
+            String physical = ("lc_" + projectId + "_" + instanceId + "_" + name).toLowerCase().replaceAll("[^a-z0-9_]", "_");
+            ps.setString(1, projectId);
+            ps.setString(2, instanceId);
+            ps.setString(3, name);
+            ps.setString(4, charset);
+            ps.setString(5, collation);
+            ps.setString(6, physical);
+            ps.executeUpdate();
+            return true;
+        } catch (Exception e) {
+            logger.warn("Failed to seed Cloud SQL database {}: {}", name, e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean seedCloudSqlUser(String projectId, String instanceId, String name,
+                                     String host, String password) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "INSERT INTO cloudsql_users (project_id, instance_id, user_name, host, password_hash) " +
+                 "VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")) {
+            String passwordHash = password == null ? null : java.util.HexFormat.of().formatHex(
+                    java.security.MessageDigest.getInstance("SHA-256").digest(password.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            ps.setString(1, projectId);
+            ps.setString(2, instanceId);
+            ps.setString(3, name);
+            ps.setString(4, host);
+            ps.setString(5, passwordHash);
+            ps.executeUpdate();
+            return true;
+        } catch (Exception e) {
+            logger.warn("Failed to seed Cloud SQL user {}: {}", name, e.getMessage());
+            return false;
+        }
+    }
+
+    private int resetCloudSql(String projectId) {
+        int count = 0;
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM cloudsql_operations WHERE project_id = ?")) {
+                    ps.setString(1, projectId);
+                    count += ps.executeUpdate();
+                }
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM cloudsql_users WHERE project_id = ?")) {
+                    ps.setString(1, projectId);
+                    count += ps.executeUpdate();
+                }
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM cloudsql_databases WHERE project_id = ?")) {
+                    ps.setString(1, projectId);
+                    count += ps.executeUpdate();
+                }
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM cloudsql_instances WHERE project_id = ?")) {
+                    ps.setString(1, projectId);
+                    count += ps.executeUpdate();
+                }
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to reset Cloud SQL: {}", e.getMessage());
+        }
+        if (cloudSqlEmulator != null) cloudSqlEmulator.reset();
+        logger.info("Reset Cloud SQL: deleted {} resources", count);
+        return count;
+    }
+
+    @SuppressWarnings("unchecked")
+    private int seedBigtableAdmin(Object bigtableData, String projectId) {
+        int count = 0;
+        if (!(bigtableData instanceof Map<?, ?> raw)) return 0;
+        Map<String, Object> data = new LinkedHashMap<>();
+        raw.forEach((k, v) -> data.put(String.valueOf(k), v));
+
+        List<Map<String, Object>> instances = mapList(data, "instances");
+        for (Map<String, Object> instance : instances) {
+            String instanceId = stringValue(instance, "instanceId");
+            if (instanceId == null) continue;
+            String displayName = stringValue(instance, "displayName", instanceId);
+            String instanceType = stringValue(instance, "instanceType", "PRODUCTION");
+            if (seedBigtableInstance(projectId, instanceId, displayName, instanceType)) count++;
+
+            List<Map<String, Object>> tables = mapList(instance, "tables");
+            for (Map<String, Object> table : tables) {
+                String tableId = stringValue(table, "tableId");
+                if (tableId != null && seedBigtableTable(projectId, instanceId, tableId,
+                        stringValue(table, "granularity", "MILLIS"))) count++;
+            }
+        }
+        logger.info("Seeded Bigtable: {} resources for project {}", count, projectId);
+        return count;
+    }
+
+    private boolean seedBigtableInstance(String projectId, String instanceId, String displayName, String instanceType) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "INSERT INTO bigtable_instances (project_id, instance_id, display_name, instance_type, state, clusters_json) " +
+                 "VALUES (?, ?, ?, ?, 'READY', ?) ON CONFLICT DO NOTHING")) {
+            ps.setString(1, projectId);
+            ps.setString(2, instanceId);
+            ps.setString(3, displayName);
+            ps.setString(4, instanceType);
+            ps.setString(5, "[]");
+            ps.executeUpdate();
+            return true;
+        } catch (Exception e) {
+            logger.warn("Failed to seed Bigtable instance {}: {}", instanceId, e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean seedBigtableTable(String projectId, String instanceId, String tableId, String granularity) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "INSERT INTO bigtable_tables (project_id, instance_id, table_id, column_families_json, granularity) " +
+                 "VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")) {
+            ps.setString(1, projectId);
+            ps.setString(2, instanceId);
+            ps.setString(3, tableId);
+            ps.setString(4, "[]");
+            ps.setString(5, granularity);
+            ps.executeUpdate();
+            return true;
+        } catch (Exception e) {
+            logger.warn("Failed to seed Bigtable table {}: {}", tableId, e.getMessage());
+            return false;
+        }
+    }
+
+    private int resetBigtableAdmin(String projectId) {
+        int count = 0;
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM bigtable_tables WHERE project_id = ?")) {
+                    ps.setString(1, projectId);
+                    count += ps.executeUpdate();
+                }
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM bigtable_instances WHERE project_id = ?")) {
+                    ps.setString(1, projectId);
+                    count += ps.executeUpdate();
+                }
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to reset Bigtable: {}", e.getMessage());
+        }
+        if (bigtableEmulator != null) bigtableEmulator.reset();
+        logger.info("Reset Bigtable: deleted {} resources", count);
+        return count;
+    }
+
+    @SuppressWarnings("unchecked")
+    private int seedMemorystoreAdmin(Object memorystoreData, String projectId) {
+        int count = 0;
+        if (!(memorystoreData instanceof Map<?, ?> raw)) return 0;
+        Map<String, Object> data = new LinkedHashMap<>();
+        raw.forEach((k, v) -> data.put(String.valueOf(k), v));
+
+        List<Map<String, Object>> instances = mapList(data, "instances");
+        for (Map<String, Object> instance : instances) {
+            String instanceId = stringValue(instance, "instanceId");
+            if (instanceId == null) continue;
+            String displayName = stringValue(instance, "displayName", instanceId);
+            String tier = stringValue(instance, "tier", "BASIC");
+            String redisVersion = stringValue(instance, "redisVersion", "7_0");
+            int memorySizeGb = instance.containsKey("memorySizeGb") ? ((Number) instance.get("memorySizeGb")).intValue() : 1;
+            if (seedMemorystoreInstance(projectId, instanceId, displayName, tier, redisVersion, memorySizeGb)) count++;
+        }
+        logger.info("Seeded Memorystore: {} resources for project {}", count, projectId);
+        return count;
+    }
+
+    private boolean seedMemorystoreInstance(String projectId, String instanceId, String displayName,
+                                            String tier, String redisVersion, int memorySizeGb) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "INSERT INTO memorystore_instances (project_id, instance_id, display_name, tier, engine, redis_version, port, memory_size_gb, state, host) " +
+                 "VALUES (?, ?, ?, ?, 'REDIS', ?, 6379, ?, 'READY', 'localhost') ON CONFLICT DO NOTHING")) {
+            ps.setString(1, projectId);
+            ps.setString(2, instanceId);
+            ps.setString(3, displayName);
+            ps.setString(4, tier);
+            ps.setString(5, redisVersion);
+            ps.setInt(6, memorySizeGb);
+            ps.executeUpdate();
+            return true;
+        } catch (Exception e) {
+            logger.warn("Failed to seed Memorystore instance {}: {}", instanceId, e.getMessage());
+            return false;
+        }
+    }
+
+    private int resetMemorystoreAdmin(String projectId) {
+        int count = 0;
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "DELETE FROM memorystore_instances WHERE project_id = ?")) {
+            ps.setString(1, projectId);
+            count = ps.executeUpdate();
+        } catch (Exception e) {
+            logger.warn("Failed to reset Memorystore: {}", e.getMessage());
+        }
+        if (memorystoreEmulator != null) memorystoreEmulator.reset();
+        logger.info("Reset Memorystore: deleted {} resources", count);
+        return count;
+    }
+
     // ========== Seed parsing helpers ==========
 
     private static void addResult(Map<String, Object> results, String service, int count) {
@@ -2931,6 +3261,14 @@ public class SeedService {
     private static String stringOr(Map<String, Object> map, String defaultValue, String... keys) {
         String value = string(map, keys);
         return value != null ? value : defaultValue;
+    }
+
+    private static String stringValue(Map<String, Object> map, String key) {
+        return string(map, key);
+    }
+
+    private static String stringValue(Map<String, Object> map, String key, String defaultValue) {
+        return stringOr(map, defaultValue, key);
     }
 
     private static int intValue(Map<String, Object> map, int defaultValue, String... keys) {

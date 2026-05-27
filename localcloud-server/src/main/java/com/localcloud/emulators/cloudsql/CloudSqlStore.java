@@ -7,6 +7,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -111,17 +112,24 @@ public class CloudSqlStore {
     public Map<String, Object> createDatabase(String project, String instance, String database,
                                               String charset, String collation) throws SQLException {
         String physical = physicalName(project, instance, database);
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO cloudsql_databases (project_id, instance_id, database_name, charset, \"collation\", physical_name) " +
-                             "VALUES (?, ?, ?, ?, ?, ?)")) {
-            ps.setString(1, project);
-            ps.setString(2, instance);
-            ps.setString(3, database);
-            ps.setString(4, charset != null ? charset : "UTF8");
-            ps.setString(5, collation != null ? collation : "");
-            ps.setString(6, physical);
-            ps.executeUpdate();
+        String databaseVersion = getDatabaseVersion(project, instance);
+        try (Connection conn = dataSource.getConnection()) {
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "INSERT INTO cloudsql_databases (project_id, instance_id, database_name, charset, \"collation\", physical_name) " +
+                            "VALUES (?, ?, ?, ?, ?, ?)")) {
+                ps.setString(1, project);
+                ps.setString(2, instance);
+                ps.setString(3, database);
+                ps.setString(4, charset != null ? charset : "UTF8");
+                ps.setString(5, collation != null ? collation : "");
+                ps.setString(6, physical);
+                ps.executeUpdate();
+            }
+            if (databaseVersion != null && databaseVersion.startsWith("POSTGRES")) {
+                try (Statement stmt = conn.createStatement()) {
+                    stmt.execute("CREATE DATABASE " + physical);
+                }
+            }
         }
         return getDatabase(project, instance, database);
     }
@@ -156,15 +164,23 @@ public class CloudSqlStore {
     }
 
     public boolean deleteDatabase(String project, String instance, String database) throws SQLException {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "DELETE FROM cloudsql_databases WHERE project_id = ? AND instance_id = ? AND database_name = ?")) {
-            ps.setString(1, project);
-            ps.setString(2, instance);
-            ps.setString(3, database);
-            boolean deleted = ps.executeUpdate() > 0;
-            if (deleted) insertOperation(project, instance, "DELETE_DATABASE", "projects/" + project + "/instances/" + instance + "/databases/" + database, "{}");
-            return deleted;
+        String physical = getPhysicalName(project, instance, database);
+        String databaseVersion = getDatabaseVersion(project, instance);
+        try (Connection conn = dataSource.getConnection()) {
+            if (physical != null && databaseVersion != null && databaseVersion.startsWith("POSTGRES")) {
+                try (Statement stmt = conn.createStatement()) {
+                    stmt.execute("DROP DATABASE IF EXISTS " + physical);
+                }
+            }
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "DELETE FROM cloudsql_databases WHERE project_id = ? AND instance_id = ? AND database_name = ?")) {
+                ps.setString(1, project);
+                ps.setString(2, instance);
+                ps.setString(3, database);
+                boolean deleted = ps.executeUpdate() > 0;
+                if (deleted) insertOperation(project, instance, "DELETE_DATABASE", "projects/" + project + "/instances/" + instance + "/databases/" + database, "{}");
+                return deleted;
+            }
         }
     }
 
@@ -323,5 +339,34 @@ public class CloudSqlStore {
         return ("lc_" + project + "_" + instance + "_" + database)
                 .toLowerCase()
                 .replaceAll("[^a-z0-9_]", "_");
+    }
+
+    private String getPhysicalName(String project, String instance, String database) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "SELECT physical_name FROM cloudsql_databases WHERE project_id = ? AND instance_id = ? AND database_name = ?")) {
+            ps.setString(1, project);
+            ps.setString(2, instance);
+            ps.setString(3, database);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString("physical_name") : null;
+            }
+        } catch (SQLException e) {
+            return null;
+        }
+    }
+
+    private String getDatabaseVersion(String project, String instance) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "SELECT database_version FROM cloudsql_instances WHERE project_id = ? AND instance_id = ?")) {
+            ps.setString(1, project);
+            ps.setString(2, instance);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString("database_version") : null;
+            }
+        } catch (SQLException e) {
+            return null;
+        }
     }
 }

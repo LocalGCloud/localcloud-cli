@@ -1,6 +1,6 @@
 # localcloud Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-07
+Auto-generated from all feature plans. Last updated: 2026-05-26
 
 ## Active Technologies
 - Java 21 LTS (primary) + Netty codec-redis (RESP2 parser), Armeria (lifecycle), HikariCP (PostgreSQL pool), Jackson (JSONB) (002-memorystore-emulator)
@@ -44,7 +44,7 @@ Java 21 (LTS, primary): Follow standard conventions
 
 ## Architecture
 
-- **Gateway (port 8080)**: Armeria server hosting admin API + in-process gRPC facades (Secret Manager, Cloud Tasks, Logging, Monitoring, GKE, Compute, Cloud Run)
+- **Gateway (port 8080)**: Armeria server hosting admin API + in-process gRPC facades (Secret Manager, Cloud Tasks, Logging, Monitoring, GKE, Compute, Cloud Run, Cloud Workflows, Cloud Scheduler, Cloud Functions, AlloyDB, Dataproc, Cloud IAM, Vertex AI, Cloud KMS, Cloud SQL)
 - **External emulators**: Managed by supervisord inside Docker container (GCS on 4443, Pub/Sub on 8085, Firestore on 8086, Bigtable on 8087, Spanner on 9010, BigQuery on 9050)
 - **Persistence**: PostgreSQL (inside container) for facade service data; filesystem for GCS blobs
 - **Console**: Solid.js app served by Armeria gateway at `/` (port 8080), opened via `localcloud console`
@@ -72,7 +72,7 @@ Java 21 (LTS, primary): Follow standard conventions
 
 - 002-memorystore-emulator: Added Java 21 LTS (primary) + Netty codec-redis (RESP2 parser), Armeria (lifecycle), HikariCP (PostgreSQL pool), Jackson (JSONB)
 
-- 001-gcp-local-emulator: Java 21 + Armeria (API gateway, gRPC+REST, console static files), PostgreSQL (persistence), proto-google-cloud-* (gRPC stubs), HikariCP, Solid.js (web console). 14 GCP services emulated (GCS, Pub/Sub, Firestore, BigQuery, Secret Manager, Cloud Tasks, Spanner, Bigtable, Logging, Monitoring, GKE, Compute Engine, Cloud Run, Memorystore).
+- 001-gcp-local-emulator: Java 21 + Armeria (API gateway, gRPC+REST, console static files), PostgreSQL (persistence), proto-google-cloud-* (gRPC stubs), HikariCP, Solid.js (web console). 23 GCP services emulated (GCS, Pub/Sub, Firestore, BigQuery, Secret Manager, Cloud Tasks, Spanner, Bigtable, Logging, Monitoring, GKE, Compute Engine, Cloud Run, Memorystore, Workflows, Cloud Scheduler, Cloud Functions, AlloyDB, Dataproc, Cloud IAM, Vertex AI, Cloud KMS, Cloud SQL).
 
 ## Test Counts
 

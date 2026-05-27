@@ -344,70 +344,6 @@ function SQLEditor(props) {
         }
     }
 
-    const currentServiceInfo = () => SQL_SERVICES.find(s => s.id === service());
-    const currentSchema = () => {
-        return serviceSchema() || { tables: [] };
-    };
-    const cmSchema = () => toCodeMirrorSchema(currentSchema()?.tables);
-
-    // Build hierarchical tree: database → tables → columns
-    // For Spanner: instance → database → tables → columns
-    const schemaTree = createMemo(() => {
-        const schema = currentSchema();
-        const tables = schema?.tables || [];
-        const q = schemaSearch().toLowerCase().trim();
-        const svcInfo = currentServiceInfo();
-        const isBigQuery = svcInfo?.dialect === 'bigquery';
-        const isSpanner = svcInfo?.id === 'spanner';
-        const isBigtable = svcInfo?.id === 'bigtable';
-
-        // Group tables by database/dataset
-        const groups = {};
-        for (const t of tables) {
-            let dbName, tableName;
-            if (isBigQuery && t.name.includes('.')) {
-                const parts = t.name.split('.');
-                dbName = parts[0];
-                tableName = parts.slice(1).join('.');
-            } else if (isBigtable && t.name.includes('.')) {
-                const parts = t.name.split('.');
-                dbName = parts[0];
-                tableName = parts.slice(1).join('.');
-            } else if (isSpanner && t.name.includes('.')) {
-                // Spanner: tables are prefixed as "database.TableName"
-                const parts = t.name.split('.');
-                dbName = parts[0];
-                tableName = parts.slice(1).join('.');
-            } else {
-                dbName = 'public';
-                tableName = t.name;
-            }
-            // Apply search filter
-            if (q) {
-                const matchTable = tableName.toLowerCase().includes(q);
-                const matchCols = (t.columns || []).some(c => (c.name || c).toLowerCase().includes(q));
-                if (!matchTable && !matchCols) continue;
-            }
-            // For Spanner: group key is "instance/database" to separate same-named dbs across instances
-            const groupKey = isSpanner && t.instance ? t.instance + '/' + dbName : dbName;
-            if (!groups[groupKey]) groups[groupKey] = [];
-            groups[groupKey].push({ ...t, shortName: tableName, _instance: t.instance, _database: dbName });
-        }
-        return groups;
-    });
-
-    const spannerInstanceTree = createMemo(() => {
-        const tree = schemaTree();
-        const instanceGroups = {};
-        for (const [groupKey, tables] of Object.entries(tree)) {
-            const inst = tables[0]?._instance || currentSchema()?.selectedInstance || 'default';
-            const dbName = tables[0]?._database || groupKey;
-            if (!instanceGroups[inst]) instanceGroups[inst] = {};
-            instanceGroups[inst][dbName] = tables;
-        }
-        return instanceGroups;
-    });
-
     function toggle(key) { setExpanded(prev => ({ ...prev, [key]: !prev[key] })); }
 
     function persistActiveTab(nextSql = sqlText()) {
@@ -508,10 +444,12 @@ function SQLEditor(props) {
             if (queryService === 'spanner') {
                 const schema = currentSchema();
                 params.instance = schema?.selectedInstance || selectedInstance() || '';
-                // Infer database from the SQL — look for table references in schema
-                // Default to first database in schema
                 const databases = schema?.databases || [];
                 params.database = selectedDatabase() || (databases.length > 0 ? databases[0] : '');
+            }
+            if (queryService === 'alloydb') {
+                const schema = currentSchema();
+                params.database = schema?.selectedDatabase || '';
             }
             const data = await api.query(queryService, query, params);
             const elapsed = Math.round(performance.now() - startTime);
@@ -585,6 +523,8 @@ function SQLEditor(props) {
     // Track whether current sqlText is still auto-generated placeholder
     const [isPlaceholder, setIsPlaceholder] = createSignal(true);
 
+    const currentServiceInfo = () => SQL_SERVICES.find(s => s.id === service());
+
     const serviceSchema = createMemo(() => {
         const svc = currentServiceInfo();
         const ds = dynamicSchema();
@@ -599,6 +539,88 @@ function SQLEditor(props) {
         return { ...ds, tables: [] };
     });
 
+    const currentSchema = () => {
+        return serviceSchema() || { tables: [] };
+    };
+    const cmSchema = () => toCodeMirrorSchema(currentSchema()?.tables);
+
+    // Build hierarchical tree: database → tables → columns
+    // For Spanner: instance → database → tables → columns
+    const schemaTree = createMemo(() => {
+        const schema = currentSchema();
+        const tables = schema?.tables || [];
+        const q = schemaSearch().toLowerCase().trim();
+        const svcInfo = currentServiceInfo();
+        const isBigQuery = svcInfo?.dialect === 'bigquery';
+        const isSpanner = svcInfo?.id === 'spanner';
+        const isAlloyDB = svcInfo?.id === 'alloydb';
+        const isBigtable = svcInfo?.id === 'bigtable';
+
+        // Group tables by database/dataset
+        const groups = {};
+        for (const t of tables) {
+            let dbName, tableName;
+            if (isBigQuery && t.name.includes('.')) {
+                const parts = t.name.split('.');
+                dbName = parts[0];
+                tableName = parts.slice(1).join('.');
+            } else if (isBigtable && t.name.includes('.')) {
+                const parts = t.name.split('.');
+                dbName = parts[0];
+                tableName = parts.slice(1).join('.');
+            } else if (isSpanner && t.name.includes('.')) {
+                // Spanner: tables are prefixed as "database.TableName"
+                const parts = t.name.split('.');
+                dbName = parts[0];
+                tableName = parts.slice(1).join('.');
+            } else if (isAlloyDB && t.name.includes('.')) {
+                // AlloyDB: tables are prefixed as "cluster.database.TableName"
+                const parts = t.name.split('.');
+                dbName = parts[0] + '.' + parts[1];
+                tableName = parts.slice(2).join('.');
+            } else {
+                dbName = 'public';
+                tableName = t.name;
+            }
+            // Apply search filter
+            if (q) {
+                const matchTable = tableName.toLowerCase().includes(q);
+                const matchCols = (t.columns || []).some(c => (c.name || c).toLowerCase().includes(q));
+                if (!matchTable && !matchCols) continue;
+            }
+            // For Spanner: group key is "instance/database" to separate same-named dbs across instances
+            // For AlloyDB: group key is "cluster/database" to separate same-named dbs across clusters
+            const groupKey = isSpanner && t.instance ? t.instance + '/' + dbName : (isAlloyDB && t.cluster ? t.cluster + '/' + dbName : dbName);
+            groups[groupKey] ||= [];
+            groups[groupKey].push({ ...t, shortName: tableName, _instance: t.instance, _cluster: t.cluster, _database: t.database || dbName });
+        }
+        return groups;
+    });
+
+    const spannerInstanceTree = createMemo(() => {
+        const tree = schemaTree();
+        const instanceGroups = {};
+        for (const [groupKey, tables] of Object.entries(tree)) {
+            const inst = tables[0]?._instance || currentSchema()?.selectedInstance || 'default';
+            const dbName = tables[0]?._database || groupKey;
+            if (!instanceGroups[inst]) instanceGroups[inst] = {};
+            instanceGroups[inst][dbName] = tables;
+        }
+        return instanceGroups;
+    });
+
+    const alloydbClusterTree = createMemo(() => {
+        const tree = schemaTree();
+        const clusterGroups = {};
+        for (const [groupKey, tables] of Object.entries(tree)) {
+            const cluster = tables[0]?._cluster || 'default';
+            const dbName = tables[0]?._database || groupKey;
+            if (!clusterGroups[cluster]) clusterGroups[cluster] = {};
+            clusterGroups[cluster][dbName] = tables;
+        }
+        return clusterGroups;
+    });
+
     const dynamicPlaceholder = createMemo(() => {
         const svc = currentServiceInfo();
         if (!svc) return '';
@@ -606,7 +628,9 @@ function SQLEditor(props) {
         if (ds && ds.tables && ds.tables.length > 0) {
             const tbl = ds.tables[0];
             // Strip database prefix for Spanner (e.g., "my-database.Users" → "Users")
-            const tableName = svc.id === 'spanner' && tbl.name.includes('.') ? tbl.name.split('.').pop() : tbl.name;
+            // Strip cluster.database prefix for AlloyDB (e.g., "my-cluster.my-db.Users" → "Users")
+            const isPrefixed = (svc.id === 'spanner' || svc.id === 'alloydb') && tbl.name.includes('.');
+            const tableName = isPrefixed ? tbl.name.split('.').pop() : tbl.name;
             return `SELECT * FROM ${quoteTableName(svc, tableName)} LIMIT 10`;
         }
         return svc.placeholder;
@@ -919,8 +943,92 @@ function SQLEditor(props) {
                             }}
                         </For>
                     </Show>
-                    {/* Non-Spanner services: flat database grouping */}
-                    <Show when={service() !== 'spanner'}>
+                    {/* AlloyDB: cluster → database → table hierarchy */}
+                    <Show when={service() === 'alloydb' && Object.keys(alloydbClusterTree()).length > 0}>
+                        <For each={Object.entries(alloydbClusterTree())}>
+                            {([clusterName, databases]) => {
+                                const clusterKey = 'cluster:' + clusterName;
+                                const dbCount = Object.keys(databases).length;
+                                return (
+                                    <div class="tree-group">
+                                        <div class="tree-row tree-row-db" onClick={() => toggle(clusterKey)} onKeyDown={onActivate(() => toggle(clusterKey))} role="button" tabIndex={0} aria-expanded={expanded()[clusterKey] !== false}>
+                                            <IconChevron open={expanded()[clusterKey] !== false} />
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true" focusable="false" style={{"flex-shrink":"0"}}><path d="M19 15v4H5v-4h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 18.5c-.82 0-1.5-.67-1.5-1.5s.68-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM19 3v4H5V3h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V2c0-.55-.45-1-1-1zM7 6.5c-.82 0-1.5-.67-1.5-1.5S6.19 3.5 7 3.5s1.5.67 1.5 1.5S7.83 6.5 7 6.5z"/></svg>
+                                            <span class="tree-name" style={{"font-weight":"600"}}>{clusterName}</span>
+                                            <span class="tree-badge tree-badge-db">{dbCount} db{dbCount !== 1 ? 's' : ''}</span>
+                                        </div>
+                                        <Show when={expanded()[clusterKey] !== false}>
+                                            <div class="tree-children">
+                                                <For each={Object.entries(databases)}>
+                                                    {([dbName, tables]) => {
+                                                        const dbKey = 'db:' + clusterName + '/' + dbName;
+                                                        const tableCount = tables.length;
+                                                        const physicalDb = tables[0]?._database || dbName;
+                                                        return (
+                                                            <div class="tree-group">
+                                                                <div class="tree-row tree-row-db"
+                                                                    onClick={() => { toggle(dbKey); setSelectedDatabase(physicalDb); }}
+                                                                    onKeyDown={onActivate(() => { toggle(dbKey); setSelectedDatabase(physicalDb); })}
+                                                                    role="button" tabIndex={0} aria-expanded={!!expanded()[dbKey]}>
+                                                                    <IconChevron open={expanded()[dbKey]} />
+                                                                    <IconDatabase />
+                                                                    <span class="tree-name">{dbName}</span>
+                                                                    <span class="tree-badge tree-badge-db">{tableCount} table{tableCount !== 1 ? 's' : ''}</span>
+                                                                </div>
+                                                                <Show when={expanded()[dbKey]}>
+                                                                    <div class="tree-children">
+                                                                        <For each={tables}>
+                                                                            {(table) => {
+                                                                                const tblKey = 'tbl:' + clusterName + '/' + table.name;
+                                                                                const colCount = (table.columns || []).length;
+                                                                                return (
+                                                                                    <div class="tree-group">
+                                                                                        <div class="tree-row tree-row-tbl"
+                                                                                            onClick={() => { toggle(tblKey); setSelectedDatabase(physicalDb); }}
+                                                                                            onKeyDown={onActivate(() => { toggle(tblKey); setSelectedDatabase(physicalDb); })}
+                                                                                            role="button" tabIndex={0} aria-expanded={!!expanded()[tblKey]}>
+                                                                                            <IconChevron open={expanded()[tblKey]} />
+                                                                                            <IconTable />
+                                                                                            <span class="tree-name">{table.shortName}</span>
+                                                                                            <span class="tree-badge">{colCount}</span>
+                                                                                            <button class="tree-run-btn" title="SELECT * LIMIT 10" aria-label={`Run SELECT * for ${table.shortName}`} onClick={(e) => { setSelectedDatabase(physicalDb); quickSelect(table.name, e); }}>
+                                                                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg>
+                                                                                            </button>
+                                                                                        </div>
+                                                                                        <Show when={expanded()[tblKey]}>
+                                                                                            <div class="tree-children">
+                                                                                                <For each={table.columns || []}>
+                                                                                                    {(col) => (
+                                                                                                        <div class="tree-row tree-row-col" title={`${col.name || col} (${col.type || ''})`}>
+                                                                                                            <IconColumn />
+                                                                                                            <span class="tree-col-name">{col.name || col}</span>
+                                                                                                            <Show when={col.type}>
+                                                                                                                <span class="tree-col-type">{col.type}</span>
+                                                                                                            </Show>
+                                                                                                        </div>
+                                                                                                    )}
+                                                                                                </For>
+                                                                                            </div>
+                                                                                        </Show>
+                                                                                    </div>
+                                                                                );
+                                                                            }}
+                                                                        </For>
+                                                                    </div>
+                                                                </Show>
+                                                            </div>
+                                                        );
+                                                    }}
+                                                </For>
+                                            </div>
+                                        </Show>
+                                    </div>
+                                );
+                            }}
+                        </For>
+                    </Show>
+                    {/* Non-Spanner/AlloyDB services: flat database grouping */}
+                    <Show when={service() !== 'spanner' && service() !== 'alloydb'}>
                     <For each={Object.entries(schemaTree())}>
                         {([dbName, tables]) => {
                             const dbKey = 'db:' + dbName;
@@ -1264,6 +1372,216 @@ function SQLEditor(props) {
     );
 }
 
+// ─── Database Panels Component (History + Stats) ─────────────────────
+const QUERY_HISTORY_SERVICES = new Set(['spanner', 'bigquery', 'alloydb', 'cloudsql', 'bigtable', 'memorystore']);
+
+function DatabasePanels(props) {
+    const [historyEntries, setHistoryEntries] = createSignal([]);
+    const [historyLoading, setHistoryLoading] = createSignal(false);
+    const [statsData, setStatsData] = createSignal(null);
+    const [statsLoading, setStatsLoading] = createSignal(false);
+
+    const canShowHistory = () => QUERY_HISTORY_SERVICES.has(props.serviceId);
+
+    const loadHistory = async () => {
+        if (!canShowHistory()) return;
+        setHistoryLoading(true);
+        try {
+            const resp = await api.queryHistory(props.serviceId, 50, 0);
+            setHistoryEntries(resp.entries || []);
+        } catch {
+            setHistoryEntries([]);
+        } finally {
+            setHistoryLoading(false);
+        }
+    };
+
+    const loadStats = async () => {
+        setStatsLoading(true);
+        setStatsData(null);
+        try {
+            if (props.serviceId === 'spanner') {
+                const result = await api.spannerStats('local-instance', 'local-database');
+                setStatsData(result);
+            } else {
+                const result = await api.schema(props.serviceId);
+                const tables = result?.tables || [];
+                setStatsData({
+                    totalObjects: tables.length,
+                    tableCount: tables.length,
+                    columnCount: tables.reduce((sum, t) => sum + (t.columns?.length || 0), 0),
+                    rowCount: 0,
+                    details: tables.map(t => ({ type: 'TABLE', name: t.name, columnCount: t.columns?.length || 0 })),
+                });
+            }
+        } catch {
+            setStatsData(null);
+        } finally {
+            setStatsLoading(false);
+        }
+    };
+
+    createEffect(() => {
+        if (props.mode === 'db-history') loadHistory();
+        if (props.mode === 'db-stats') loadStats();
+    });
+
+    if (props.mode === 'db-history') {
+        return (
+            <div>
+                <h3 style={{ margin: '0 0 16px', "font-size": '16px', "font-weight": '600' }}>Query History</h3>
+                <Show when={!canShowHistory()}>
+                    <div class="empty-state">
+                        <div class="empty-state-title">History not available</div>
+                        <div class="empty-state-text">Query history is not available for {props.serviceId}.</div>
+                    </div>
+                </Show>
+                <Show when={canShowHistory()}>
+                    <Show when={historyLoading()}>
+                        <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
+                    </Show>
+                    <Show when={!historyLoading()}>
+                        <Show when={historyEntries().length === 0}>
+                            <div class="empty-state">
+                                <div class="empty-state-title">No query history yet</div>
+                                <div class="empty-state-text">Run a SQL query to see it here.</div>
+                            </div>
+                        </Show>
+                        <Show when={historyEntries().length > 0}>
+                            <div class="data-table-wrapper">
+                                <table class="data-table" style={{ "font-size": '13px' }}>
+                                    <thead>
+                                        <tr>
+                                            <th>Time</th>
+                                            <th>SQL</th>
+                                            <th>Duration</th>
+                                            <th>Rows</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <For each={historyEntries()}>
+                                            {(entry) => (
+                                                <tr style={{ "border-bottom": '1px solid var(--border)' }}>
+                                                    <td style={{ "white-space": 'nowrap', "color": 'var(--text-secondary)', "font-size": '12px' }}>
+                                                        {entry.executed_at ? entry.executed_at.replace('T', ' ').substring(0, 19) : '--'}
+                                                    </td>
+                                                    <td style={{ "max-width": '400px', "overflow": 'hidden', "text-overflow": 'ellipsis', "white-space": 'nowrap', "font-family": 'monospace', "font-size": '12px' }}>
+                                                        {entry.sql}
+                                                    </td>
+                                                    <td style={{ "font-family": 'monospace', "font-size": '12px' }}>
+                                                        {entry.duration_ms > 1000 ? (entry.duration_ms / 1000).toFixed(1) + 's' : entry.duration_ms + 'ms'}
+                                                    </td>
+                                                    <td style={{ "font-family": 'monospace', "font-size": '12px' }}>
+                                                        {entry.row_count}
+                                                    </td>
+                                                    <td>
+                                                        <span style={{
+                                                            display: 'inline-block',
+                                                            padding: '2px 8px',
+                                                            borderRadius: '10px',
+                                                            "font-size": '11px',
+                                                            "font-weight": '600',
+                                                            background: entry.success ? 'rgba(52,199,89,0.15)' : 'rgba(255,69,58,0.15)',
+                                                            color: entry.success ? '#34C759' : '#FF453A',
+                                                        }}>
+                                                            {entry.success ? 'OK' : 'FAIL'}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </For>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </Show>
+                    </Show>
+                </Show>
+            </div>
+        );
+    }
+
+    if (props.mode === 'db-stats') {
+        return (
+            <div>
+                <h3 style={{ margin: '0 0 16px', "font-size": '16px', "font-weight": '600' }}>Database Statistics</h3>
+                <Show when={statsLoading()}>
+                    <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
+                </Show>
+                <Show when={!statsLoading()}>
+                    <Show when={!statsData()}>
+                        <div class="empty-state">
+                            <div class="empty-state-title">No statistics available</div>
+                            <div class="empty-state-text">Select a database to view statistics.</div>
+                        </div>
+                    </Show>
+                    <Show when={statsData()}>
+                        <div style={{ display: 'grid', "grid-template-columns": 'repeat(auto-fill, minmax(160px, 1fr))', gap: '12px', "margin-bottom": '24px' }}>
+                            <div style={{ display: 'flex', "flex-direction": 'column', align: 'center', gap: '4px', padding: '16px', border: '1px solid var(--border)', "border-radius": '8px', background: 'var(--surface)' }}>
+                                <span style={{ "font-size": '28px', "font-weight": '700', color: 'var(--accent, #4285f4)' }}>{statsData().tableCount}</span>
+                                <span style={{ "font-size": '12px', color: 'var(--text-secondary)' }}>Tables</span>
+                            </div>
+                            <div style={{ display: 'flex', "flex-direction": 'column', align: 'center', gap: '4px', padding: '16px', border: '1px solid var(--border)', "border-radius": '8px', background: 'var(--surface)' }}>
+                                <span style={{ "font-size": '28px', "font-weight": '700', color: 'var(--text)' }}>{statsData().columnCount || 0}</span>
+                                <span style={{ "font-size": '12px', color: 'var(--text-secondary)' }}>Columns</span>
+                            </div>
+                            <Show when={statsData().indexCount != null}>
+                                <div style={{ display: 'flex', "flex-direction": 'column', align: 'center', gap: '4px', padding: '16px', border: '1px solid var(--border)', "border-radius": '8px', background: 'var(--surface)' }}>
+                                    <span style={{ "font-size": '28px', "font-weight": '700', color: 'var(--text)' }}>{statsData().indexCount}</span>
+                                    <span style={{ "font-size": '12px', color: 'var(--text-secondary)' }}>Indexes</span>
+                                </div>
+                            </Show>
+                            <div style={{ display: 'flex', "flex-direction": 'column', align: 'center', gap: '4px', padding: '16px', border: '1px solid var(--border)', "border-radius": '8px', background: 'var(--surface)' }}>
+                                <span style={{ "font-size": '28px', "font-weight": '700', color: 'var(--text)' }}>{statsData().totalObjects}</span>
+                                <span style={{ "font-size": '12px', color: 'var(--text-secondary)' }}>Total Objects</span>
+                            </div>
+                        </div>
+                        <Show when={statsData().details && statsData().details.length > 0}>
+                            <h4 style={{ "font-size": '14px', margin: '0 0 8px 0', color: 'var(--text-secondary)' }}>Objects</h4>
+                            <div class="data-table-wrapper">
+                                <table class="data-table" style={{ "font-size": '13px' }}>
+                                    <thead>
+                                        <tr>
+                                            <th>Type</th>
+                                            <th>Name</th>
+                                            <th style={{ "text-align": 'right' }}>Columns</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <For each={statsData().details}>
+                                            {(item) => (
+                                                <tr>
+                                                    <td>
+                                                        <span style={{
+                                                            display: 'inline-block',
+                                                            padding: '2px 8px',
+                                                            borderRadius: '10px',
+                                                            "font-size": '11px',
+                                                            "font-weight": '600',
+                                                            background: 'rgba(66,133,244,0.15)',
+                                                            color: '#4285f4',
+                                                        }}>
+                                                            {item.type === 'TABLE' ? 'TABLE' : item.type === 'SEARCH_INDEX' ? 'SEARCH' : item.type === 'VECTOR_INDEX' ? 'VECTOR' : item.type}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ "font-weight": '500', "font-family": 'monospace', "font-size": '12px' }}>{item.name}</td>
+                                                    <td style={{ "text-align": 'right' }}>{item.columnCount != null ? item.columnCount : '-'}</td>
+                                                </tr>
+                                            )}
+                                        </For>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </Show>
+                    </Show>
+                </Show>
+            </div>
+        );
+    }
+
+    return null;
+}
+
 // ─── Main Component ────────────────────────────────────────────────────
 export default function ServiceExplorer(props) {
     const [mode, setMode] = createSignal(props.activeView?.() || 'explorer');
@@ -1280,7 +1598,7 @@ export default function ServiceExplorer(props) {
     });
 
     const switchPrimaryMode = (nextMode) => {
-        if (nextMode !== 'explorer' && nextMode !== 'editor') return;
+        if (!['explorer', 'editor', 'db-history', 'db-stats'].includes(nextMode)) return;
         lastSyncedView = nextMode;
         props.onViewChange?.(nextMode);
         setMode(nextMode);
@@ -1390,6 +1708,26 @@ export default function ServiceExplorer(props) {
                                 Connection
                             </button>
                         </Show>
+                        <Show when={SQL_SERVICES.some(s => s.id === activeService())}>
+                            <button
+                                class={`se-mode-tab ${mode() === 'db-history' ? 'active' : ''}`}
+                                onClick={() => switchPrimaryMode('db-history')}
+                            >
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                    <path d="M13 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S6.67 9 7.5 9 9 9.67 9 10.5 8.33 12 7.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 10.5 5s2.5.67 2.5 1.5S11.33 8 10.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S14.67 5 15.5 5s2.5.67 2.5 1.5S16.33 8 15.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S17.67 9 18.5 9s2.5.67 2.5 1.5-.67 1.5-1.5 1.5z"/>
+                                </svg>
+                                History
+                            </button>
+                            <button
+                                class={`se-mode-tab ${mode() === 'db-stats' ? 'active' : ''}`}
+                                onClick={() => switchPrimaryMode('db-stats')}
+                            >
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                    <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
+                                </svg>
+                                Stats
+                            </button>
+                        </Show>
                         <button
                             class={`se-mode-tab ${mode() === 'sync' ? 'active' : ''}`}
                             onClick={() => setMode('sync')}
@@ -1467,6 +1805,12 @@ export default function ServiceExplorer(props) {
                 <Show when={activeService() === 'alloydb' && mode() === 'connection'}>
                     <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '16px' }}>
                         <ConnectionInfoPanel project={props.activeProject} />
+                    </div>
+                </Show>
+
+                <Show when={(mode() === 'db-history' || mode() === 'db-stats') && SQL_SERVICES.some(s => s.id === activeService())}>
+                    <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '16px' }}>
+                        <DatabasePanels serviceId={activeService()} mode={mode()} />
                     </div>
                 </Show>
             </Show>
