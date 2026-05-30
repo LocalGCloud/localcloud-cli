@@ -194,6 +194,40 @@ services:
     gcloudApiName: iam
     terraformEnvVar: GOOGLE_IAM_CUSTOM_ENDPOINT
 
+  cloudresourcemanager:
+    displayName: "Cloud Resource Manager"
+    port: gateway
+    protocol: rest
+    envVar: CLOUD_RESOURCE_MANAGER_EMULATOR_HOST
+    envValuePrefix: "http://"
+    type: facade
+    defaultEnabled: true
+    minTier: community
+    gcloudApiName: cloudresourcemanager
+    terraformEnvVar: GOOGLE_RESOURCE_MANAGER_CUSTOM_ENDPOINT
+
+  serviceusage:
+    displayName: "Service Usage"
+    port: gateway
+    protocol: rest
+    envVar: SERVICE_USAGE_EMULATOR_HOST
+    envValuePrefix: "http://"
+    type: facade
+    defaultEnabled: true
+    minTier: community
+    terraformEnvVar: GOOGLE_SERVICE_USAGE_CUSTOM_ENDPOINT
+
+  cloudbilling:
+    displayName: "Cloud Billing"
+    port: gateway
+    protocol: rest
+    envVar: CLOUD_BILLING_EMULATOR_HOST
+    envValuePrefix: "http://"
+    type: facade
+    defaultEnabled: true
+    minTier: community
+    terraformEnvVar: GOOGLE_CLOUD_BILLING_CUSTOM_ENDPOINT
+
   logging:
     displayName: "Cloud Logging"
     port: gateway

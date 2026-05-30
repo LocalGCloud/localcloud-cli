@@ -1,5 +1,6 @@
 package com.localcloud.emulators.secretmanager;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -12,6 +13,8 @@ import com.linecorp.armeria.server.annotation.*;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 
 import java.util.List;
 import java.util.Map;
@@ -34,10 +37,16 @@ public class SecretManagerRestService {
     private final SecretManagerStore store;
     private final SecretManagerEmulator emulator;
     private final ObjectMapper mapper = new ObjectMapper();
+    private final IAMPolicyRestHandler iamHandler;
 
     public SecretManagerRestService(SecretManagerStore store, SecretManagerEmulator emulator) {
+        this(store, emulator, null);
+    }
+
+    public SecretManagerRestService(SecretManagerStore store, SecretManagerEmulator emulator, IAMPolicyRestHandler iamHandler) {
         this.store = store;
         this.emulator = emulator;
+        this.iamHandler = iamHandler;
     }
 
     @Post("/projects/{project}/secrets")
@@ -133,6 +142,79 @@ public class SecretManagerRestService {
             return errorResponse(500, e.getMessage());
         }
     }
+
+    // ── Service Usage API endpoints (co-located to share /v1 prefix) ──────────
+
+    @Get("/projects/{project}/services/{service}")
+    public HttpResponse getService(@Param String project, @Param String service) {
+        try {
+            ObjectNode result = mapper.createObjectNode();
+            result.put("name", service);
+            result.put("state", "ENABLED");
+            result.put("parent", "projects/" + project);
+            ObjectNode config = result.putObject("config");
+            config.put("name", service);
+            config.put("title", service.replace(".googleapis.com", ""));
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+        } catch (Exception e) {
+            return errorResponse(500, "Internal error");
+        }
+    }
+
+    @Get("/projects/{project}/services")
+    public HttpResponse listServices(@Param String project) {
+        try {
+            ObjectNode result = mapper.createObjectNode();
+            result.set("services", mapper.createArrayNode());
+            result.put("nextPageToken", "");
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+        } catch (Exception e) {
+            return errorResponse(500, "Internal error");
+        }
+    }
+
+    @Post("regex:^/projects/(?<project>[^/]+)/services/(?<service>[^:]+):enable$")
+    public HttpResponse enableService(@Param String project, @Param String service) {
+        try {
+            ObjectNode operation = mapper.createObjectNode();
+            operation.put("name", "operations/su-" + System.currentTimeMillis());
+            operation.put("done", true);
+            ObjectNode resp = operation.putObject("response");
+            resp.put("name", service);
+            resp.put("state", "ENABLED");
+            resp.put("@type", "type.googleapis.com/google.api.serviceusage.v1.EnableServiceResponse");
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(operation));
+        } catch (Exception e) {
+            return errorResponse(500, "Internal error");
+        }
+    }
+
+    @Post("regex:^/projects/(?<project>[^/]+)/services:batchEnable$")
+    public HttpResponse batchEnableServices(@Param String project, String body) {
+        try {
+            ObjectNode operation = mapper.createObjectNode();
+            operation.put("name", "operations/su-batch-" + System.currentTimeMillis());
+            operation.put("done", true);
+            ObjectNode resp = operation.putObject("response");
+            resp.put("@type", "type.googleapis.com/google.api.serviceusage.v1.BatchEnableServicesResponse");
+            ArrayNode services = resp.putArray("services");
+            if (body != null && !body.isBlank()) {
+                JsonNode parsed = mapper.readTree(body);
+                if (parsed.has("serviceIds") && parsed.get("serviceIds").isArray()) {
+                    for (JsonNode id : parsed.get("serviceIds")) {
+                        ObjectNode svc = services.addObject();
+                        svc.put("name", id.asText());
+                        svc.put("state", "ENABLED");
+                    }
+                }
+            }
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(operation));
+        } catch (Exception e) {
+            return errorResponse(500, "Internal error");
+        }
+    }
+
+    // IAM Policy endpoints are handled by the generic catch-all in LocalCloudApplication.
 
     private HttpResponse errorResponse(int code, String message) {
         try {

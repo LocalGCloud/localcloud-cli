@@ -1,6 +1,7 @@
 package com.localcloud.emulators.memorystore;
 
 import com.localcloud.emulators.AbstractEmulator;
+import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 import com.localcloud.persistence.PostgresDataSource;
 
 public class MemorystoreEmulator extends AbstractEmulator {
@@ -9,9 +10,13 @@ public class MemorystoreEmulator extends AbstractEmulator {
     private final MemorystoreAdminService adminService;
 
     public MemorystoreEmulator(PostgresDataSource dataSource, int gatewayPort) {
+        this(dataSource, gatewayPort, null);
+    }
+
+    public MemorystoreEmulator(PostgresDataSource dataSource, int gatewayPort, IAMPolicyRestHandler iamHandler) {
         super("memorystore", "Memorystore", gatewayPort, "rest", "REDIS_HOST");
         this.store = new MemorystoreStore(dataSource);
-        this.adminService = new MemorystoreAdminService(store, this);
+        this.adminService = new MemorystoreAdminService(store, this, iamHandler);
     }
 
     public MemorystoreAdminService getAdminService() {

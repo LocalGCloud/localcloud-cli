@@ -21,6 +21,7 @@ public class LocalCloudConfig {
     private int gatewayPort;
     private String iamMode;
     private String iamPolicyFile;
+    private boolean iamLogWarnings;
     private String logVerbosity;
     private boolean persistenceEnabled;
     private String postgresHost;
@@ -53,6 +54,7 @@ public class LocalCloudConfig {
         config.gatewayPort = intEnv("LOCALCLOUD_PORT", 8080);
         config.iamMode = env("LOCALCLOUD_IAM_MODE", "permissive");
         config.iamPolicyFile = env("LOCALCLOUD_IAM_POLICY_FILE", "");
+        config.iamLogWarnings = Boolean.parseBoolean(env("LOCALCLOUD_IAM_LOG_WARNINGS", "true"));
         config.logVerbosity = env("LOCALCLOUD_LOG_VERBOSITY", "info");
         config.persistenceEnabled = Boolean.parseBoolean(env("LOCALCLOUD_PERSISTENCE", "true"));
 
@@ -159,6 +161,10 @@ public class LocalCloudConfig {
 
     public String getIamPolicyFile() {
         return iamPolicyFile;
+    }
+
+    public boolean isIamLogWarningsEnabled() {
+        return iamLogWarnings;
     }
 
     public String getLogVerbosity() {

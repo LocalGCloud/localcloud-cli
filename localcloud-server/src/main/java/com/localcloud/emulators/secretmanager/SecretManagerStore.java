@@ -43,6 +43,18 @@ public class SecretManagerStore {
         }
     }
 
+    public void updateSecret(String projectId, String secretId, String labelsJson) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE secrets SET labels = ? WHERE project_id = ? AND secret_id = ?")) {
+            ps.setString(1, labelsJson != null ? labelsJson : "{}");
+            ps.setString(2, projectId);
+            ps.setString(3, secretId);
+            ps.executeUpdate();
+            logger.debug("Updated secret: projects/{}/secrets/{}", projectId, secretId);
+        }
+    }
+
     public Map<String, Object> getSecret(String projectId, String secretId) throws SQLException {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(

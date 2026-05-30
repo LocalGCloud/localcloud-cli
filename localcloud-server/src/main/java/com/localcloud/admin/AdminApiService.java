@@ -27,6 +27,7 @@ import com.linecorp.armeria.server.annotation.Put;
 import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.config.ServiceRegistry;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
+import com.localcloud.emulators.iam.IAMEmulator;
 import com.localcloud.gateway.FaultInjectionRegistry;
 import com.localcloud.gateway.RequestLogger;
 import com.localcloud.gateway.RequestLogger.RequestLogEntry;
@@ -143,6 +144,17 @@ public class AdminApiService {
                     String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(envVars);
                     yield HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
                 }
+                case "oauth" -> {
+                    // Return OAuth token endpoint configuration
+                    String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of(
+                        "token_uri", "http://localhost:8080/oauth2/token",
+                        "auth_uri", "http://localhost:8080/oauth2/auth",
+                        "access_token", "ya29.localcloud-dev-access-token",
+                        "token_type", "Bearer",
+                        "expires_in", 3600
+                    ));
+                    yield HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
+                }
                 case "docker-compose" -> {
                     StringBuilder sb = new StringBuilder();
                     sb.append("# docker-compose environment variables\n");
@@ -167,16 +179,63 @@ public class AdminApiService {
                         // Spanner uses REST port for Terraform (not gRPC)
                         String endpoint;
                         if ("spanner".equals(service) && def.additionalPorts().containsKey("rest")) {
-                            endpoint = "http://localhost:" + def.additionalPorts().get("rest");
+                            endpoint = "http://localhost:" + def.additionalPorts().get("rest") + "/v1";
+                        // Memorystore: Terraform needs the Admin REST API on the gateway,
+                        // not the Redis data plane (port 6379, RESP2 protocol).
+                        } else if ("memorystore".equals(service)) {
+                            endpoint = "http://localhost:" + config.getGatewayPort() + "/redis/v1";
+                        // Bigtable: Terraform needs the Admin REST API on the gateway,
+                        // not the gRPC data plane (port 8087).
+                        } else if ("bigtable".equals(service)) {
+                            endpoint = "http://localhost:" + config.getGatewayPort();
+                        // PubSub: Terraform uses the REST admin API on the gateway,
+                        // not the gRPC data plane (port 8085).
+                        } else if ("pubsub".equals(service)) {
+                            endpoint = "http://localhost:" + config.getGatewayPort();
                         } else {
                             endpoint = def.envValue("localhost");
                             if (!endpoint.startsWith("http")) {
                                 endpoint = "http://" + endpoint;
                             }
                         }
+                        // External emulators that need a path prefix beyond the host.
+                        // GCS: fake-gcs-server expects /storage/v1/ prefix
+                        if ("gcs".equals(service)) {
+                            if (endpoint.endsWith("/")) {
+                                endpoint = endpoint.substring(0, endpoint.length() - 1);
+                            }
+                            endpoint = endpoint + "/storage/v1";
+                        }
+                        // Gateway-based REST services need API version prefix in the endpoint.
+                        // The Go REST client replaces the googleapis base URL (which includes the
+                        // version prefix like /v1/) with our custom endpoint. Without the version
+                        // prefix, the client constructs URLs without it (e.g., /projects/... instead
+                        // of /v1/projects/...), which don't match our annotated service routes.
+                        // gRPC-based services and external emulators do NOT need a version prefix.
+                        if (def.isFacade()) {
+                            String versionPrefix = switch (service) {
+                                case "cloudtasks" -> "/v2/";
+                                // These services' Go clients already include the version
+                                // prefix in the request path — NOT needed in endpoint.
+                                case "cloudresourcemanager", "cloudbilling", "cloudsql", "dataproc", "bigtable" -> "";
+                                default -> "/v1/";
+                            };
+                            if (!versionPrefix.isEmpty()) {
+                                endpoint = endpoint + versionPrefix;
+                            }
+                        }
+                        // Ensure trailing slash so the Go client path concatenation works.
+                        // e.g. http://localhost:8085 + /projects/... → http://localhost:8085/projects/...
+                        if (!endpoint.endsWith("/")) {
+                            endpoint += "/";
+                        }
                         sb.append("export ").append(tfVar).append("=\"").append(endpoint).append("\"\n");
                     }
                     sb.append("export GOOGLE_PROJECT=\"").append(projectId).append("\"\n");
+                    sb.append("export GOOGLE_OAUTH_ACCESS_TOKEN=\"ya29.localcloud-dev-access-token\"\n");
+                    sb.append("export GOOGLE_OAUTH_CUSTOM_ENDPOINT=\"http://localhost:8080/oauth2/\"\n");
+                    sb.append("export GOOGLE_OPENID_CONNECT_CUSTOM_ENDPOINT=\"http://localhost:8080/oauth2/\"\n");
+                    sb.append("export BIGTABLE_EMULATOR_HOST=\"localhost:8087\"\n");
                     sb.append("export GOOGLE_APPLICATION_CREDENTIALS=\"/dev/null\"\n");
                     yield HttpResponse.of(HttpStatus.OK, MediaType.PLAIN_TEXT_UTF_8, sb.toString());
                 }
@@ -194,6 +253,42 @@ public class AdminApiService {
             logger.error("Error generating env output", e);
             return errorResponse(e);
         }
+    }
+
+    /**
+     * OAuth2 token endpoint for Terraform and other clients.
+     * Returns a fake access token that works with LocalCloud emulators.
+     */
+    @Post("/oauth2/token")
+    public HttpResponse oauth2Token(AggregatedHttpRequest req) {
+        try {
+            String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of(
+                "access_token", "ya29.localcloud-" + System.currentTimeMillis(),
+                "token_type", "Bearer",
+                "expires_in", 3600,
+                "scope", "https://www.googleapis.com/auth/cloud-platform"
+            ));
+            logger.info("OAuth2 token request from client");
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
+        } catch (Exception e) {
+            logger.error("Error generating OAuth2 token", e);
+            return errorResponse(e);
+        }
+    }
+
+    /**
+     * OAuth2 authorization endpoint (stub for completeness).
+     */
+    @Get("/oauth2/auth")
+    public HttpResponse oauth2Auth(ServiceRequestContext ctx) {
+        String redirectUri = ctx.queryParams().get("redirect_uri", "http://localhost");
+        String state = ctx.queryParams().get("state", "");
+        String location = redirectUri + "?code=localcloud-auth-code&state=" + state;
+        return HttpResponse.builder()
+            .status(HttpStatus.TEMPORARY_REDIRECT)
+            .header("Location", location)
+            .content(MediaType.PLAIN_TEXT, "Redirecting to " + location)
+            .build();
     }
 
     /**
@@ -838,6 +933,32 @@ public class AdminApiService {
                     mapper.writeValueAsString(Map.of("applied", applied, "blocked", blocked)));
         } catch (Exception e) {
             logger.error("Error updating service config", e);
+            return errorResponse(e);
+        }
+    }
+
+    /**
+     * Update IAM-specific runtime settings (e.g., warning logging).
+     */
+    @Put("/config/iam")
+    public HttpResponse updateIamConfig(String body) {
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> updates = mapper.readValue(body, Map.class);
+            if (updates.containsKey("logWarnings")) {
+                boolean enabled = Boolean.TRUE.equals(updates.get("logWarnings"))
+                        || "true".equalsIgnoreCase(String.valueOf(updates.get("logWarnings")));
+                var iam = IAMEmulator.getRunningInstance();
+                if (iam != null) {
+                    iam.setLogWarnings(enabled);
+                }
+                return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                        mapper.writeValueAsString(Map.of("logWarnings", enabled)));
+            }
+            return HttpResponse.of(HttpStatus.BAD_REQUEST, MediaType.JSON,
+                    mapper.writeValueAsString(Map.of("error", "Unknown IAM config key")));
+        } catch (Exception e) {
+            logger.error("Error updating IAM config", e);
             return errorResponse(e);
         }
     }

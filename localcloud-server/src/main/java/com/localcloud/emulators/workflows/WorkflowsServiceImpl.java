@@ -436,12 +436,12 @@ public class WorkflowsServiceImpl {
         result.put("sourceContents", row.get("source_contents"));
         if (row.get("description") != null) result.put("description", row.get("description"));
         if (row.get("service_account") != null) result.put("serviceAccount", row.get("service_account"));
-        if (row.get("labels") != null) result.put("labels", row.get("labels"));
+        if (row.get("labels") != null) result.put("labels", jsonbToMap(row.get("labels")));
         if (row.get("call_log_level") != null) result.put("callLogLevel", row.get("call_log_level"));
         if (row.get("execution_history_level") != null) result.put("executionHistoryLevel", row.get("execution_history_level"));
         if (row.get("crypto_key_name") != null) result.put("cryptoKeyName", row.get("crypto_key_name"));
-        if (row.get("user_env_vars") != null) result.put("userEnvVars", row.get("user_env_vars"));
-        if (row.get("tags") != null) result.put("tags", row.get("tags"));
+        if (row.get("user_env_vars") != null) result.put("userEnvVars", jsonbToMap(row.get("user_env_vars")));
+        if (row.get("tags") != null) result.put("tags", jsonbToMap(row.get("tags")));
         if (row.get("created_at") != null) result.put("createTime", String.valueOf(row.get("created_at")));
         if (row.get("updated_at") != null) result.put("updateTime", String.valueOf(row.get("updated_at")));
         return result;
@@ -456,7 +456,7 @@ public class WorkflowsServiceImpl {
         if (row.get("result") != null) result.put("result", row.get("result"));
         if (row.get("error") != null) result.put("error", row.get("error"));
         if (row.get("call_log_level") != null) result.put("callLogLevel", row.get("call_log_level"));
-        if (row.get("labels") != null) result.put("labels", row.get("labels"));
+        if (row.get("labels") != null) result.put("labels", jsonbToMap(row.get("labels")));
         if (row.get("duration_ms") != null) result.put("durationMs", row.get("duration_ms"));
         if (row.get("state_error") != null) result.put("stateError", row.get("state_error"));
         if (row.get("start_time") != null) result.put("startTime", String.valueOf(row.get("start_time")));
@@ -473,6 +473,25 @@ public class WorkflowsServiceImpl {
             }
         }
         return result;
+    }
+
+    /**
+     * Converts a PostgreSQL JSONB column value (represented as PGobject by JDBC) into a proper Java Map.
+     * If the value is already a Map, returns it as-is. Handles null safely.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> jsonbToMap(Object value) {
+        if (value == null) return null;
+        if (value instanceof Map) return (Map<String, Object>) value;
+        try {
+            // PGobject from PostgreSQL JDBC — extract the JSON string value and parse it
+            String json = value instanceof org.postgresql.util.PGobject
+                    ? ((org.postgresql.util.PGobject) value).getValue()
+                    : String.valueOf(value);
+            return mapper.readValue(json, Map.class);
+        } catch (Exception e) {
+            return Map.of();
+        }
     }
 
     private Map<String, Object> formatStepEntry(Map<String, Object> row, String projectId, String locationId,

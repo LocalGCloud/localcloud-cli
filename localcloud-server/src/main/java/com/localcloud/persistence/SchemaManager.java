@@ -36,9 +36,14 @@ public class SchemaManager {
                 "CREATE TABLE IF NOT EXISTS projects (" +
                 "    project_id VARCHAR(255) NOT NULL PRIMARY KEY," +
                 "    display_name VARCHAR(255)," +
+                "    labels VARCHAR(4096) DEFAULT '{}'," +
+                "    state VARCHAR(20) DEFAULT 'ACTIVE'," +
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
                 ")"
             );
+            // Migration: add labels/state columns for existing databases
+            stmt.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS labels VARCHAR(4096) DEFAULT '{}'");
+            stmt.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS state VARCHAR(20) DEFAULT 'ACTIVE'");
 
             // Schema version tracking
             stmt.execute(

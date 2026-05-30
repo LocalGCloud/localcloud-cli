@@ -1,6 +1,7 @@
 package com.localcloud.emulators.cloudsql;
 
 import com.localcloud.emulators.AbstractEmulator;
+import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 import com.localcloud.persistence.PostgresDataSource;
 
 /**
@@ -13,9 +14,13 @@ public class CloudSqlEmulator extends AbstractEmulator {
     private final CloudSqlRestService restService;
 
     public CloudSqlEmulator(PostgresDataSource dataSource, int gatewayPort) {
+        this(dataSource, gatewayPort, null);
+    }
+
+    public CloudSqlEmulator(PostgresDataSource dataSource, int gatewayPort, IAMPolicyRestHandler iamHandler) {
         super("cloudsql", "Cloud SQL", gatewayPort, "rest", "CLOUD_SQL_EMULATOR_HOST");
         this.store = new CloudSqlStore(dataSource);
-        this.restService = new CloudSqlRestService(store, this);
+        this.restService = new CloudSqlRestService(store, this, iamHandler);
     }
 
     public CloudSqlRestService getRestService() {

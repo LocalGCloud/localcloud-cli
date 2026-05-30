@@ -7,8 +7,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.server.annotation.Get;
 import com.linecorp.armeria.server.annotation.Param;
 import com.linecorp.armeria.server.annotation.Post;
+import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -25,10 +27,16 @@ public class VertexAiRestService {
     private final VertexAiEmulator emulator;
     private final ObjectMapper mapper = new ObjectMapper();
     private final String backend;
+    private final IAMPolicyRestHandler iamHandler;
 
     public VertexAiRestService(VertexAiStore store, VertexAiEmulator emulator) {
+        this(store, emulator, null);
+    }
+
+    public VertexAiRestService(VertexAiStore store, VertexAiEmulator emulator, IAMPolicyRestHandler iamHandler) {
         this.store = store;
         this.emulator = emulator;
+        this.iamHandler = iamHandler;
         this.backend = System.getenv().getOrDefault("LOCALCLOUD_VERTEX_BACKEND", "stub");
     }
 
@@ -209,6 +217,8 @@ public class VertexAiRestService {
     private HttpResponse json(HttpStatus status, JsonNode node) {
         return HttpResponse.of(status, MediaType.JSON, node.toString());
     }
+
+    // IAM Policy endpoints are handled by the generic catch-all in LocalCloudApplication.
 
     private HttpResponse error(HttpStatus status, String message) {
         ObjectNode out = mapper.createObjectNode();

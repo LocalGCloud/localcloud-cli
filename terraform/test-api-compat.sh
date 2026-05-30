@@ -137,6 +137,22 @@ test_api "List instances" GET "$BASE/compute/v1/projects/$PROJECT/zones/us-centr
 test_api "Delete instance" DELETE "$BASE/compute/v1/projects/$PROJECT/zones/us-central1-a/instances/tf-compat-vm"
 echo ""
 
+# ─── Cloud Resource Manager (google_project) ─────────────────────
+
+echo "--- Cloud Resource Manager (google_project) ---"
+test_api "Create project (v3)" POST "$BASE/v3/projects" '{"projectId":"tf-compat-project","name":"TF Compat Project","labels":{"env":"test"}}'
+test_api "Get project (v3)" GET "$BASE/v3/projects/tf-compat-project"
+test_api "List projects (v3)" GET "$BASE/v3/projects"
+test_api "Update project (v3)" PATCH "$BASE/v3/projects/tf-compat-project" '{"name":"TF Compat Updated","labels":{"env":"test","updated":"true"}}'
+test_api "Get project (v1)" GET "$BASE/v1/projects/tf-compat-project"
+test_api "List projects (v1)" GET "$BASE/v1/projects"
+test_api "Delete project (v3)" DELETE "$BASE/v3/projects/tf-compat-project"
+test_api "Get deleted project (v3)" GET "$BASE/v3/projects/tf-compat-project" "" "404"
+test_api "Get deleted project (v1)" GET "$BASE/v1/projects/tf-compat-project" "" "404"
+test_api "Cannot delete default project (v3)" DELETE "$BASE/v3/projects/local-project" "" "403"
+test_api "Cannot delete default project (v1)" DELETE "$BASE/v1/projects/local-project" "" "403"
+echo ""
+
 # ─── Summary ─────────────────────────────────────────────────────
 
 echo "============================================"

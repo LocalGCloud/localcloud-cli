@@ -50,9 +50,11 @@
 #     LOCALCLOUD_ENABLE_GCS, LOCALCLOUD_ENABLE_PUBSUB,
 #     LOCALCLOUD_ENABLE_FIRESTORE, LOCALCLOUD_ENABLE_BIGQUERY,
 #     LOCALCLOUD_ENABLE_SPANNER, LOCALCLOUD_ENABLE_BIGTABLE,
-#     LOCALCLOUD_ENABLE_SECRETMANAGER, LOCALCLOUD_ENABLE_CLOUDTASKS,
-#     LOCALCLOUD_ENABLE_LOGGING, LOCALCLOUD_ENABLE_MONITORING,
-#     LOCALCLOUD_ENABLE_MEMORYSTORE,
+#     LOCALCLOUD_ENABLE_CLOUDTASKS, LOCALCLOUD_ENABLE_CLOUDSCHEDULER,
+#     LOCALCLOUD_ENABLE_CLOUDFUNCTIONS, LOCALCLOUD_ENABLE_ALLOYDB,
+#     LOCALCLOUD_ENABLE_DATAPROC, LOCALCLOUD_ENABLE_CLOUDIAM,
+#     LOCALCLOUD_ENABLE_CLOUDRESOURCEMANAGER, LOCALCLOUD_ENABLE_WORKFLOWS,
+#     LOCALCLOUD_ENABLE_MEMORYSTORE, LOCALCLOUD_ENABLE_LOGGING,
 #     LOCALCLOUD_ENABLE_GKE (default: false),
 #     LOCALCLOUD_ENABLE_COMPUTE (default: false),
 #     LOCALCLOUD_ENABLE_CLOUDRUN (default: false),
@@ -238,6 +240,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         openssl=3.5.6-1~deb13u1 \
         gosu=1.17-3+b4 \
         caddy=2.6.2-12+b3 \
+        dnsmasq \
     && apt-get remove -y --purge postgresql-17-jit 2>/dev/null || true \
     && apt-get autoremove -y --purge \
     && rm -rf /usr/lib/postgresql/17/lib/bitcode \
@@ -303,15 +306,18 @@ RUN su - localcloud -s /bin/bash -c " \
     /usr/lib/postgresql/17/bin/pg_ctl -D /var/lib/localcloud/pgdata stop"
 
 # 6. Copy local configuration and artifacts
-COPY valkey.conf /etc/valkey.conf
+COPY docker/conf/valkey.conf /etc/valkey.conf
 COPY --chown=localcloud:localcloud services.yaml seed.yaml /etc/localcloud/
 COPY --chown=localcloud:localcloud localcloud-server/build/libs/localcloud-server-*-all.jar /opt/localcloud/server.jar
 COPY --chown=localcloud:localcloud localcloud-console/dist/ /opt/localcloud/console/dist/
-COPY supervisord.conf /etc/supervisor/conf.d/localcloud.conf
-COPY Caddyfile /etc/caddy/Caddyfile
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-COPY wait-for-pg.sh /usr/local/bin/wait-for-pg.sh
-COPY license-gate.sh /opt/localcloud/license-gate.sh
+COPY docker/conf/supervisord.conf /etc/supervisor/conf.d/localcloud.conf
+COPY docker/conf/network/Caddyfile /etc/caddy/Caddyfile
+COPY docker/conf/security/server-cert.pem /etc/caddy/server-cert.pem
+COPY docker/conf/security/server-key.pem /etc/caddy/server-key.pem
+COPY docker/conf/network/dnsmasq.conf /etc/dnsmasq.conf
+COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY docker/wait-for-pg.sh /usr/local/bin/wait-for-pg.sh
+COPY docker/license-gate.sh /opt/localcloud/license-gate.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/wait-for-pg.sh /opt/localcloud/license-gate.sh
 
 # Build mode: "development" (default) skips license gate when no key is set.
@@ -345,6 +351,8 @@ ENV JAVA_OPTS="-Xmx512m -Xms128m -XX:+UseSerialGC -Xss256k -XX:MaxMetaspaceSize=
     LOCALCLOUD_ENABLE_BIGTABLE="true" \
     LOCALCLOUD_ENABLE_SECRETMANAGER="true" \
     LOCALCLOUD_ENABLE_CLOUDTASKS="true" \
+    LOCALCLOUD_ENABLE_CLOUDRESOURCEMANAGER="true" \
+    LOCALCLOUD_ENABLE_SERVICEUSAGE="true" \
     LOCALCLOUD_ENABLE_LOGGING="true" \
     LOCALCLOUD_ENABLE_MONITORING="true" \
     LOCALCLOUD_ENABLE_GKE="false" \
@@ -361,7 +369,7 @@ ENV JAVA_OPTS="-Xmx512m -Xms128m -XX:+UseSerialGC -Xss256k -XX:MaxMetaspaceSize=
 VOLUME /var/lib/localcloud
 
 # Ports: gateway (+ console), Cloud SQL, GCS, Memorystore, GKE/k3d, Pub/Sub, Firestore, Bigtable, Spanner, BigQuery
-EXPOSE 8080 3306 4443 5432 6379 6443 8085 8086 8087 9010 9020 9050 9060
+EXPOSE 8080 3306 4443 5432 6379 6443 8085 8086 8087 9010 9020 9050 9060 443 53
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
   CMD curl -sf http://localhost:8080/health || exit 1

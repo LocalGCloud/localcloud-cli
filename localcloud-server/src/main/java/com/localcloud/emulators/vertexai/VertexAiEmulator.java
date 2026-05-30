@@ -1,6 +1,7 @@
 package com.localcloud.emulators.vertexai;
 
 import com.localcloud.emulators.AbstractEmulator;
+import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 import com.localcloud.persistence.PostgresDataSource;
 
 /**
@@ -12,9 +13,13 @@ public class VertexAiEmulator extends AbstractEmulator {
     private final VertexAiRestService restService;
 
     public VertexAiEmulator(PostgresDataSource dataSource, int gatewayPort) {
+        this(dataSource, gatewayPort, null);
+    }
+
+    public VertexAiEmulator(PostgresDataSource dataSource, int gatewayPort, IAMPolicyRestHandler iamHandler) {
         super("vertexai", "Vertex AI", gatewayPort, "rest", "AIPLATFORM_EMULATOR_HOST");
         this.store = new VertexAiStore(dataSource);
-        this.restService = new VertexAiRestService(store, this);
+        this.restService = new VertexAiRestService(store, this, iamHandler);
     }
 
     public VertexAiRestService getRestService() {

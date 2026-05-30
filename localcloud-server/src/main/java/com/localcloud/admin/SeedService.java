@@ -681,20 +681,29 @@ public class SeedService {
     @SuppressWarnings("unchecked")
     private int resetPubSub(String projectId) {
         int count = 0;
+        String pubsubRestBase = "http://localhost:" + config.getGatewayPort();
         try {
             // List and delete subscriptions first (they reference topics)
             try {
-                String subListUrl = pubsubBase + "/v1/projects/" + projectId + "/subscriptions";
+                String subListUrl = pubsubRestBase + "/v1/projects/" + projectId + "/subscriptions";
                 String subResp = httpGet(subListUrl);
                 Map<String, Object> subParsed = jsonMapper.readValue(subResp, Map.class);
-                List<String> subscriptions = (List<String>) subParsed.get("subscriptions");
+                List<?> subscriptions = (List<?>) subParsed.get("subscriptions");
                 if (subscriptions != null) {
-                    for (String sub : subscriptions) {
-                        try {
-                            httpDelete(pubsubBase + "/v1/" + sub);
-                            count++;
-                        } catch (Exception e) {
-                            logger.debug("Failed to delete Pub/Sub subscription {}: {}", sub, e.getMessage());
+                    for (Object item : subscriptions) {
+                        String subName = null;
+                        if (item instanceof Map) {
+                            subName = String.valueOf(((Map<?, ?>) item).get("name"));
+                        } else if (item instanceof String) {
+                            subName = (String) item;
+                        }
+                        if (subName != null && !subName.isBlank()) {
+                            try {
+                                httpDelete(pubsubRestBase + "/v1/" + subName);
+                                count++;
+                            } catch (Exception e) {
+                                logger.debug("Failed to delete Pub/Sub subscription {}: {}", subName, e.getMessage());
+                            }
                         }
                     }
                 }
@@ -704,17 +713,25 @@ public class SeedService {
 
             // List and delete topics
             try {
-                String topicListUrl = pubsubBase + "/v1/projects/" + projectId + "/topics";
+                String topicListUrl = pubsubRestBase + "/v1/projects/" + projectId + "/topics";
                 String topicResp = httpGet(topicListUrl);
                 Map<String, Object> topicParsed = jsonMapper.readValue(topicResp, Map.class);
-                List<String> topics = (List<String>) topicParsed.get("topics");
+                List<?> topics = (List<?>) topicParsed.get("topics");
                 if (topics != null) {
-                    for (String topic : topics) {
-                        try {
-                            httpDelete(pubsubBase + "/v1/" + topic);
-                            count++;
-                        } catch (Exception e) {
-                            logger.debug("Failed to delete Pub/Sub topic {}: {}", topic, e.getMessage());
+                    for (Object item : topics) {
+                        String topicName = null;
+                        if (item instanceof Map) {
+                            topicName = String.valueOf(((Map<?, ?>) item).get("name"));
+                        } else if (item instanceof String) {
+                            topicName = (String) item;
+                        }
+                        if (topicName != null && !topicName.isBlank()) {
+                            try {
+                                httpDelete(pubsubRestBase + "/v1/" + topicName);
+                                count++;
+                            } catch (Exception e) {
+                                logger.debug("Failed to delete Pub/Sub topic {}: {}", topicName, e.getMessage());
+                            }
                         }
                     }
                 }

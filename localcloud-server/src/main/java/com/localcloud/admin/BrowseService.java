@@ -29,6 +29,8 @@ import com.localcloud.config.ServiceRegistry;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
 import com.localcloud.persistence.PostgresDataSource;
 
+import com.google.iam.v1.Binding;
+import com.google.iam.v1.Policy;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.params.ScanParams;
 import redis.clients.jedis.resps.ScanResult;
@@ -227,6 +229,14 @@ public class BrowseService {
                             "message", "Invalid Memorystore browse path"));
                 }
                 case "cloudscheduler" -> browseSchedulerJobExecutions(a, b, projectId);
+                case "kms" -> {
+                    if ("versions".equals(a)) {
+                        yield browseKmsVersions(b, c, projectId);
+                    }
+                    yield mapper.writeValueAsString(Map.of(
+                            "error", true,
+                            "message", "Invalid KMS browse path"));
+                }
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unsupported 4-segment browse for service: " + service));
@@ -295,6 +305,7 @@ public class BrowseService {
                 case "alloydb" -> browseAlloyDB(resourceType, resourceId, projectId);
                 case "dataproc" -> browseDataproc(resourceType, resourceId, projectId);
                 case "cloudiam" -> browseCloudIAM(resourceType, resourceId, projectId);
+                case "kms" -> browseKms(resourceType, resourceId, projectId);
                 case "cloudsql" -> browseCloudSql(resourceType, resourceId, projectId);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
@@ -2068,21 +2079,120 @@ public class BrowseService {
         List<Map<String, Object>> policies = new ArrayList<>();
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                 "SELECT resource_type, resource_id, policy FROM iam_policies ORDER BY resource_type, resource_id")) {
+                 "SELECT resource_type, resource_id, policy_proto FROM iam_policies ORDER BY resource_type, resource_id")) {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     Map<String, Object> p = new LinkedHashMap<>();
                     p.put("resourceType", rs.getString("resource_type"));
                     p.put("resourceId", rs.getString("resource_id"));
-                    byte[] policyBytes = rs.getBytes("policy");
+                    byte[] policyBytes = rs.getBytes("policy_proto");
+                    List<Map<String, Object>> bindings = new ArrayList<>();
                     if (policyBytes != null) {
-                        p.put("policy", "stored"); // placeholder, actual protobuf parsing not needed for list view
+                        try {
+                            Policy policy = Policy.parseFrom(policyBytes);
+                            for (Binding b : policy.getBindingsList()) {
+                                Map<String, Object> binding = new LinkedHashMap<>();
+                                binding.put("role", b.getRole());
+                                binding.put("members", b.getMembersList());
+                                bindings.add(binding);
+                            }
+                        } catch (Exception e) {
+                            logger.warn("Failed to parse IAM policy for {}/{}: {}",
+                                    rs.getString("resource_type"), rs.getString("resource_id"), e.getMessage());
+                        }
                     }
+                    p.put("bindings", bindings);
                     policies.add(p);
                 }
             }
         }
         return mapper.writeValueAsString(Map.of("policies", policies));
+    }
+
+    // ========== Cloud KMS (in-process, query PostgreSQL) ==========
+
+    private String browseKms(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+
+        // List key rings
+        if (resourceType == null || resourceId == null) {
+            List<Map<String, Object>> keyRings = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT key_ring_id, location_id, created_at FROM kms_key_rings " +
+                     "WHERE project_id = ? ORDER BY key_ring_id")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> kr = new LinkedHashMap<>();
+                        kr.put("keyRingId", rs.getString("key_ring_id"));
+                        kr.put("locationId", rs.getString("location_id"));
+                        kr.put("createdAt", rs.getTimestamp("created_at") != null ? rs.getTimestamp("created_at").toString() : null);
+                        keyRings.add(kr);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("keyRings", keyRings));
+        }
+
+        // List crypto keys in a key ring
+        if ("keys".equals(resourceType)) {
+            String keyRingId = resourceId;
+            List<Map<String, Object>> cryptoKeys = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT crypto_key_id, purpose, algorithm, primary_version, labels, created_at " +
+                     "FROM kms_crypto_keys " +
+                     "WHERE project_id = ? AND key_ring_id = ? ORDER BY crypto_key_id")) {
+                ps.setString(1, projectId);
+                ps.setString(2, keyRingId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> ck = new LinkedHashMap<>();
+                        ck.put("cryptoKeyId", rs.getString("crypto_key_id"));
+                        ck.put("purpose", rs.getString("purpose"));
+                        ck.put("algorithm", rs.getString("algorithm"));
+                        ck.put("primaryVersion", rs.getInt("primary_version"));
+                        ck.put("labels", rs.getString("labels"));
+                        ck.put("createdAt", rs.getTimestamp("created_at") != null ? rs.getTimestamp("created_at").toString() : null);
+                        cryptoKeys.add(ck);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("keyRingId", keyRingId, "cryptoKeys", cryptoKeys));
+        }
+
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid KMS browse path"));
+    }
+
+    private String browseKmsVersions(String keyRingId, String cryptoKeyId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        List<Map<String, Object>> versions = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "SELECT version_number, state, algorithm, created_at " +
+                 "FROM kms_crypto_key_versions " +
+                 "WHERE project_id = ? AND key_ring_id = ? AND crypto_key_id = ? " +
+                 "ORDER BY version_number DESC")) {
+            ps.setString(1, projectId);
+            ps.setString(2, keyRingId);
+            ps.setString(3, cryptoKeyId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> v = new LinkedHashMap<>();
+                    v.put("versionNumber", rs.getInt("version_number"));
+                    v.put("state", rs.getString("state"));
+                    v.put("algorithm", rs.getString("algorithm"));
+                    v.put("createdAt", rs.getTimestamp("created_at") != null ? rs.getTimestamp("created_at").toString() : null);
+                    versions.add(v);
+                }
+            }
+        }
+        return mapper.writeValueAsString(Map.of("keyRingId", keyRingId, "cryptoKeyId", cryptoKeyId, "versions", versions));
     }
 
     private String browseCloudSql(String resourceType, String resourceId, String projectId) throws Exception {

@@ -29,6 +29,9 @@ graphify-out
 graphify-out/*
 pp
 
+#temporary
+openspec
+
 # IDE
 .idea/
 .vscode/
@@ -63,4 +66,5 @@ localcloud-data/
 /var/lib/localcloud/
 .design-extract/
 
-
+#terraform
+**/.terraform/

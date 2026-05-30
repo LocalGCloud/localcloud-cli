@@ -48,6 +48,19 @@ public class CloudSqlStore {
         return getInstance(project, instance);
     }
 
+    public Map<String, Object> updateInstance(String project, String instance, String tier, String settingsJson) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE cloudsql_instances SET tier = ?, settings_json = ? WHERE project_id = ? AND instance_id = ?")) {
+            ps.setString(1, tier);
+            ps.setString(2, settingsJson != null ? settingsJson : "{}");
+            ps.setString(3, project);
+            ps.setString(4, instance);
+            ps.executeUpdate();
+        }
+        return getInstance(project, instance);
+    }
+
     public Map<String, Object> getInstance(String project, String instance) throws SQLException {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(

@@ -255,7 +255,10 @@ class LocalCloudConfigTest {
         assertTrue(services.contains("monitoring"));
         assertTrue(services.contains("memorystore"));
         assertTrue(services.contains("workflows"));
-        assertEquals(17, services.size());
+        assertTrue(services.contains("cloudresourcemanager"));
+        assertTrue(services.contains("serviceusage"));
+        assertTrue(services.contains("cloudbilling"));
+        assertEquals(20, services.size());
     }
 
     // -----------------------------------------------------------------------
@@ -372,7 +375,10 @@ class LocalCloudConfigTest {
         assertTrue(allServices.containsKey("vertexai"));
         assertTrue(allServices.containsKey("kms"));
         assertTrue(allServices.containsKey("cloudsql"));
-        assertEquals(23, allServices.size(), "services.yaml should define exactly 23 services");
+        assertTrue(allServices.containsKey("cloudresourcemanager"));
+        assertTrue(allServices.containsKey("serviceusage"));
+        assertTrue(allServices.containsKey("cloudbilling"));
+        assertEquals(26, allServices.size(), "services.yaml should define exactly 26 services");
         assertFalse(config.isServiceEnabled("vertexai"), "vertexai should be disabled by default");
         assertFalse(config.isServiceEnabled("kms"), "kms should be disabled by default");
         assertFalse(config.isServiceEnabled("cloudsql"), "cloudsql should be disabled by default");

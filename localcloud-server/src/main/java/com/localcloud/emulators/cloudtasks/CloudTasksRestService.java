@@ -11,6 +11,8 @@ import com.linecorp.armeria.server.annotation.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.localcloud.emulators.iam.IAMPolicyRestHandler;
+
 import java.util.List;
 import java.util.Map;
 
@@ -27,10 +29,16 @@ public class CloudTasksRestService {
     private final CloudTasksStore store;
     private final CloudTasksEmulator emulator;
     private final ObjectMapper mapper = new ObjectMapper();
+    private final IAMPolicyRestHandler iamHandler;
 
     public CloudTasksRestService(CloudTasksStore store, CloudTasksEmulator emulator) {
+        this(store, emulator, null);
+    }
+
+    public CloudTasksRestService(CloudTasksStore store, CloudTasksEmulator emulator, IAMPolicyRestHandler iamHandler) {
         this.store = store;
         this.emulator = emulator;
+        this.iamHandler = iamHandler;
     }
 
     @Post("/projects/{project}/locations/{location}/queues")
@@ -122,6 +130,8 @@ public class CloudTasksRestService {
             return errorResponse(500, e.getMessage());
         }
     }
+
+    // IAM Policy endpoints are handled by the generic catch-all in LocalCloudApplication.
 
     private HttpResponse errorResponse(int code, String message) {
         try {

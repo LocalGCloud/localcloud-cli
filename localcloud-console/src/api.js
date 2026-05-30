@@ -94,6 +94,13 @@ export const api = {
     services: () => get('/services'),
     requests: () => get('/requests'),
     env: () => get(appendProject('/env?format=json')),
+    terraformEnv: () => {
+        const url = appendProject('/env?format=terraform');
+        return fetch(`${BASE}${url}`).then(r => {
+            if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+            return r.text();
+        });
+    },
     reset: () => post(appendProject('/reset')),
     browse: (service, sub) => get(appendProject(`/browse/${service}${sub ? '/' + sub : ''}`)),
     mutate: async (service, operation, data) => {
@@ -153,6 +160,18 @@ export const api = {
     secretManagerVersions: (secretId) => get(appendProject(`/browse/secretmanager/versions/${encodeURIComponent(secretId)}`)),
     // Secret Manager version payload
     getSecretVersionPayload: (secretId, version) => get(appendProject(`/browse/secretmanager/versions/${encodeURIComponent(secretId)}/${version}`)),
+    // KMS browse
+    kmsKeyRings: () => get(appendProject('/browse/kms')),
+    kmsCryptoKeys: (keyRingId) => get(appendProject(`/browse/kms/keys/${encodeURIComponent(keyRingId)}`)),
+    kmsVersions: (keyRingId, cryptoKeyId) => get(appendProject(`/browse/kms/versions/${encodeURIComponent(keyRingId)}/${encodeURIComponent(cryptoKeyId)}`)),
+    // KMS mutations
+    kmsCreateKeyRing: (data) => postJson(appendProject('/mutate/kms/keyrings'), data),
+    kmsCreateCryptoKey: (data) => postJson(appendProject('/mutate/kms/keys'), data),
+    kmsDeleteCryptoKey: (data) => postJson(appendProject('/mutate/kms/keys/delete'), data),
+    kmsEnableVersion: (data) => postJson(appendProject('/mutate/kms/versions/enable'), data),
+    kmsDisableVersion: (data) => postJson(appendProject('/mutate/kms/versions/disable'), data),
+    kmsDestroyVersion: (data) => postJson(appendProject('/mutate/kms/versions/destroy'), data),
+    kmsSetPrimaryVersion: (data) => postJson(appendProject('/mutate/kms/versions/setPrimary'), data),
     // Secret Manager version management
     addSecretVersion: (name, value) => postJson(appendProject('/mutate/secretmanager/versions/add'), { name, value }),
     enableSecretVersion: (name, version) => postJson(appendProject('/mutate/secretmanager/versions/enable'), { name, version }),

@@ -59,9 +59,9 @@ public class ServiceGatingDecorator implements DecoratingHttpServiceFunction {
         // Check if this path maps to a known facade service
         String serviceId = resolveService(path);
         if (serviceId != null && !config.isServiceDynamicallyEnabled(serviceId)) {
-            logger.debug("Service '{}' is disabled, returning 503 for path: {}", serviceId, path);
-            return HttpResponse.of(HttpStatus.SERVICE_UNAVAILABLE, MediaType.JSON,
-                    "{\"error\":\"Service '" + serviceId + "' is disabled\"}");
+            logger.debug("Service '{}' is disabled, returning 501 for path: {}", serviceId, path);
+            return HttpResponse.of(HttpStatus.NOT_IMPLEMENTED, MediaType.JSON,
+                    "{\"error\":\"Service '" + serviceId + "' is not implemented\"}");
         }
 
         return delegate.serve(ctx, req);

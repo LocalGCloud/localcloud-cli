@@ -12,6 +12,7 @@ import com.linecorp.armeria.server.annotation.Delete;
 import com.linecorp.armeria.server.annotation.Get;
 import com.linecorp.armeria.server.annotation.Param;
 import com.linecorp.armeria.server.annotation.Post;
+import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
@@ -35,10 +36,16 @@ public class KmsRestService {
     private final KmsStore store;
     private final KmsEmulator emulator;
     private final ObjectMapper mapper = new ObjectMapper();
+    private final IAMPolicyRestHandler iamHandler;
 
     public KmsRestService(KmsStore store, KmsEmulator emulator) {
+        this(store, emulator, null);
+    }
+
+    public KmsRestService(KmsStore store, KmsEmulator emulator, IAMPolicyRestHandler iamHandler) {
         this.store = store;
         this.emulator = emulator;
+        this.iamHandler = iamHandler;
     }
 
     @Post("/projects/{project}/locations/{location}/keyRings")
@@ -405,6 +412,8 @@ public class KmsRestService {
         HttpStatus status = e instanceof IllegalArgumentException ? HttpStatus.BAD_REQUEST : HttpStatus.INTERNAL_SERVER_ERROR;
         return error(status, "Failed to " + action + ": " + e.getMessage());
     }
+
+    // IAM Policy endpoints are handled by the generic catch-all in LocalCloudApplication.
 
     private HttpResponse error(HttpStatus status, String message) {
         ObjectNode out = mapper.createObjectNode();

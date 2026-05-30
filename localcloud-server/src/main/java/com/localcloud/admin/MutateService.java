@@ -7,6 +7,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -213,6 +214,7 @@ public class MutateService {
                 case "alloydb" -> mutateAlloyDB(operation, null, json);
                 case "dataproc" -> mutateDataproc(operation, null, json);
                 case "cloudiam" -> mutateCloudIAM(operation, null, json);
+                case "kms" -> mutateKms(operation, null, json);
                 case "cloudsql" -> mutateCloudSql(operation, null, json);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
@@ -251,6 +253,7 @@ public class MutateService {
                 case "alloydb" -> mutateAlloyDB(operation, subOp, json);
                 case "dataproc" -> mutateDataproc(operation, subOp, json);
                 case "cloudiam" -> mutateCloudIAM(operation, subOp, json);
+                case "kms" -> mutateKms(operation, subOp, json);
                 case "cloudsql" -> mutateCloudSql(operation, subOp, json);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
@@ -870,6 +873,158 @@ public class MutateService {
             }
         }
         return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown Cloud IAM operation: " + operation));
+    }
+
+    // ========== Cloud KMS (PostgreSQL) ==========
+
+    private String mutateKms(String operation, String subOp, Map<String, Object> json) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("error", true, "message", "Persistence disabled"));
+        }
+        String projectId = config.getProjectId();
+
+        if ("keyrings".equals(operation) && subOp == null) {
+            String keyRingId = stringValue(json, "keyRingId");
+            String locationId = stringValue(json, "locationId", "global");
+            if (keyRingId == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "keyRingId is required"));
+            }
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO kms_key_rings (project_id, location_id, key_ring_id) VALUES (?, ?, ?)")) {
+                ps.setString(1, projectId);
+                ps.setString(2, locationId);
+                ps.setString(3, keyRingId);
+                ps.executeUpdate();
+            }
+            logger.debug("Created KMS key ring: {}", keyRingId);
+            return mapper.writeValueAsString(Map.of("status", "created", "keyRingId", keyRingId));
+        }
+
+        if ("keys".equals(operation) && subOp == null) {
+            String keyRingId = stringValue(json, "keyRingId");
+            String cryptoKeyId = stringValue(json, "cryptoKeyId");
+            String locationId = stringValue(json, "locationId", "global");
+            if (keyRingId == null || cryptoKeyId == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "keyRingId and cryptoKeyId are required"));
+            }
+            String purpose = stringValue(json, "purpose", "ENCRYPT_DECRYPT");
+            String algorithm = stringValue(json, "algorithm", "GOOGLE_SYMMETRIC_ENCRYPTION");
+            String labelsJson = stringValue(json, "labels", "{}");
+
+            byte[] keyMaterial = new byte[32];
+            new SecureRandom().nextBytes(keyMaterial);
+
+            try (Connection conn = dataSource.getConnection()) {
+                conn.setAutoCommit(false);
+                try (PreparedStatement keyPs = conn.prepareStatement(
+                        "INSERT INTO kms_crypto_keys (project_id, location_id, key_ring_id, crypto_key_id, purpose, algorithm, primary_version, labels) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, 1, ?)");
+                     PreparedStatement versionPs = conn.prepareStatement(
+                        "INSERT INTO kms_crypto_key_versions (project_id, location_id, key_ring_id, crypto_key_id, version_number, state, algorithm, key_material) " +
+                        "VALUES (?, ?, ?, ?, 1, 'ENABLED', ?, ?)")) {
+                    keyPs.setString(1, projectId);
+                    keyPs.setString(2, locationId);
+                    keyPs.setString(3, keyRingId);
+                    keyPs.setString(4, cryptoKeyId);
+                    keyPs.setString(5, purpose);
+                    keyPs.setString(6, algorithm);
+                    keyPs.setString(7, labelsJson);
+                    keyPs.executeUpdate();
+
+                    versionPs.setString(1, projectId);
+                    versionPs.setString(2, locationId);
+                    versionPs.setString(3, keyRingId);
+                    versionPs.setString(4, cryptoKeyId);
+                    versionPs.setString(5, algorithm);
+                    versionPs.setBytes(6, keyMaterial);
+                    versionPs.executeUpdate();
+                    conn.commit();
+                } catch (SQLException e) {
+                    conn.rollback();
+                    throw e;
+                } finally {
+                    conn.setAutoCommit(true);
+                }
+            }
+            logger.debug("Created KMS crypto key: {}/{}", keyRingId, cryptoKeyId);
+            return mapper.writeValueAsString(Map.of("status", "created", "keyRingId", keyRingId, "cryptoKeyId", cryptoKeyId));
+        }
+
+        if ("keys".equals(operation) && "delete".equals(subOp)) {
+            String keyRingId = stringValue(json, "keyRingId");
+            String cryptoKeyId = stringValue(json, "cryptoKeyId");
+            if (keyRingId == null || cryptoKeyId == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "keyRingId and cryptoKeyId are required"));
+            }
+            try (Connection conn = dataSource.getConnection()) {
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM kms_crypto_key_versions WHERE project_id = ? AND key_ring_id = ? AND crypto_key_id = ?")) {
+                    ps.setString(1, projectId);
+                    ps.setString(2, keyRingId);
+                    ps.setString(3, cryptoKeyId);
+                    ps.executeUpdate();
+                }
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "DELETE FROM kms_crypto_keys WHERE project_id = ? AND key_ring_id = ? AND crypto_key_id = ?")) {
+                    ps.setString(1, projectId);
+                    ps.setString(2, keyRingId);
+                    ps.setString(3, cryptoKeyId);
+                    int count = ps.executeUpdate();
+                    return mapper.writeValueAsString(Map.of("status", "deleted", "count", count));
+                }
+            }
+        }
+
+        if ("versions".equals(operation)) {
+            String keyRingId = stringValue(json, "keyRingId");
+            String cryptoKeyId = stringValue(json, "cryptoKeyId");
+            Number versionNum = (Number) json.get("version");
+            if (keyRingId == null || cryptoKeyId == null || versionNum == null) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "keyRingId, cryptoKeyId, and version are required"));
+            }
+            int version = versionNum.intValue();
+
+            if ("enable".equals(subOp) || "disable".equals(subOp) || "destroy".equals(subOp)) {
+                String newState = "enable".equals(subOp) ? "ENABLED" : "disable".equals(subOp) ? "DISABLED" : "DESTROYED";
+                try (Connection conn = dataSource.getConnection();
+                     PreparedStatement ps = conn.prepareStatement(
+                         "UPDATE kms_crypto_key_versions SET state = ? WHERE project_id = ? AND key_ring_id = ? AND crypto_key_id = ? AND version_number = ?")) {
+                    ps.setString(1, newState);
+                    ps.setString(2, projectId);
+                    ps.setString(3, keyRingId);
+                    ps.setString(4, cryptoKeyId);
+                    ps.setInt(5, version);
+                    int count = ps.executeUpdate();
+                    return mapper.writeValueAsString(Map.of("status", "updated", "state", newState, "count", count));
+                }
+            }
+
+            if ("setPrimary".equals(subOp)) {
+                try (Connection conn = dataSource.getConnection();
+                     PreparedStatement ps = conn.prepareStatement(
+                         "UPDATE kms_crypto_keys SET primary_version = ? " +
+                         "WHERE project_id = ? AND key_ring_id = ? AND crypto_key_id = ? " +
+                         "AND EXISTS (SELECT 1 FROM kms_crypto_key_versions " +
+                         "WHERE project_id = ? AND key_ring_id = ? AND crypto_key_id = ? AND version_number = ?)")) {
+                    ps.setInt(1, version);
+                    ps.setString(2, projectId);
+                    ps.setString(3, keyRingId);
+                    ps.setString(4, cryptoKeyId);
+                    ps.setString(5, projectId);
+                    ps.setString(6, keyRingId);
+                    ps.setString(7, cryptoKeyId);
+                    ps.setInt(8, version);
+                    int count = ps.executeUpdate();
+                    if (count == 0) {
+                        return mapper.writeValueAsString(Map.of("error", true, "message", "Version not found"));
+                    }
+                    return mapper.writeValueAsString(Map.of("status", "updated", "primaryVersion", version));
+                }
+            }
+        }
+
+        return mapper.writeValueAsString(Map.of("error", true, "message", "Unknown KMS operation: " + operation + "/" + subOp));
     }
 
     private String mutateCloudSql(String operation, String subOp, Map<String, Object> json) throws Exception {

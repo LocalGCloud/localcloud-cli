@@ -24,10 +24,17 @@ import com.google.cloud.tasks.v2.Queue;
 import com.google.cloud.tasks.v2.ResumeQueueRequest;
 import com.google.cloud.tasks.v2.RunTaskRequest;
 import com.google.cloud.tasks.v2.Task;
+import com.google.iam.v1.GetIamPolicyRequest;
+import com.google.iam.v1.Policy;
+import com.google.iam.v1.SetIamPolicyRequest;
+import com.google.iam.v1.TestIamPermissionsRequest;
+import com.google.iam.v1.TestIamPermissionsResponse;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Empty;
 import com.google.protobuf.Timestamp;
 import com.localcloud.emulators.AbstractEmulator;
+import com.localcloud.emulators.iam.IAMPolicyGrpcHelper;
+import com.localcloud.emulators.iam.IAMRepository;
 import com.localcloud.persistence.PostgresDataSource;
 
 import io.grpc.Status;
@@ -42,11 +49,13 @@ public class CloudTasksEmulator extends AbstractEmulator {
     private final CloudTasksStore store;
     private final TaskDispatcher dispatcher;
     private final CloudTasksServiceImpl serviceImpl;
+    private final IAMPolicyGrpcHelper iamHelper;
 
     public CloudTasksEmulator(PostgresDataSource dataSource) {
         super("cloudtasks", "Cloud Tasks", 8080, "grpc", "CLOUD_TASKS_EMULATOR_HOST");
         this.store = new CloudTasksStore(dataSource);
         this.dispatcher = new TaskDispatcher(store);
+        this.iamHelper = new IAMPolicyGrpcHelper(new IAMRepository(dataSource));
         this.serviceImpl = new CloudTasksServiceImpl();
     }
 
@@ -518,6 +527,27 @@ public class CloudTasksEmulator extends AbstractEmulator {
                 case "DISABLED" -> Queue.State.DISABLED;
                 default -> Queue.State.STATE_UNSPECIFIED;
             };
+        }
+
+        // ── IAM Policy gRPC methods ────────────────────────────────────────────
+
+        @Override
+        public void getIamPolicy(GetIamPolicyRequest request, StreamObserver<Policy> responseObserver) {
+            incrementRequestCount();
+            iamHelper.getIamPolicy(request, responseObserver);
+        }
+
+        @Override
+        public void setIamPolicy(SetIamPolicyRequest request, StreamObserver<Policy> responseObserver) {
+            incrementRequestCount();
+            iamHelper.setIamPolicy(request, responseObserver);
+        }
+
+        @Override
+        public void testIamPermissions(TestIamPermissionsRequest request,
+                                       StreamObserver<TestIamPermissionsResponse> responseObserver) {
+            incrementRequestCount();
+            iamHelper.testIamPermissions(request, responseObserver);
         }
     }
 }

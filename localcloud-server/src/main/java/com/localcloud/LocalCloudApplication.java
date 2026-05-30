@@ -39,6 +39,8 @@ import com.localcloud.emulators.functions.CloudFunctionsEmulator;
 import com.localcloud.emulators.alloydb.AlloyDBEmulator;
 import com.localcloud.emulators.dataproc.DataprocEmulator;
 import com.localcloud.emulators.iam.IAMEmulator;
+import com.localcloud.emulators.iam.IAMPolicyRestHandler;
+import com.localcloud.emulators.iam.IAMRepository;
 import com.localcloud.emulators.logging.LoggingEmulator;
 import com.localcloud.emulators.monitoring.MonitoringEmulator;
 import com.localcloud.emulators.compute.ComputeEmulator;
@@ -58,8 +60,12 @@ import com.localcloud.emulators.workflows.WorkflowConnectorService;
 import com.localcloud.emulators.workflows.WorkflowsGrpcServiceImpl;
 import com.localcloud.emulators.workflows.ExecutionsGrpcServiceImpl;
 import com.localcloud.emulators.workflows.WorkflowsRestService;
+import com.localcloud.emulators.pubsub.PubSubRestService;
+import com.localcloud.emulators.pubsub.PubSubStore;
 import com.localcloud.emulators.secretmanager.SecretManagerRestService;
 import com.localcloud.emulators.cloudtasks.CloudTasksRestService;
+import com.localcloud.emulators.cloudresourcemanager.CloudResourceManagerRestService;
+import com.localcloud.emulators.oauth2.OAuth2RestService;
 import com.localcloud.docker.ContainerManager;
 import com.localcloud.docker.DockerClientProvider;
 import com.localcloud.gateway.ApiGateway;
@@ -122,6 +128,7 @@ public class LocalCloudApplication {
     private MemorystoreEmulator memorystoreEmulator;
     private IamMiddleware iamMiddleware;
     private Server server;
+    private final IAMPolicyRestHandler iamPolicyRestHandler;
 
     // Stored for deferred AdminApiService construction after license validation
     private final ServiceRoutingRepository routingRepository;
@@ -149,9 +156,10 @@ public class LocalCloudApplication {
         this.seedService = new SeedService(config, dataSource, config.getServiceRegistry(), workflowsStore);
         this.exportService = new ExportService(config, dataSource, config.getServiceRegistry());
         this.queryService = new QueryService(config, dataSource, config.getServiceRegistry(), usageMetrics, queryHistoryRepo);
-        this.cloudSqlEmulator = new CloudSqlEmulator(dataSource, config.getGatewayPort());
-        this.bigtableEmulator = new BigtableEmulator(dataSource, config.getGatewayPort());
-        this.memorystoreEmulator = new MemorystoreEmulator(dataSource, config.getGatewayPort());
+        this.iamPolicyRestHandler = new IAMPolicyRestHandler(new IAMRepository(dataSource));
+        this.cloudSqlEmulator = new CloudSqlEmulator(dataSource, config.getGatewayPort(), iamPolicyRestHandler);
+        this.bigtableEmulator = new BigtableEmulator(dataSource, config.getGatewayPort(), iamPolicyRestHandler);
+        this.memorystoreEmulator = new MemorystoreEmulator(dataSource, config.getGatewayPort(), iamPolicyRestHandler);
     }
 
     /**
@@ -311,10 +319,14 @@ public class LocalCloudApplication {
         // Bigtable Admin API facade (REST)
         if (config.isServiceEnabled("bigtable")) {
             bigtableEmulator.start();
+            // Console/browse paths
             sb.annotatedService("/bigtable/admin/v2", bigtableEmulator.getAdminService());
+            // Terraform provider path: GOOGLE_BIGTABLE_CUSTOM_ENDPOINT replaces
+            // bigtableadmin.googleapis.com base → hits /v2/projects/.../instances
+            sb.annotatedService("/v2", bigtableEmulator.getAdminService());
             seedService.setBigtableEmulator(bigtableEmulator);
             mutateService.setBigtableEmulator(bigtableEmulator);
-            logger.info("Bigtable Admin API facade registered at /bigtable/admin/v2");
+            logger.info("Bigtable Admin API facade registered at /bigtable/admin/v2 and /v2");
 
             // Manual route for modifyColumnFamilies — Armeria's annotation parser treats ':'
             // as a path-parameter regex delimiter, so {table}:modifyColumnFamilies is invalid.
@@ -329,7 +341,19 @@ public class LocalCloudApplication {
                         ctx.pathParam("project"), ctx.pathParam("instance"), ctx.pathParam("table"),
                         aggregated.contentUtf8());
                 });
-            logger.info("Bigtable modifyColumnFamilies route registered");
+            // Same route for the /v2 prefix used by Terraform provider
+            sb.service(
+                Route.builder()
+                    .methods(HttpMethod.POST)
+                    .path("regex:^/v2/projects/(?<project>[^/]+)/instances/(?<instance>[^/]+)/tables/(?<table>[^/]+):modifyColumnFamilies$")
+                    .build(),
+                (ctx, req) -> {
+                    var aggregated = req.aggregate().join();
+                    return bigtableEmulator.getAdminService().modifyColumnFamilies(
+                        ctx.pathParam("project"), ctx.pathParam("instance"), ctx.pathParam("table"),
+                        aggregated.contentUtf8());
+                });
+            logger.info("Bigtable modifyColumnFamilies routes registered");
         }
 
         // Memorystore Admin API facade (REST)
@@ -339,6 +363,19 @@ public class LocalCloudApplication {
             seedService.setMemorystoreEmulator(memorystoreEmulator);
             mutateService.setMemorystoreEmulator(memorystoreEmulator);
             logger.info("Memorystore Admin API facade registered at /redis/v1");
+        }
+
+        // Pub/Sub Admin API facade (REST) — Terraform uses REST admin API, but the
+        // external Pub/Sub emulator (port 8085) only serves gRPC data-plane.
+        // This REST service handles topic and subscription CRUD via PostgreSQL.
+        if (config.isServiceEnabled("pubsub")) {
+            var pubsubStore = new PubSubStore(dataSource.getDataSource());
+            var pubsubRestService = new PubSubRestService(pubsubStore);
+            sb.annotatedService("/v1", pubsubRestService);
+            // Also register at root — the Google Pub/Sub REST client sends paths
+            // without the /v1/ version prefix (e.g., /projects/.../topics/...).
+            sb.annotatedService("/", pubsubRestService);
+            logger.info("Pub/Sub Admin API REST facade registered at /v1 and /");
         }
 
         // =============================================================================
@@ -369,7 +406,8 @@ public class LocalCloudApplication {
 
         var grpcBuilder = GrpcService.builder()
                 .enableHttpJsonTranscoding(true);
-        boolean hasGrpcServices = false;
+        boolean hasGrpcServices = true;
+        grpcBuilder.addService(new com.localcloud.gateway.OperationsGrpcService());
 
         // Secret Manager: gRPC + explicit REST (Terraform compatibility)
         if (config.isServiceEnabled("secretmanager")) {
@@ -378,7 +416,7 @@ public class LocalCloudApplication {
             grpcBuilder.addService(secretManagerEmulator.getServiceImpl());
             gateway.registerGrpcEmulator(secretManagerEmulator, secretManagerEmulator.getServiceImpl());
             sb.annotatedService("/v1", new SecretManagerRestService(
-                    secretManagerEmulator.getStore(), secretManagerEmulator));
+                    secretManagerEmulator.getStore(), secretManagerEmulator, iamPolicyRestHandler));
             hasGrpcServices = true;
             logger.info("Secret Manager facade registered on gateway port {}", config.getGatewayPort());
         }
@@ -390,7 +428,7 @@ public class LocalCloudApplication {
             grpcBuilder.addService(cloudTasksEmulator.getServiceImpl());
             gateway.registerGrpcEmulator(cloudTasksEmulator, cloudTasksEmulator.getServiceImpl());
             sb.annotatedService("/v2", new CloudTasksRestService(
-                    cloudTasksEmulator.getStore(), cloudTasksEmulator));
+                    cloudTasksEmulator.getStore(), cloudTasksEmulator, iamPolicyRestHandler));
             hasGrpcServices = true;
             logger.info("Cloud Tasks facade registered on gateway port {}", config.getGatewayPort());
         }
@@ -443,13 +481,30 @@ public class LocalCloudApplication {
 
         // Cloud IAM: gRPC only
         if (config.isServiceEnabled("cloudiam")) {
-            IAMEmulator iamEmulator = new IAMEmulator(dataSource);
+            IAMEmulator iamEmulator = new IAMEmulator(dataSource, config.isIamLogWarningsEnabled());
             iamEmulator.start();
-            grpcBuilder.addService(iamEmulator.getServiceImpl());
+            var iamService = io.grpc.ServerInterceptors.intercept(
+                    iamEmulator.getServiceImpl(), IAMEmulator.warningInterceptor());
+            grpcBuilder.addService(iamService);
             gateway.registerGrpcEmulator(iamEmulator, iamEmulator.getServiceImpl());
             seedService.setIAMEmulator(iamEmulator);
             hasGrpcServices = true;
             logger.info("Cloud IAM facade registered on gateway port {}", config.getGatewayPort());
+        }
+
+        // Service Usage API endpoints are co-located in SecretManagerRestService (shared /v1 prefix)
+        // to avoid Armeria prefix conflicts with multiple annotated services on the same path.
+        logger.info("Service Usage API endpoints registered via SecretManagerRestService");
+
+        // Cloud Resource Manager: REST only (Terraform google_project support)
+        // Registered at /v1 and /v3 — Terraform google_project uses v3,
+        // but GCS/BigQuery/PubSub client libraries validate projects via v1.
+        if (config.isServiceEnabled("cloudresourcemanager")) {
+            var crmV1Service = new CloudResourceManagerRestService(projectService, config, "v1");
+            var crmV3Service = new CloudResourceManagerRestService(projectService, config, "v3");
+            sb.annotatedService("/v1", crmV1Service);
+            sb.annotatedService("/v3", crmV3Service);
+            logger.info("Cloud Resource Manager facade registered at /v1 and /v3 on gateway port {}", config.getGatewayPort());
         }
 
         // Cloud Logging: gRPC only
@@ -475,7 +530,7 @@ public class LocalCloudApplication {
         // Compute Engine: REST only
         if (config.isServiceEnabled("compute")) {
             ContainerManager cm = containerManager != null ? containerManager : new ContainerManager(null);
-            ComputeEmulator computeEmulator = new ComputeEmulator(dataSource, cm, credentialBroker);
+            ComputeEmulator computeEmulator = new ComputeEmulator(dataSource, cm, credentialBroker, iamPolicyRestHandler);
             computeEmulator.start();
             sb.annotatedService("/compute/v1", computeEmulator.getRestService());
             gateway.registerRestEmulator("/compute/v1", computeEmulator, null);
@@ -525,7 +580,7 @@ public class LocalCloudApplication {
                     workflowsEmulator.getWorkflowsService().getStore());
             sb.annotatedService("/workflow", connectorService);
             sb.annotatedService("/v1", new WorkflowsRestService(
-                    workflowsEmulator.getWorkflowsService(), workflowsEmulator));
+                    workflowsEmulator.getWorkflowsService(), workflowsEmulator, iamPolicyRestHandler));
 
             // Register callback HTTP endpoint so external systems can wake waiting executions
             WorkflowsCallbackService callbackService = new WorkflowsCallbackService(
@@ -542,7 +597,7 @@ public class LocalCloudApplication {
 
         // Vertex AI: REST only
         if (config.isServiceEnabled("vertexai")) {
-            VertexAiEmulator vertexAiEmulator = new VertexAiEmulator(dataSource, config.getGatewayPort());
+            VertexAiEmulator vertexAiEmulator = new VertexAiEmulator(dataSource, config.getGatewayPort(), iamPolicyRestHandler);
             vertexAiEmulator.start();
             sb.annotatedService("/v1", vertexAiEmulator.getRestService());
             gateway.registerRestEmulator("/v1/projects/*/locations/*/publishers/*/models", vertexAiEmulator, null);
@@ -551,7 +606,7 @@ public class LocalCloudApplication {
 
         // Cloud KMS: REST only
         if (config.isServiceEnabled("kms")) {
-            KmsEmulator kmsEmulator = new KmsEmulator(dataSource, config.getGatewayPort());
+            KmsEmulator kmsEmulator = new KmsEmulator(dataSource, config.getGatewayPort(), iamPolicyRestHandler);
             kmsEmulator.start();
             sb.annotatedService("/v1", kmsEmulator.getRestService());
             gateway.registerRestEmulator("/v1/projects/*/locations/*/keyRings", kmsEmulator, null);
@@ -627,6 +682,38 @@ public class LocalCloudApplication {
                 new SpannerIamService());
         logger.info("Spanner IAM stubs registered (permissive mode)");
 
+        // Generic IAM catch-all for services without explicit REST IAM support.
+        // Handles patterns like /v1/.../{resource}:setIamPolicy and
+        // /compute/v1/.../{resource}:setIamPolicy for any service.
+        sb.service(Route.builder()
+                .methods(HttpMethod.POST, HttpMethod.GET)
+                .path("regex:^/(?:compute/)?v[0-9]+/.*:(setIamPolicy|getIamPolicy|testIamPermissions)$")
+                .build(),
+                (ctx, req) -> {
+                    String path = ctx.path();
+                    String method = req.method().name();
+                    String action = path.substring(path.lastIndexOf(':') + 1);
+                    String resource = path.substring(0, path.lastIndexOf(':'));
+                    // Strip /v1/, /v2/, or /compute/v1/ prefix to get the resource path
+                    resource = resource.replaceFirst("^/(?:compute/)?v[0-9]+/", "");
+                    try {
+                        var aggregated = req.aggregate().join();
+                        String body = aggregated.contentUtf8();
+                        String result = switch (action) {
+                            case "getIamPolicy" -> iamPolicyRestHandler.getIamPolicy(resource);
+                            case "setIamPolicy" -> iamPolicyRestHandler.setIamPolicy(resource, body);
+                            case "testIamPermissions" -> iamPolicyRestHandler.testIamPermissions(resource, body);
+                            default -> throw new IllegalArgumentException("Unknown IAM action: " + action);
+                        };
+                        return HttpResponse.of(HttpStatus.OK, MediaType.JSON, result);
+                    } catch (Exception e) {
+                        logger.error("IAM request failed for {} {}", method, path, e);
+                        return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
+                            "{\"error\":{\"code\":500,\"message\":\"" + e.getMessage() + "\"}}");
+                    }
+                });
+        logger.info("Generic IAM catch-all registered for all services");
+
         // Legacy dashboard route - redirect to console root
         sb.service("/dashboard/", (ctx, req) -> {
             ResponseHeaders headers = ResponseHeaders.builder(HttpStatus.MOVED_PERMANENTLY)
@@ -635,6 +722,24 @@ public class LocalCloudApplication {
                     .build();
             return HttpResponse.of(headers);
         });
+
+        // OAuth2 token endpoint — Google client libraries call oauth2.googleapis.com/token
+        // before making REST API calls. Emulate this locally so auth stays within LocalCloud.
+        var oauth2Service = new OAuth2RestService();
+        sb.service("/token", (ctx, req) -> {
+            if (req.method() != HttpMethod.POST) return HttpResponse.of(HttpStatus.METHOD_NOT_ALLOWED);
+            return HttpResponse.from(req.aggregate().thenApply(
+                agg -> oauth2Service.token(agg.contentUtf8())));
+        });
+        sb.service("/tokeninfo", (ctx, req) -> {
+            if (req.method() != HttpMethod.GET) return HttpResponse.of(HttpStatus.METHOD_NOT_ALLOWED);
+            return oauth2Service.tokenInfo();
+        });
+        sb.service("/oauth2/v3/certs", (ctx, req) -> {
+            if (req.method() != HttpMethod.GET) return HttpResponse.of(HttpStatus.METHOD_NOT_ALLOWED);
+            return oauth2Service.certs();
+        });
+        logger.info("OAuth2 token endpoint registered on gateway port {}", config.getGatewayPort());
 
         // Global catch-all: SPA routing when console is available, 501 fallback otherwise
         // spaIndex and consoleAvailable were loaded earlier before the SPA decorator.

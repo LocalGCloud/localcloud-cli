@@ -807,6 +807,8 @@ export default function Settings(props) {
     });
     const [prefsMsg, setPrefsMsg] = createSignal(null);
     const [quickCopied, setQuickCopied] = createSignal(false);
+    const [iamLogWarnings, setIamLogWarnings] = createSignal(true);
+    const [iamLogMsg, setIamLogMsg] = createSignal(null);
 
     // Remote connection state (Data Mirror)
     const [remoteAuth, setRemoteAuth] = createSignal(null);
@@ -908,6 +910,26 @@ export default function Settings(props) {
         if (val < 1 || val > 60) { setPrefsMsg('Logs interval must be 1-60 seconds.'); setTimeout(() => setPrefsMsg(null), 3000); return; }
         try { localStorage.setItem('localcloud-logs-interval', String(val)); } catch {}
         setPrefsMsg('Applied.'); setTimeout(() => setPrefsMsg(null), 2000);
+    };
+
+    const applyIamLogWarnings = async () => {
+        const newVal = !iamLogWarnings();
+        try {
+            const resp = await fetch('/config/iam', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ logWarnings: newVal })
+            });
+            if (resp.ok) {
+                setIamLogWarnings(newVal);
+                setIamLogMsg('Applied.');
+            } else {
+                setIamLogMsg('Failed to update.');
+            }
+        } catch (e) {
+            setIamLogMsg('Error: ' + e.message);
+        }
+        setTimeout(() => setIamLogMsg(null), 2000);
     };
 
     const applyUsageInterval = () => {
@@ -1273,9 +1295,23 @@ environment:
                             </div>
                         </div>
                     </div>
-                    <Show when={intervalMsg() || prefsMsg()}>
+                    <div class="settings-row" style={{ padding: "16px 20px", "border-top": "1px solid var(--border)" }}>
+                        <div class="settings-row-info">
+                            <label class="settings-row-label" for="settings-iam-log-warnings">IAM Warning Logging</label>
+                            <div class="settings-row-desc">Log a warning for each IAM operation (setIamPolicy, getIamPolicy, testIamPermissions) indicating policies are stored but NOT enforced.</div>
+                        </div>
+                        <div class="settings-row-action">
+                            <label class="toggle-switch">
+                                <input type="checkbox" checked={iamLogWarnings()}
+                                    onChange={applyIamLogWarnings}
+                                    aria-label="Toggle IAM warning logging" />
+                                <span class="toggle-slider" />
+                            </label>
+                        </div>
+                    </div>
+                    <Show when={intervalMsg() || prefsMsg() || iamLogMsg()}>
                         <div style={{ padding: "0 20px 12px", "font-size": "12px", color: "var(--success)" }} aria-live="polite">
-                            {intervalMsg() || prefsMsg()}
+                            {intervalMsg() || prefsMsg() || iamLogMsg()}
                         </div>
                     </Show>
                 </div>

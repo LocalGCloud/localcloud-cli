@@ -1,6 +1,7 @@
 package com.localcloud.emulators.kms;
 
 import com.localcloud.emulators.AbstractEmulator;
+import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 import com.localcloud.persistence.PostgresDataSource;
 
 /**
@@ -13,9 +14,13 @@ public class KmsEmulator extends AbstractEmulator {
     private final KmsRestService restService;
 
     public KmsEmulator(PostgresDataSource dataSource, int gatewayPort) {
+        this(dataSource, gatewayPort, null);
+    }
+
+    public KmsEmulator(PostgresDataSource dataSource, int gatewayPort, IAMPolicyRestHandler iamHandler) {
         super("kms", "Cloud KMS", gatewayPort, "rest", "CLOUD_KMS_EMULATOR_HOST");
         this.store = new KmsStore(dataSource);
-        this.restService = new KmsRestService(store, this);
+        this.restService = new KmsRestService(store, this, iamHandler);
     }
 
     public KmsStore getStore() {

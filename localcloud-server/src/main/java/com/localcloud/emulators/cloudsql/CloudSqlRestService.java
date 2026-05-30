@@ -11,6 +11,9 @@ import com.linecorp.armeria.server.annotation.Delete;
 import com.linecorp.armeria.server.annotation.Get;
 import com.linecorp.armeria.server.annotation.Param;
 import com.linecorp.armeria.server.annotation.Post;
+import com.linecorp.armeria.server.annotation.Patch;
+import com.linecorp.armeria.server.annotation.Put;
+import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 
 import java.util.Map;
 
@@ -22,10 +25,16 @@ public class CloudSqlRestService {
     private final CloudSqlStore store;
     private final CloudSqlEmulator emulator;
     private final ObjectMapper mapper = new ObjectMapper();
+    private final IAMPolicyRestHandler iamHandler;
 
     public CloudSqlRestService(CloudSqlStore store, CloudSqlEmulator emulator) {
+        this(store, emulator, null);
+    }
+
+    public CloudSqlRestService(CloudSqlStore store, CloudSqlEmulator emulator, IAMPolicyRestHandler iamHandler) {
         this.store = store;
         this.emulator = emulator;
+        this.iamHandler = iamHandler;
     }
 
     @Post("/projects/{project}/instances")
@@ -43,6 +52,41 @@ public class CloudSqlRestService {
             return json(HttpStatus.OK, operationJson(project, op, row));
         } catch (Exception e) {
             return exception(e, "create instance");
+        }
+    }
+
+    @Patch("/projects/{project}/instances/{instance}")
+    public HttpResponse patchInstance(@Param String project, @Param String instance, String body) {
+        return updateInstance(project, instance, body);
+    }
+
+    @Put("/projects/{project}/instances/{instance}")
+    public HttpResponse putInstance(@Param String project, @Param String instance, String body) {
+        return updateInstance(project, instance, body);
+    }
+
+    private HttpResponse updateInstance(String project, String instance, String body) {
+        emulator.incrementRequestCount();
+        try {
+            Map<String, Object> existing = store.getInstance(project, instance);
+            if (existing == null) {
+                return error(HttpStatus.NOT_FOUND, "Cloud SQL instance not found: " + instance);
+            }
+            JsonNode root = readTree(body);
+            String tier = String.valueOf(existing.get("tier"));
+            String settingsJson = String.valueOf(existing.get("settings_json"));
+            if (root.has("settings")) {
+                JsonNode settings = root.get("settings");
+                if (settings.has("tier")) {
+                    tier = settings.get("tier").asText();
+                }
+                settingsJson = mapper.writeValueAsString(settings);
+            }
+            Map<String, Object> row = store.updateInstance(project, instance, tier, settingsJson);
+            String op = store.insertOperation(project, instance, "UPDATE", "projects/" + project + "/instances/" + instance, "{}");
+            return json(HttpStatus.OK, operationJson(project, op, row));
+        } catch (Exception e) {
+            return exception(e, "update instance");
         }
     }
 
@@ -335,9 +379,14 @@ public class CloudSqlRestService {
     }
 
     private HttpResponse exception(Exception e, String action) {
+        if (e.getMessage() != null && e.getMessage().contains("duplicate")) {
+            return error(HttpStatus.CONFLICT, e.getMessage());
+        }
         HttpStatus status = e instanceof IllegalArgumentException ? HttpStatus.BAD_REQUEST : HttpStatus.INTERNAL_SERVER_ERROR;
         return error(status, "Failed to " + action + ": " + e.getMessage());
     }
+
+    // IAM Policy endpoints are handled by the generic catch-all in LocalCloudApplication.
 
     private HttpResponse error(HttpStatus status, String message) {
         ObjectNode out = mapper.createObjectNode();

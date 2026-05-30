@@ -9,9 +9,12 @@ import com.linecorp.armeria.server.ServiceRequestContext;
 import com.linecorp.armeria.server.annotation.Delete;
 import com.linecorp.armeria.server.annotation.Get;
 import com.linecorp.armeria.server.annotation.Param;
+import com.linecorp.armeria.server.annotation.Post;
+import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -25,10 +28,16 @@ public class WorkflowsRestService {
     private final WorkflowsServiceImpl service;
     private final WorkflowsEmulator emulator;
     private final ObjectMapper mapper = new ObjectMapper();
+    private final IAMPolicyRestHandler iamHandler;
 
     public WorkflowsRestService(WorkflowsServiceImpl service, WorkflowsEmulator emulator) {
+        this(service, emulator, null);
+    }
+
+    public WorkflowsRestService(WorkflowsServiceImpl service, WorkflowsEmulator emulator, IAMPolicyRestHandler iamHandler) {
         this.service = service;
         this.emulator = emulator;
+        this.iamHandler = iamHandler;
     }
 
     @Get("/projects/{project}/locations/{location}/workflows/{workflow}/revisions")
@@ -130,6 +139,141 @@ public class WorkflowsRestService {
             return HttpResponse.of(status, MediaType.JSON, mapper.writeValueAsString(value));
         } catch (Exception e) {
             return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.PLAIN_TEXT_UTF_8, e.getMessage());
+        }
+    }
+
+    // IAM Policy endpoints are handled by the generic catch-all in LocalCloudApplication.
+
+    // ── Workflow CRUD endpoints ─────────────────────────────────────────────
+
+    @Post("/projects/{project}/locations/{location}/workflows")
+    public HttpResponse createWorkflow(ServiceRequestContext ctx,
+                                       @Param String project,
+                                       @Param String location,
+                                       String body) {
+        emulator.incrementRequestCount();
+        try {
+            String workflowId = ctx.queryParams().get("workflowId");
+            if (workflowId == null || workflowId.isBlank()) {
+                logger.error("workflowId parameter is missing or blank. Query params: {}", ctx.queryParams());
+                return errorResponse(400, "workflowId query parameter is required");
+            }
+            logger.info("Creating workflow with ID: {}, project: {}, location: {}", workflowId, project, location);
+
+            Map<String, Object> workflow = mapper.readValue(body, Map.class);
+            
+            String sourceContents = (String) workflow.get("sourceContents");
+            if (sourceContents == null || sourceContents.isBlank()) {
+                return errorResponse(400, "sourceContents is required");
+            }
+            
+            String description = (String) workflow.getOrDefault("description", "");
+            String serviceAccount = (String) workflow.getOrDefault("serviceAccount", "");
+            String callLogLevel = (String) workflow.getOrDefault("callLogLevel", "CALL_LOG_LEVEL_UNSPECIFIED");
+            String executionHistoryLevel = (String) workflow.getOrDefault("executionHistoryLevel", "EXECUTION_HISTORY_LEVEL_UNSPECIFIED");
+            String cryptoKeyName = (String) workflow.getOrDefault("cryptoKeyName", "");
+            String labelsJson = mapper.writeValueAsString(workflow.getOrDefault("labels", Map.of()));
+            String userEnvVarsJson = mapper.writeValueAsString(workflow.getOrDefault("userEnvVars", Map.of()));
+            String tagsJson = mapper.writeValueAsString(workflow.getOrDefault("tags", Map.of()));
+            
+            Map<String, Object> result = service.createWorkflow(project, location, workflowId,
+                    sourceContents, labelsJson, serviceAccount, description, callLogLevel,
+                    executionHistoryLevel, cryptoKeyName, userEnvVarsJson, tagsJson);
+            return jsonResponse(HttpStatus.OK, result);
+        } catch (Exception e) {
+            logger.error("Failed to create workflow", e);
+            if (e.getMessage() != null && e.getMessage().contains("duplicate")) {
+                return errorResponse(409, "Workflow already exists: " + e.getMessage());
+            }
+            return errorResponse(500, e.getMessage());
+        }
+    }
+
+    @Get("/projects/{project}/locations/{location}/workflows/{workflow}")
+    public HttpResponse getWorkflow(@Param String project,
+                                    @Param String location,
+                                    @Param String workflow) {
+        emulator.incrementRequestCount();
+        try {
+            Map<String, Object> result = service.getWorkflow(project, location, workflow);
+            if (result == null) {
+                return errorResponse(404, "Workflow not found: " + workflow);
+            }
+            return jsonResponse(HttpStatus.OK, result);
+        } catch (Exception e) {
+            logger.error("Failed to get workflow", e);
+            return errorResponse(500, e.getMessage());
+        }
+    }
+
+    @Get("/projects/{project}/locations/{location}/operations/{operation}")
+    public HttpResponse getOperation(@Param String project,
+                                     @Param String location,
+                                     @Param String operation) {
+        emulator.incrementRequestCount();
+        // Operation names are of form "create-{workflowId}" or "delete-{workflowId}"
+        // The provider polls this after create — return done with the workflow response
+        try {
+            Map<String, Object> doneOp = new LinkedHashMap<>();
+            doneOp.put("name", "projects/" + project + "/locations/" + location + "/operations/" + operation);
+            doneOp.put("done", true);
+            doneOp.put("metadata", Map.of(
+                "@type", "type.googleapis.com/google.cloud.workflows.v1.OperationMetadata",
+                "createTime", java.time.Instant.now().toString(),
+                "target", "projects/" + project + "/locations/" + location + "/workflows/" + operation.replace("create-", "").replace("delete-", "")
+            ));
+            // Include the workflow in the response if it's a create operation
+            if (operation.startsWith("create-")) {
+                String workflowId = operation.substring("create-".length());
+                Map<String, Object> workflow = service.getWorkflow(project, location, workflowId);
+                if (workflow != null) {
+                    doneOp.put("response", workflow);
+                }
+            }
+            return jsonResponse(HttpStatus.OK, doneOp);
+        } catch (Exception e) {
+            logger.error("Failed to get operation", e);
+            return errorResponse(500, e.getMessage());
+        }
+    }
+
+    @Delete("/projects/{project}/locations/{location}/workflows/{workflow}")
+    public HttpResponse deleteWorkflow(@Param String project,
+                                       @Param String location,
+                                       @Param String workflow) {
+        emulator.incrementRequestCount();
+        try {
+            Map<String, Object> result = service.deleteWorkflow(project, location, workflow);
+            return jsonResponse(HttpStatus.OK, result);
+        } catch (IllegalArgumentException e) {
+            return errorResponse(404, e.getMessage());
+        } catch (Exception e) {
+            logger.error("Failed to delete workflow", e);
+            return errorResponse(500, e.getMessage());
+        }
+    }
+
+    @Get("/projects/{project}/locations/{location}/workflows")
+    public HttpResponse listWorkflows(ServiceRequestContext ctx,
+                                      @Param String project,
+                                      @Param String location) {
+        emulator.incrementRequestCount();
+        try {
+            String pageSizeParam = ctx.queryParams().get("pageSize");
+            int pageSize = 100; // Default page size
+            if (pageSizeParam != null && !pageSizeParam.isBlank()) {
+                try {
+                    pageSize = Integer.parseInt(pageSizeParam);
+                } catch (NumberFormatException e) {
+                    // Use default
+                }
+            }
+            
+            List<Map<String, Object>> workflows = service.listWorkflows(project, location, pageSize);
+            return jsonResponse(HttpStatus.OK, Map.of("workflows", workflows));
+        } catch (Exception e) {
+            logger.error("Failed to list workflows", e);
+            return errorResponse(500, e.getMessage());
         }
     }
 

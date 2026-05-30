@@ -21,12 +21,20 @@ import com.google.cloud.secretmanager.v1.ListSecretsResponse;
 import com.google.cloud.secretmanager.v1.Replication;
 import com.google.cloud.secretmanager.v1.Secret;
 import com.google.cloud.secretmanager.v1.SecretManagerServiceGrpc;
+import com.google.cloud.secretmanager.v1.UpdateSecretRequest;
 import com.google.cloud.secretmanager.v1.SecretPayload;
 import com.google.cloud.secretmanager.v1.SecretVersion;
+import com.google.iam.v1.GetIamPolicyRequest;
+import com.google.iam.v1.Policy;
+import com.google.iam.v1.SetIamPolicyRequest;
+import com.google.iam.v1.TestIamPermissionsRequest;
+import com.google.iam.v1.TestIamPermissionsResponse;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Empty;
 import com.google.protobuf.Timestamp;
 import com.localcloud.emulators.AbstractEmulator;
+import com.localcloud.emulators.iam.IAMPolicyGrpcHelper;
+import com.localcloud.emulators.iam.IAMRepository;
 import com.localcloud.persistence.PostgresDataSource;
 
 import java.nio.charset.StandardCharsets;
@@ -43,10 +51,12 @@ public class SecretManagerEmulator extends AbstractEmulator {
 
     private final SecretManagerStore store;
     private final SecretManagerServiceImpl serviceImpl;
+    private final IAMPolicyGrpcHelper iamHelper;
 
     public SecretManagerEmulator(PostgresDataSource dataSource) {
         super("secretmanager", "Secret Manager", 8080, "grpc", "SECRET_MANAGER_EMULATOR_HOST");
         this.store = new SecretManagerStore(dataSource);
+        this.iamHelper = new IAMPolicyGrpcHelper(new IAMRepository(dataSource));
         this.serviceImpl = new SecretManagerServiceImpl();
     }
 
@@ -135,6 +145,54 @@ public class SecretManagerEmulator extends AbstractEmulator {
                         .asRuntimeException());
             } catch (SQLException e) {
                 logger.error("Failed to create secret", e);
+                responseObserver.onError(Status.INTERNAL
+                        .withDescription("Database error: " + e.getMessage())
+                        .asRuntimeException());
+            }
+        }
+
+        @Override
+        public void updateSecret(UpdateSecretRequest request, StreamObserver<Secret> responseObserver) {
+            incrementRequestCount();
+            try {
+                Secret secret = request.getSecret();
+                String fullName = secret.getName(); // projects/{project}/secrets/{secret}
+                String[] parts = SecretManagerStore.parseSecretName(fullName);
+
+                if (!store.secretExists(parts[0], parts[1])) {
+                    responseObserver.onError(Status.NOT_FOUND
+                            .withDescription("Secret not found: " + fullName)
+                            .asRuntimeException());
+                    return;
+                }
+
+                // Extract labels as simple JSON
+                String labelsJson = "{}";
+                if (secret.getLabelsCount() > 0) {
+                    StringBuilder sb = new StringBuilder("{");
+                    boolean first = true;
+                    for (Map.Entry<String, String> entry : secret.getLabelsMap().entrySet()) {
+                        if (!first) sb.append(",");
+                        sb.append("\"").append(entry.getKey()).append("\":\"").append(entry.getValue()).append("\"");
+                        first = false;
+                    }
+                    sb.append("}");
+                    labelsJson = sb.toString();
+                }
+
+                store.updateSecret(parts[0], parts[1], labelsJson);
+
+                Map<String, Object> data = store.getSecret(parts[0], parts[1]);
+                Secret response = buildSecret(fullName, data);
+
+                responseObserver.onNext(response);
+                responseObserver.onCompleted();
+            } catch (IllegalArgumentException e) {
+                responseObserver.onError(Status.INVALID_ARGUMENT
+                        .withDescription(e.getMessage())
+                        .asRuntimeException());
+            } catch (SQLException e) {
+                logger.error("Failed to update secret", e);
                 responseObserver.onError(Status.INTERNAL
                         .withDescription("Database error: " + e.getMessage())
                         .asRuntimeException());
@@ -524,6 +582,27 @@ public class SecretManagerEmulator extends AbstractEmulator {
                 case "DESTROYED" -> SecretVersion.State.DESTROYED;
                 default -> SecretVersion.State.STATE_UNSPECIFIED;
             };
+        }
+
+        // ── IAM Policy gRPC methods ────────────────────────────────────────────
+
+        @Override
+        public void getIamPolicy(GetIamPolicyRequest request, StreamObserver<Policy> responseObserver) {
+            incrementRequestCount();
+            iamHelper.getIamPolicy(request, responseObserver);
+        }
+
+        @Override
+        public void setIamPolicy(SetIamPolicyRequest request, StreamObserver<Policy> responseObserver) {
+            incrementRequestCount();
+            iamHelper.setIamPolicy(request, responseObserver);
+        }
+
+        @Override
+        public void testIamPermissions(TestIamPermissionsRequest request,
+                                       StreamObserver<TestIamPermissionsResponse> responseObserver) {
+            incrementRequestCount();
+            iamHelper.testIamPermissions(request, responseObserver);
         }
     }
 }

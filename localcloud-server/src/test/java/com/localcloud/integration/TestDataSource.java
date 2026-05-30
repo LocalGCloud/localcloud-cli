@@ -73,6 +73,17 @@ public final class TestDataSource {
         try (Connection conn = getConnection();
              Statement stmt = conn.createStatement()) {
 
+            // Projects
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS projects (" +
+                "    project_id VARCHAR(255) NOT NULL PRIMARY KEY," +
+                "    display_name VARCHAR(255)," +
+                "    labels VARCHAR(4096) DEFAULT '{}'," +
+                "    state VARCHAR(20) DEFAULT 'ACTIVE'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                ")"
+            );
+
             // Secret Manager
             stmt.execute(
                 "CREATE TABLE IF NOT EXISTS secrets (" +
@@ -305,6 +316,68 @@ public final class TestDataSource {
                 "    target_link VARCHAR(1024)," +
                 "    error_json TEXT DEFAULT '{}'," +
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                ")"
+            );
+
+            // Bigtable (matches SchemaManager schema)
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS bigtable_instances (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    instance_id VARCHAR(255) NOT NULL," +
+                "    display_name VARCHAR(255)," +
+                "    instance_type VARCHAR(32) DEFAULT 'PRODUCTION'," +
+                "    state VARCHAR(32) DEFAULT 'READY'," +
+                "    clusters_json TEXT DEFAULT '[]'," +
+                "    labels_json TEXT DEFAULT '{}'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, instance_id)" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS bigtable_tables (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    instance_id VARCHAR(255) NOT NULL," +
+                "    table_id VARCHAR(255) NOT NULL," +
+                "    column_families_json TEXT DEFAULT '[]'," +
+                "    granularity VARCHAR(32) DEFAULT 'MILLIS'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, instance_id, table_id)" +
+                ")"
+            );
+
+            // Memorystore (matches SchemaManager schema)
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS memorystore_instances (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    instance_id VARCHAR(255) NOT NULL," +
+                "    display_name VARCHAR(255)," +
+                "    tier VARCHAR(32) DEFAULT 'BASIC'," +
+                "    engine VARCHAR(32) DEFAULT 'REDIS'," +
+                "    redis_version VARCHAR(32) DEFAULT '7_0'," +
+                "    port INT DEFAULT 6379," +
+                "    memory_size_gb INT DEFAULT 1," +
+                "    state VARCHAR(32) DEFAULT 'READY'," +
+                "    host VARCHAR(255) DEFAULT 'localhost'," +
+                "    labels_json TEXT DEFAULT '{}'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, instance_id)" +
+                ")"
+            );
+
+            // Compute Engine (matches SchemaManager schema)
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS compute_instances (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    zone VARCHAR(255) NOT NULL," +
+                "    instance_name VARCHAR(255) NOT NULL," +
+                "    machine_type VARCHAR(255) DEFAULT 'e2-medium'," +
+                "    status VARCHAR(20) DEFAULT 'PROVISIONING'," +
+                "    container_id VARCHAR(255)," +
+                "    container_image VARCHAR(512) DEFAULT 'ubuntu:22.04'," +
+                "    network_ip VARCHAR(45)," +
+                "    metadata TEXT DEFAULT '{}'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, zone, instance_name)" +
                 ")"
             );
 

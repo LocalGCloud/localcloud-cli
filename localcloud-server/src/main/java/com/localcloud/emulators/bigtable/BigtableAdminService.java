@@ -11,15 +11,23 @@ import com.linecorp.armeria.server.annotation.*;
 
 import java.util.Map;
 
+import com.localcloud.emulators.iam.IAMPolicyRestHandler;
+
 public class BigtableAdminService {
 
     private final BigtableStore store;
     private final BigtableEmulator emulator;
     private final ObjectMapper mapper = new ObjectMapper();
+    private final IAMPolicyRestHandler iamHandler;
 
     public BigtableAdminService(BigtableStore store, BigtableEmulator emulator) {
+        this(store, emulator, null);
+    }
+
+    public BigtableAdminService(BigtableStore store, BigtableEmulator emulator, IAMPolicyRestHandler iamHandler) {
         this.store = store;
         this.emulator = emulator;
+        this.iamHandler = iamHandler;
     }
 
     @Post("/projects/{project}/instances")
@@ -193,6 +201,8 @@ public class BigtableAdminService {
     private HttpResponse json(HttpStatus status, JsonNode node) {
         return HttpResponse.of(status, MediaType.JSON, node.toString());
     }
+
+    // IAM Policy endpoints are handled by the generic catch-all in LocalCloudApplication.
 
     private HttpResponse exception(Exception e, String action) {
         HttpStatus status = e instanceof IllegalArgumentException ? HttpStatus.BAD_REQUEST : HttpStatus.INTERNAL_SERVER_ERROR;

@@ -8,6 +8,7 @@ import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
 import com.linecorp.armeria.server.annotation.*;
 import com.localcloud.docker.ContainerManager;
+import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,11 +27,17 @@ public class ComputeRestService {
     private final ContainerManager containerManager;
     private final ObjectMapper mapper = new ObjectMapper();
     private final ComputeEmulator emulator;
+    private final IAMPolicyRestHandler iamHandler;
 
     public ComputeRestService(ComputeStore store, ContainerManager containerManager, ComputeEmulator emulator) {
+        this(store, containerManager, emulator, null);
+    }
+
+    public ComputeRestService(ComputeStore store, ContainerManager containerManager, ComputeEmulator emulator, IAMPolicyRestHandler iamHandler) {
         this.store = store;
         this.containerManager = containerManager;
         this.emulator = emulator;
+        this.iamHandler = iamHandler;
     }
 
     @Post("/projects/{project}/zones/{zone}/instances")
@@ -218,6 +225,8 @@ public class ComputeRestService {
         }
         return json;
     }
+
+    // IAM Policy endpoints are handled by the generic catch-all in LocalCloudApplication.
 
     private ObjectNode operationJson(String project, String zone, String operationType, String target) {
         ObjectNode op = mapper.createObjectNode();

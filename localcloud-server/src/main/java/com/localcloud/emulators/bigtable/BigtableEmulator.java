@@ -1,6 +1,7 @@
 package com.localcloud.emulators.bigtable;
 
 import com.localcloud.emulators.AbstractEmulator;
+import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 import com.localcloud.persistence.PostgresDataSource;
 
 public class BigtableEmulator extends AbstractEmulator {
@@ -9,9 +10,13 @@ public class BigtableEmulator extends AbstractEmulator {
     private final BigtableAdminService adminService;
 
     public BigtableEmulator(PostgresDataSource dataSource, int gatewayPort) {
+        this(dataSource, gatewayPort, null);
+    }
+
+    public BigtableEmulator(PostgresDataSource dataSource, int gatewayPort, IAMPolicyRestHandler iamHandler) {
         super("bigtable", "Bigtable", gatewayPort, "rest", "BIGTABLE_EMULATOR_HOST");
         this.store = new BigtableStore(dataSource);
-        this.adminService = new BigtableAdminService(store, this);
+        this.adminService = new BigtableAdminService(store, this, iamHandler);
     }
 
     public BigtableAdminService getAdminService() {

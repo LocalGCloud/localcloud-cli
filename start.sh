@@ -29,7 +29,9 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 docker run -d --name localcloud \
+  -p 127.0.0.1:8053:53/udp \
   -p 127.0.0.1:80:80 \
+  -p 127.0.0.1:443:443 \
   -p 127.0.0.1:8080:8080 \
   -p 127.0.0.1:4443:4443 \
   -p 127.0.0.1:8085:8085 \
@@ -45,9 +47,11 @@ docker run -d --name localcloud \
   -v "$VOLUME_ARG" \
   -v "${LOCALCLOUD_SEED_FILE:-$SCRIPT_DIR/seed.yaml}:/etc/localcloud/seed.yaml:ro" \
   -v "$SCRIPT_DIR/services.yaml:/etc/localcloud/services.yaml:ro" \
+  -v "$SCRIPT_DIR/docker/conf/security/certs:/etc/caddy/certs:ro" \
+  -v "$SCRIPT_DIR/docker/conf/network/Caddyfile:/etc/caddy/Caddyfile:ro" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e LOCALCLOUD_PROJECT="${LOCALCLOUD_PROJECT:-local-project}" \
-  -e LOCALCLOUD_SERVICES="${LOCALCLOUD_SERVICES:-gcs,pubsub,firestore,bigquery,secretmanager,cloudtasks,spanner,bigtable,logging,monitoring,memorystore,workflows,cloudscheduler,cloudfunctions,alloydb,dataproc,cloudiam}" \
+  -e LOCALCLOUD_SERVICES="${LOCALCLOUD_SERVICES:-gcs,pubsub,firestore,bigquery,secretmanager,cloudtasks,spanner,bigtable,logging,monitoring,memorystore,workflows,cloudscheduler,cloudfunctions,alloydb,dataproc,cloudiam,cloudresourcemanager,cloudbilling,cloudsql}" \
   -e LOCALCLOUD_DATA_DIR="/var/lib/localcloud" \
   -e LOCALCLOUD_GCP_CREDENTIAL_SOURCE="${LOCALCLOUD_GCP_CREDENTIAL_SOURCE:-none}" \
   localcloud/localcloud:latest

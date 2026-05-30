@@ -1,0 +1,29 @@
+{
+  "service": "cloudtasks",
+  "source": "gcloud iam roles list + https://cloud.google.com/tasks/docs/access-control",
+  "roles": [
+    {"id": "roles/cloudtasks.admin", "title": "Cloud Tasks Admin", "stage": "GA", "permissions": [
+      "cloudtasks.locations.get","cloudtasks.locations.list",
+      "cloudtasks.queues.create","cloudtasks.queues.delete","cloudtasks.queues.get",
+      "cloudtasks.queues.getIamPolicy","cloudtasks.queues.list","cloudtasks.queues.pause",
+      "cloudtasks.queues.purge","cloudtasks.queues.resume",
+      "cloudtasks.queues.setIamPolicy","cloudtasks.queues.update",
+      "cloudtasks.tasks.create","cloudtasks.tasks.delete","cloudtasks.tasks.fullView",
+      "cloudtasks.tasks.get","cloudtasks.tasks.lease","cloudtasks.tasks.list",
+      "cloudtasks.tasks.renewLease","cloudtasks.tasks.run"
+    ]},
+    {"id": "roles/cloudtasks.enqueuer", "title": "Cloud Tasks Enqueuer", "stage": "GA", "permissions": ["cloudtasks.tasks.create"]},
+    {"id": "roles/cloudtasks.taskRunner", "title": "Cloud Tasks Task Runner", "stage": "GA", "permissions": ["cloudtasks.tasks.fullView"]},
+    {"id": "roles/cloudtasks.viewer", "title": "Cloud Tasks Viewer", "stage": "GA", "permissions": [
+      "cloudtasks.locations.get","cloudtasks.locations.list",
+      "cloudtasks.queues.get","cloudtasks.queues.list",
+      "cloudtasks.tasks.get","cloudtasks.tasks.list"
+    ]},
+    {"id": "roles/cloudtasks.queueAdmin", "title": "Cloud Tasks Queue Admin", "stage": "GA", "permissions": [
+      "cloudtasks.locations.get","cloudtasks.locations.list",
+      "cloudtasks.queues.create","cloudtasks.queues.delete","cloudtasks.queues.get",
+      "cloudtasks.queues.list","cloudtasks.queues.pause","cloudtasks.queues.purge",
+      "cloudtasks.queues.resume","cloudtasks.queues.update"
+    ]}
+  ]
+}

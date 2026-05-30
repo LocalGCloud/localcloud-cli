@@ -11,15 +11,23 @@ import com.linecorp.armeria.server.annotation.*;
 
 import java.util.Map;
 
+import com.localcloud.emulators.iam.IAMPolicyRestHandler;
+
 public class MemorystoreAdminService {
 
     private final MemorystoreStore store;
     private final MemorystoreEmulator emulator;
     private final ObjectMapper mapper = new ObjectMapper();
+    private final IAMPolicyRestHandler iamHandler;
 
     public MemorystoreAdminService(MemorystoreStore store, MemorystoreEmulator emulator) {
+        this(store, emulator, null);
+    }
+
+    public MemorystoreAdminService(MemorystoreStore store, MemorystoreEmulator emulator, IAMPolicyRestHandler iamHandler) {
         this.store = store;
         this.emulator = emulator;
+        this.iamHandler = iamHandler;
     }
 
     @Post("/projects/{project}/locations/{location}/instances")
@@ -33,9 +41,36 @@ public class MemorystoreAdminService {
             String redisVersion = text(root, "redisVersion", "7_0");
             int memorySizeGb = root.has("memorySizeGb") ? root.get("memorySizeGb").asInt(1) : 1;
             Map<String, Object> row = store.createInstance(project, instanceId, displayName, tier, "REDIS", redisVersion, 6379, memorySizeGb);
-            return json(HttpStatus.OK, instanceJson(row));
+            // Return an operation (LRO pattern) instead of the instance directly.
+            // Terraform provider polls GET /operations/{name} until done=true.
+            String opName = "projects/" + project + "/locations/" + location + "/operations/" + instanceId;
+            ObjectNode op = mapper.createObjectNode();
+            op.put("name", opName);
+            op.put("done", true);
+            op.set("response", instanceJson(row));
+            return json(HttpStatus.OK, op);
         } catch (Exception e) {
             return exception(e, "create instance");
+        }
+    }
+
+    @Get("/projects/{project}/locations/{location}/operations/{operation}")
+    public HttpResponse getOperation(@Param String project, @Param String location, @Param String operation) {
+        emulator.incrementRequestCount();
+        try {
+            // Operation ID is the instance ID
+            Map<String, Object> row = store.getInstance(project, operation);
+            if (row == null) {
+                return error(HttpStatus.NOT_FOUND, "Operation not found: " + operation);
+            }
+            String opName = "projects/" + project + "/locations/" + location + "/operations/" + operation;
+            ObjectNode op = mapper.createObjectNode();
+            op.put("name", opName);
+            op.put("done", true);
+            op.set("response", instanceJson(row));
+            return json(HttpStatus.OK, op);
+        } catch (Exception e) {
+            return exception(e, "get operation");
         }
     }
 
@@ -119,6 +154,8 @@ public class MemorystoreAdminService {
     private HttpResponse json(HttpStatus status, JsonNode node) {
         return HttpResponse.of(status, MediaType.JSON, node.toString());
     }
+
+    // IAM Policy endpoints are handled by the generic catch-all in LocalCloudApplication.
 
     private HttpResponse exception(Exception e, String action) {
         HttpStatus status = e instanceof IllegalArgumentException ? HttpStatus.BAD_REQUEST : HttpStatus.INTERNAL_SERVER_ERROR;

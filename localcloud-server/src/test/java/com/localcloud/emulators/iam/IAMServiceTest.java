@@ -11,6 +11,7 @@ import com.google.iam.v1.Policy;
 import com.google.iam.v1.SetIamPolicyRequest;
 import com.google.iam.v1.TestIamPermissionsRequest;
 import com.google.iam.v1.TestIamPermissionsResponse;
+import com.google.protobuf.ByteString;
 import com.localcloud.integration.TestDataSource;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,8 @@ class IAMServiceTest {
             var empty = new TestObserver<Policy>();
             service.getIamPolicy(GetIamPolicyRequest.newBuilder().setResource(resource).build(), empty);
             assertTrue(empty.value().getBindingsList().isEmpty());
+            assertEquals(ByteString.copyFromUtf8("dummy-localcloud"), empty.value().getEtag(),
+                    "Empty policy should have dummy etag");
 
             Policy policy = Policy.newBuilder()
                     .addBindings(Binding.newBuilder()
@@ -52,6 +55,8 @@ class IAMServiceTest {
             var get = new TestObserver<Policy>();
             service.getIamPolicy(GetIamPolicyRequest.newBuilder().setResource(resource).build(), get);
             assertEquals("roles/storage.objectViewer", get.value().getBindings(0).getRole());
+            assertEquals(ByteString.copyFromUtf8("dummy-localcloud"), get.value().getEtag(),
+                    "Stored policy should have dummy etag");
         } finally {
             emulator.stop();
             testDataSource.close();

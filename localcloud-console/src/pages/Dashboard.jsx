@@ -528,6 +528,7 @@ export default function Dashboard(props) {
                         >
                           <span>{svc.displayName}</span>
                           <Show when={svc.id === 'firestore' || svc.id === 'vertexai'}><span class="badge badge-coming-up">Coming up</span></Show>
+                          <Show when={svc.id === 'cloudiam'}><span class="badge badge-warning" title="IAM policies are stored but not enforced in LocalCloud">⚠ Not Enforced</span></Show>
                         </button>
                       </td>
                       <td>

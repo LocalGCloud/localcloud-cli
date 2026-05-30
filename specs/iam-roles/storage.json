@@ -1,0 +1,73 @@
+{
+  "service": "storage",
+  "source": "https://cloud.google.com/storage/docs/access-control/iam-roles",
+  "roles": [
+    {"id": "roles/storage.admin", "title": "Storage Admin", "stage": "GA", "permissions": [
+      "storage.anywhereCaches.create","storage.anywhereCaches.disable","storage.anywhereCaches.get","storage.anywhereCaches.list","storage.anywhereCaches.pause","storage.anywhereCaches.resume","storage.anywhereCaches.update",
+      "storage.bucketOperations.cancel","storage.bucketOperations.get","storage.bucketOperations.list",
+      "storage.buckets.create","storage.buckets.createTagBinding","storage.buckets.delete","storage.buckets.deleteTagBinding","storage.buckets.enableObjectRetention","storage.buckets.get","storage.buckets.getIamPolicy","storage.buckets.getIpFilter","storage.buckets.getObjectInsights","storage.buckets.list","storage.buckets.listEffectiveTags","storage.buckets.listTagBindings","storage.buckets.relocate","storage.buckets.restore","storage.buckets.setIamPolicy","storage.buckets.setIpFilter","storage.buckets.update","storage.buckets.viewIntelligenceDetails",
+      "storage.featureConfigs.create","storage.featureConfigs.delete","storage.featureConfigs.get","storage.featureConfigs.list","storage.featureConfigs.update",
+      "storage.folders.create","storage.folders.delete","storage.folders.get","storage.folders.list","storage.folders.rename",
+      "storage.intelligenceConfigs.get","storage.intelligenceConfigs.update",
+      "storage.managedFolders.create","storage.managedFolders.delete","storage.managedFolders.get","storage.managedFolders.getIamPolicy","storage.managedFolders.list","storage.managedFolders.setIamPolicy",
+      "storage.multipartUploads.abort","storage.multipartUploads.create","storage.multipartUploads.list","storage.multipartUploads.listParts",
+      "storage.objects.create","storage.objects.createContext","storage.objects.delete","storage.objects.deleteContext","storage.objects.get","storage.objects.getIamPolicy","storage.objects.list","storage.objects.move","storage.objects.overrideUnlockedRetention","storage.objects.restore","storage.objects.setIamPolicy","storage.objects.setRetention","storage.objects.update","storage.objects.updateContext",
+      "storagebatchoperations.bucketOperations.get","storagebatchoperations.bucketOperations.list","storagebatchoperations.jobs.cancel","storagebatchoperations.jobs.create","storagebatchoperations.jobs.delete","storagebatchoperations.jobs.get","storagebatchoperations.jobs.list","storagebatchoperations.locations.get","storagebatchoperations.locations.list","storagebatchoperations.operations.cancel","storagebatchoperations.operations.delete","storagebatchoperations.operations.get","storagebatchoperations.operations.list"
+    ]},
+    {"id": "roles/storage.objectAdmin", "title": "Storage Object Admin", "stage": "GA", "permissions": [
+      "storage.folders.create","storage.folders.delete","storage.folders.get","storage.folders.list","storage.folders.rename",
+      "storage.managedFolders.create","storage.managedFolders.delete","storage.managedFolders.get","storage.managedFolders.list",
+      "storage.multipartUploads.abort","storage.multipartUploads.create","storage.multipartUploads.list","storage.multipartUploads.listParts",
+      "storage.objects.create","storage.objects.createContext","storage.objects.delete","storage.objects.deleteContext","storage.objects.get","storage.objects.getIamPolicy","storage.objects.list","storage.objects.move","storage.objects.overrideUnlockedRetention","storage.objects.restore","storage.objects.setIamPolicy","storage.objects.setRetention","storage.objects.update","storage.objects.updateContext"
+    ]},
+    {"id": "roles/storage.objectViewer", "title": "Storage Object Viewer", "stage": "GA", "permissions": [
+      "storage.folders.get","storage.folders.list","storage.managedFolders.get","storage.managedFolders.list","storage.objects.get","storage.objects.list"
+    ]},
+    {"id": "roles/storage.objectCreator", "title": "Storage Object Creator", "stage": "GA", "permissions": [
+      "storage.folders.create","storage.managedFolders.create","storage.multipartUploads.abort","storage.multipartUploads.create","storage.multipartUploads.listParts","storage.objects.create","storage.objects.createContext"
+    ]},
+    {"id": "roles/storage.objectUser", "title": "Storage Object User", "stage": "GA", "permissions": [
+      "storage.folders.create","storage.folders.delete","storage.folders.get","storage.folders.list","storage.folders.rename",
+      "storage.managedFolders.create","storage.managedFolders.delete","storage.managedFolders.get","storage.managedFolders.list",
+      "storage.multipartUploads.abort","storage.multipartUploads.create","storage.multipartUploads.list","storage.multipartUploads.listParts",
+      "storage.objects.create","storage.objects.createContext","storage.objects.delete","storage.objects.deleteContext","storage.objects.get","storage.objects.list","storage.objects.move","storage.objects.restore","storage.objects.update","storage.objects.updateContext"
+    ]},
+    {"id": "roles/storage.hmacKeyAdmin", "title": "Storage HMAC Key Admin", "stage": "GA", "permissions": [
+      "storage.hmacKeys.create","storage.hmacKeys.delete","storage.hmacKeys.get","storage.hmacKeys.list","storage.hmacKeys.update"
+    ]},
+    {"id": "roles/storage.folderAdmin", "title": "Storage Folder Admin", "stage": "GA", "permissions": [
+      "storage.folders.create","storage.folders.delete","storage.folders.get","storage.folders.list","storage.folders.rename",
+      "storage.managedFolders.create","storage.managedFolders.delete","storage.managedFolders.get","storage.managedFolders.getIamPolicy","storage.managedFolders.list","storage.managedFolders.setIamPolicy",
+      "storage.multipartUploads.abort","storage.multipartUploads.create","storage.multipartUploads.list","storage.multipartUploads.listParts",
+      "storage.objects.create","storage.objects.createContext","storage.objects.delete","storage.objects.deleteContext","storage.objects.get","storage.objects.getIamPolicy","storage.objects.list","storage.objects.move","storage.objects.overrideUnlockedRetention","storage.objects.restore","storage.objects.setIamPolicy","storage.objects.setRetention","storage.objects.update","storage.objects.updateContext"
+    ]},
+    {"id": "roles/storage.insightsCollectorService", "title": "Storage Insights Collector Service", "stage": "GA", "permissions": [
+      "storage.buckets.get","storage.buckets.getObjectInsights"
+    ]},
+    {"id": "roles/storage.legacyBucketOwner", "title": "Storage Legacy Bucket Owner", "stage": "GA", "permissions": [
+      "storage.anywhereCaches.create","storage.anywhereCaches.disable","storage.anywhereCaches.get","storage.anywhereCaches.list","storage.anywhereCaches.pause","storage.anywhereCaches.resume","storage.anywhereCaches.update",
+      "storage.bucketOperations.cancel","storage.bucketOperations.get","storage.bucketOperations.list",
+      "storage.buckets.createTagBinding","storage.buckets.deleteTagBinding","storage.buckets.enableObjectRetention","storage.buckets.get","storage.buckets.getIamPolicy","storage.buckets.getIpFilter","storage.buckets.listEffectiveTags","storage.buckets.listTagBindings","storage.buckets.relocate","storage.buckets.restore","storage.buckets.setIamPolicy","storage.buckets.setIpFilter","storage.buckets.update",
+      "storage.folders.create","storage.folders.delete","storage.folders.get","storage.folders.list","storage.folders.rename",
+      "storage.managedFolders.create","storage.managedFolders.delete","storage.managedFolders.get","storage.managedFolders.getIamPolicy","storage.managedFolders.list","storage.managedFolders.setIamPolicy",
+      "storage.multipartUploads.abort","storage.multipartUploads.create","storage.multipartUploads.list","storage.multipartUploads.listParts",
+      "storage.objects.create","storage.objects.createContext","storage.objects.delete","storage.objects.deleteContext","storage.objects.list","storage.objects.restore","storage.objects.setRetention","storage.objects.updateContext"
+    ]},
+    {"id": "roles/storage.legacyBucketReader", "title": "Storage Legacy Bucket Reader", "stage": "GA", "permissions": [
+      "storage.buckets.get","storage.folders.get","storage.folders.list","storage.managedFolders.get","storage.managedFolders.list","storage.multipartUploads.list","storage.objects.list"
+    ]},
+    {"id": "roles/storage.legacyBucketWriter", "title": "Storage Legacy Bucket Writer", "stage": "GA", "permissions": [
+      "storage.buckets.get",
+      "storage.folders.create","storage.folders.delete","storage.folders.get","storage.folders.list","storage.folders.rename",
+      "storage.managedFolders.create","storage.managedFolders.delete","storage.managedFolders.get","storage.managedFolders.list",
+      "storage.multipartUploads.abort","storage.multipartUploads.create","storage.multipartUploads.list","storage.multipartUploads.listParts",
+      "storage.objects.create","storage.objects.createContext","storage.objects.delete","storage.objects.list","storage.objects.restore","storage.objects.setRetention"
+    ]},
+    {"id": "roles/storage.legacyObjectOwner", "title": "Storage Legacy Object Owner", "stage": "GA", "permissions": [
+      "storage.objects.createContext","storage.objects.deleteContext","storage.objects.get","storage.objects.getIamPolicy","storage.objects.overrideUnlockedRetention","storage.objects.setIamPolicy","storage.objects.setRetention","storage.objects.update","storage.objects.updateContext"
+    ]},
+    {"id": "roles/storage.legacyObjectReader", "title": "Storage Legacy Object Reader", "stage": "GA", "permissions": [
+      "storage.objects.get"
+    ]}
+  ]
+}

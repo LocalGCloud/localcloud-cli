@@ -29,6 +29,7 @@ const TABS = [
     { id: 'alloydb', label: 'AlloyDB' },
     { id: 'dataproc', label: 'Dataproc' },
     { id: 'cloudiam', label: 'Cloud IAM' },
+    { id: 'kms', label: 'Cloud KMS' },
 ];
 
 const SERVICE_INFO = {
@@ -1524,11 +1525,47 @@ function DataprocView(props) {
 // -- Cloud IAM View --
 function CloudIAMView(props) {
     const d = () => props.data();
+    const [viewMode, setViewMode] = createSignal('resources'); // 'resources' | 'principals'
+
+    // Transform resource-oriented policies into principal-oriented map
+    const principals = createMemo(() => {
+        const map = new Map();
+        const policies = d()?.policies || [];
+        for (const policy of policies) {
+            for (const binding of (policy.bindings || [])) {
+                for (const member of (binding.members || [])) {
+                    if (!map.has(member)) map.set(member, []);
+                    map.get(member).push({
+                        role: binding.role,
+                        resourceType: policy.resourceType,
+                        resourceId: policy.resourceId,
+                    });
+                }
+            }
+        }
+        return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    });
+
+    const roleColor = (role) => {
+        if (role?.includes('admin')) return 'badge-unhealthy';
+        if (role?.includes('editor')) return 'badge-warning';
+        if (role?.includes('viewer')) return 'badge-info';
+        return 'badge-neutral';
+    };
 
     return (
         <div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                <div />
+                <div style="display:flex;gap:8px;align-items:center">
+                    <button
+                        onClick={() => setViewMode('resources')}
+                        style={{ padding: '5px 12px', border: '1px solid var(--border)', borderRadius: '6px', background: viewMode() === 'resources' ? 'var(--primary)' : 'var(--surface)', color: viewMode() === 'resources' ? '#fff' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '12px', fontWeight: viewMode() === 'resources' ? 600 : 400, transition: 'all 0.15s' }}
+                    >By Resource</button>
+                    <button
+                        onClick={() => setViewMode('principals')}
+                        style={{ padding: '5px 12px', border: '1px solid var(--border)', borderRadius: '6px', background: viewMode() === 'principals' ? 'var(--primary)' : 'var(--surface)', color: viewMode() === 'principals' ? '#fff' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '12px', fontWeight: viewMode() === 'principals' ? 600 : 400, transition: 'all 0.15s' }}
+                    >By Principal</button>
+                </div>
                 <Show when={props.onAdd}>
                     <button onClick={() => props.onAdd('Create Policy', [
                         { name: 'resource', type: 'text' },
@@ -1536,7 +1573,7 @@ function CloudIAMView(props) {
                         { name: 'members', type: 'text' },
                     ], async (formData) => {
                         await api.mutate('cloudiam', 'policies', formData);
-                    })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
+                    })} class="btn btn-primary" style={{ 'font-size': '13px', height: '34px' }}>
                         + Create Policy
                     </button>
                 </Show>
@@ -1548,38 +1585,390 @@ function CloudIAMView(props) {
                     <div class="empty-state-text">Create an IAM policy to see it here. All testIamPermissions calls return ALLOW.</div>
                 </div>
             }>
-                <div class="data-table-wrapper">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Resource Type</th>
-                                <th>Resource ID</th>
-                                <th>Policy</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <For each={d().policies}>
-                                {(policy) => (
-                                    <tr>
-                                        <td><span class="badge badge-neutral">{policy.resourceType}</span></td>
-                                        <td style={{ "font-family": "var(--font-mono)", "font-size": "12px" }}>{policy.resourceId}</td>
-                                        <td>{policy.policy || '--'}</td>
-                                        <td>
-                                            <Show when={props.onDelete}>
-                                                <button onClick={() => props.onDelete('Delete policy for "' + policy.resourceId + '"?', async () => {
-                                                    await api.mutate('cloudiam', 'policies/delete', { resourceType: policy.resourceType, resourceId: policy.resourceId });
-                                                })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete">Del</button>
-                                            </Show>
-                                        </td>
-                                    </tr>
-                                )}
-                            </For>
-                        </tbody>
-                    </table>
-                </div>
+                {/* Resource-oriented view */}
+                <Show when={viewMode() === 'resources'}>
+                    <div class="data-table-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Resource</th>
+                                    <th>Bindings</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <For each={d().policies}>
+                                    {(policy) => (
+                                        <tr>
+                                            <td>
+                                                <div style="display:flex;flex-direction:column;gap:2px">
+                                                    <span style={{ 'font-weight': 500 }}>{policy.resourceId}</span>
+                                                    <span class="badge badge-neutral" style={{ 'align-self': 'flex-start' }}>{policy.resourceType}</span>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div style="display:flex;flex-direction:column;gap:4px">
+                                                    <For each={policy.bindings || []}>
+                                                        {(binding) => (
+                                                            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                                                                <span class={`badge ${roleColor(binding.role)}`}>{binding.role}</span>
+                                                                <span style={{ 'font-size': '11px', color: 'var(--text-secondary)' }}>
+                                                                    {(binding.members || []).join(', ')}
+                                                                </span>
+                                                            </div>
+                                                        )}
+                                                    </For>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <Show when={props.onDelete}>
+                                                    <button onClick={() => props.onDelete('Delete policy for "' + policy.resourceId + '"?', async () => {
+                                                        await api.mutate('cloudiam', 'policies/delete', { resource: policy.resourceType + ':' + policy.resourceId });
+                                                    })} class="btn btn-danger" style={{ height: '26px', 'font-size': '11px', padding: '0 8px' }} title="Delete">Del</button>
+                                                </Show>
+                                            </td>
+                                        </tr>
+                                    )}
+                                </For>
+                            </tbody>
+                        </table>
+                    </div>
+                </Show>
+                {/* Principal-oriented view */}
+                <Show when={viewMode() === 'principals'}>
+                    <div style="display:flex;flex-direction:column;gap:12px">
+                        <For each={principals()}>
+                            {([member, bindings]) => (
+                                <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+                                    <div style="padding:10px 14px;background:var(--surface-variant);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                                        <span style={{ 'font-weight': 600, 'font-size': '13px' }}>{member}</span>
+                                        <span class="badge badge-info" style={{ 'margin-left': 'auto' }}>{bindings.length} role{bindings.length !== 1 ? 's' : ''}</span>
+                                    </div>
+                                    <div style="padding:8px 14px;display:flex;flex-direction:column;gap:6px">
+                                        <For each={bindings}>
+                                            {(b) => (
+                                                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:4px 0">
+                                                    <span class={`badge ${roleColor(b.role)}`}>{b.role}</span>
+                                                    <span style={{ 'font-size': '12px', color: 'var(--text-secondary)' }}>on</span>
+                                                    <span style={{ 'font-size': '12px', 'font-weight': 500 }}>{b.resourceType}:{b.resourceId}</span>
+                                                </div>
+                                            )}
+                                        </For>
+                                    </div>
+                                </div>
+                            )}
+                        </For>
+                    </div>
+                </Show>
             </Show>
         </div>
+    );
+}
+
+// -- Cloud KMS View --
+function KmsView(props) {
+    const d = () => props.data();
+    const [selectedKeyRing, setSelectedKeyRing] = createSignal(null);
+    const [selectedCryptoKey, setSelectedCryptoKey] = createSignal(null);
+    const [cryptoKeys, setCryptoKeys] = createSignal([]);
+    const [versions, setVersions] = createSignal([]);
+    const [subLoading, setSubLoading] = createSignal(false);
+    const [viewError, setViewError] = createSignal(null);
+
+    async function loadCryptoKeys(keyRingId) {
+        setSelectedKeyRing(keyRingId);
+        setSelectedCryptoKey(null);
+        setCryptoKeys([]);
+        setVersions([]);
+        setViewError(null);
+        setSubLoading(true);
+        try {
+            const data = await api.kmsCryptoKeys(keyRingId);
+            setCryptoKeys(data?.cryptoKeys || []);
+        } catch (e) {
+            setViewError('Failed to load crypto keys: ' + e.message);
+            setCryptoKeys([]);
+        } finally {
+            setSubLoading(false);
+        }
+    }
+
+    async function loadVersions(keyRingId, cryptoKeyId) {
+        setSelectedCryptoKey(cryptoKeyId);
+        setVersions([]);
+        setViewError(null);
+        setSubLoading(true);
+        try {
+            const data = await api.kmsVersions(keyRingId, cryptoKeyId);
+            setVersions(data?.versions || []);
+        } catch (e) {
+            setViewError('Failed to load versions: ' + e.message);
+            setVersions([]);
+        } finally {
+            setSubLoading(false);
+        }
+    }
+
+    function goBackToKeyRings() {
+        setSelectedKeyRing(null);
+        setSelectedCryptoKey(null);
+        setCryptoKeys([]);
+        setVersions([]);
+        setViewError(null);
+    }
+
+    function goBackToCryptoKeys() {
+        setSelectedCryptoKey(null);
+        setVersions([]);
+        setViewError(null);
+    }
+
+    async function handleVersionAction(keyRingId, cryptoKeyId, version, action) {
+        setViewError(null);
+        const newState = action === 'enable' ? 'ENABLED' : action === 'disable' ? 'DISABLED' : 'DESTROYED';
+
+        // Optimistic update
+        setVersions(prev => prev.map(v =>
+            v.versionNumber === version ? { ...v, state: newState } : v
+        ));
+
+        try {
+            if (action === 'destroy') {
+                if (!confirm(`Destroy version ${version} of "${cryptoKeyId}"? This cannot be undone.`)) {
+                    await loadVersions(keyRingId, cryptoKeyId);
+                    return;
+                }
+                await api.kmsDestroyVersion({ keyRingId, cryptoKeyId, version });
+            } else if (action === 'enable') {
+                await api.kmsEnableVersion({ keyRingId, cryptoKeyId, version });
+            } else if (action === 'disable') {
+                await api.kmsDisableVersion({ keyRingId, cryptoKeyId, version });
+            }
+        } catch (e) {
+            setViewError('Failed: ' + e.message);
+            await loadVersions(keyRingId, cryptoKeyId);
+        }
+    }
+
+    async function handleSetPrimary(keyRingId, cryptoKeyId, version) {
+        setViewError(null);
+        try {
+            await api.kmsSetPrimaryVersion({ keyRingId, cryptoKeyId, version });
+            // Refresh crypto keys to show updated primary version
+            const data = await api.kmsCryptoKeys(keyRingId);
+            setCryptoKeys(data?.cryptoKeys || []);
+        } catch (e) {
+            setViewError('Failed to set primary: ' + e.message);
+        }
+    }
+
+    const stateBadge = (state) => {
+        const s = (state || '').toUpperCase();
+        if (s === 'ENABLED') return 'badge-healthy';
+        if (s === 'DISABLED') return 'badge-warning';
+        if (s === 'DESTROYED') return 'badge-unhealthy';
+        return 'badge-neutral';
+    };
+
+    return (
+        <Show when={!selectedKeyRing()} fallback={
+            <Show when={!selectedCryptoKey()} fallback={
+                <div>
+                    <button class="back-link" onClick={goBackToCryptoKeys}>
+                        {'\u2190'} Back to crypto keys
+                    </button>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                        <h2 style="margin:0;font-size:16px">{selectedKeyRing()} / {selectedCryptoKey()}</h2>
+                    </div>
+                    <Show when={viewError()}>
+                        <div class="alert alert-error" role="alert">{viewError()}</div>
+                    </Show>
+                    <Show when={!subLoading()} fallback={
+                        <div class="loading-state"><div class="loading-spinner" /> Loading versions…</div>
+                    }>
+                        <Show when={versions().length > 0} fallback={
+                            <div class="empty-state">
+                                <div class="empty-state-title">No versions found</div>
+                                <div class="empty-state-text">This crypto key has no versions.</div>
+                            </div>
+                        }>
+                            <div class="data-table-wrapper">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Version</th>
+                                            <th>State</th>
+                                            <th>Algorithm</th>
+                                            <th>Created</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <For each={versions()}>
+                                            {(v) => (
+                                                <tr>
+                                                    <td style={{ 'font-family': 'var(--font-mono)', 'font-weight': 600 }}>v{v.versionNumber}</td>
+                                                    <td><span class={`badge ${stateBadge(v.state)}`}>{v.state || 'UNKNOWN'}</span></td>
+                                                    <td style={{ 'font-size': '12px', color: 'var(--text-secondary)' }}>{v.algorithm}</td>
+                                                    <td style={{ 'font-size': '12px', color: 'var(--text-secondary)' }}>{formatDate(v.createdAt)}</td>
+                                                    <td>
+                                                        <div style="display:flex;gap:4px;flex-wrap:wrap">
+                                                            <Show when={v.state === 'DISABLED'}>
+                                                                <button class="btn btn-secondary" style={{ height: '26px', 'font-size': '11px', padding: '0 8px' }}
+                                                                    onClick={() => handleVersionAction(selectedKeyRing(), selectedCryptoKey(), v.versionNumber, 'enable')}>
+                                                                    Enable
+                                                                </button>
+                                                            </Show>
+                                                            <Show when={v.state === 'ENABLED'}>
+                                                                <button class="btn btn-secondary" style={{ height: '26px', 'font-size': '11px', padding: '0 8px' }}
+                                                                    onClick={() => handleVersionAction(selectedKeyRing(), selectedCryptoKey(), v.versionNumber, 'disable')}>
+                                                                    Disable
+                                                                </button>
+                                                            </Show>
+                                                            <Show when={v.state !== 'DESTROYED'}>
+                                                                <button class="btn btn-danger" style={{ height: '26px', 'font-size': '11px', padding: '0 8px' }}
+                                                                    onClick={() => handleVersionAction(selectedKeyRing(), selectedCryptoKey(), v.versionNumber, 'destroy')}>
+                                                                    Destroy
+                                                                </button>
+                                                            </Show>
+                                                            <Show when={v.state === 'ENABLED'}>
+                                                                <button class="btn btn-secondary" style={{ height: '26px', 'font-size': '11px', padding: '0 8px' }}
+                                                                    onClick={() => handleSetPrimary(selectedKeyRing(), selectedCryptoKey(), v.versionNumber)}>
+                                                                    Set Primary
+                                                                </button>
+                                                            </Show>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </For>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </Show>
+                    </Show>
+                </div>
+            }>
+                <div>
+                    <button class="back-link" onClick={goBackToKeyRings}>
+                        {'\u2190'} Back to key rings
+                    </button>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                        <h2 style="margin:0;font-size:16px">Key Ring: {selectedKeyRing()}</h2>
+                        <Show when={props.onAdd}>
+                            <button onClick={() => props.onAdd('Create Crypto Key in ' + selectedKeyRing(), [
+                                { name: 'cryptoKeyId', type: 'text' },
+                                { name: 'purpose', type: 'text', value: 'ENCRYPT_DECRYPT' },
+                                { name: 'algorithm', type: 'text', value: 'GOOGLE_SYMMETRIC_ENCRYPTION' },
+                            ], async (formData) => {
+                                await api.kmsCreateCryptoKey({ keyRingId: selectedKeyRing(), ...formData });
+                                await loadCryptoKeys(selectedKeyRing());
+                            })} class="btn btn-primary" style={{ 'font-size': '13px', height: '34px' }}>
+                                + Create Crypto Key
+                            </button>
+                        </Show>
+                    </div>
+                    <Show when={viewError()}>
+                        <div class="alert alert-error" role="alert">{viewError()}</div>
+                    </Show>
+                    <Show when={!subLoading()} fallback={
+                        <div class="loading-state"><div class="loading-spinner" /> Loading crypto keys…</div>
+                    }>
+                        <Show when={cryptoKeys().length > 0} fallback={
+                            <div class="empty-state">
+                                <div class="empty-state-title">No crypto keys found</div>
+                                <div class="empty-state-text">Create a crypto key to get started.</div>
+                            </div>
+                        }>
+                            <div class="data-table-wrapper">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Key Name</th>
+                                            <th>Purpose</th>
+                                            <th>Algorithm</th>
+                                            <th>Primary Version</th>
+                                            <th>Created</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <For each={cryptoKeys()}>
+                                            {(key) => (
+                                                <tr class="clickable-row" onClick={() => loadVersions(selectedKeyRing(), key.cryptoKeyId)} role="button" tabIndex="0">
+                                                    <td style={{ 'font-weight': 500 }}>{key.cryptoKeyId}</td>
+                                                    <td><span class="badge badge-neutral">{key.purpose}</span></td>
+                                                    <td style={{ 'font-size': '12px', color: 'var(--text-secondary)' }}>{key.algorithm}</td>
+                                                    <td style={{ 'font-family': 'var(--font-mono)', 'font-size': '12px' }}>v{key.primaryVersion}</td>
+                                                    <td style={{ 'font-size': '12px', color: 'var(--text-secondary)' }}>{formatDate(key.createdAt)}</td>
+                                                    <td onClick={(e) => e.stopPropagation()}>
+                                                        <Show when={props.onDelete}>
+                                                            <button onClick={() => props.onDelete('Delete crypto key "' + key.cryptoKeyId + '" from ' + selectedKeyRing() + '?', async () => {
+                                                                await api.kmsDeleteCryptoKey({ keyRingId: selectedKeyRing(), cryptoKeyId: key.cryptoKeyId });
+                                                                await loadCryptoKeys(selectedKeyRing());
+                                                            })} class="btn btn-danger" style={{ height: '26px', 'font-size': '11px', padding: '0 8px' }} title="Delete">Del</button>
+                                                        </Show>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </For>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </Show>
+                    </Show>
+                </div>
+            </Show>
+        }>
+            {/* Key Rings list */}
+            <div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                    <div />
+                    <Show when={props.onAdd}>
+                        <button onClick={() => props.onAdd('Create Key Ring', [
+                            { name: 'keyRingId', type: 'text' },
+                            { name: 'locationId', type: 'text', value: 'global' },
+                        ], async (formData) => {
+                            await api.kmsCreateKeyRing(formData);
+                            if (props.onRefresh) props.onRefresh();
+                        })} class="btn btn-primary" style={{ 'font-size': '13px', height: '34px' }}>
+                            + Create Key Ring
+                        </button>
+                    </Show>
+                </div>
+                <Show when={d() && d().keyRings && d().keyRings.length > 0} fallback={
+                    <div class="empty-state">
+                        <div class="empty-state-icon">{'\u2205'}</div>
+                        <div class="empty-state-title">No key rings found</div>
+                        <div class="empty-state-text">Create a key ring to organize your crypto keys.</div>
+                    </div>
+                }>
+                    <div class="data-table-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Key Ring Name</th>
+                                    <th>Location</th>
+                                    <th>Created</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <For each={d().keyRings}>
+                                    {(kr) => (
+                                        <tr class="clickable-row" onClick={() => loadCryptoKeys(kr.keyRingId)} onKeyDown={onActivate(() => loadCryptoKeys(kr.keyRingId))} role="button" tabIndex="0">
+                                            <td style={{ 'font-weight': 500 }}>{kr.keyRingId}</td>
+                                            <td><span class="badge badge-neutral">{kr.locationId}</span></td>
+                                            <td>{formatDate(kr.createdAt)}</td>
+                                        </tr>
+                                    )}
+                                </For>
+                            </tbody>
+                        </table>
+                    </div>
+                </Show>
+            </div>
+        </Show>
     );
 }
 
@@ -3562,12 +3951,12 @@ function CloudSqlView(props) {
 
     return (
         <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h2 style={{ margin: 0 }}>Cloud SQL</h2>
-                <Show when={!selectedInstance()}>
-                    <button class="btn btn-primary" onClick={() => setShowCreateInstance(true)}>+ Create Instance</button>
-                </Show>
-            </div>
+            <Show when={!selectedInstance()}>
+                <div style="display:flex;align-items:center;margin-bottom:8px">
+                    <div style="flex:1" />
+                    <button class="btn btn-primary" style="height:30px;font-size:11px;padding:0 12px" onClick={() => setShowCreateInstance(true)}>+ Create Instance</button>
+                </div>
+            </Show>
 
             <div class="breadcrumbs" style={{ marginBottom: '16px' }}>
                 <For each={breadcrumbs()}>
@@ -3900,9 +4289,9 @@ function MemorystoreView(props) {
     return (
         <div>
             <Show when={selectedDb() === null}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                    <h2 style={{ margin: 0 }}>Memorystore Instances</h2>
-                    <button class="btn btn-primary" onClick={() => setShowCreateInstance(true)}>+ Create Instance</button>
+                <div style="display:flex;align-items:center;margin-bottom:8px">
+                    <div style="flex:1" />
+                    <button class="btn btn-primary" style="height:30px;font-size:11px;padding:0 12px" onClick={() => setShowCreateInstance(true)}>+ Create Instance</button>
                 </div>
                 <Show when={instances().length > 0}>
                     <table class="data-table">
@@ -4499,9 +4888,9 @@ function BigtableView(props) {
                     </Show>
                 </Show>
                 <Show when={selectedInstance() && !selectedTable()}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                        <h2 style={{ margin: 0 }}>Tables</h2>
-                        <button class="btn btn-primary" onClick={() => setShowCreateTable(true)}>+ Create Table</button>
+                    <div style="display:flex;align-items:center;margin-bottom:8px">
+                        <div style="flex:1" />
+                        <button class="btn btn-primary" style="height:30px;font-size:11px;padding:0 12px" onClick={() => setShowCreateTable(true)}>+ Create Table</button>
                     </div>
                     <Show when={tablesData().length > 0} fallback={<div class="empty-state"><div class="empty-state-icon">{'\u2205'}</div><div class="empty-state-title">No tables</div></div>}>
                         <table class="data-table"><thead><tr><th>Table</th><th>Granularity</th><th>Actions</th></tr></thead>
@@ -4520,9 +4909,9 @@ function BigtableView(props) {
                     </Show>
                 </Show>
                 <Show when={!selectedInstance()}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                        <h2 style={{ margin: 0 }}>Bigtable Instances</h2>
-                        <button class="btn btn-primary" onClick={() => setShowCreateInstance(true)}>+ Create Instance</button>
+                    <div style="display:flex;align-items:center;margin-bottom:8px">
+                        <div style="flex:1" />
+                        <button class="btn btn-primary" style="height:30px;font-size:11px;padding:0 12px" onClick={() => setShowCreateInstance(true)}>+ Create Instance</button>
                     </div>
                     <Show when={instances().length > 0} fallback={<div class="empty-state"><div class="empty-state-icon">{'\u2205'}</div><div class="empty-state-title">No instances</div></div>}>
                         <table class="data-table"><thead><tr><th>Instance</th><th>Type</th><th>State</th><th>Actions</th></tr></thead>
@@ -4716,7 +5105,7 @@ const CONNECTION_ONLY = new Set(['gke', 'compute', 'cloudrun']);
 const FETCH_SERVICES = new Set([
     'gcs', 'pubsub', 'firestore', 'bigquery', 'secretmanager', 'cloudtasks',
     'logging', 'monitoring', 'spanner', 'bigtable', 'memorystore', 'cloudsql',
-    'cloudscheduler', 'cloudfunctions', 'alloydb', 'dataproc', 'cloudiam',
+    'cloudscheduler', 'cloudfunctions', 'alloydb', 'dataproc', 'cloudiam', 'kms',
 ]);
 
 const STANDARD_DATABASE_EXPLORER_SERVICES = new Set([
@@ -4931,6 +5320,7 @@ export default function DataBrowser(props) {
             case 'cloudfunctions': return <CloudFunctionsView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
             case 'dataproc': return <DataprocView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
             case 'cloudiam': return <CloudIAMView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
+            case 'kms': return <KmsView data={data} onAdd={handleAdd} onDelete={handleDelete} onRefresh={loadData} />;
             default: return null;
         }
     };
