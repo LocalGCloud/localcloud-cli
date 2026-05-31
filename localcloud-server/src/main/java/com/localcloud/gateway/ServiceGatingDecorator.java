@@ -114,7 +114,8 @@ public class ServiceGatingDecorator implements DecoratingHttpServiceFunction {
                 || path.equals("/snapshots")
                 || path.startsWith("/snapshots/")
                 || path.startsWith("/dashboard/")
-                || path.startsWith("/computeMetadata/v1");
+                || path.startsWith("/computeMetadata/v1")
+                || path.equals("/terraform/readiness");
     }
 
     /**

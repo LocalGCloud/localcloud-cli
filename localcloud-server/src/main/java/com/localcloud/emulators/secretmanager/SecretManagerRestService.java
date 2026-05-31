@@ -143,78 +143,88 @@ public class SecretManagerRestService {
         }
     }
 
-    // ── Service Usage API endpoints (co-located to share /v1 prefix) ──────────
-
-    @Get("/projects/{project}/services/{service}")
-    public HttpResponse getService(@Param String project, @Param String service) {
-        try {
-            ObjectNode result = mapper.createObjectNode();
-            result.put("name", service);
-            result.put("state", "ENABLED");
-            result.put("parent", "projects/" + project);
-            ObjectNode config = result.putObject("config");
-            config.put("name", service);
-            config.put("title", service.replace(".googleapis.com", ""));
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
-        } catch (Exception e) {
-            return errorResponse(500, "Internal error");
-        }
-    }
-
-    @Get("/projects/{project}/services")
-    public HttpResponse listServices(@Param String project) {
-        try {
-            ObjectNode result = mapper.createObjectNode();
-            result.set("services", mapper.createArrayNode());
-            result.put("nextPageToken", "");
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
-        } catch (Exception e) {
-            return errorResponse(500, "Internal error");
-        }
-    }
-
-    @Post("regex:^/projects/(?<project>[^/]+)/services/(?<service>[^:]+):enable$")
-    public HttpResponse enableService(@Param String project, @Param String service) {
-        try {
-            ObjectNode operation = mapper.createObjectNode();
-            operation.put("name", "operations/su-" + System.currentTimeMillis());
-            operation.put("done", true);
-            ObjectNode resp = operation.putObject("response");
-            resp.put("name", service);
-            resp.put("state", "ENABLED");
-            resp.put("@type", "type.googleapis.com/google.api.serviceusage.v1.EnableServiceResponse");
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(operation));
-        } catch (Exception e) {
-            return errorResponse(500, "Internal error");
-        }
-    }
-
-    @Post("regex:^/projects/(?<project>[^/]+)/services:batchEnable$")
-    public HttpResponse batchEnableServices(@Param String project, String body) {
-        try {
-            ObjectNode operation = mapper.createObjectNode();
-            operation.put("name", "operations/su-batch-" + System.currentTimeMillis());
-            operation.put("done", true);
-            ObjectNode resp = operation.putObject("response");
-            resp.put("@type", "type.googleapis.com/google.api.serviceusage.v1.BatchEnableServicesResponse");
-            ArrayNode services = resp.putArray("services");
-            if (body != null && !body.isBlank()) {
-                JsonNode parsed = mapper.readTree(body);
-                if (parsed.has("serviceIds") && parsed.get("serviceIds").isArray()) {
-                    for (JsonNode id : parsed.get("serviceIds")) {
-                        ObjectNode svc = services.addObject();
-                        svc.put("name", id.asText());
-                        svc.put("state", "ENABLED");
-                    }
-                }
-            }
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(operation));
-        } catch (Exception e) {
-            return errorResponse(500, "Internal error");
-        }
-    }
-
     // IAM Policy endpoints are handled by the generic catch-all in LocalCloudApplication.
+    // Service Usage API endpoints are in ServiceUsageRestService (registered at /v1).
+    // Cloud Billing endpoints are in CloudBillingRestService (registered at /v1).
+
+    // ── Secret version custom methods (gRPC transcoding doesn't handle query params) ──
+
+    @Post("regex:^/projects/(?<project>[^/]+)/secrets/(?<secret>[^/]+):addVersion$")
+    public HttpResponse addVersion(@Param String project, @Param String secret, String body) {
+        emulator.incrementRequestCount();
+        try {
+            var root = mapper.readTree(body);
+            String payloadData = root.path("payload").path("data").asText(null);
+            if (payloadData == null) {
+                return errorResponse(400, "Missing required field: payload.data");
+            }
+            byte[] payload = java.util.Base64.getDecoder().decode(payloadData);
+            Map<String, Object> versionRow = store.addSecretVersion(project, secret, payload);
+            int versionNum = ((Number) versionRow.get("version_number")).intValue();
+            ObjectNode result = mapper.createObjectNode();
+            result.put("name", "projects/" + project + "/secrets/" + secret + "/versions/" + versionNum);
+            result.put("state", String.valueOf(versionRow.getOrDefault("state", "ENABLED")));
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+        } catch (Exception e) {
+            logger.error("Error adding secret version", e);
+            return errorResponse(500, e.getMessage());
+        }
+    }
+
+    @Post("regex:^/projects/(?<project>[^/]+)/secrets/(?<secret>[^/]+)/versions/(?<version>[^:]+):destroy$")
+    public HttpResponse destroyVersion(@Param String project, @Param String secret,
+                                       @Param String version, String body) {
+        emulator.incrementRequestCount();
+        try {
+            int v = Integer.parseInt(version);
+            // Idempotent: destroying a non-existent version is a no-op (matches GCP behavior)
+            store.destroySecretVersion(project, secret, v);
+            ObjectNode result = mapper.createObjectNode();
+            result.put("name", "projects/" + project + "/secrets/" + secret + "/versions/" + version);
+            result.put("state", "DESTROYED");
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+        } catch (Exception e) {
+            logger.error("Error destroying secret version", e);
+            return errorResponse(500, e.getMessage());
+        }
+    }
+
+    @Post("regex:^/projects/(?<project>[^/]+)/secrets/(?<secret>[^/]+)/versions/(?<version>[^:]+):enable$")
+    public HttpResponse enableVersion(@Param String project, @Param String secret,
+                                      @Param String version, String body) {
+        emulator.incrementRequestCount();
+        try {
+            int v = Integer.parseInt(version);
+            // Idempotent: enabling an already-enabled version is a no-op
+            store.enableSecretVersion(project, secret, v);
+            ObjectNode result = mapper.createObjectNode();
+            result.put("name", "projects/" + project + "/secrets/" + secret + "/versions/" + version);
+            result.put("state", "ENABLED");
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+        } catch (Exception e) {
+            logger.error("Error enabling secret version", e);
+            return errorResponse(500, e.getMessage());
+        }
+    }
+
+    @Post("regex:^/projects/(?<project>[^/]+)/secrets/(?<secret>[^/]+)/versions/(?<version>[^:]+):disable$"
+)
+    public HttpResponse disableVersion(@Param String project, @Param String secret,
+                                       @Param String version, String body) {
+        emulator.incrementRequestCount();
+        try {
+            int v = Integer.parseInt(version);
+            // Idempotent: disabling an already-disabled version is a no-op
+            store.disableSecretVersion(project, secret, v);
+            ObjectNode result = mapper.createObjectNode();
+            result.put("name", "projects/" + project + "/secrets/" + secret + "/versions/" + version);
+            result.put("state", "DISABLED");
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+        } catch (Exception e) {
+            logger.error("Error disabling secret version", e);
+            return errorResponse(500, e.getMessage());
+        }
+    }
 
     private HttpResponse errorResponse(int code, String message) {
         try {

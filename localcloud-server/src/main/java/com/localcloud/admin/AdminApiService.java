@@ -237,6 +237,10 @@ public class AdminApiService {
                     sb.append("export GOOGLE_OPENID_CONNECT_CUSTOM_ENDPOINT=\"http://localhost:8080/oauth2/\"\n");
                     sb.append("export BIGTABLE_EMULATOR_HOST=\"localhost:8087\"\n");
                     sb.append("export GOOGLE_APPLICATION_CREDENTIALS=\"/dev/null\"\n");
+                    sb.append("\n# REQUIRED: DNS redirect for all *.googleapis.com (one-time setup)\n");
+                    sb.append("# sudo sh -c 'echo \"nameserver 127.0.0.1\" > /etc/resolver/googleapis.com'\n");
+                    sb.append("# REQUIRED: Docker must map port 443: -p 443:8080\n");
+                    sb.append("# Verify readiness: curl http://localhost:").append(config.getGatewayPort()).append("/terraform/readiness\n");
                     yield HttpResponse.of(HttpStatus.OK, MediaType.PLAIN_TEXT_UTF_8, sb.toString());
                 }
                 default -> {

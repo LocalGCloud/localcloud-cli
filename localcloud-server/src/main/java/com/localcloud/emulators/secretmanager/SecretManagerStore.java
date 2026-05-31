@@ -31,15 +31,25 @@ public class SecretManagerStore {
     // --- Secret operations ---
 
     public void createSecret(String projectId, String secretId, String labelsJson) throws SQLException {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
+        try (Connection conn = dataSource.getConnection()) {
+            try (PreparedStatement ps = conn.prepareStatement(
                      "INSERT INTO secrets (project_id, secret_id, labels, created_at) " +
                      "VALUES (?, ?, ?, CURRENT_TIMESTAMP)")) {
-            ps.setString(1, projectId);
-            ps.setString(2, secretId);
-            ps.setString(3, labelsJson != null ? labelsJson : "{}");
-            ps.executeUpdate();
-            logger.debug("Created secret: projects/{}/secrets/{}", projectId, secretId);
+                ps.setString(1, projectId);
+                ps.setString(2, secretId);
+                ps.setString(3, labelsJson != null ? labelsJson : "{}");
+                ps.executeUpdate();
+                logger.debug("Created secret: projects/{}/secrets/{}", projectId, secretId);
+            }
+            // Auto-create version 1 — Terraform expects it to exist when reading secret versions
+            try (PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO secret_versions (project_id, secret_id, version_number, payload, state) " +
+                     "VALUES (?, ?, 1, ?::bytea, 'ENABLED') ON CONFLICT DO NOTHING")) {
+                ps.setString(1, projectId);
+                ps.setString(2, secretId);
+                ps.setBytes(3, new byte[0]);
+                ps.executeUpdate();
+            }
         }
     }
 

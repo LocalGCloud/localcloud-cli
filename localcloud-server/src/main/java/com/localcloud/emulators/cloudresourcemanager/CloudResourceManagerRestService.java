@@ -111,16 +111,13 @@ public class CloudResourceManagerRestService {
     }
 
     /**
-     * Get billing info for a project. Always returns enabled.
-     * Maps to Google Cloud Billing GET /v1/projects/{projectId}/billingInfo
+     * Get operation status. Operations are always done synchronously in LocalCloud.
      */
     @Get("/operations/{operation}")
     public HttpResponse getOperation(@Param String operation) {
         try {
-            // Operations are always done synchronously in LocalCloud
-            Map<String, Object> project = null;
-            // Operation names are of form "operations/xxxxx"
-            // The project can be retrieved separately
+            // Operations are always done synchronously in LocalCloud.
+            // We don't store operations, so return a completed operation with the operation name.
             ObjectNode op = toDoneOperation(operation);
             return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(op));
         } catch (Exception e) {
@@ -129,23 +126,9 @@ public class CloudResourceManagerRestService {
         }
     }
 
-    @Get("/projects/{projectId}/billingInfo")
-    public HttpResponse getBillingInfo(@Param String projectId) {
-        try {
-            Map<String, Object> project = projectService.getProject(projectId);
-            ObjectNode result = mapper.createObjectNode();
-            result.put("name", "projects/" + projectId + "/billingInfo");
-            result.put("projectId", projectId);
-            result.put("billingAccountName", "billingAccounts/localcloud-fake");
-            result.put("billingEnabled", true);
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
-        } catch (Exception e) {
-            logger.error("Error getting billing info", e);
-            return errorResponse(HttpStatus.INTERNAL_SERVER_ERROR, e.getMessage());
-        }
-    }
-
     /**
+     * Billing info is now handled by CloudBillingRestService (registered at /v1).
+     *
      * Get a single project. Maps to Google Cloud Resource Manager GET /v3/projects/projects/{projectId}.
      */
     @Get("/projects/{projectId}")
@@ -183,13 +166,23 @@ public class CloudResourceManagerRestService {
     }
 
     /**
-     * Update a project. Maps to Google Cloud Resource Manager PATCH /v3/projects/{projectId}.
+     * Update a project. Maps to Google Cloud Resource Manager PUT/PATCH.
      * <p>
+     * Terraform provider v6 uses PUT /v1/projects/{projectId} for updates.
      * Supports updating displayName and labels. updateMask query param is ignored
      * (all provided fields are updated).
      */
+    @Put("/projects/{projectId}")
+    public HttpResponse putProject(@Param String projectId, String body) {
+        return updateProject(projectId, body);
+    }
+
     @Patch("/projects/{projectId}")
-    public HttpResponse updateProject(@Param String projectId, String body) {
+    public HttpResponse patchProject(@Param String projectId, String body) {
+        return updateProject(projectId, body);
+    }
+
+    private HttpResponse updateProject(String projectId, String body) {
         try {
             JsonNode parsed = mapper.readTree(body);
             String displayName = parsed.has("name") ? parsed.get("name").asText() : null;
@@ -290,22 +283,22 @@ public class CloudResourceManagerRestService {
         }
         node.put("projectNumber", projectNumber);
         node.put("state", state);
+        // Terraform provider v6 reads lifecycleState from v3 too
+        node.put("lifecycleState", state);
         node.put("displayName", displayName != null ? displayName : projectId);
-        // parent as string (e.g., "organizations/0")
-        node.put("parent", "organizations/0");
+        // parent as object — matches the google.cloud.resourcemanager.v3.Project shape
+        ObjectNode parent = mapper.createObjectNode();
+        parent.put("type", "organization");
+        parent.put("id", "0");
+        node.set("parent", parent);
         try {
             node.set("labels", mapper.readTree(labels != null && !labels.isEmpty() && !labels.equals("{}") ? labels : "{}"));
         } catch (Exception e) {
             node.set("labels", mapper.createObjectNode());
         }
-        if (createdAt != null) {
-            node.put("createTime", createdAt);
-        }
-        if (updatedAt != null) {
-            node.put("updateTime", updatedAt);
-        } else if (createdAt != null) {
-            node.put("updateTime", createdAt);
-        }
+        String now = Instant.now().toString();
+        node.put("createTime", createdAt != null ? createdAt : now);
+        node.put("updateTime", updatedAt != null ? updatedAt : (createdAt != null ? createdAt : now));
         // etag — a checksum for optimistic concurrency
         node.put("etag", Integer.toHexString(projectId.hashCode()));
         return node;

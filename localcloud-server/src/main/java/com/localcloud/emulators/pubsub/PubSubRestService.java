@@ -62,6 +62,30 @@ public class PubSubRestService {
         }
     }
 
+    @Patch("/projects/{project}/topics/{topic}")
+    public HttpResponse updateTopic(@Param String project, @Param String topic, String body) {
+        if (emulator != null) emulator.incrementRequestCount();
+        try {
+            var existing = store.getTopic(project, topic);
+            if (existing == null) {
+                return errorResponse(404, "Topic not found: " + topic);
+            }
+            Map<String, String> labels = null;
+            if (body != null && !body.isBlank()) {
+                var parsed = mapper.readTree(body);
+                if (parsed.has("labels")) {
+                    labels = mapper.convertValue(parsed.get("labels"), Map.class);
+                }
+            }
+            store.updateTopic(project, topic, labels);
+            ObjectNode result = topicToJson(project, topic, labels);
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+        } catch (Exception e) {
+            logger.error("Error updating topic", e);
+            return errorResponse(500, e.getMessage());
+        }
+    }
+
     @Get("/projects/{project}/topics/{topic}")
     public HttpResponse getTopic(@Param String project, @Param String topic) {
         if (emulator != null) emulator.incrementRequestCount();
@@ -111,7 +135,7 @@ public class PubSubRestService {
 
     @Put("/projects/{project}/subscriptions/{subscription}")
     public HttpResponse createSubscription(@Param String project, @Param String subscription, String body) {
-        emulator.incrementRequestCount();
+        if (emulator != null) emulator.incrementRequestCount();
         try {
             var parsed = mapper.readTree(body);
             String topicFull = parsed.path("topic").asText();

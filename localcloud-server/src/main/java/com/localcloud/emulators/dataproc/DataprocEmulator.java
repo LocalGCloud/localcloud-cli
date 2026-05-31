@@ -40,20 +40,18 @@ public class DataprocEmulator extends AbstractEmulator {
     private final DataprocRepository repository;
     private final ClusterService clusterService = new ClusterService();
     private final JobService jobService = new JobService();
+    private final DataprocRestService restService;
     private final Map<String, Process> runningJobs = new ConcurrentHashMap<>();
 
     public DataprocEmulator(PostgresDataSource dataSource) {
         super("dataproc", "Dataproc", 8080, "grpc", "DATAPROC_EMULATOR_HOST");
         this.repository = new DataprocRepository(dataSource);
+        this.restService = new DataprocRestService(repository, this);
     }
 
-    public ClusterService getClusterService() {
-        return clusterService;
-    }
-
-    public JobService getJobService() {
-        return jobService;
-    }
+    public DataprocRestService getRestService() { return restService; }
+    public ClusterService getClusterService() { return clusterService; }
+    public JobService getJobService() { return jobService; }
 
     @Override protected void doStart() {
         logger.info("Dataproc emulator initialized; spark-submit will be resolved from PATH on job submission");

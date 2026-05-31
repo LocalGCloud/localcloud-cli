@@ -127,20 +127,31 @@ public class CloudSqlStore {
         String physical = physicalName(project, instance, database);
         String databaseVersion = getDatabaseVersion(project, instance);
         try (Connection conn = dataSource.getConnection()) {
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO cloudsql_databases (project_id, instance_id, database_name, charset, \"collation\", physical_name) " +
-                            "VALUES (?, ?, ?, ?, ?, ?)")) {
-                ps.setString(1, project);
-                ps.setString(2, instance);
-                ps.setString(3, database);
-                ps.setString(4, charset != null ? charset : "UTF8");
-                ps.setString(5, collation != null ? collation : "");
-                ps.setString(6, physical);
-                ps.executeUpdate();
+            // Idempotent: check first, then insert (H2 doesn't support ON CONFLICT DO NOTHING)
+            Map<String, Object> existing = getDatabase(project, instance, database);
+            if (existing == null) {
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO cloudsql_databases (project_id, instance_id, database_name, charset, \"collation\", physical_name) " +
+                                "VALUES (?, ?, ?, ?, ?, ?)")) {
+                    ps.setString(1, project);
+                    ps.setString(2, instance);
+                    ps.setString(3, database);
+                    ps.setString(4, charset != null ? charset : "UTF8");
+                    ps.setString(5, collation != null ? collation : "");
+                    ps.setString(6, physical);
+                    ps.executeUpdate();
+                } catch (SQLException e) {
+                    // Race condition: another thread inserted between check and insert.
+                    // Both H2 and PostgreSQL report constraint violations so treat as idempotent.
+                    if (!isDuplicateKeyError(e)) throw e;
+                }
             }
             if (databaseVersion != null && databaseVersion.startsWith("POSTGRES")) {
                 try (Statement stmt = conn.createStatement()) {
                     stmt.execute("CREATE DATABASE " + physical);
+                } catch (SQLException e) {
+                    // Database already exists — ignore duplicate
+                    if (!e.getMessage().contains("already exists")) throw e;
                 }
             }
         }
@@ -381,5 +392,18 @@ public class CloudSqlStore {
         } catch (SQLException e) {
             return null;
         }
+    }
+
+    /**
+     * Detect duplicate key / unique constraint violations across H2 and PostgreSQL.
+     */
+    private static boolean isDuplicateKeyError(SQLException e) {
+        if (e == null) return false;
+        String msg = e.getMessage();
+        if (msg == null) return false;
+        // PostgreSQL: "duplicate key value violates unique constraint"
+        // H2: "Unique index or primary key violation"
+        return msg.contains("duplicate key") || msg.contains("Unique index or primary key violation")
+                || msg.contains("violates unique constraint");
     }
 }

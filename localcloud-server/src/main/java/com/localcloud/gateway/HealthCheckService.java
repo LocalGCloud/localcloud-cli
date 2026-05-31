@@ -605,6 +605,175 @@ public class HealthCheckService {
         return "Inspect gateway logs for the in-process facade.";
     }
 
+    /**
+     * Terraform-specific readiness check. Verifies that DNS redirect for
+     * {@code serviceusage.googleapis.com} is configured and port 443 is
+     * reachable. Returns actionable errors when prerequisites are missing.
+     *
+     * <p>Usage: {@code GET /terraform/readiness} — returns 200 if all
+     * Terraform prerequisites are met, 503 with remediation hints otherwise.</p>
+     */
+    @Get("/terraform/readiness")
+    public HttpResponse terraformReadiness() {
+        return HttpResponse.of(CompletableFuture.supplyAsync(() -> {
+            try {
+                List<Map<String, Object>> checks = new ArrayList<>();
+                boolean allPassed = true;
+
+                // Check 1: DNS resolution for serviceusage.googleapis.com
+                Map<String, Object> dnsCheck = new LinkedHashMap<>();
+                dnsCheck.put("name", "dns_redirect");
+                dnsCheck.put("description", "serviceusage.googleapis.com resolves to 127.0.0.1");
+                try {
+                    java.net.InetAddress addr = java.net.InetAddress.getByName("serviceusage.googleapis.com");
+                    boolean resolvedToLocal = "127.0.0.1".equals(addr.getHostAddress());
+                    dnsCheck.put("passed", resolvedToLocal);
+                    dnsCheck.put("actual", addr.getHostAddress());
+                    dnsCheck.put("expected", "127.0.0.1");
+                    if (!resolvedToLocal) {
+                        allPassed = false;
+                        dnsCheck.put("remediation",
+                            "Option A (recommended): echo 'nameserver 127.0.0.1' | sudo tee /etc/resolver/googleapis.com");
+                        dnsCheck.put("remediation_alt",
+                            "Option B: echo '127.0.0.1 serviceusage.googleapis.com' | sudo tee -a /etc/hosts");
+                    }
+                } catch (java.net.UnknownHostException e) {
+                    dnsCheck.put("passed", false);
+                    dnsCheck.put("error", e.getMessage());
+                    allPassed = false;
+                    dnsCheck.put("remediation",
+                        "Option A (recommended): echo 'nameserver 127.0.0.1' | sudo tee /etc/resolver/googleapis.com");
+                    dnsCheck.put("remediation_alt",
+                        "Option B: echo '127.0.0.1 serviceusage.googleapis.com' | sudo tee -a /etc/hosts");
+                }
+                checks.add(dnsCheck);
+
+                // Check 2: Port 443 reachable (gateway must be mapped -p 443:8080)
+                Map<String, Object> portCheck = new LinkedHashMap<>();
+                portCheck.put("name", "port_443");
+                portCheck.put("description", "Port 443 reachable (requires -p 443:8080)");
+                try (var socket = new java.net.Socket()) {
+                    socket.connect(new java.net.InetSocketAddress("127.0.0.1", 443), 2000);
+                    portCheck.put("passed", true);
+                } catch (Exception e) {
+                    portCheck.put("passed", false);
+                    portCheck.put("error", e.getMessage());
+                    allPassed = false;
+                    portCheck.put("remediation",
+                        "Restart container with: docker run -p 443:8080 ...");
+                }
+                checks.add(portCheck);
+
+                // Check 3: Service Usage API responds
+                Map<String, Object> apiCheck = new LinkedHashMap<>();
+                apiCheck.put("name", "service_usage_api");
+                apiCheck.put("description", "Service Usage API returns ENABLED");
+                try {
+                    var httpClient = java.net.http.HttpClient.newHttpClient();
+                    var request = java.net.http.HttpRequest.newBuilder()
+                        .uri(java.net.URI.create(
+                            "http://localhost:" + config.getGatewayPort()
+                            + "/v1/projects/" + config.getProjectId()
+                            + "/services/storage.googleapis.com"))
+                        .timeout(java.time.Duration.ofSeconds(3))
+                        .GET()
+                        .build();
+                    var response = httpClient.send(request,
+                        java.net.http.HttpResponse.BodyHandlers.ofString());
+                    boolean apiOk = response.statusCode() == 200
+                        && response.body().contains("ENABLED");
+                    apiCheck.put("passed", apiOk);
+                    apiCheck.put("status_code", response.statusCode());
+                    if (!apiOk) {
+                        allPassed = false;
+                        apiCheck.put("remediation",
+                            "Ensure serviceusage service is enabled in services.yaml");
+                    }
+                } catch (Exception e) {
+                    apiCheck.put("passed", false);
+                    apiCheck.put("error", e.getMessage());
+                    allPassed = false;
+                    apiCheck.put("remediation",
+                        "Ensure gateway is running and serviceusage service is enabled");
+                }
+                checks.add(apiCheck);
+
+                // Check 4: Billing API responds
+                Map<String, Object> billingCheck = new LinkedHashMap<>();
+                billingCheck.put("name", "billing_api");
+                billingCheck.put("description", "Cloud Billing API returns billingEnabled=true");
+                try {
+                    var httpClient = java.net.http.HttpClient.newHttpClient();
+                    var request = java.net.http.HttpRequest.newBuilder()
+                        .uri(java.net.URI.create(
+                            "http://localhost:" + config.getGatewayPort()
+                            + "/v1/projects/" + config.getProjectId() + "/billingInfo"))
+                        .timeout(java.time.Duration.ofSeconds(3))
+                        .GET()
+                        .build();
+                    var response = httpClient.send(request,
+                        java.net.http.HttpResponse.BodyHandlers.ofString());
+                    boolean billingOk = response.statusCode() == 200
+                        && response.body().contains("billingEnabled");
+                    billingCheck.put("passed", billingOk);
+                    billingCheck.put("status_code", response.statusCode());
+                    if (!billingOk) {
+                        allPassed = false;
+                        billingCheck.put("remediation",
+                            "Ensure cloudbilling service is enabled in services.yaml");
+                    }
+                } catch (Exception e) {
+                    billingCheck.put("passed", false);
+                    billingCheck.put("error", e.getMessage());
+                    allPassed = false;
+                    billingCheck.put("remediation",
+                        "Ensure gateway is running and cloudbilling service is enabled");
+                }
+                checks.add(billingCheck);
+
+                // Check 5: BigQuery DNS (provider ignores GOOGLE_BIGQUERY_CUSTOM_ENDPOINT)
+                Map<String, Object> bqCheck = new LinkedHashMap<>();
+                bqCheck.put("name", "bigquery_dns");
+                bqCheck.put("description", "bigquery.googleapis.com resolves to 127.0.0.1 (required for BigQuery Terraform resources)");
+                try {
+                    java.net.InetAddress bqAddr = java.net.InetAddress.getByName("bigquery.googleapis.com");
+                    boolean bqLocal = "127.0.0.1".equals(bqAddr.getHostAddress());
+                    bqCheck.put("passed", bqLocal);
+                    bqCheck.put("actual", bqAddr.getHostAddress());
+                    bqCheck.put("expected", "127.0.0.1");
+                    if (!bqLocal) {
+                        bqCheck.put("remediation",
+                            "If /etc/resolver/googleapis.com exists, this should work automatically. Otherwise add: echo '127.0.0.1 bigquery.googleapis.com' | sudo tee -a /etc/hosts");
+                    }
+                } catch (java.net.UnknownHostException e) {
+                    bqCheck.put("passed", false);
+                    bqCheck.put("error", e.getMessage());
+                    bqCheck.put("remediation",
+                        "If /etc/resolver/googleapis.com exists, this should work automatically. Otherwise add: echo '127.0.0.1 bigquery.googleapis.com' | sudo tee -a /etc/hosts");
+                }
+                checks.add(bqCheck);
+
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("ready", allPassed);
+                response.put("status", allPassed ? "ready" : "not_ready");
+                response.put("project_id", config.getProjectId());
+                response.put("gateway_port", config.getGatewayPort());
+                response.put("checks", checks);
+                response.put("required_dns_entry",
+                    "127.0.0.1 serviceusage.googleapis.com");
+                response.put("required_docker_port", "-p 443:8080");
+
+                String json = mapper.writeValueAsString(response);
+                return HttpResponse.of(
+                    allPassed ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE,
+                    MediaType.JSON, json);
+            } catch (Exception e) {
+                return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR,
+                    MediaType.PLAIN_TEXT_UTF_8, "Internal server error");
+            }
+        }));
+    }
+
     private record ReadinessResult(boolean ready, Map<String, Object> response) {}
 
     /**

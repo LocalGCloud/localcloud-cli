@@ -218,6 +218,17 @@ public class SeedService {
         if (yamlContent == null || yamlContent.isBlank()) {
             return errorResponse(HttpStatus.BAD_REQUEST, "Seed data is required (YAML format)");
         }
+        // Terraform mode: skip seed entirely to avoid conflicts with tf-* resources.
+        // Terraform manages its own resources; seed would create duplicate projects/resources
+        // causing spurious failures. Set LOCALCLOUD_TERRAFORM_MODE=true to enable this.
+        if ("true".equalsIgnoreCase(System.getenv("LOCALCLOUD_TERRAFORM_MODE"))) {
+            logger.info("LOCALCLOUD_TERRAFORM_MODE=true — skipping seed to avoid conflicts with Terraform-managed resources");
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("status", "skipped");
+            response.put("reason", "terraform_mode");
+            response.put("message", "Seed skipped — LOCALCLOUD_TERRAFORM_MODE is enabled. Terraform manages its own resources.");
+            return jsonResponse(HttpStatus.OK, response);
+        }
         String mode = ctx.queryParam("mode");
         boolean volatileOnly = "volatile".equals(mode);
         return doSeed(yamlContent, volatileOnly);
@@ -1007,6 +1018,10 @@ public class SeedService {
             for (Map<String, Object> bucket : buckets) {
                 try {
                     String name = (String) bucket.get("name");
+                    if (shouldSkipInTerraformMode(name)) {
+                        logger.info("Skipping Terraform-managed GCS bucket: {}", name);
+                        continue;
+                    }
                     Map<String, Object> body = new LinkedHashMap<>();
                     body.put("name", name);
                     if (bucket.containsKey("location")) body.put("location", bucket.get("location"));
@@ -1097,6 +1112,10 @@ public class SeedService {
                 try {
                     String project = (String) topic.getOrDefault("project", config.getProjectId());
                     String name = (String) topic.get("name");
+                    if (shouldSkipInTerraformMode(name)) {
+                        logger.info("Skipping Terraform-managed Pub/Sub topic: {}", name);
+                        continue;
+                    }
 
                     String url = pubsubBase + "/v1/projects/" + project + "/topics/" + name;
                     boolean topicCreated = false;
@@ -1229,6 +1248,10 @@ public class SeedService {
             for (Map<String, Object> dataset : datasets) {
                 try {
                     String name = (String) dataset.get("name");
+                    if (shouldSkipInTerraformMode(name)) {
+                        logger.info("Skipping Terraform-managed BigQuery dataset: {}", name);
+                        continue;
+                    }
                     Map<String, Object> datasetRef = new LinkedHashMap<>();
                     datasetRef.put("datasetId", name);
                     datasetRef.put("projectId", projectId);
@@ -1345,6 +1368,10 @@ public class SeedService {
             for (Map<String, Object> secret : secrets) {
                 try {
                     String secretId = (String) secret.get("name");
+                    if (shouldSkipInTerraformMode(secretId)) {
+                        logger.info("Skipping Terraform-managed Secret Manager secret: {}", secretId);
+                        continue;
+                    }
 
                     // Insert secret directly into PostgreSQL
                     try (var conn = dataSource.getConnection();
@@ -2954,6 +2981,10 @@ public class SeedService {
         for (Map<String, Object> instance : instances) {
             String name = stringValue(instance, "name");
             if (name == null) continue;
+            if (shouldSkipInTerraformMode(name)) {
+                logger.info("Skipping Terraform-managed Cloud SQL instance: {}", name);
+                continue;
+            }
             String region = stringValue(instance, "region", "us-central1");
             String databaseVersion = stringValue(instance, "databaseVersion", "POSTGRES_15");
             String tier = stringValue(instance, "tier", "db-custom-1-3840");
@@ -3237,6 +3268,25 @@ public class SeedService {
 
     private static void addResult(Map<String, Object> results, String service, int count) {
         results.put(service, results.containsKey(service) ? ((int) results.get(service)) + count : count);
+    }
+
+    /**
+     * Returns true if the resource name is a Terraform-managed resource (starts with "tf-").
+     * In LOCALCLOUD_TERRAFORM_MODE, seed should skip these to avoid conflicts with
+     * Terraform-managed resources that are expected to be created by terraform apply.
+     */
+    private static boolean isTerraformResource(String name) {
+        return name != null && (name.startsWith("tf-") || name.startsWith("tf_"));
+    }
+
+    /**
+     * Returns true if Terraform mode is enabled and the resource should be skipped.
+     */
+    private static boolean shouldSkipInTerraformMode(String name) {
+        if (!"true".equalsIgnoreCase(System.getenv("LOCALCLOUD_TERRAFORM_MODE"))) {
+            return false;
+        }
+        return isTerraformResource(name);
     }
 
     @SuppressWarnings("unchecked")

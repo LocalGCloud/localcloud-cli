@@ -17,7 +17,7 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = "~> 6.0"
+      version = "~> 7.0"
     }
   }
 }
@@ -368,8 +368,8 @@ resource "google_cloudfunctions2_function" "tf_hello" {
 
     source {
       storage_source {
-        bucket = google_storage_bucket.artifacts.name
-        object = "function-source.zip"
+        bucket = "tf-build-artifacts"
+        object = "dummy-source.zip"
       }
     }
   }

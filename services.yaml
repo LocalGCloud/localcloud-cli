@@ -344,8 +344,8 @@ services:
     envVar: CLOUD_SQL_EMULATOR_HOST
     envValuePrefix: "http://"
     type: facade
-    defaultEnabled: false
-    minTier: pro
+    defaultEnabled: true
+    minTier: community
     gcloudApiName: sqladmin
     terraformEnvVar: GOOGLE_SQL_CUSTOM_ENDPOINT
     additionalPorts:

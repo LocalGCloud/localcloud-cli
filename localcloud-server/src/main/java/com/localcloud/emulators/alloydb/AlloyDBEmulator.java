@@ -39,14 +39,20 @@ import io.grpc.stub.StreamObserver;
 public class AlloyDBEmulator extends AbstractEmulator {
     private final AlloyDBRepository repository;
     private final AlloyDBService service = new AlloyDBService();
+    private final AlloyDBRestService restService;
 
     public AlloyDBEmulator(PostgresDataSource dataSource) {
         super("alloydb", "AlloyDB", 8080, "grpc", "ALLOYDB_EMULATOR_HOST");
         this.repository = new AlloyDBRepository(dataSource);
+        this.restService = new AlloyDBRestService(repository, this);
     }
 
     public AlloyDBService getServiceImpl() {
         return service;
+    }
+
+    public AlloyDBRestService getRestService() {
+        return restService;
     }
 
     @Override protected void doStart() {

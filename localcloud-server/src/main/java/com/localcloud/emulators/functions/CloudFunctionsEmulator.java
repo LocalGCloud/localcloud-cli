@@ -42,6 +42,7 @@ public class CloudFunctionsEmulator extends AbstractEmulator {
     private final CloudRunStore cloudRunStore;
     private final PubSubTriggerRegistrar pubSubTriggerRegistrar;
     private final CloudFunctionsService service = new CloudFunctionsService();
+    private final CloudFunctionsRestService restService;
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
     public CloudFunctionsEmulator(PostgresDataSource dataSource) {
@@ -54,11 +55,11 @@ public class CloudFunctionsEmulator extends AbstractEmulator {
         this.repository = new CloudFunctionsRepository(dataSource);
         this.cloudRunStore = cloudRunStore;
         this.pubSubTriggerRegistrar = pubSubTriggerRegistrar;
+        this.restService = new CloudFunctionsRestService(repository, this);
     }
 
-    public CloudFunctionsService getServiceImpl() {
-        return service;
-    }
+    public CloudFunctionsService getServiceImpl() { return service; }
+    public CloudFunctionsRestService getRestService() { return restService; }
 
     public CloudFunctionsRepository getRepository() {
         return repository;

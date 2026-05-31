@@ -49,7 +49,7 @@ public class CloudSqlRestService {
             String settingsJson = root.has("settings") ? mapper.writeValueAsString(root.get("settings")) : "{}";
             Map<String, Object> row = store.createInstance(project, name, region, databaseVersion, tier, settingsJson);
             String op = store.insertOperation(project, name, "CREATE", "projects/" + project + "/instances/" + name, "{}");
-            return json(HttpStatus.OK, operationJson(project, op, row));
+            return json(HttpStatus.OK, operationJson(project, op, Map.of("operation_type", "CREATE", "status", "DONE", "instance_id", name)));
         } catch (Exception e) {
             return exception(e, "create instance");
         }
@@ -84,7 +84,8 @@ public class CloudSqlRestService {
             }
             Map<String, Object> row = store.updateInstance(project, instance, tier, settingsJson);
             String op = store.insertOperation(project, instance, "UPDATE", "projects/" + project + "/instances/" + instance, "{}");
-            return json(HttpStatus.OK, operationJson(project, op, row));
+            Map<String, Object> opRow = store.getOperation(project, op);
+            return json(HttpStatus.OK, operationJson(project, op, opRow != null ? opRow : Map.of("operation_type", "UPDATE", "status", "DONE", "instance_id", instance)));
         } catch (Exception e) {
             return exception(e, "update instance");
         }
@@ -145,7 +146,30 @@ public class CloudSqlRestService {
                     text(root, "charset", "UTF8"), text(root, "collation", ""));
             String op = store.insertOperation(project, instance, "CREATE_DATABASE",
                     "projects/" + project + "/instances/" + instance + "/databases/" + name, "{}");
-            return json(HttpStatus.OK, operationJson(project, op, row));
+            return json(HttpStatus.OK, operationJson(project, op, Map.of("operation_type", "CREATE_DATABASE", "status", "DONE", "instance_id", instance, "target_link", "projects/" + project + "/instances/" + instance + "/databases/" + name)));
+        } catch (Exception e) {
+            return exception(e, "create database");
+        }
+    }
+
+    /**
+     * Create a database via PUT (Terraform google_sql_database uses PUT not POST).
+     * Maps to: PUT /sql/v1beta4/projects/{project}/instances/{instance}/databases/{database}
+     */
+    @Put("/projects/{project}/instances/{instance}/databases/{database}")
+    public HttpResponse putDatabase(@Param String project, @Param String instance,
+                                    @Param String database, String body) {
+        emulator.incrementRequestCount();
+        try {
+            if (store.getInstance(project, instance) == null) {
+                return error(HttpStatus.NOT_FOUND, "Cloud SQL instance not found: " + instance);
+            }
+            JsonNode root = readTree(body);
+            store.createDatabase(project, instance, database,
+                    text(root, "charset", "UTF8"), text(root, "collation", ""));
+            String op = store.insertOperation(project, instance, "CREATE_DATABASE",
+                    "projects/" + project + "/instances/" + instance + "/databases/" + database, "{}");
+            return json(HttpStatus.OK, operationJson(project, op, Map.of("operation_type", "CREATE_DATABASE", "status", "DONE", "instance_id", instance, "target_link", "projects/" + project + "/instances/" + instance + "/databases/" + database)));
         } catch (Exception e) {
             return exception(e, "create database");
         }
@@ -298,7 +322,17 @@ public class CloudSqlRestService {
         ObjectNode settings = out.putObject("settings");
         settings.put("tier", String.valueOf(row.get("tier")));
         settings.put("dataDiskType", "PD_SSD");
+        settings.put("dataDiskSizeGb", "10");
         settings.put("activationPolicy", "ALWAYS");
+        settings.putNull("ipConfiguration");
+        settings.putNull("databaseFlags");
+        settings.putNull("backupConfiguration");
+        settings.putNull("maintenanceWindow");
+        out.putNull("gceZone");
+        out.putNull("diskEncryptionConfiguration");
+        out.putNull("diskEncryptionStatus");
+        out.putNull("failoverReplica");
+        out.putNull("masterInstanceName");
         ObjectNode local = out.putObject("localcloud");
         local.put("postgresEndpoint", "localhost:5432");
         local.put("mysqlEndpoint", "localhost:3306");
@@ -315,6 +349,8 @@ public class CloudSqlRestService {
         out.put("project", String.valueOf(row.get("project_id")));
         out.put("charset", String.valueOf(row.get("charset")));
         out.put("collation", String.valueOf(row.get("collation")));
+        out.put("selfLink", "projects/" + row.get("project_id") + "/instances/" + row.get("instance_id") + "/databases/" + row.get("database_name"));
+        out.putNull("sqlserverDatabaseDetails");
         out.putObject("localcloud").put("physicalName", String.valueOf(row.get("physical_name")));
         return out;
     }

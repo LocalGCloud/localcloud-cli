@@ -124,6 +124,20 @@ public class PubSubStore {
         }
     }
 
+    /**
+     * Update topic labels. Used by Terraform PATCH /v1/projects/{p}/topics/{t}.
+     */
+    public void updateTopic(String projectId, String topicId, Map<String,String> labels) throws SQLException {
+        try (Connection conn = ds.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE pubsub_topics SET labels = ?::jsonb WHERE project_id = ? AND topic_id = ?")) {
+            ps.setString(1, labelsToJson(labels));
+            ps.setString(2, projectId);
+            ps.setString(3, topicId);
+            ps.executeUpdate();
+        }
+    }
+
     // === Subscriptions ===
     
     public boolean createSubscription(String projectId, String subId, String topicProjectId,

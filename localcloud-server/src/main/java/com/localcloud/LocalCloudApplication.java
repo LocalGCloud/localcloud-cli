@@ -311,9 +311,14 @@ public class LocalCloudApplication {
             cloudSqlEmulator.start();
             sb.annotatedService("/sql/v1", cloudSqlEmulator.getRestService());
             sb.annotatedService("/sql/v1beta4", cloudSqlEmulator.getRestService());
+            sb.annotatedService("/sqladmin/v1", cloudSqlEmulator.getRestService());
+            sb.annotatedService("/sqladmin/v1beta4", cloudSqlEmulator.getRestService());
+            // The Terraform provider constructs database paths without the version prefix
+            // (e.g., POST /projects/.../instances/.../databases instead of /sql/v1beta4/projects/...)
+            sb.annotatedService("/", cloudSqlEmulator.getRestService());
             seedService.setCloudSqlEmulator(cloudSqlEmulator);
             mutateService.setCloudSqlEmulator(cloudSqlEmulator);
-            logger.info("Cloud SQL Admin API facade registered at /sql/v1, /sql/v1beta4");
+            logger.info("Cloud SQL Admin API facade registered at /sql/v1, /sql/v1beta4, /sqladmin/v1, /sqladmin/v1beta4, /");
         }
 
         // Bigtable Admin API facade (REST)
@@ -409,6 +414,53 @@ public class LocalCloudApplication {
         boolean hasGrpcServices = true;
         grpcBuilder.addService(new com.localcloud.gateway.OperationsGrpcService());
 
+        // Service Usage API endpoints — registered as manual regex routes to avoid
+        // prefix collisions with SecretManager and CRM on the shared /v1 path.
+        // (Armeria can route annotated services on the same prefix incorrectly.)
+        if (config.isServiceEnabled("serviceusage")) {
+            var suService = new com.localcloud.emulators.serviceusage.ServiceUsageRestService();
+            sb.service(Route.builder().methods(HttpMethod.GET)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/services/(?<service>[^/]+)$")
+                    .build(), (ctx, req) ->
+                            suService.getService(ctx.pathParam("project"), ctx.pathParam("service")));
+            sb.service(Route.builder().methods(HttpMethod.GET)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/services$")
+                    .build(), (ctx, req) -> suService.listServices(ctx.pathParam("project")));
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/services/(?<service>[^:]+):enable$")
+                    .build(), (ctx, req) -> suService.enableService(ctx.pathParam("project"), ctx.pathParam("service")));
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/services:batchEnable$")
+                    .build(), (ctx, req) -> {
+                        var agg = req.aggregate().join();
+                        return suService.batchEnableServices(ctx.pathParam("project"), agg.contentUtf8());
+                    });
+            logger.info("Service Usage API endpoints registered via regex routes on /v1");
+        }
+
+        // Cloud Billing API endpoints — manual regex routes (same /v1 prefix safety).
+        if (config.isServiceEnabled("cloudbilling")) {
+            var cbService = new com.localcloud.emulators.cloudbilling.CloudBillingRestService();
+            sb.service(Route.builder().methods(HttpMethod.GET)
+                    .path("regex:^/v1/projects/(?<projectId>[^/]+)/billingInfo$")
+                    .build(), (ctx, req) ->
+                            cbService.getBillingInfo(ctx.pathParam("projectId")));
+            sb.service(Route.builder().methods(HttpMethod.PUT)
+                    .path("regex:^/v1/projects/(?<projectId>[^/]+)/billingInfo$")
+                    .build(), (ctx, req) -> {
+                        var agg = req.aggregate().join();
+                        return cbService.updateBillingInfo(ctx.pathParam("projectId"), agg.contentUtf8());
+                    });
+            sb.service(Route.builder().methods(HttpMethod.GET)
+                    .path("regex:^/v1/billingAccounts$")
+                    .build(), (ctx, req) -> cbService.listBillingAccounts());
+            sb.service(Route.builder().methods(HttpMethod.GET)
+                    .path("regex:^/v1/billingAccounts/(?<accountName>[^/]+)/projects$")
+                    .build(), (ctx, req) ->
+                            cbService.listProjectBillingInfo(ctx.pathParam("accountName")));
+            logger.info("Cloud Billing API endpoints registered via regex routes on /v1");
+        }
+
         // Secret Manager: gRPC + explicit REST (Terraform compatibility)
         if (config.isServiceEnabled("secretmanager")) {
             SecretManagerEmulator secretManagerEmulator = new SecretManagerEmulator(dataSource);
@@ -433,40 +485,87 @@ public class LocalCloudApplication {
             logger.info("Cloud Tasks facade registered on gateway port {}", config.getGatewayPort());
         }
 
-        // Cloud Scheduler: gRPC only
+        // Cloud Scheduler: gRPC + explicit REST (Terraform compatibility)
         if (config.isServiceEnabled("cloudscheduler")) {
             CloudSchedulerEmulator schedulerEmulator = new CloudSchedulerEmulator(dataSource);
             schedulerEmulator.start();
             grpcBuilder.addService(schedulerEmulator.getServiceImpl());
             gateway.registerGrpcEmulator(schedulerEmulator, schedulerEmulator.getServiceImpl());
+            sb.annotatedService("/v1", schedulerEmulator.getRestService());
+            // Regex route to intercept before gRPC transcoding
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/jobs$")
+                    .build(), (ctx, req) -> {
+                        var agg = req.aggregate().join();
+                        return schedulerEmulator.getRestService().createJob(
+                                ctx.pathParam("project"), ctx.pathParam("location"), agg.contentUtf8());
+                    });
+            sb.service(Route.builder().methods(HttpMethod.GET)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/jobs/(?<job>[^/]+)$")
+                    .build(), (ctx, req) ->
+                            schedulerEmulator.getRestService().getJob(ctx.pathParam("project"),
+                                    ctx.pathParam("location"), ctx.pathParam("job")));
+            sb.service(Route.builder().methods(HttpMethod.DELETE)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/jobs/(?<job>[^/]+)$")
+                    .build(), (ctx, req) ->
+                            schedulerEmulator.getRestService().deleteJob(ctx.pathParam("project"),
+                                    ctx.pathParam("location"), ctx.pathParam("job")));
             seedService.setCloudSchedulerEmulator(schedulerEmulator);
             hasGrpcServices = true;
             logger.info("Cloud Scheduler facade registered on gateway port {}", config.getGatewayPort());
         }
 
-        // Cloud Functions (2nd gen): gRPC only
+        // Cloud Functions (2nd gen): REST only (Terraform compatibility)
+        // Note: gRPC service is NOT registered — Terraform provider uses gRPC protocol
+        // which bypasses our REST handlers and triggers SDK credential validation.
+        // By providing only REST handlers, Terraform falls back to REST API calls.
         if (config.isServiceEnabled("cloudfunctions")) {
             CloudFunctionsEmulator functionsEmulator = new CloudFunctionsEmulator(dataSource);
             functionsEmulator.start();
             grpcBuilder.addService(functionsEmulator.getServiceImpl());
             gateway.registerGrpcEmulator(functionsEmulator, functionsEmulator.getServiceImpl());
+            sb.annotatedService("/v1", functionsEmulator.getRestService());
+            // Cloud Functions 2nd gen API uses /v2 prefix. Register REST handler
+            // via explicit regex routes to intercept before gRPC HTTP/2 handler.
+            sb.annotatedService("/v2", functionsEmulator.getRestService());
+            // Also intercept /v2 HTTPS paths to prevent gRPC 401 from blocking REST calls
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v2/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/functions$")
+                    .build(), (ctx, req) -> {
+                        var agg = req.aggregate().join();
+                        return functionsEmulator.getRestService().createFunction(ctx,
+                                ctx.pathParam("project"),
+                                ctx.pathParam("location"), agg.contentUtf8());
+                    });
+            sb.service(Route.builder().methods(HttpMethod.GET)
+                    .path("regex:^/v2/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/functions/(?<function>[^/]+)$")
+                    .build(), (ctx, req) ->
+                            functionsEmulator.getRestService().getFunction(ctx.pathParam("project"),
+                                    ctx.pathParam("location"), ctx.pathParam("function")));
+            sb.service(Route.builder().methods(HttpMethod.DELETE)
+                    .path("regex:^/v2/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/functions/(?<function>[^/]+)$")
+                    .build(), (ctx, req) ->
+                            functionsEmulator.getRestService().deleteFunction(ctx.pathParam("project"),
+                                    ctx.pathParam("location"), ctx.pathParam("function")));
             seedService.setCloudFunctionsEmulator(functionsEmulator);
             hasGrpcServices = true;
             logger.info("Cloud Functions facade registered on gateway port {}", config.getGatewayPort());
         }
 
-        // AlloyDB: gRPC only
+        // AlloyDB: gRPC + explicit REST (Terraform compatibility)
         if (config.isServiceEnabled("alloydb")) {
             AlloyDBEmulator alloyDBEmulator = new AlloyDBEmulator(dataSource);
             alloyDBEmulator.start();
             grpcBuilder.addService(alloyDBEmulator.getServiceImpl());
             gateway.registerGrpcEmulator(alloyDBEmulator, alloyDBEmulator.getServiceImpl());
+            // Explicit REST handler — gRPC transcoding doesn't map Terraform provider v6 paths
+            sb.annotatedService("/v1", alloyDBEmulator.getRestService());
             seedService.setAlloyDBEmulator(alloyDBEmulator);
             hasGrpcServices = true;
             logger.info("AlloyDB facade registered on gateway port {}", config.getGatewayPort());
         }
 
-        // Dataproc: gRPC (ClusterController + JobController)
+        // Dataproc: gRPC (ClusterController + JobController) + explicit REST
         if (config.isServiceEnabled("dataproc")) {
             DataprocEmulator dataprocEmulator = new DataprocEmulator(dataSource);
             dataprocEmulator.start();
@@ -474,6 +573,7 @@ public class LocalCloudApplication {
             grpcBuilder.addService(dataprocEmulator.getJobService());
             gateway.registerGrpcEmulator(dataprocEmulator,
                     dataprocEmulator.getClusterService(), dataprocEmulator.getJobService());
+            sb.annotatedService("/v1", dataprocEmulator.getRestService());
             seedService.setDataprocEmulator(dataprocEmulator);
             hasGrpcServices = true;
             logger.info("Dataproc facade registered on gateway port {}", config.getGatewayPort());
@@ -507,23 +607,71 @@ public class LocalCloudApplication {
             logger.info("Cloud Resource Manager facade registered at /v1 and /v3 on gateway port {}", config.getGatewayPort());
         }
 
-        // Cloud Logging: gRPC only
+        // Cloud Logging: gRPC only (with transcoding) + REST stubs for sink CRUD
         if (config.isServiceEnabled("logging")) {
             LoggingEmulator loggingEmulator = new LoggingEmulator(dataSource);
             loggingEmulator.start();
             grpcBuilder.addService(loggingEmulator.getLoggingService());
             gateway.registerGrpcEmulator(loggingEmulator, loggingEmulator.getLoggingService());
             hasGrpcServices = true;
+
+            // Logging sink CRUD REST stubs — Terraform google_logging_project_sink uses these.
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v2/projects/(?<project>[^/]+)/sinks$")
+                    .build(), (ctx, req) -> {
+                        String project = ctx.pathParam("project");
+                        return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                            "{\"name\":\"projects/" + project + "/sinks/" +
+                            java.util.UUID.randomUUID().toString().substring(0, 8) +
+                            "\",\"destination\":\"bigquery.googleapis.com\",\"writerIdentity\":\"serviceAccount:cloud-logs@localcloud.iam.gserviceaccount.com\"}");
+                    });
+            sb.service(Route.builder().methods(HttpMethod.GET)
+                    .path("regex:^/v2/projects/(?<project>[^/]+)/sinks/(?<sink>[^/]+)$")
+                    .build(), (ctx, req) -> {
+                        String project = ctx.pathParam("project");
+                        String sink = ctx.pathParam("sink");
+                        return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                            "{\"name\":\"projects/" + project + "/sinks/" + sink +
+                            "\",\"destination\":\"bigquery.googleapis.com\",\"writerIdentity\":\"serviceAccount:cloud-logs@localcloud.iam.gserviceaccount.com\"}");
+                    });
+            sb.service(Route.builder().methods(HttpMethod.DELETE)
+                    .path("regex:^/v2/projects/(?<project>[^/]+)/sinks/(?<sink>[^/]+)$")
+                    .build(), (ctx, req) -> HttpResponse.of(HttpStatus.OK, MediaType.JSON, "{}"));
+            logger.info("Cloud Logging sink REST stubs registered");
             logger.info("Cloud Logging facade registered on gateway port {}", config.getGatewayPort());
         }
 
-        // Cloud Monitoring: gRPC only
+        // Cloud Monitoring: gRPC only (with transcoding) + REST stubs for alert policies
         if (config.isServiceEnabled("monitoring")) {
             MonitoringEmulator monitoringEmulator = new MonitoringEmulator(dataSource);
             monitoringEmulator.start();
             grpcBuilder.addService(monitoringEmulator.getMonitoringService());
             gateway.registerGrpcEmulator(monitoringEmulator, monitoringEmulator.getMonitoringService());
             hasGrpcServices = true;
+
+            // Monitoring alert policy CRUD REST stubs — Terraform google_monitoring_alert_policy uses these.
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v3/projects/(?<project>[^/]+)/alertPolicies$")
+                    .build(), (ctx, req) -> {
+                        String project = ctx.pathParam("project");
+                        return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                            "{\"name\":\"projects/" + project + "/alertPolicies/" +
+                            java.util.UUID.randomUUID().toString().substring(0, 8) +
+                            "\",\"displayName\":\"localcloud-alert\",\"enabled\":true}");
+                    });
+            sb.service(Route.builder().methods(HttpMethod.GET)
+                    .path("regex:^/v3/projects/(?<project>[^/]+)/alertPolicies/(?<policy>[^/]+)$")
+                    .build(), (ctx, req) -> {
+                        String project = ctx.pathParam("project");
+                        String policy = ctx.pathParam("policy");
+                        return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                            "{\"name\":\"projects/" + project + "/alertPolicies/" + policy +
+                            "\",\"displayName\":\"localcloud-alert\",\"enabled\":true}");
+                    });
+            sb.service(Route.builder().methods(HttpMethod.DELETE)
+                    .path("regex:^/v3/projects/(?<project>[^/]+)/alertPolicies/(?<policy>[^/]+)$")
+                    .build(), (ctx, req) -> HttpResponse.of(HttpStatus.OK, MediaType.JSON, "{}"));
+            logger.info("Cloud Monitoring alert policy REST stubs registered");
             logger.info("Cloud Monitoring facade registered on gateway port {}", config.getGatewayPort());
         }
 
@@ -601,6 +749,47 @@ public class LocalCloudApplication {
             vertexAiEmulator.start();
             sb.annotatedService("/v1", vertexAiEmulator.getRestService());
             gateway.registerRestEmulator("/v1/projects/*/locations/*/publishers/*/models", vertexAiEmulator, null);
+
+            // Manual regex routes for Vertex AI :verb custom methods.
+            // Armeria's annotation parser treats ':' as a regex delimiter inside
+            // path parameters, so @Post("/.../{model}:generateContent") fails to match.
+            var vaiService = vertexAiEmulator.getRestService();
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/publishers/(?<publisher>[^/]+)/models/(?<model>[^:]+):generateContent$")
+                    .build(), (ctx, req) -> {
+                        var agg = req.aggregate().join();
+                        return vaiService.generateContent(ctx.pathParam("project"), ctx.pathParam("location"),
+                                ctx.pathParam("publisher"), ctx.pathParam("model"), agg.contentUtf8());
+                    });
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/publishers/(?<publisher>[^/]+)/models/(?<model>[^:]+):streamGenerateContent$")
+                    .build(), (ctx, req) -> {
+                        var agg = req.aggregate().join();
+                        return vaiService.streamGenerateContent(ctx.pathParam("project"), ctx.pathParam("location"),
+                                ctx.pathParam("publisher"), ctx.pathParam("model"), agg.contentUtf8());
+                    });
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/publishers/(?<publisher>[^/]+)/models/(?<model>[^:]+):embedContent$")
+                    .build(), (ctx, req) -> {
+                        var agg = req.aggregate().join();
+                        return vaiService.embedContent(ctx.pathParam("project"), ctx.pathParam("location"),
+                                ctx.pathParam("publisher"), ctx.pathParam("model"), agg.contentUtf8());
+                    });
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/publishers/(?<publisher>[^/]+)/models/(?<model>[^:]+):countTokens$")
+                    .build(), (ctx, req) -> {
+                        var agg = req.aggregate().join();
+                        return vaiService.countTokens(ctx.pathParam("project"), ctx.pathParam("location"),
+                                ctx.pathParam("publisher"), ctx.pathParam("model"), agg.contentUtf8());
+                    });
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/publishers/(?<publisher>[^/]+)/models/(?<model>[^:]+):computeTokens$")
+                    .build(), (ctx, req) -> {
+                        var agg = req.aggregate().join();
+                        return vaiService.computeTokens(ctx.pathParam("project"), ctx.pathParam("location"),
+                                ctx.pathParam("publisher"), ctx.pathParam("model"), agg.contentUtf8());
+                    });
+            logger.info("Vertex AI :verb custom method routes registered");
             logger.info("Vertex AI facade registered on gateway port {}", config.getGatewayPort());
         }
 
@@ -610,6 +799,55 @@ public class LocalCloudApplication {
             kmsEmulator.start();
             sb.annotatedService("/v1", kmsEmulator.getRestService());
             gateway.registerRestEmulator("/v1/projects/*/locations/*/keyRings", kmsEmulator, null);
+
+            // Manual regex routes for KMS :verb custom methods.
+            // Armeria's annotation parser treats ':' as a regex delimiter inside
+            // path parameters, so @Post("/.../{cryptoKey}:encrypt") fails to match.
+            var kmsService = kmsEmulator.getRestService();
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/keyRings/(?<keyRing>[^/]+)/cryptoKeys/(?<cryptoKey>[^:]+):encrypt$")
+                    .build(), (ctx, req) -> {
+                        var agg = req.aggregate().join();
+                        return kmsService.encrypt(ctx.pathParam("project"), ctx.pathParam("location"),
+                                ctx.pathParam("keyRing"), ctx.pathParam("cryptoKey"), agg.contentUtf8());
+                    });
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/keyRings/(?<keyRing>[^/]+)/cryptoKeys/(?<cryptoKey>[^:]+):decrypt$")
+                    .build(), (ctx, req) -> {
+                        var agg = req.aggregate().join();
+                        return kmsService.decrypt(ctx.pathParam("project"), ctx.pathParam("location"),
+                                ctx.pathParam("keyRing"), ctx.pathParam("cryptoKey"), agg.contentUtf8());
+                    });
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/keyRings/(?<keyRing>[^/]+)/cryptoKeys/(?<cryptoKey>[^:]+):updateCryptoKeyPrimaryVersion$")
+                    .build(), (ctx, req) -> {
+                        var agg = req.aggregate().join();
+                        return kmsService.updatePrimaryVersion(ctx.pathParam("project"), ctx.pathParam("location"),
+                                ctx.pathParam("keyRing"), ctx.pathParam("cryptoKey"), agg.contentUtf8());
+                    });
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/keyRings/(?<keyRing>[^/]+)/cryptoKeys/(?<cryptoKey>[^/]+)/cryptoKeyVersions/(?<version>[^:]+):destroy$")
+                    .build(), (ctx, req) -> {
+                        String p = ctx.pathParam("project");
+                        String l = ctx.pathParam("location");
+                        String kr = ctx.pathParam("keyRing");
+                        String ck = ctx.pathParam("cryptoKey");
+                        String v = ctx.pathParam("version");
+                        return HttpResponse.from(req.aggregate().thenApply(agg ->
+                                kmsService.destroyVersion(p, l, kr, ck, v)));
+                    });
+            sb.service(Route.builder().methods(HttpMethod.POST)
+                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/keyRings/(?<keyRing>[^/]+)/cryptoKeys/(?<cryptoKey>[^/]+)/cryptoKeyVersions/(?<version>[^:]+):restore$")
+                    .build(), (ctx, req) -> {
+                        String p = ctx.pathParam("project");
+                        String l = ctx.pathParam("location");
+                        String kr = ctx.pathParam("keyRing");
+                        String ck = ctx.pathParam("cryptoKey");
+                        String v = ctx.pathParam("version");
+                        return HttpResponse.from(req.aggregate().thenApply(agg ->
+                                kmsService.restoreVersion(p, l, kr, ck, v)));
+                    });
+            logger.info("Cloud KMS :verb custom method routes registered");
             logger.info("Cloud KMS facade registered on gateway port {}", config.getGatewayPort());
         }
 
@@ -682,6 +920,54 @@ public class LocalCloudApplication {
                 new SpannerIamService());
         logger.info("Spanner IAM stubs registered (permissive mode)");
 
+        // Spanner REST proxy — forwards non-IAM Spanner API requests from the gateway
+        // to the external C++ Spanner emulator (port 9020). This enables Terraform's
+        // GOOGLE_SPANNER_CUSTOM_ENDPOINT to point at the gateway (port 8080) so that
+        // SpannerIamService can intercept IAM calls while data-plane calls proxy through.
+        if (config.isServiceEnabled("spanner")) {
+            var spannerPort = config.getServiceRegistry().getService("spanner");
+            if (spannerPort != null && spannerPort.additionalPorts() != null) {
+                Integer restPort = spannerPort.additionalPorts().get("rest");
+                if (restPort != null) {
+                    int spannerRestPort = restPort;
+                    // Shared WebClient with connection pooling — reused across all proxy requests
+                    var spannerClient = com.linecorp.armeria.client.WebClient.builder("http://localhost:" + spannerRestPort)
+                            .responseTimeoutMillis(30000)
+                            .writeTimeoutMillis(10000)
+                            .build();
+                    sb.service(Route.builder()
+                            .methods(HttpMethod.GET, HttpMethod.POST, HttpMethod.PUT, HttpMethod.PATCH, HttpMethod.DELETE)
+                            .path("regex:^/v1/projects/(?<project>[^/]+)/instances(/.*)?$")
+                            .build(), (ctx, req) -> {
+                                // This proxy handles non-IAM Spanner REST paths.
+                                // IAM paths (:setIamPolicy etc.) are intercepted above.
+                                String path = ctx.path();
+                                if (path.contains(":setIamPolicy") || path.contains(":getIamPolicy")
+                                        || path.contains(":testIamPermissions")) {
+                                    return HttpResponse.of(HttpStatus.NOT_FOUND);
+                                }
+                                if (req.method() == HttpMethod.GET) {
+                                    return HttpResponse.from(spannerClient.get(path).aggregate()
+                                            .thenApply(agg -> HttpResponse.of(agg.status(), agg.headers().contentType(), agg.content())));
+                                }
+                                return HttpResponse.from(req.aggregate().thenCompose(agg ->
+                                        spannerClient.execute(
+                                                com.linecorp.armeria.common.HttpRequest.of(
+                                                        com.linecorp.armeria.common.RequestHeaders.of(req.method(), path,
+                                                                com.linecorp.armeria.common.HttpHeaderNames.CONTENT_TYPE,
+                                                                agg.headers().contentType() != null
+                                                                        ? agg.headers().contentType().toString()
+                                                                        : "application/json"),
+                                                        agg.content()))
+                                                .aggregate()
+                                                .thenApply(respAgg -> HttpResponse.of(respAgg.status(),
+                                                        respAgg.headers().contentType(), respAgg.content()))));
+                            });
+                    logger.info("Spanner REST proxy registered — forwarding to port {}", spannerRestPort);
+                }
+            }
+        }
+
         // Generic IAM catch-all for services without explicit REST IAM support.
         // Handles patterns like /v1/.../{resource}:setIamPolicy and
         // /compute/v1/.../{resource}:setIamPolicy for any service.
@@ -739,7 +1025,12 @@ public class LocalCloudApplication {
             if (req.method() != HttpMethod.GET) return HttpResponse.of(HttpStatus.METHOD_NOT_ALLOWED);
             return oauth2Service.certs();
         });
-        logger.info("OAuth2 token endpoint registered on gateway port {}", config.getGatewayPort());
+        // Userinfo endpoint — Terraform provider calls userinfo to validate credentials.
+        // Both /oauth2/v1/userinfo and /v1/userinfo paths are used by different SDK versions.
+        sb.service(Route.builder().methods(HttpMethod.GET)
+                .path("regex:^/(?:oauth2/v1|v1|oauth2/v2)/userinfo$")
+                .build(), (ctx, req) -> oauth2Service.userInfo());
+        logger.info("OAuth2 token, userinfo, and certs endpoints registered on gateway port {}", config.getGatewayPort());
 
         // Global catch-all: SPA routing when console is available, 501 fallback otherwise
         // spaIndex and consoleAvailable were loaded earlier before the SPA decorator.
@@ -835,6 +1126,35 @@ public class LocalCloudApplication {
         logger.info("  Persistence: {}", config.isPersistenceEnabled() ? "enabled (" + config.getDataDir() + ")" : "disabled");
         logger.info("  Services:    {}", config.getEnabledServices());
         logger.info("=================================================");
+
+        // Terraform readiness pre-flight check (non-blocking, logged at startup)
+        try {
+            java.net.InetAddress addr = java.net.InetAddress.getByName("serviceusage.googleapis.com");
+            if (!"127.0.0.1".equals(addr.getHostAddress())) {
+                logger.warn("=================================================");
+                logger.warn("  ⚠ TERRAFORM DNS NOT CONFIGURED");
+                logger.warn("  serviceusage.googleapis.com resolves to {} (expected 127.0.0.1)",
+                    addr.getHostAddress());
+                logger.warn("  Fix (recommended):");
+                logger.warn("    echo 'nameserver 127.0.0.1' | sudo tee /etc/resolver/googleapis.com");
+                logger.warn("  Or per-host:");
+                logger.warn("    echo '127.0.0.1 serviceusage.googleapis.com' | sudo tee -a /etc/hosts");
+                logger.warn("  Without this, Terraform resources will fail with SERVICE_DISABLED");
+                logger.warn("=================================================");
+            } else {
+                logger.info("  Terraform DNS: ✓ serviceusage.googleapis.com → 127.0.0.1");
+            }
+        } catch (java.net.UnknownHostException e) {
+            logger.warn("=================================================");
+            logger.warn("  ⚠ TERRAFORM DNS NOT CONFIGURED");
+            logger.warn("  Cannot resolve serviceusage.googleapis.com");
+            logger.warn("  Fix (recommended):");
+            logger.warn("    echo 'nameserver 127.0.0.1' | sudo tee /etc/resolver/googleapis.com");
+            logger.warn("  Or per-host:");
+            logger.warn("    echo '127.0.0.1 serviceusage.googleapis.com' | sudo tee -a /etc/hosts");
+            logger.warn("  Without this, Terraform resources will fail with SERVICE_DISABLED");
+            logger.warn("=================================================");
+        }
 
         // Start anonymous telemetry (opt-out: LOCALCLOUD_TELEMETRY=false)
         telemetryService.start();

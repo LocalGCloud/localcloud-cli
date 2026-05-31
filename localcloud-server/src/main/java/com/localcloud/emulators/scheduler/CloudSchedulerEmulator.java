@@ -53,6 +53,7 @@ public class CloudSchedulerEmulator extends AbstractEmulator {
     private final HttpClient httpClient = HttpClient.newHttpClient();
     private final PubSubPublisher pubSubPublisher;
     private final CloudSchedulerService service = new CloudSchedulerService();
+    private final CloudSchedulerRestService restService;
     private final CronParser cronParser = new CronParser(CronDefinitionBuilder.instanceDefinitionFor(CronType.UNIX));
 
     public CloudSchedulerEmulator(PostgresDataSource dataSource) {
@@ -63,11 +64,11 @@ public class CloudSchedulerEmulator extends AbstractEmulator {
         super("cloudscheduler", "Cloud Scheduler", 8080, "grpc", "CLOUD_SCHEDULER_EMULATOR_HOST");
         this.repository = new SchedulerRepository(dataSource);
         this.pubSubPublisher = pubSubPublisher;
+        this.restService = new CloudSchedulerRestService(this.repository, this);
     }
 
-    public CloudSchedulerService getServiceImpl() {
-        return service;
-    }
+    public CloudSchedulerService getServiceImpl() { return service; }
+    public CloudSchedulerRestService getRestService() { return restService; }
 
     public SchedulerRepository getRepository() {
         return repository;

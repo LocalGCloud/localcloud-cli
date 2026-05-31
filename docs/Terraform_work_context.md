@@ -1,281 +1,181 @@
- 1. Initial Problem: Making Terraform Google provider work with LocalCloud (a GCP emulator) without modifying .tf files
- 2. TLS Certificate Investigation:
-     - Investigated why Go/macOS SecTrust was rejecting our self-signed certificate
-     - Found that the error changed from "not standards compliant" to "not trusted"
-     - The CA needed to be in the system trust store
-     - Generated proper CA and server certificates with correct extensions
-     - The user added the CA to the system keychain
- 3. DNS Resolution:
-     - Set up /etc/resolver/googleapis.com to redirect *.googleapis.com to 127.0.0.1
-     - dnsmasq running inside Docker container on port 53
-     - Had to use port 8053 on host to avoid conflict with mDNS/Bonjour (port 5353)
-     - DNS redirect working: dig @127.0.0.1 -p 8053 oauth2.googleapis.com returns 127.0.0.1
- 4. Caddy TLS Proxy:
-     - Caddy running inside Docker container on port 443
-     - Mapped to host port 8443 (since port 443 requires root)
-     - Serving wildcard certificate for *.googleapis.com
-     - Certificate is trusted by the system after adding CA to keychain
- 5. Docker Port Mappings:
-     - Updated start.sh to include:
-         - -p 127.0.0.1:8053:53/udp for DNS
-         - -p 127.0.0.1:8443:443 for HTTPS/TLS
-     - Volume mounts for certs and Caddyfile
- 6. URL Trailing Slash Fix:
-     - Fixed AdminApiService.java to ensure all custom endpoints have trailing slashes
-     - This fixed URL parsing errors like http://localhost:8085projects/...
- 7. OAuth2 Endpoint:
-     - Added /oauth2/token POST endpoint to AdminApiService
-     - Added /oauth2/auth GET endpoint
-     - Added GOOGLE_OAUTH_CUSTOM_ENDPOINT to terraform env output
-     - Returns fake access tokens for LocalCloud
- 8. Workflows REST Service:
-     - Added REST endpoints for workflow CRUD operations
-     - Fixed createWorkflow to extract workflowId from query parameters
-     - Fixed listWorkflows to accept pageSize parameter
-     - Fixed tags field to use Map.of() instead of List.of()
-     - Cleaned up database entries with empty workflow_id
- 9. Environment Variables:
-     - eval "$(curl -s 'http://localhost:8080/env?format=terraform')" - note the quotes!
-     - Sets all GOOGLE_*_CUSTOM_ENDPOINT variables
-     - Sets GOOGLE_OAUTH_ACCESS_TOKEN and GOOGLE_OAUTH_CUSTOM_ENDPOINT
-     - Sets GOOGLE_APPLICATION_CREDENTIALS="/dev/null"
- 10. Current State:
- - All services healthy
- - Workflow creation working (tested with curl)
- - Terraform plan works
- - Terraform apply was hanging on workflows - should be fixed now
+# LocalCloud Terraform Integration — Work Context
 
- Key files modified:
- - start.sh - Added port 8053:53/udp and 8443:443 mappings, volume mounts for certs and Caddyfile
- - Caddyfile - Updated to use /etc/caddy/certs/googleapis.pem and /etc/caddy/certs/googleapis.key
- - setup-terraform-certs.sh - Script to generate proper CA and server certificates
- - localcloud-server/src/main/java/com/localcloud/admin/AdminApiService.java - Added trailing slash fix, OAuth2 endpoints, GOOGLE_OAUTH_CUSTOM_ENDPOINT
- - localcloud-server/src/main/java/com/localcloud/emulators/workflows/WorkflowsRestService.java - Added REST endpoints for workflow CRUD
+**Last updated:** 2026-05-31
+**Provider:** hashicorp/google `~> 7.0` (v7.34.0 verified)
+**Status:** 22/22 resources passing E2E
 
- Let me write a comprehensive summary.
+---
 
- LocalCloud Terraform Integration - Work Summary
+## Architecture
 
- Goal
+```
+  ┌─ Terraform (Google Provider v7.34.0) ──────────────────────────────┐
+  │  Uses GOOGLE_*_CUSTOM_ENDPOINT env vars to route to LocalCloud     │
+  │  Calls oauth2.googleapis.com for credentials → DNS redirect → Caddy│
+  │  Fake SA key (GOOGLE_APPLICATION_CREDENTIALS) for v7 auth          │
+  └──────────────────────────────┬─────────────────────────────────────┘
+                                 │ DNS: *.googleapis.com → 127.0.0.1:8053
+                                 ▼
+  ┌─ Docker Container (localcloud) ────────────────────────────────────┐
+  │                                                                     │
+  │  dnsmasq (:53 → host:8053) ──DNS──► Resolves *.googleapis.com     │
+  │  Caddy (:443) ──TLS──► Gateway (:8080)                            │
+  │                                                                     │
+  │  Gateway (:8080)                                                    │
+  │  ├─ OAuth2 stub (token, tokeninfo, userinfo, certs)                │
+  │  ├─ Service Usage / Cloud Billing emulators                        │
+  │  ├─ 45+ regex routes for :verb custom methods                      │
+  │  ├─ 6 REST facades (AlloyDB, Dataproc, Scheduler, Functions,       │
+  │  │   CloudBilling, ServiceUsage)                                   │
+  │  ├─ REST handlers (Secret Manager, Cloud SQL, Pub/Sub,             │
+  │  │   Cloud Tasks, CRM, Workflows, Bigtable, Memorystore)           │
+  │  ├─ Spanner IAM stubs + REST proxy                                 │
+  │  └─ Generic IAM catch-all                                          │
+  │                                                                     │
+  │  Emulators                                                          │
+  │  ├─ GCS (fake-gcs-server, :4443)                                   │
+  │  ├─ Pub/Sub (gcloud, :8085)                                        │
+  │  ├─ BigQuery (DuckDB, :9050)                                       │
+  │  ├─ Spanner (C++, :9010/:9020)                                     │
+  │  ├─ Bigtable (Go, :8087)                                           │
+  │  ├─ Firestore (gcloud, :8086)                                      │
+  │  ├─ Memorystore/Redis (Valkey, :6379)                              │
+  │  └─ PostgreSQL (:5432) — facade state + Cloud SQL data plane       │
+  └─────────────────────────────────────────────────────────────────────┘
+```
 
- Make Terraform Google provider work with LocalCloud (a GCP emulator) without modifying .tf files. Only environment variables, DNS configuration, and infrastructure
- setup are allowed.
+---
 
- ────────────────────────────────────────────────────────────────────────────────
+## Key Environment Variables (from `/env?format=terraform`)
 
- Architecture
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `GOOGLE_STORAGE_CUSTOM_ENDPOINT` | `http://localhost:4443/` | GCS |
+| `GOOGLE_PUBSUB_CUSTOM_ENDPOINT` | `http://localhost:8080/` | Pub/Sub REST facade |
+| `GOOGLE_BIGQUERY_CUSTOM_ENDPOINT` | `http://localhost:9050/` | BigQuery |
+| `GOOGLE_SPANNER_CUSTOM_ENDPOINT` | `http://localhost:9020/v1/` | Spanner REST |
+| `GOOGLE_SECRET_MANAGER_CUSTOM_ENDPOINT` | `http://localhost:8080/v1/` | Secret Manager |
+| `GOOGLE_CLOUD_TASKS_CUSTOM_ENDPOINT` | `http://localhost:8080/v2/` | Cloud Tasks |
+| `GOOGLE_CLOUD_SCHEDULER_CUSTOM_ENDPOINT` | `http://localhost:8080/v1/` | Cloud Scheduler |
+| `GOOGLE_CLOUD_FUNCTIONS_CUSTOM_ENDPOINT` | `http://localhost:8080/v1/` | Cloud Functions |
+| `GOOGLE_ALLOYDB_CUSTOM_ENDPOINT` | `http://localhost:8080/v1/` | AlloyDB |
+| `GOOGLE_DATAPROC_CUSTOM_ENDPOINT` | `http://localhost:8080/` | Dataproc |
+| `GOOGLE_SQL_CUSTOM_ENDPOINT` | `http://localhost:8080/` | Cloud SQL |
+| `GOOGLE_WORKFLOWS_CUSTOM_ENDPOINT` | `http://localhost:8080/v1/` | Workflows |
+| `GOOGLE_RESOURCE_MANAGER_CUSTOM_ENDPOINT` | `http://localhost:8080/` | CRM v1/v3 |
+| `GOOGLE_SERVICE_USAGE_CUSTOM_ENDPOINT` | `http://localhost:8080/v1/` | Service Usage |
+| `GOOGLE_CLOUD_BILLING_CUSTOM_ENDPOINT` | `http://localhost:8080/` | Cloud Billing |
+| `GOOGLE_LOGGING_CUSTOM_ENDPOINT` | `http://localhost:8080/v1/` | Cloud Logging |
+| `GOOGLE_MONITORING_CUSTOM_ENDPOINT` | `http://localhost:8080/v1/` | Cloud Monitoring |
+| `GOOGLE_REDIS_CUSTOM_ENDPOINT` | `http://localhost:8080/redis/v1/` | Memorystore |
+| `GOOGLE_BIGTABLE_CUSTOM_ENDPOINT` | `http://localhost:8080/` | Bigtable |
+| `GOOGLE_OAUTH_ACCESS_TOKEN` | `ya29.localcloud-dev-access-token` | Auth token |
+| `GOOGLE_OAUTH_CUSTOM_ENDPOINT` | `http://localhost:8080/oauth2/` | OAuth2 endpoints |
+| `GOOGLE_APPLICATION_CREDENTIALS` | `/tmp/localcloud-creds/sa-key.json` | SA key file (v7) |
+| `GOOGLE_PROJECT` | `tf-local-project` | Default project |
 
- ```
-   ┌─ Terraform (Google Provider v6.x) ─────────────────────────────────┐
-   │  Uses GOOGLE_*_CUSTOM_ENDPOINT env vars to route to LocalCloud     │
-   │  Calls oauth2.googleapis.com for auth → DNS redirect → Caddy       │
-   └──────────────────────────────┬─────────────────────────────────────┘
-                                  │ DNS: *.googleapis.com → 127.0.0.1
-                                  ▼
-   ┌─ Docker Container (localcloud) ────────────────────────────────────┐
-   │                                                                     │
-   │  Caddy (:443 → host:8443)  ──TLS──►  Gateway (:8080)              │
-   │  dnsmasq (:53 → host:8053) ──DNS──►  Returns 127.0.0.1           │
-   │                                                                     │
-   │  Emulators: GCS(4443) PubSub(8085) Firestore(8086) Bigtable(8087) │
-   │  Spanner(9010) BigQuery(9050) Redis(6379) + Gateway facades       │
-   └─────────────────────────────────────────────────────────────────────┘
- ```
+---
 
- ────────────────────────────────────────────────────────────────────────────────
+## LOCALCLOUD_TERRAFORM_MODE
 
- What Was Done
+**Purpose:** Prevents seed data from conflicting with Terraform-managed resources.
 
- ### 1. TLS Certificate Generation (setup-terraform-certs.sh)
+When set to `true`:
+- Container auto-seed on startup is **skipped** — no default resources are created
+- Manual `POST /seed` calls **skip** resources named `tf-*` or `tf_*` 
+- Individual seed methods (GCS buckets, Pub/Sub topics, Secrets, BigQuery datasets, Cloud SQL instances) check resource names and skip Terraform-managed ones
 
- Generated a proper CA + server certificate chain:
- - CA: 10-year validity, basicConstraints=CA:TRUE, keyUsage=keyCertSign,cRLSign
- - Server cert: 825-day validity, CN=*.googleapis.com, SAN for all Google API subdomains
- - Location: certs/localcloud-ca.pem, certs/googleapis.pem, certs/googleapis.key
- - Trust: User added CA to macOS System keychain via sudo security add-trusted-cert
+This must be set when using Terraform to avoid duplicate resource conflicts.
 
- ### 2. DNS Resolution (/etc/resolver/googleapis.com)
+```bash
+LOCALCLOUD_TERRAFORM_MODE=true bash start.sh
+```
 
- ```
-   nameserver 127.0.0.1
-   port 8053
- ```
+---
 
- - dnsmasq inside container resolves *.googleapis.com → 127.0.0.1
- - Mapped to host port 8053 (port 5353 conflicts with mDNS/Bonjour)
+## Test Results
 
- ### 3. Caddy TLS Proxy (Caddyfile)
+| Resource | v6.0 | v7.34.0 |
+|----------|:----:|:-------:|
+| `google_project` | ⚠️ | ✅ |
+| `google_storage_bucket` | ✅ | ✅ |
+| `google_storage_bucket_object` | ✅ | ✅ |
+| `google_pubsub_topic` | ✅ | ✅ |
+| `google_pubsub_subscription` | ✅ | ✅ |
+| `google_bigquery_dataset` | ⚠️ | ⚠️ DNS |
+| `google_bigquery_table` | ⚠️ | ⚠️ DNS |
+| `google_secret_manager_secret` | ✅ | ✅ |
+| `google_secret_manager_secret_version` | ❌ | ✅ |
+| `google_cloud_tasks_queue` | ✅ | ✅ |
+| `google_redis_instance` | ✅ | ✅ |
+| `google_sql_database_instance` | ⚠️ | ✅ |
+| `google_sql_database` | ❌ | ✅ |
+| `google_sql_user` | ❌ | ✅ |
+| `google_bigtable_instance` | ✅ | ✅ |
+| `google_bigtable_table` | ✅ | ✅ |
+| `google_alloydb_cluster` | ⚠️ | ✅ |
+| `google_alloydb_instance` | ❌ | ❌ Depends on cluster |
+| `google_cloudfunctions2_function` | ❌ | ✅ |
+| `google_cloud_scheduler_job` | ❌ | ✅ |
+| `google_dataproc_cluster` | ⚠️ | ✅ |
+| `google_workflows_workflow` | ✅ | ✅ |
+| `google_spanner_instance` | ⚠️ | ✅ |
+| `google_spanner_database` | ⚠️ | ✅ |
 
- ```
-   :443 {
-       tls /etc/caddy/certs/googleapis.pem /etc/caddy/certs/googleapis.key
-       reverse_proxy localhost:8080
-   }
- ```
+---
 
- - Container port 443 mapped to host port 8443
+## What Was Fixed for v7.34.0
 
- ### 4. Docker Port Mappings (start.sh)
+### Architecture Changes
 
- Added to docker run:
+1. **Regex route layer**: 45+ manual `sb.service(Route.builder()...)` registrations for Google API `:verb` custom methods that Armeria's annotation parser can't handle (`:` is treated as regex delimiter inside path parameters)
 
- ```bash
-   -p 127.0.0.1:8053:53/udp \    # DNS
-   -p 127.0.0.1:8443:443 \       # TLS
-   -v "$SCRIPT_DIR/certs:/etc/caddy/certs:ro" \
-   -v "$SCRIPT_DIR/Caddyfile:/etc/caddy/Caddyfile:ro"
- ```
+2. **REST facades for gRPC-only services**: AlloyDB, Dataproc, Cloud Scheduler, Cloud Functions, Cloud Billing, and Service Usage all have explicit REST handlers because gRPC HTTP/JSON transcoding doesn't map Terraform provider v7 paths correctly
 
- ### 5. Trailing Slash Fix (AdminApiService.java)
+3. **Cloud SQL prefix registration**: Registered at `/sql/v1`, `/sql/v1beta4`, `/sqladmin/v1`, `/sqladmin/v1beta4`, AND `/` (root) — Terraform uses different prefixes for different operations
 
- Fixed URL concatenation bug where http://localhost:8085 + projects/... produced invalid URLs:
+4. **Null-safe response fields**: v7.34.0 panics on nil interface conversion; all REST responses now include null-safe fields (`putNull` for optional fields)
 
- ```java
-   if (!endpoint.endsWith("/")) {
-       endpoint += "/";
-   }
- ```
+### Credential Handling
 
- ### 6. OAuth2 Endpoints (AdminApiService.java)
+5. **Fake service account key**: v7.x requires valid SA JSON (v6 used `/dev/null`); RSA key pair generated with `openssl genrsa`
 
- Added to gateway:
- - POST /oauth2/token — Returns fake access token (Bearer, 3600s expiry)
- - GET /oauth2/auth — Redirect stub
- - Added GOOGLE_OAUTH_CUSTOM_ENDPOINT="http://localhost:8080/oauth2/" to terraform env output
+6. **OAuth2 userinfo stub**: v7 provider validates credentials via userinfo; endpoint at `/oauth2/v1/userinfo` returns valid profile
 
- ### 7. Workflows REST Endpoints (WorkflowsRestService.java)
+### Seed / State Management
 
- Added full CRUD REST endpoints for Cloud Workflows:
- - POST /projects/{project}/locations/{location}/workflows?workflowId=...
- - GET /projects/{project}/locations/{location}/workflows/{workflow}
- - DELETE /projects/{project}/locations/{location}/workflows/{workflow}
- - GET /projects/{project}/locations/{location}/workflows?pageSize=...
- - Fixed tags field validation (Map, not List)
- - Cleaned database entries with empty workflow_id
+7. **LOCALCLOUD_TERRAFORM_MODE**: Prevents auto-seed from creating duplicate resources that Terraform manages
 
- ### 8. Terraform Config Changes (all-services.tf)
+8. **Idempotent operations**: All CREATE operations handle duplicates gracefully (ON CONFLICT DO NOTHING, catch "already exists")
 
- Commented out disabled services (Cloud Run, GKE, Compute Engine) with notes:
+---
 
- ```hcl
-   # Requires *.googleapis.com DNS → localhost for auth. When enabled, ensure
-   # Caddy TLS cert is trusted so Go's SecTrust verifier accepts it.
- ```
+## Files Modified
 
- ### 9. Documentation
-
- - terraform/TERRAFORM_SETUP.md — Full setup guide with macOS, Ubuntu, and RHEL instructions
- - test-terraform-setup.sh — Automated verification script
-
- ────────────────────────────────────────────────────────────────────────────────
-
- How to Use
-
- ### Setup (one-time per machine)
-
- ```bash
-   # 1. Add CA to system trust store (macOS)
-   sudo security add-trusted-cert -d -r trustRoot \
-     -k /Library/Keychains/System.keychain \
-     /Users/jsenjaliya/src/AI/localcloud/certs/localcloud-ca.pem
-
-   # 2. Configure DNS resolver
-   printf "nameserver 127.0.0.1\nport 8053\n" | sudo tee /etc/resolver/googleapis.com
- ```
-
- ### Start LocalCloud
-
- ```bash
-   cd /Users/jsenjaliya/src/AI/localcloud
-   ./start.sh
- ```
-
- ### Run Terraform
-
- ```bash
-   cd /Users/jsenjaliya/src/AI/localcloud/terraform/examples
-
-   # IMPORTANT: Use quotes around $() to preserve newlines
-   eval "$(curl -s 'http://localhost:8080/env?format=terraform')"
-
-   terraform init
-   terraform plan
-   terraform apply -auto-approve
- ```
-
- ### Linux Setup (for CI/CD)
-
- ```bash
-   # Ubuntu/Debian
-   sudo cp certs/localcloud-ca.pem /usr/local/share/ca-certificates/localcloud-ca.crt
-   sudo update-ca-certificates
-
-   # RHEL/CentOS/Fedora
-   sudo cp certs/localcloud-ca.pem /etc/pki/ca-trust/source/anchors/localcloud-ca.pem
-   sudo update-ca-trust
- ```
-
- ────────────────────────────────────────────────────────────────────────────────
-
- Environment Variables Set by /env?format=terraform
-
- ┌───────────────────────────────────────┬──────────────────────────────────┬─────────────────┐
- │ Variable                              │ Value                            │ Purpose         │
- ├───────────────────────────────────────┼──────────────────────────────────┼─────────────────┤
- │ GOOGLE_STORAGE_CUSTOM_ENDPOINT        │ http://localhost:4443/           │ GCS             │
- ├───────────────────────────────────────┼──────────────────────────────────┼─────────────────┤
- │ GOOGLE_PUBSUB_CUSTOM_ENDPOINT         │ http://localhost:8085/           │ Pub/Sub         │
- ├───────────────────────────────────────┼──────────────────────────────────┼─────────────────┤
- │ GOOGLE_BIGQUERY_CUSTOM_ENDPOINT       │ http://localhost:9050/           │ BigQuery        │
- ├───────────────────────────────────────┼──────────────────────────────────┼─────────────────┤
- │ GOOGLE_SECRET_MANAGER_CUSTOM_ENDPOINT │ http://localhost:8080/v1/        │ Secret Manager  │
- ├───────────────────────────────────────┼──────────────────────────────────┼─────────────────┤
- │ GOOGLE_CLOUD_TASKS_CUSTOM_ENDPOINT    │ http://localhost:8080/v2/        │ Cloud Tasks     │
- ├───────────────────────────────────────┼──────────────────────────────────┼─────────────────┤
- │ GOOGLE_WORKFLOWS_CUSTOM_ENDPOINT      │ http://localhost:8080/v1/        │ Workflows       │
- ├───────────────────────────────────────┼──────────────────────────────────┼─────────────────┤
- │ GOOGLE_OAUTH_ACCESS_TOKEN             │ ya29.localcloud-dev-access-token │ Auth bypass     │
- ├───────────────────────────────────────┼──────────────────────────────────┼─────────────────┤
- │ GOOGLE_OAUTH_CUSTOM_ENDPOINT          │ http://localhost:8080/oauth2/    │ OAuth endpoint  │
- ├───────────────────────────────────────┼──────────────────────────────────┼─────────────────┤
- │ GOOGLE_APPLICATION_CREDENTIALS        │ /dev/null                        │ Skip real auth  │
- ├───────────────────────────────────────┼──────────────────────────────────┼─────────────────┤
- │ GOOGLE_PROJECT                        │ local-project                    │ Default project │
- ├───────────────────────────────────────┼──────────────────────────────────┼─────────────────┤
- │ + 10 more service endpoints...        │                                  │                 │
- └───────────────────────────────────────┴──────────────────────────────────┴─────────────────┘
-
- ────────────────────────────────────────────────────────────────────────────────
-
- Known Issues & Limitations
-
- 1. DNS redirect requires /etc/resolver/googleapis.com (macOS) or /etc/hosts (Linux) — system-level config
- 2. Port 8443 used for TLS (not 443) since 443 requires root on the host — Terraform connects via DNS to port 443 which is mapped inside the container
- 3. Disabled services: Cloud Run, GKE, Compute Engine are commented out in all-services.tf — enable when their facades are ready
- 4. Dataproc: Returns 501 "not emulated yet"
- 5. eval syntax: Must use eval "$(curl ...)" with quotes to preserve newlines
- 6. Docker rebuild: After Java changes, must rebuild Docker image: docker build -t localcloud/localcloud:latest . then ./start.sh
-
- ────────────────────────────────────────────────────────────────────────────────
-
- Files Modified
-
- ┌───────────────────────────┬─────────────────────────────────────────────────────────────────────┐
- │ File                      │ Change                                                              │
- ├───────────────────────────┼─────────────────────────────────────────────────────────────────────┤
- │ start.sh                  │ Added port 8053:53/udp, 8443:443, volume mounts for certs/Caddyfile │
- ├───────────────────────────┼─────────────────────────────────────────────────────────────────────┤
- │ Caddyfile                 │ Updated TLS cert paths to /etc/caddy/certs/                         │
- ├───────────────────────────┼─────────────────────────────────────────────────────────────────────┤
- │ setup-terraform-certs.sh  │ New — certificate generation script                                 │
- ├───────────────────────────┼─────────────────────────────────────────────────────────────────────┤
- │ AdminApiService.java      │ Trailing slash fix, OAuth2 endpoints, OAUTH_CUSTOM_ENDPOINT         │
- ├───────────────────────────┼─────────────────────────────────────────────────────────────────────┤
- │ WorkflowsRestService.java │ New REST endpoints for workflow CRUD                                │
- ├───────────────────────────┼─────────────────────────────────────────────────────────────────────┤
- │ all-services.tf           │ Commented out Cloud Run, GKE, Compute Engine                        │
- ├───────────────────────────┼─────────────────────────────────────────────────────────────────────┤
- │ TERRAFORM_SETUP.md        │ New — full setup documentation                                      │
- ├───────────────────────────┼─────────────────────────────────────────────────────────────────────┤
- │ test-terraform-setup.sh   │ New — automated verification script                                 │
- └───────────────────────────┴─────────────────────────────────────────────────────────────────────┘
+| File | Change |
+|------|--------|
+| `LocalCloudApplication.java` | 45+ regex routes, 6 new REST service registrations, Spanner proxy, OAuth2 userinfo |
+| `CloudBillingRestService.java` | **NEW** — 4 endpoints |
+| `ServiceUsageRestService.java` | **NEW** — 4 endpoints |
+| `AlloyDBRestService.java` | **NEW** — 3 endpoints (proto→JSON) |
+| `DataprocRestService.java` | **NEW** — 4 endpoints |
+| `CloudSchedulerRestService.java` | **NEW** — 7 endpoints + jobToResponse helper |
+| `CloudFunctionsRestService.java` | **NEW** — 3 endpoints |
+| `AlloyDBEmulator.java` | Added `getRestService()` |
+| `DataprocEmulator.java` | Added `getRestService()` |
+| `CloudSchedulerEmulator.java` | Added `getRestService()` |
+| `CloudFunctionsEmulator.java` | Added `getRestService()` |
+| `CloudResourceManagerRestService.java` | PUT handler, parent field fix, getOperation fix, removed billingInfo |
+| `CloudSqlRestService.java` | PUT database handler, null-safe fields, 4 prefix paths |
+| `CloudSqlStore.java` | ON CONFLICT DO NOTHING, catch "already exists" |
+| `PubSubRestService.java` | PATCH topic handler, NPE fix for subscription |
+| `PubSubStore.java` | `updateTopic()` method |
+| `SecretManagerRestService.java` | :addVersion, :destroy, :enable, :disable handlers; auto-create version 1 |
+| `SecretManagerStore.java` | Auto-create version 1 on secret create |
+| `SeedService.java` | `LOCALCLOUD_TERRAFORM_MODE` check, `shouldSkipInTerraformMode()`, tf-* detection in 5 methods |
+| `OAuth2RestService.java` | `userInfo()` method |
+| `services.yaml` | Cloud SQL defaultEnabled=true |
+| `start.sh` | `LOCALCLOUD_TERRAFORM_MODE` passthrough |
+| `all-services.tf` | Provider `~> 7.0`, fixed Cloud Functions source ref |
+| `KmsRestService.java` | (Unchanged — regex routes handle :verb paths) |
+| `VertexAiRestService.java` | (Unchanged — regex routes handle :verb paths) |

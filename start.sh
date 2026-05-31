@@ -51,6 +51,7 @@ docker run -d --name localcloud \
   -v "$SCRIPT_DIR/docker/conf/network/Caddyfile:/etc/caddy/Caddyfile:ro" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e LOCALCLOUD_PROJECT="${LOCALCLOUD_PROJECT:-local-project}" \
+  -e LOCALCLOUD_TERRAFORM_MODE="${LOCALCLOUD_TERRAFORM_MODE:-false}" \
   -e LOCALCLOUD_SERVICES="${LOCALCLOUD_SERVICES:-gcs,pubsub,firestore,bigquery,secretmanager,cloudtasks,spanner,bigtable,logging,monitoring,memorystore,workflows,cloudscheduler,cloudfunctions,alloydb,dataproc,cloudiam,cloudresourcemanager,cloudbilling,cloudsql}" \
   -e LOCALCLOUD_DATA_DIR="/var/lib/localcloud" \
   -e LOCALCLOUD_GCP_CREDENTIAL_SOURCE="${LOCALCLOUD_GCP_CREDENTIAL_SOURCE:-none}" \
