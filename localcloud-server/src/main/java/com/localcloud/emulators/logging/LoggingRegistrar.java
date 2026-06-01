@@ -32,19 +32,25 @@ public class LoggingRegistrar implements ServiceRegistrar {
         sb.service(Route.builder().methods(HttpMethod.POST)
                 .path("regex:^/v2/projects/(?<project>[^/]+)/sinks$")
                 .build(), (c, req) -> {
-                    try {
-                        var agg = req.aggregate().join();
-                        String body = agg.contentUtf8();
-                        var parsed = new com.fasterxml.jackson.databind.ObjectMapper().readTree(body);
-                        String sinkName = parsed.has("name") ? parsed.get("name").asText() : java.util.UUID.randomUUID().toString().substring(0, 8);
-                        String destination = parsed.has("destination") ? parsed.get("destination").asText() : "bigquery.googleapis.com";
-                        String result = sinkRepo.create(c.pathParam("project"), sinkName, destination);
-                        return HttpResponse.of(HttpStatus.OK, MediaType.JSON, result);
-                    } catch (Exception e) {
-                        logger.error("Failed to create logging sink: {}", e.getMessage(), e);
-                        return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
-                                "{\"error\":{\"code\":500,\"message\":\"" + e.getMessage() + "\"}}");
-                    }
+                    return HttpResponse.from(req.aggregate().handle((agg, throwable) -> {
+                        if (throwable != null) {
+                            logger.error("Failed to aggregate request: {}", throwable.getMessage(), throwable);
+                            return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
+                                    "{\"error\":{\"code\":500,\"message\":\"" + throwable.getMessage() + "\"}}");
+                        }
+                        try {
+                            String body = agg.contentUtf8();
+                            var parsed = new com.fasterxml.jackson.databind.ObjectMapper().readTree(body);
+                            String sinkName = parsed.has("name") ? parsed.get("name").asText() : java.util.UUID.randomUUID().toString().substring(0, 8);
+                            String destination = parsed.has("destination") ? parsed.get("destination").asText() : "bigquery.googleapis.com";
+                            String result = sinkRepo.create(c.pathParam("project"), sinkName, destination);
+                            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, result);
+                        } catch (Exception e) {
+                            logger.error("Failed to create logging sink: {}", e.getMessage(), e);
+                            return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
+                                    "{\"error\":{\"code\":500,\"message\":\"" + e.getMessage() + "\"}}");
+                        }
+                    }));
                 });
         sb.service(Route.builder().methods(HttpMethod.GET)
                 .path("regex:^/v2/projects/(?<project>[^/]+)/sinks/(?<sink>[^/]+)$")

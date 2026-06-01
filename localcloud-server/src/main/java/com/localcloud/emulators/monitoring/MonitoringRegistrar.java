@@ -30,10 +30,26 @@ public class MonitoringRegistrar implements ServiceRegistrar {
         sb.service(Route.builder().methods(HttpMethod.POST)
                 .path("regex:^/v3/projects/(?<project>[^/]+)/alertPolicies$")
                 .build(), (c, req) -> {
-                    var parsed = new com.fasterxml.jackson.databind.ObjectMapper().readTree(req.aggregate().join().contentUtf8());
-                    String displayName = parsed.has("displayName") ? parsed.get("displayName").asText() : "localcloud-alert";
-                    String result = policyRepo.create(c.pathParam("project"), displayName);
-                    return HttpResponse.of(HttpStatus.OK, MediaType.JSON, result);
+                    return HttpResponse.from(req.aggregate().handle((agg, throwable) -> {
+                        if (throwable != null) {
+                            logger.error("Failed to aggregate request: {}", throwable.getMessage(), throwable);
+                            return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
+                                    "{\"error\":{\"code\":500,\"message\":\"" + throwable.getMessage() + "\"}}");
+                        }
+                        try {
+                            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                            var parsed = mapper.readTree(agg.contentUtf8());
+                            String displayName = parsed.has("displayName") ? parsed.get("displayName").asText() : "localcloud-alert";
+                            String conditionsJson = parsed.has("conditions") ? mapper.writeValueAsString(parsed.get("conditions")) : "[]";
+                            String combiner = parsed.has("combiner") ? parsed.get("combiner").asText() : "OR";
+                            String result = policyRepo.create(c.pathParam("project"), displayName, conditionsJson, combiner);
+                            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, result);
+                        } catch (Exception e) {
+                            logger.error("Failed to create alert policy: {}", e.getMessage(), e);
+                            return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
+                                    "{\"error\":{\"code\":500,\"message\":\"" + e.getMessage() + "\"}}");
+                        }
+                    }));
                 });
         sb.service(Route.builder().methods(HttpMethod.GET)
                 .path("regex:^/v3/projects/(?<project>[^/]+)/alertPolicies/(?<policy>[^/]+)$")
@@ -54,6 +70,47 @@ public class MonitoringRegistrar implements ServiceRegistrar {
                                 "{\"error\":{\"code\":404,\"message\":\"Alert policy not found\"}}");
                     }
                     return HttpResponse.of(HttpStatus.OK, MediaType.JSON, "{}");
+                });
+        sb.service(Route.builder().methods(HttpMethod.PATCH)
+                .path("regex:^/v3/projects/(?<project>[^/]+)/alertPolicies/(?<policy>[^/]+)$")
+                .build(), (c, req) -> {
+                    return HttpResponse.from(req.aggregate().handle((agg, throwable) -> {
+                        if (throwable != null) {
+                            logger.error("Failed to aggregate request: {}", throwable.getMessage(), throwable);
+                            return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
+                                    "{\"error\":{\"code\":500,\"message\":\"" + throwable.getMessage() + "\"}}");
+                        }
+                        try {
+                            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                            var parsed = mapper.readTree(agg.contentUtf8());
+                            String displayName = parsed.has("displayName") ? parsed.get("displayName").asText() : null;
+                            String conditionsJson = parsed.has("conditions") ? mapper.writeValueAsString(parsed.get("conditions")) : null;
+                            String combiner = parsed.has("combiner") ? parsed.get("combiner").asText() : null;
+                            
+                            // Get existing policy to merge updates
+                            String existing = policyRepo.find(c.pathParam("project"), c.pathParam("policy"));
+                            if (existing == null) {
+                                return HttpResponse.of(HttpStatus.NOT_FOUND, MediaType.JSON,
+                                        "{\"error\":{\"code\":404,\"message\":\"Alert policy not found\"}}");
+                            }
+                            
+                            var existingParsed = mapper.readTree(existing);
+                            if (displayName == null) displayName = existingParsed.get("displayName").asText();
+                            if (conditionsJson == null) conditionsJson = mapper.writeValueAsString(existingParsed.get("conditions"));
+                            if (combiner == null) combiner = existingParsed.get("combiner").asText();
+                            
+                            String result = policyRepo.update(c.pathParam("project"), c.pathParam("policy"), displayName, conditionsJson, combiner);
+                            if (result == null) {
+                                return HttpResponse.of(HttpStatus.NOT_FOUND, MediaType.JSON,
+                                        "{\"error\":{\"code\":404,\"message\":\"Alert policy not found\"}}");
+                            }
+                            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, result);
+                        } catch (Exception e) {
+                            logger.error("Failed to update alert policy: {}", e.getMessage(), e);
+                            return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.JSON,
+                                    "{\"error\":{\"code\":500,\"message\":\"" + e.getMessage() + "\"}}");
+                        }
+                    }));
                 });
         logger.info("Cloud Monitoring facade registered (with persisted alert policies)");
     }

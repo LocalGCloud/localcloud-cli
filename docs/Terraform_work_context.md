@@ -175,7 +175,8 @@ LOCALCLOUD_TERRAFORM_MODE=true bash start.sh
 | `SeedService.java` | `LOCALCLOUD_TERRAFORM_MODE` check, `shouldSkipInTerraformMode()`, tf-* detection in 5 methods |
 | `OAuth2RestService.java` | `userInfo()` method |
 | `services.yaml` | Cloud SQL defaultEnabled=true |
-| `start.sh` | `LOCALCLOUD_TERRAFORM_MODE` passthrough |
+| `start.sh` | `LO
+CALCLOUD_TERRAFORM_MODE` passthrough |
 | `all-services.tf` | Provider `~> 7.0`, fixed Cloud Functions source ref |
 | `KmsRestService.java` | (Unchanged — regex routes handle :verb paths) |
 | `VertexAiRestService.java` | (Unchanged — regex routes handle :verb paths) |

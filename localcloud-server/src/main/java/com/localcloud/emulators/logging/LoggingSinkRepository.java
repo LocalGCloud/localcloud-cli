@@ -82,7 +82,7 @@ public class LoggingSinkRepository {
     }
 
     static String buildSinkJson(String projectId, String sinkId, String destination, String writerIdentity) {
-        return "{\"name\":\"projects/" + projectId + "/sinks/" + sinkId + "\"," +
+        return "{\"name\":\"" + sinkId + "\"," +
                "\"destination\":\"" + (destination != null ? destination : "bigquery.googleapis.com") + "\"," +
                "\"writerIdentity\":\"" + (writerIdentity != null ? writerIdentity : "serviceAccount:cloud-logs@localcloud.iam.gserviceaccount.com") + "\"}";
     }
