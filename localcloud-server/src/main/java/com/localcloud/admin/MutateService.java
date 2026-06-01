@@ -738,9 +738,10 @@ public class MutateService {
 
     private void insertAlloyDBRow(String databaseName, String table, Map<String, Object> row) throws Exception {
         List<String> columns = new ArrayList<>(row.keySet());
+        Map<String, String> columnTypes = alloyDBColumnTypes(databaseName, table);
         String sql = "INSERT INTO " + quoteIdentifier(table) + " (" +
                 columns.stream().map(this::quoteIdentifier).reduce((a, b) -> a + ", " + b).orElse("") +
-                ") VALUES (" + columns.stream().map(c -> "?").reduce((a, b) -> a + ", " + b).orElse("") + ")";
+                ") VALUES (" + columns.stream().map(c -> alloyDBPlaceholder(columnTypes.get(c.toLowerCase()))).reduce((a, b) -> a + ", " + b).orElse("") + ")";
         try (Connection conn = dataSource.getConnection(databaseName);
              PreparedStatement ps = conn.prepareStatement(sql)) {
             for (int i = 0; i < columns.size(); i++) {
@@ -753,9 +754,10 @@ public class MutateService {
     private int updateAlloyDBRow(String databaseName, String table, String keyColumn, Object keyValue,
                                  Map<String, Object> row) throws Exception {
         List<String> columns = new ArrayList<>(row.keySet());
+        Map<String, String> columnTypes = alloyDBColumnTypes(databaseName, table);
         String sql = "UPDATE " + quoteIdentifier(table) + " SET " +
-                columns.stream().map(c -> quoteIdentifier(c) + " = ?").reduce((a, b) -> a + ", " + b).orElse("") +
-                " WHERE " + quoteIdentifier(keyColumn) + " = ?";
+                columns.stream().map(c -> quoteIdentifier(c) + " = " + alloyDBPlaceholder(columnTypes.get(c.toLowerCase()))).reduce((a, b) -> a + ", " + b).orElse("") +
+                " WHERE " + quoteIdentifier(keyColumn) + " = " + alloyDBPlaceholder(columnTypes.get(keyColumn.toLowerCase()));
         try (Connection conn = dataSource.getConnection(databaseName);
              PreparedStatement ps = conn.prepareStatement(sql)) {
             for (int i = 0; i < columns.size(); i++) {
@@ -773,6 +775,35 @@ public class MutateService {
             setAlloyDBValue(ps, 1, keyValue);
             return ps.executeUpdate();
         }
+    }
+
+    private Map<String, String> alloyDBColumnTypes(String databaseName, String table) throws Exception {
+        Map<String, String> types = new LinkedHashMap<>();
+        try (Connection conn = dataSource.getConnection(databaseName);
+             PreparedStatement ps = conn.prepareStatement("""
+                     SELECT column_name, data_type, udt_name
+                     FROM information_schema.columns
+                     WHERE table_schema = 'public' AND table_name = ?
+                     """)) {
+            ps.setString(1, table);
+            try (var rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String column = rs.getString("column_name");
+                    String type = rs.getString("data_type");
+                    String udt = rs.getString("udt_name");
+                    String normalized = udt != null && !udt.isBlank() ? udt : type;
+                    types.put(column.toLowerCase(), normalized == null ? "" : normalized.toLowerCase());
+                }
+            }
+        }
+        return types;
+    }
+
+    private String alloyDBPlaceholder(String columnType) {
+        if ("json".equals(columnType) || "jsonb".equals(columnType)) {
+            return "?::" + columnType;
+        }
+        return "?";
     }
 
     private void setAlloyDBValue(PreparedStatement ps, int index, Object value) throws Exception {
@@ -1613,6 +1644,21 @@ public class MutateService {
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Spanner operation: " + operation));
     }
 
+    /**
+     * Convert a value for Spanner commit mutations. Scalars become strings;
+     * Lists are recursively converted, preserving array structure for ARRAY columns.
+     */
+    private Object spannerValue(Object val) {
+        if (val == null) return null;
+        if (val instanceof List<?> list) {
+            return list.stream().map(this::spannerValue).toList();
+        }
+        if (val instanceof Map) {
+            return String.valueOf(val);
+        }
+        return String.valueOf(val);
+    }
+
     @SuppressWarnings("unchecked")
     private String spannerCommitMutation(String projectId, Map<String, Object> json, String mutationType) throws Exception {
         String instance = (String) json.get("instance");
@@ -1636,20 +1682,20 @@ public class MutateService {
             }
 
             // 2. Build mutation
-            // Convert values to string lists for Spanner format
-            List<List<String>> stringValues = new ArrayList<>();
+            // Convert values to Spanner format, preserving arrays for ARRAY columns
+            List<List<Object>> mutationValues = new ArrayList<>();
             for (List<?> row : values) {
-                List<String> rowValues = new ArrayList<>();
+                List<Object> rowValues = new ArrayList<>();
                 for (Object val : row) {
-                    rowValues.add(val != null ? String.valueOf(val) : null);
+                    rowValues.add(spannerValue(val));
                 }
-                stringValues.add(rowValues);
+                mutationValues.add(rowValues);
             }
 
             Map<String, Object> mutationWrite = new LinkedHashMap<>();
             mutationWrite.put("table", table);
             mutationWrite.put("columns", columns);
-            mutationWrite.put("values", stringValues);
+            mutationWrite.put("values", mutationValues);
 
             Map<String, Object> mutation = new LinkedHashMap<>();
             mutation.put(mutationType, mutationWrite);

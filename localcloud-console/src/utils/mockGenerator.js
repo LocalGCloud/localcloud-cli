@@ -34,7 +34,21 @@ function randomDigits(length) {
  */
 export function generateMockValue(columnName, type = 'STRING') {
     const nameLower = columnName.toLowerCase();
-    const cleanType = type.toUpperCase().split('(')[0].trim();
+    const rawType = type.toUpperCase().trim();
+
+    // Handle ARRAY<INNER_TYPE> — generate an array of 2-3 mock values of the inner type.
+    const arrayMatch = rawType.match(/^ARRAY<(.+)>$/);
+    if (arrayMatch) {
+        const innerType = arrayMatch[1].split('(')[0].trim(); // strip (MAX) etc.
+        const count = 2 + Math.floor(Math.random() * 2); // 2 or 3
+        const items = [];
+        for (let i = 0; i < count; i++) {
+            items.push(generateMockValue(columnName + '_' + i, innerType));
+        }
+        return items;
+    }
+
+    const cleanType = rawType.split('(')[0].trim();
 
     // Type-specific values come first so numeric key columns like customer_id
     // do not receive UUID strings.

@@ -55,6 +55,7 @@
   justify-content: center;
   justify-self: center;
   width: 100%;
+  min-width: 0;
   max-width: 480px;
   position: relative;
 }
@@ -82,6 +83,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 /* --- Sidebar --- */
@@ -469,6 +471,20 @@
   .topbar-project-label {
     display: none;
   }
+  .aura-topbar-left {
+    gap: 8px;
+  }
+  .aura-project-chip {
+    width: min(36vw, 138px);
+  }
+  .topbar-right {
+    gap: 4px;
+  }
+  .topbar-right > .aura-top-icon:nth-of-type(1),
+  .topbar-right > .aura-top-icon:nth-of-type(2),
+  .aura-user-btn {
+    display: none;
+  }
   .page-header h1 {
     font-size: 18px;
   }
@@ -513,8 +529,8 @@
   height: var(--topbar-height);
   padding: 0 20px;
   display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 16px;
+  grid-template-columns: minmax(0, auto) minmax(160px, 1fr) auto;
+  gap: 14px;
   align-items: center;
   background: color-mix(in srgb, var(--surface) 88%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
@@ -530,8 +546,9 @@
 .aura-topbar-left {
   display: flex;
   align-items: center;
-  gap: 20px;
-  flex-shrink: 0;
+  gap: 14px;
+  min-width: 0;
+  flex-shrink: 1;
 }
 
 .aura-sidebar-toggle {
@@ -649,6 +666,7 @@
 
 .aura-project-wrap {
   position: relative;
+  min-width: 0;
 }
 
 .aura-project-chip {
@@ -657,11 +675,16 @@
   grid-template-rows: 1fr 1fr;
   align-items: center;
   border-radius: 12px;
-  padding: 8px 16px;
-  min-width: 200px;
+  padding: 8px 14px;
+  min-width: 0;
+  width: clamp(168px, 22vw, 300px);
+  overflow: hidden;
 }
 
 .aura-project-main {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: var(--font-size-sm);
   font-weight: 700;
   color: var(--text);
@@ -669,6 +692,9 @@
 }
 
 .aura-project-sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: var(--font-size-2xs);;
   color: var(--text-tertiary);
   white-space: nowrap;
@@ -763,10 +789,10 @@
 .aura-sidebar-header {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
+  justify-content: space-between;
+  gap: 6px;
   margin-bottom: 12px;
-  padding: 0 4px;
+  padding: 0;
   position: relative;
 }
 
@@ -856,13 +882,14 @@
 }
 
 .aura-sidebar-pin-btn {
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  min-width: 36px;
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 6px;
+  border-radius: 10px;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -885,9 +912,24 @@
 
 .aura-sidebar:not(.pinned):not(:hover) .aura-sidebar-pin-btn {
   width: 100%;
-  height: 24px;
-  border-radius: 6px;
-  opacity: 0.7;
+  min-width: 0;
+  height: 36px;
+  padding: 0;
+  box-sizing: border-box;
+  border-radius: 10px;
+  opacity: 0.78;
+}
+
+/* When sidebar is collapsed, group labels become compact toggles —
+   hide text and center the chevron so categories are still identifiable */
+.aura-sidebar:not(.pinned):not(:hover) .aura-group-label {
+  justify-content: center;
+  padding: 0;
+  gap: 0;
+}
+.aura-sidebar:not(.pinned):not(:hover) .aura-group-label span,
+.aura-sidebar:not(.pinned):not(:hover) .aura-group-label small {
+  display: none;
 }
 
 .aura-sidebar-pin-btn:hover {
@@ -935,11 +977,13 @@
 }
 
 .aura-sidebar .sidebar-sub-item {
-  height: 48px;
+  width: 100%;
+  min-width: 0;
+  height: 44px;
   border: 0;
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 0 10px;
-  gap: 14px;
+  gap: 12px;
   transition: background var(--transition), color var(--transition), transform var(--transition);
 }
 
@@ -988,9 +1032,14 @@
 
 .aura-sidebar .sidebar-sub-item-label,
 .aura-sidebar .badge {
+  min-width: 0;
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--transition);
+}
+
+.aura-sidebar .sidebar-sub-item-desc {
+  display: none;
 }
 
 .aura-sidebar:hover .sidebar-sub-item-label,
@@ -1005,8 +1054,8 @@
 
 .aura-service-groups {
   display: grid;
-  gap: 12px;
-  padding-right: 12px;
+  gap: 10px;
+  padding-right: 0;
 }
 
 .aura-service-group {
@@ -1015,22 +1064,23 @@
 }
 
 .aura-group-label {
-  height: 42px;
+  height: 30px;
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  background: var(--surface-variant);
-  color: var(--text-secondary);
+  gap: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-tertiary);
   font-family: var(--font-body);
-  font-size: var(--font-size-xs);;
+  font-size: var(--font-size-2xs);;
   font-weight: 800;
   text-transform: uppercase;
+  letter-spacing: 0.05em;
   cursor: pointer;
-  transition: background var(--transition), color var(--transition), border-color var(--transition);
+  transition: background var(--transition), color var(--transition);
 }
 
 .aura-group-label svg {
@@ -1046,7 +1096,6 @@
 
 .aura-group-label:hover {
   color: var(--text);
-  border-color: var(--primary-soft);
   background: var(--surface-hover);
 }
 
@@ -1059,13 +1108,13 @@
 
 .aura-group-label small {
   opacity: 0;
-  min-width: 22px;
-  height: 22px;
+  min-width: 20px;
+  height: 20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: var(--surface);
+  background: var(--surface-variant);
   color: var(--text-tertiary);
   transition: opacity var(--transition);
 }
@@ -1232,48 +1281,93 @@
   .aura-topbar {
     display: flex;
     gap: 8px;
+    padding: 0 12px;
   }
 
   .aura-sidebar,
   .aura-sidebar:hover,
   .aura-sidebar.pinned {
-    width: 64px;
+    width: 280px;
   }
 
   .aura-main,
   .aura-sidebar.pinned ~ .aura-main {
-    margin-left: 64px;
+    margin-left: 0;
   }
 
   .aura-brand-lockup,
   .aura-project-sub,
-  .aura-global-search span {
+  .aura-global-search span,
+  .aura-global-search kbd {
     display: none;
+  }
+
+  .aura-project-chip {
+    width: min(34vw, 180px);
+    padding: 8px 10px;
   }
 
   .aura-global-search {
     width: 44px;
     border-radius: 12px;
+    padding: 0;
+    justify-content: center;
   }
 
   .aura-sidebar-header {
     flex-direction: row;
-    gap: 4px;
-    justify-content: center;
+    gap: 6px;
+    justify-content: space-between;
   }
 
   .aura-sidebar-header .aura-sidebar-nav-item {
-    flex: 0;
-    width: 40px;
-    justify-content: center;
+    flex: 1;
+    width: auto;
+    justify-content: flex-start;
+    padding: 0 12px;
   }
 
-  .aura-sidebar-header .aura-sidebar-nav-label {
-    display: none;
+  .aura-sidebar.mobile-open .aura-sidebar-nav-label,
+  .aura-sidebar.mobile-open .sidebar-sub-item-label,
+  .aura-sidebar.mobile-open .sidebar-sub-item-dot,
+  .aura-sidebar.mobile-open .badge,
+  .aura-sidebar.mobile-open .aura-group-label small {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .aura-sidebar-pin-btn {
     opacity: 1;
     pointer-events: auto;
+  }
+}
+
+@media (max-width: 768px) {
+  .aura-topbar-left {
+    gap: 8px;
+  }
+
+  .aura-project-chip {
+    width: min(36vw, 138px);
+  }
+
+  .topbar-right {
+    gap: 4px;
+  }
+
+  .topbar-right > .aura-top-icon:nth-of-type(1),
+  .topbar-right > .aura-top-icon:nth-of-type(2),
+  .aura-user-btn {
+    display: none;
+  }
+}
+
+/* ── Intermediate breakpoint: collapse brand name before mobile triggers ── */
+@media (max-width: 1100px) {
+  .aura-brand-name {
+    display: none;
+  }
+  .aura-brand-version {
+    font-size: 9px;
   }
 }

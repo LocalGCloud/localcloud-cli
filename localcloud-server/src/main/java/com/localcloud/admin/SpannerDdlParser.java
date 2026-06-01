@@ -4,7 +4,6 @@ import net.sf.jsqlparser.parser.CCJSqlParserUtil;
 import net.sf.jsqlparser.schema.Table;
 import net.sf.jsqlparser.statement.create.table.ColumnDefinition;
 import net.sf.jsqlparser.statement.create.table.CreateTable;
-import net.sf.jsqlparser.statement.create.table.Index;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -55,13 +54,15 @@ public class SpannerDdlParser {
             for (ColumnDefinition colDef : createTable.getColumnDefinitions()) {
                 String colName = colDef.getColumnName();
                 String colType = extractColumnType(colDef);
+                String fullDef = colDef.toString();
 
-                if (colType == null || colType.equalsIgnoreCase("TOKENLIST")) {
+                if (isSkippableDefinition(colName, colType, fullDef)
+                        || colType == null
+                        || colType.equalsIgnoreCase("TOKENLIST")) {
                     continue;
                 }
 
-                String fullDef = colDef.toString().toUpperCase();
-                if (fullDef.contains(" HIDDEN")) {
+                if (fullDef.toUpperCase().contains(" HIDDEN")) {
                     continue;
                 }
 
@@ -79,6 +80,24 @@ public class SpannerDdlParser {
             logger.debug("JSqlParser failed to parse DDL, falling back to regex: {}", e.getMessage());
             return null;
         }
+    }
+
+    private static boolean isSkippableDefinition(String colName, String colType, String fullDef) {
+        return SKIP_KEYWORDS.contains(firstKeyword(colName))
+                || SKIP_KEYWORDS.contains(firstKeyword(colType))
+                || SKIP_KEYWORDS.contains(firstKeyword(fullDef));
+    }
+
+    private static String firstKeyword(String value) {
+        if (value == null) {
+            return "";
+        }
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()) {
+            return "";
+        }
+        String token = trimmed.split("\\s+", 2)[0];
+        return token.replaceAll("^[`\\\"]|[`\\\"]$", "").toUpperCase();
     }
 
     /**

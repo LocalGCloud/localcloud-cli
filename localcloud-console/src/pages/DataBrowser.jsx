@@ -2953,8 +2953,8 @@ function SpannerView(props) {
     };
 
     const handleAddMockRow = async () => {
-        const cols = tableData()?.columns;
-        if (!cols) return;
+        const cols = insertableColumns();
+        if (!cols || cols.length === 0) return;
         try {
             const typesMap = parseColumnTypesFromDdl(selectedTable());
             const columnDefs = cols.map(colName => ({
@@ -2973,8 +2973,11 @@ function SpannerView(props) {
             });
 
             await selectTable(selectedTable());
+            setToast({ message: 'Mock row inserted successfully!', type: 'success' });
+            setTimeout(() => setToast(null), 3000);
         } catch (e) {
-            setError("Failed to insert mock data: " + e.message);
+            setToast({ message: 'Failed to insert mock data: ' + e.message, type: 'error' });
+            setTimeout(() => setToast(null), 5000);
         }
     };
 
@@ -3269,11 +3272,25 @@ function SpannerView(props) {
         return generated;
     });
 
-    // Columns safe for INSERT (exclude generated/stored)
-    const insertableColumns = createMemo(() => {
+    const schemaColumnNames = createMemo(() => {
+        const types = parseColumnTypesFromDdl(selectedTable());
+        const names = Object.keys(types);
+        return names.length > 0 ? names : (tableData()?.columns || []);
+    });
+
+    const visibleColumns = createMemo(() => {
         const cols = tableData()?.columns || [];
+        const schemaCols = schemaColumnNames();
+        if (schemaCols.length === 0) return cols;
+        const allowed = new Set(schemaCols);
+        const filtered = cols.filter(c => allowed.has(c));
+        return filtered.length > 0 ? filtered : schemaCols;
+    });
+
+    // Columns safe for INSERT (exclude generated/stored and table-level DDL constraints)
+    const insertableColumns = createMemo(() => {
         const gen = generatedColumns();
-        return cols.filter(c => !gen.has(c));
+        return visibleColumns().filter(c => !gen.has(c));
     });
 
     // Parse column types from DDL for display — filtered to selected table only
@@ -3420,7 +3437,7 @@ function SpannerView(props) {
                                     + Add Mock Row
                                 </button>
                                 <button onClick={() => props.onAdd('Add Spanner Row',
-                                    tableData().columns.map(c => ({ name: c, type: 'text' })),
+                                    insertableColumns().map(c => ({ name: c, type: 'text' })),
                                     async (formData) => {
                                         await api.mutate('spanner', 'rows', {
                                             instance: selectedInstance(),
@@ -3450,24 +3467,24 @@ function SpannerView(props) {
                     }>
                         <div class="data-table-wrapper" style="overflow-x:auto">
                             <table class="data-table" style="min-width:max-content">
-                                <thead><tr><For each={tableData().columns}>{(col) => <th>{col}</th>}</For><th style="position:sticky;right:0;background:var(--surface);z-index:2;border-left:1px solid var(--border)">Actions</th></tr></thead>
+                                <thead><tr><For each={visibleColumns()}>{(col) => <th>{col}</th>}</For><th style="position:sticky;right:0;background:var(--surface);z-index:2;border-left:1px solid var(--border)">Actions</th></tr></thead>
                                 <tbody>
                                     <Show when={tableData().rows && tableData().rows.length > 0} fallback={
-                                        <tr><td colspan={tableData().columns.length + 1} style="text-align:center;padding:24px;color:var(--text-secondary);font-style:italic">
+                                        <tr><td colspan={visibleColumns().length + 1} style="text-align:center;padding:24px;color:var(--text-secondary);font-style:italic">
                                             No rows yet. Use "+ Add Row" or "Import CSV" to insert data.
                                         </td></tr>
                                     }>
                                         <For each={tableData().rows}>
                                             {(row) => (
                                                 <tr>
-                                                    <For each={tableData().columns}>
+                                                    <For each={visibleColumns()}>
                                                         {(col) => <td style="white-space:nowrap;max-width:300px;overflow:hidden;text-overflow:ellipsis" title={row[col] != null ? String(row[col]) : ''}>{row[col] != null ? String(row[col]) : '--'}</td>}
                                                     </For>
                                                     <td style="position:sticky;right:0;background:var(--surface);z-index:1;border-left:1px solid var(--border)">
                                                         <div style="display:flex;gap:4px;align-items:center">
                                                             <Show when={props.onEdit}>
                                                                 {(() => {
-                                                                    const columns = tableData().columns;
+                                                                    const columns = insertableColumns();
                                                                     return (
                                                                         <button onClick={() => props.onEdit('Edit Spanner Row',
                                                                             columns.map(c => ({ name: c, type: 'text', value: row[c] != null ? String(row[c]) : '' })),
@@ -3486,7 +3503,7 @@ function SpannerView(props) {
                                                             </Show>
                                                             <Show when={props.onDelete}>
                                                                 {(() => {
-                                                                    const columns = tableData().columns;
+                                                                    const columns = visibleColumns();
                                                                     return (
                                                                         <button onClick={() => props.onDelete('Delete this row?', async () => {
                                                                             await api.mutate('spanner', 'rows/delete', {
@@ -5324,13 +5341,14 @@ export default function DataBrowser(props) {
         }
 
         switch (tab) {
-            case 'spanner': return <SpannerView data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
-            case 'bigquery': return <BigQueryView data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
-            case 'alloydb': return <DatabaseExplorer serviceId={tab} data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
-            case 'cloudsql': return <CloudSqlView data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
-            case 'bigtable': return <BigtableView data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
-            case 'memorystore': return <MemorystoreView data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
-            case 'firestore': return <FirestoreView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
+            case 'spanner':
+            case 'bigquery':
+            case 'alloydb':
+            case 'cloudsql':
+            case 'bigtable':
+            case 'memorystore':
+            case 'firestore':
+                return <DatabaseExplorer serviceId={tab} data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
             case 'gcs': return <GcsView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} projectLocation={props.projectRegion || (() => 'us-central1')} />;
             case 'pubsub': return <PubSubView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
             case 'secretmanager': return <SecretManagerView data={data} onAdd={handleAdd} onDelete={handleDelete} />;

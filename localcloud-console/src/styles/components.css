@@ -909,6 +909,137 @@ button,
   outline-offset: 2px;
 }
 
+/* ---------- Data Explorer Shell ---------- */
+.data-explorer-shell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.data-explorer-header {
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.data-explorer-path {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.data-explorer-header .data-breadcrumb {
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.data-explorer-header .data-breadcrumb::-webkit-scrollbar {
+  display: none;
+}
+
+.data-explorer-header .data-breadcrumb-active,
+.data-explorer-header .data-breadcrumb-link {
+  white-space: nowrap;
+}
+
+.data-explorer-actions {
+  min-width: 0;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  overflow: visible;
+  scrollbar-width: none;
+}
+
+.data-explorer-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.data-explorer-actions .btn {
+  height: 34px;
+  padding: 0 12px;
+  flex-shrink: 0;
+}
+
+.data-explorer-split-action {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.data-explorer-split-main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.data-explorer-split-menu {
+  min-width: 34px;
+  padding: 0 8px !important;
+  border-left: 1px solid rgba(255,255,255,0.35);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.data-explorer-action-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: var(--shadow-hover);
+}
+
+.data-explorer-action-menu button {
+  width: 100%;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.data-explorer-action-menu button:hover {
+  background: var(--surface-hover);
+}
+
+.data-explorer-danger {
+  color: var(--error) !important;
+}
+
+.data-explorer-body {
+  min-width: 0;
+}
+
+@media (max-width: 700px) {
+  .data-explorer-header {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .data-explorer-actions {
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+}
+
 /* ---------- Data Breadcrumb ---------- */
 .data-breadcrumb {
   display: flex;

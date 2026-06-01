@@ -154,15 +154,32 @@ function statementForTable(ddl, tableName) {
     return match ? (match.trim().endsWith(';') ? match.trim() : `${match.trim()};`) : null;
 }
 
+function splitTopLevelComma(text) {
+    const parts = [];
+    let depth = 0;
+    let start = 0;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === '(') depth++;
+        else if (ch === ')') depth--;
+        else if (ch === ',' && depth === 0) {
+            parts.push(text.slice(start, i).trim());
+            start = i + 1;
+        }
+    }
+    const last = text.slice(start).trim();
+    if (last) parts.push(last);
+    return parts;
+}
+
 function columnsFromCreateStatement(statement) {
     const body = statement?.match(/\(([\s\S]*)\)\s*(PRIMARY\s+KEY|$)/i)?.[1];
     if (!body) return [];
-    return body
-        .split('\n')
-        .map(line => line.trim().replace(/,$/, ''))
-        .filter(line => line && !/^PRIMARY\s+KEY/i.test(line))
-        .map(line => {
-            const match = line.match(/^`?("?)([A-Za-z0-9_]+)\1`?\s+([A-Za-z0-9_() ]+)/);
+    return splitTopLevelComma(body)
+        .map(part => part.trim().replace(/,$/, ''))
+        .filter(part => part && !/^(?:CONSTRAINT|PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE|CHECK)\b/i.test(part))
+        .map(part => {
+            const match = part.match(/^`?("?)([A-Za-z0-9_]+)\1`?\s+([A-Za-z0-9_() ]+)/);
             return match ? { name: match[2], type: match[3].trim() } : null;
         })
         .filter(Boolean);
@@ -607,7 +624,7 @@ export default function DatabaseExplorer(props) {
     });
 
     const breadcrumbs = createMemo(() => [
-        { label: adapter()?.serviceName || props.serviceId, tag: 'Service', type: 'service', active: path().length === 0, onClick: () => goToDepth(0) },
+        { label: adapter()?.serviceName || props.serviceId, active: path().length === 0, onClick: () => goToDepth(0) },
         ...path().map((n, i) => ({
             label: n.label,
             tag: n.type,
@@ -748,15 +765,40 @@ export default function DatabaseExplorer(props) {
         }
     };
 
-    const tabStyle = (tab) => ({
-        padding: '6px 14px',
-        border: '1px solid var(--border)',
-        'border-radius': '4px',
-        background: activeTab() === tab || (tab === 'infoSchema' && showInfoSchema()) ? 'var(--primary)' : 'var(--surface)',
-        color: activeTab() === tab || (tab === 'infoSchema' && showInfoSchema()) ? '#fff' : 'var(--text-secondary)',
-        cursor: 'pointer',
-        'font-size': '13px',
-    });
+    const ContextActions = () => {
+        const tableColumns = () => table()?.columns || [];
+        const canAddRows = () => isTableLevel() && table() && tableActions().addRow && adapter()?.insertRow;
+        const canShowDdl = () => isTableLevel() && table() && tableActions().ddl && table().ddl;
+        const canImportCsv = () => isTableLevel() && table() && tableActions().importCsv;
+        const canDeleteTable = () => isTableLevel() && table() && tableActions().deleteTable && adapter()?.deleteTable;
+
+        return (
+            <div class="data-explorer-actions" aria-label="Data explorer actions">
+                <Show when={!isTableLevel() && action()}>
+                    <button class="btn btn-primary" onClick={runPrimaryAction}>{action().label}</button>
+                </Show>
+                <Show when={infoSchemaAdapter()}>
+                    <button class="btn btn-secondary" onClick={toggleInfoSchema}>{showInfoSchema() ? 'Hide Info Schema' : 'Info Schema'}</button>
+                </Show>
+                <Show when={canShowDdl()}><button class="btn btn-secondary" onClick={showDdl}>Show DDL</button></Show>
+                <Show when={canImportCsv()}><button class="btn btn-secondary" onClick={() => setShowCsvImport(true)}>Import CSV</button></Show>
+                <Show when={canAddRows()}>
+                    <Show when={tableActions().mockRow && tableColumns().length > 0} fallback={<button class="btn btn-primary" onClick={openAddRow}>Add Row</button>}>
+                        <div class="data-explorer-split-action">
+                            <button class="btn btn-primary data-explorer-split-main" onClick={addMockRow}>Add Row</button>
+                            <button class="btn btn-primary data-explorer-split-menu" aria-label="Add row options" onClick={() => setAddMenuOpen(v => !v)}>v</button>
+                            <Show when={addMenuOpen()}>
+                                <div class="data-explorer-action-menu">
+                                    <button onClick={openAddRow}>Add new row manually</button>
+                                </div>
+                            </Show>
+                        </div>
+                    </Show>
+                </Show>
+                <Show when={canDeleteTable()}><button class="btn btn-secondary data-explorer-danger" onClick={confirmDeleteTable}>Delete Table</button></Show>
+            </div>
+        );
+    };
 
     const NodeList = () => (
         <Show when={currentNodes().length > 0} fallback={<div class="empty-state"><div class="empty-state-icon">{'\u2205'}</div><div class="empty-state-title">No resources found</div></div>}>
@@ -784,27 +826,6 @@ export default function DatabaseExplorer(props) {
         const cols = t?.columns || [];
         return (
             <Show when={t} fallback={<div class="empty-state"><div class="empty-state-title">No table data</div></div>}>
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:12px;flex-wrap:wrap">
-                    <h2 style="margin:0;font-size:16px">{selected()?.label}</h2>
-                    <div style="display:flex;gap:6px;flex-wrap:wrap">
-                        <Show when={tableActions().ddl && t.ddl}><button class="btn btn-secondary" onClick={showDdl}>Show DDL</button></Show>
-                        <Show when={tableActions().importCsv}><button class="btn btn-secondary" onClick={() => setShowCsvImport(true)}>Import CSV</button></Show>
-                        <Show when={tableActions().addRow && adapter().insertRow}>
-                            <Show when={tableActions().mockRow && cols.length > 0} fallback={<button class="btn btn-primary" onClick={openAddRow}>Add Row</button>}>
-                                <div style="position:relative;display:inline-flex">
-                                    <button class="btn btn-primary" style="border-top-right-radius:0;border-bottom-right-radius:0" onClick={addMockRow}>Add Row</button>
-                                    <button class="btn btn-primary" aria-label="Add row options" style="border-left:1px solid rgba(255,255,255,0.35);border-top-left-radius:0;border-bottom-left-radius:0;padding:0 8px" onClick={() => setAddMenuOpen(v => !v)}>v</button>
-                                    <Show when={addMenuOpen()}>
-                                        <div style="position:absolute;right:0;top:calc(100% + 4px);z-index:20;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:var(--shadow-lg);min-width:190px;padding:4px">
-                                            <button onClick={openAddRow} style="width:100%;border:none;background:transparent;color:var(--text);padding:8px 10px;text-align:left;cursor:pointer;font-size:13px">Add new row manually</button>
-                                        </div>
-                                    </Show>
-                                </div>
-                            </Show>
-                        </Show>
-                        <Show when={tableActions().deleteTable && adapter().deleteTable}><button class="btn btn-secondary" style="color:#ea4335" onClick={confirmDeleteTable}>Delete Table</button></Show>
-                    </div>
-                </div>
                 <Show when={tableError()}>
                     <div class="alert alert-error" role="alert" style="margin-bottom:12px">{tableError()}</div>
                 </Show>
@@ -833,34 +854,22 @@ export default function DatabaseExplorer(props) {
     };
 
     return (
-        <div>
-            <DataBreadcrumb crumbs={breadcrumbs()} />
-            <div style="display:flex;align-items:center;justify-content:space-between;margin:10px 0 12px;gap:12px;flex-wrap:wrap">
-                <div style="display:flex;gap:8px;flex-wrap:wrap">
-                    <button style={tabStyle('browse')} onClick={() => { setActiveTab('browse'); setShowInfoSchema(false); }}>Browse</button>
-                    <button style={tabStyle('stats')} onClick={() => { setActiveTab('stats'); loadStats(); }}>Statistics</button>
-                    <Show when={canShowHistory(props.serviceId)}><button style={tabStyle('history')} onClick={() => { setActiveTab('history'); loadHistory(); }}>History</button></Show>
-                    <Show when={operations().length > 0}><button style={tabStyle('operations')} onClick={() => setActiveTab('operations')}>Operations</button></Show>
-                    <Show when={infoSchemaAdapter()}><button style={tabStyle('infoSchema')} onClick={toggleInfoSchema}>Info Schema</button></Show>
+        <div class="data-explorer-shell">
+            <div class="data-explorer-header">
+                <div class="data-explorer-path">
+                    <DataBreadcrumb crumbs={breadcrumbs()} />
                 </div>
-                <Show when={action()}><button class="btn btn-primary" onClick={runPrimaryAction}>{action().label}</button></Show>
+                <ContextActions />
             </div>
 
-            <Show when={loading()}><div class="loading-state"><div class="loading-spinner" /> Loading…</div></Show>
-            <Show when={!loading() && activeTab() === 'browse'}>
-                <Show when={isTableLevel()} fallback={<NodeList />}>
-                    <TableSurface />
+            <div class="data-explorer-body">
+                <Show when={loading()}><div class="loading-state"><div class="loading-spinner" /> Loading…</div></Show>
+                <Show when={!loading()}>
+                    <Show when={isTableLevel()} fallback={<NodeList />}>
+                        <TableSurface />
+                    </Show>
                 </Show>
-            </Show>
-            <Show when={!loading() && activeTab() === 'stats'}>
-                <StatsPanel stats={stats()} />
-            </Show>
-            <Show when={!loading() && activeTab() === 'history'}>
-                <HistoryPanel entries={history()} />
-            </Show>
-            <Show when={!loading() && activeTab() === 'operations'}>
-                <OperationsPanel operations={operations()} />
-            </Show>
+            </div>
 
             <Show when={!loading() && showInfoSchema() && infoSchemaAdapter()}>
                 <InfoSchemaBrowser

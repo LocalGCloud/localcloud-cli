@@ -26,4 +26,4 @@ echo "=== Starting container ==="
 ./start.sh
 
 echo "=== Tailing logs (Ctrl+C to stop) ==="
-docker logs -f $(docker ps -a -q --filter "name=localcloud")
+docker logs $(docker ps -a -q --filter "name=localcloud")
