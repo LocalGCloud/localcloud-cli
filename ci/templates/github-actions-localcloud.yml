@@ -25,7 +25,7 @@ jobs:
           - 6379:6379
         env:
           LOCALCLOUD_PROJECT: local-project
-          LOCALCLOUD_SERVICES: gcs,pubsub,firestore,bigquery,secretmanager,cloudtasks,logging,monitoring,memorystore,workflows,cloudscheduler,cloudfunctions,alloydb,dataproc,cloudiam
+          LOCALCLOUD_SERVICES: gcs,pubsub,firestore,bigquery,secretmanager,cloudtasks,logging,monitoring,memorystore,workflows,cloudscheduler,cloudfunctions,alloydb,dataproc,cloudiam,serviceusage
         options: >-
           --memory 4g
           --health-cmd "curl -fsS http://localhost:8080/health"
