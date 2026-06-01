@@ -1,7 +1,6 @@
 package com.localcloud.emulators.secretmanager;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.linecorp.armeria.common.HttpResponse;
@@ -10,6 +9,7 @@ import com.linecorp.armeria.common.MediaType;
 import com.linecorp.armeria.common.QueryParams;
 import com.linecorp.armeria.server.ServiceRequestContext;
 import com.linecorp.armeria.server.annotation.*;
+import com.localcloud.common.RestResponseHelper;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,7 +36,6 @@ public class SecretManagerRestService {
 
     private final SecretManagerStore store;
     private final SecretManagerEmulator emulator;
-    private final ObjectMapper mapper = new ObjectMapper();
     private final IAMPolicyRestHandler iamHandler;
 
     public SecretManagerRestService(SecretManagerStore store, SecretManagerEmulator emulator) {
@@ -54,35 +53,35 @@ public class SecretManagerRestService {
         emulator.incrementRequestCount();
         try {
             String secretId = ctx.queryParams().get("secretId");
-            var parsed = mapper.readTree(body);
+            var parsed = RestResponseHelper.parseBody(body);
             if (secretId == null || secretId.isBlank()) {
                 if (parsed.has("secretId")) {
                     secretId = parsed.get("secretId").asText();
                 }
             }
             if (secretId == null || secretId.isBlank()) {
-                return errorResponse(400, "Missing required parameter: secretId");
+                return RestResponseHelper.error(400, "Missing required parameter: secretId");
             }
 
             String labels = "{}";
             if (parsed.has("labels")) {
-                labels = mapper.writeValueAsString(parsed.get("labels"));
+                labels = RestResponseHelper.toJson(parsed.get("labels"));
             }
 
-            store.createSecret(project, secretId, labels);
+            store.createSecret(project, secretId, labels, "{\"automatic\":{}}", null, null);
 
-            ObjectNode result = mapper.createObjectNode();
+            ObjectNode result = RestResponseHelper.MAPPER.createObjectNode();
             result.put("name", "projects/" + project + "/secrets/" + secretId);
             result.put("createTime", java.time.Instant.now().toString());
-            result.set("replication", mapper.createObjectNode().set("automatic", mapper.createObjectNode()));
+            result.set("replication", RestResponseHelper.MAPPER.createObjectNode().set("automatic", RestResponseHelper.MAPPER.createObjectNode()));
 
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+            return RestResponseHelper.ok(result);
         } catch (Exception e) {
             if (e.getMessage() != null && e.getMessage().contains("duplicate key")) {
-                return errorResponse(409, "Secret already exists: " + e.getMessage());
+                return RestResponseHelper.error(409, "Secret already exists: " + e.getMessage());
             }
             logger.error("Error creating secret", e);
-            return errorResponse(500, e.getMessage());
+            return RestResponseHelper.error(500, e.getMessage());
         }
     }
 
@@ -92,16 +91,16 @@ public class SecretManagerRestService {
         try {
             Map<String, Object> secret = store.getSecret(project, secretId);
             if (secret == null) {
-                return errorResponse(404, "Secret not found: " + secretId);
+                return RestResponseHelper.error(404, "Secret not found: " + secretId);
             }
-            ObjectNode result = mapper.createObjectNode();
+            ObjectNode result = RestResponseHelper.MAPPER.createObjectNode();
             result.put("name", "projects/" + project + "/secrets/" + secretId);
             result.put("createTime", String.valueOf(secret.get("created_at")));
-            result.set("replication", mapper.createObjectNode().set("automatic", mapper.createObjectNode()));
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+            result.set("replication", RestResponseHelper.MAPPER.createObjectNode().set("automatic", RestResponseHelper.MAPPER.createObjectNode()));
+            return RestResponseHelper.ok(result);
         } catch (Exception e) {
             logger.error("Error getting secret", e);
-            return errorResponse(500, e.getMessage());
+            return RestResponseHelper.error(500, e.getMessage());
         }
     }
 
@@ -110,21 +109,21 @@ public class SecretManagerRestService {
         emulator.incrementRequestCount();
         try {
             List<Map<String, Object>> secrets = store.listSecrets(project);
-            ArrayNode secretsArray = mapper.createArrayNode();
+            ArrayNode secretsArray = RestResponseHelper.MAPPER.createArrayNode();
             for (Map<String, Object> s : secrets) {
-                ObjectNode node = mapper.createObjectNode();
+                ObjectNode node = RestResponseHelper.MAPPER.createObjectNode();
                 node.put("name", "projects/" + project + "/secrets/" + s.get("secret_id"));
                 node.put("createTime", String.valueOf(s.get("created_at")));
-                node.set("replication", mapper.createObjectNode().set("automatic", mapper.createObjectNode()));
+                node.set("replication", RestResponseHelper.MAPPER.createObjectNode().set("automatic", RestResponseHelper.MAPPER.createObjectNode()));
                 secretsArray.add(node);
             }
-            ObjectNode result = mapper.createObjectNode();
+            ObjectNode result = RestResponseHelper.MAPPER.createObjectNode();
             result.set("secrets", secretsArray);
             result.put("totalSize", secrets.size());
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+            return RestResponseHelper.ok(result);
         } catch (Exception e) {
             logger.error("Error listing secrets", e);
-            return errorResponse(500, e.getMessage());
+            return RestResponseHelper.error(500, e.getMessage());
         }
     }
 
@@ -134,12 +133,12 @@ public class SecretManagerRestService {
         try {
             boolean deleted = store.deleteSecret(project, secretId);
             if (!deleted) {
-                return errorResponse(404, "Secret not found: " + secretId);
+                return RestResponseHelper.error(404, "Secret not found: " + secretId);
             }
             return HttpResponse.of(HttpStatus.OK, MediaType.JSON, "{}");
         } catch (Exception e) {
             logger.error("Error deleting secret", e);
-            return errorResponse(500, e.getMessage());
+            return RestResponseHelper.error(500, e.getMessage());
         }
     }
 
@@ -153,21 +152,21 @@ public class SecretManagerRestService {
     public HttpResponse addVersion(@Param String project, @Param String secret, String body) {
         emulator.incrementRequestCount();
         try {
-            var root = mapper.readTree(body);
+            var root = RestResponseHelper.parseBody(body);
             String payloadData = root.path("payload").path("data").asText(null);
             if (payloadData == null) {
-                return errorResponse(400, "Missing required field: payload.data");
+                return RestResponseHelper.error(400, "Missing required field: payload.data");
             }
             byte[] payload = java.util.Base64.getDecoder().decode(payloadData);
             Map<String, Object> versionRow = store.addSecretVersion(project, secret, payload);
             int versionNum = ((Number) versionRow.get("version_number")).intValue();
-            ObjectNode result = mapper.createObjectNode();
+            ObjectNode result = RestResponseHelper.MAPPER.createObjectNode();
             result.put("name", "projects/" + project + "/secrets/" + secret + "/versions/" + versionNum);
             result.put("state", String.valueOf(versionRow.getOrDefault("state", "ENABLED")));
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+            return RestResponseHelper.ok(result);
         } catch (Exception e) {
             logger.error("Error adding secret version", e);
-            return errorResponse(500, e.getMessage());
+            return RestResponseHelper.error(500, e.getMessage());
         }
     }
 
@@ -179,13 +178,13 @@ public class SecretManagerRestService {
             int v = Integer.parseInt(version);
             // Idempotent: destroying a non-existent version is a no-op (matches GCP behavior)
             store.destroySecretVersion(project, secret, v);
-            ObjectNode result = mapper.createObjectNode();
+            ObjectNode result = RestResponseHelper.MAPPER.createObjectNode();
             result.put("name", "projects/" + project + "/secrets/" + secret + "/versions/" + version);
             result.put("state", "DESTROYED");
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+            return RestResponseHelper.ok(result);
         } catch (Exception e) {
             logger.error("Error destroying secret version", e);
-            return errorResponse(500, e.getMessage());
+            return RestResponseHelper.error(500, e.getMessage());
         }
     }
 
@@ -197,13 +196,13 @@ public class SecretManagerRestService {
             int v = Integer.parseInt(version);
             // Idempotent: enabling an already-enabled version is a no-op
             store.enableSecretVersion(project, secret, v);
-            ObjectNode result = mapper.createObjectNode();
+            ObjectNode result = RestResponseHelper.MAPPER.createObjectNode();
             result.put("name", "projects/" + project + "/secrets/" + secret + "/versions/" + version);
             result.put("state", "ENABLED");
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+            return RestResponseHelper.ok(result);
         } catch (Exception e) {
             logger.error("Error enabling secret version", e);
-            return errorResponse(500, e.getMessage());
+            return RestResponseHelper.error(500, e.getMessage());
         }
     }
 
@@ -216,26 +215,13 @@ public class SecretManagerRestService {
             int v = Integer.parseInt(version);
             // Idempotent: disabling an already-disabled version is a no-op
             store.disableSecretVersion(project, secret, v);
-            ObjectNode result = mapper.createObjectNode();
+            ObjectNode result = RestResponseHelper.MAPPER.createObjectNode();
             result.put("name", "projects/" + project + "/secrets/" + secret + "/versions/" + version);
             result.put("state", "DISABLED");
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+            return RestResponseHelper.ok(result);
         } catch (Exception e) {
             logger.error("Error disabling secret version", e);
-            return errorResponse(500, e.getMessage());
-        }
-    }
-
-    private HttpResponse errorResponse(int code, String message) {
-        try {
-            ObjectNode error = mapper.createObjectNode();
-            ObjectNode inner = mapper.createObjectNode();
-            inner.put("code", code);
-            inner.put("message", message);
-            error.set("error", inner);
-            return HttpResponse.of(HttpStatus.valueOf(code), MediaType.JSON, mapper.writeValueAsString(error));
-        } catch (Exception e) {
-            return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR, MediaType.PLAIN_TEXT_UTF_8, message);
+            return RestResponseHelper.error(500, e.getMessage());
         }
     }
 }

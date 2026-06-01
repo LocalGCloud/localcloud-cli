@@ -263,7 +263,7 @@ public class CloudFunctionsEmulator extends AbstractEmulator {
                 String targetUrl = resolveTargetEndpoint(projectId, locationId, functionId, function);
                 logger.info("Forwarding trigger request for {} to local endpoint {}", functionId, targetUrl);
 
-                return com.linecorp.armeria.common.HttpResponse.from(
+                return com.linecorp.armeria.common.HttpResponse.of(
                         req.aggregate().thenApply(aggregated -> {
                             try {
                                 var forwardBuilder = HttpRequest.newBuilder(URI.create(targetUrl))

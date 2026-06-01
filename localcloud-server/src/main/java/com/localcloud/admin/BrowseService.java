@@ -328,6 +328,15 @@ public class BrowseService {
 
     @SuppressWarnings("unchecked")
     private String browseGcs(String resourceType, String resourceId, String projectId) throws Exception {
+        // Read prefix and delimiter from the current request context (for folder navigation)
+        String prefix = null;
+        String delimiter = null;
+        ServiceRequestContext reqCtx = ServiceRequestContext.currentOrNull();
+        if (reqCtx != null) {
+            prefix = reqCtx.queryParams().get("prefix");
+            delimiter = reqCtx.queryParams().get("delimiter");
+        }
+
         if (resourceType == null || "buckets".equals(resourceType) && resourceId == null) {
             // List buckets — filter by project ownership from gcs_bucket_projects table
             // (fake-gcs-server returns all buckets regardless of ?project= param)
@@ -375,22 +384,63 @@ public class BrowseService {
         // or resourceType is the bucket name directly (from console UI: browse/gcs/{bucketName})
         String bucketName = "buckets".equals(resourceType) ? resourceId : resourceType;
         if (bucketName != null) {
-            String url = gcsBase + "/storage/v1/b/" + bucketName + "/o";
+            // Build URL with optional prefix and delimiter for folder navigation
+            StringBuilder urlBuilder = new StringBuilder(gcsBase + "/storage/v1/b/" + bucketName + "/o");
+            boolean hasParam = false;
+            if (delimiter != null && !delimiter.isEmpty()) {
+                urlBuilder.append("?delimiter=").append(delimiter);
+                hasParam = true;
+            }
+            if (prefix != null && !prefix.isEmpty()) {
+                urlBuilder.append(hasParam ? "&" : "?").append("prefix=").append(prefix);
+                hasParam = true;
+            }
+            String url = urlBuilder.toString();
             String raw = proxyGet(url);
             Map<String, Object> resp = mapper.readValue(raw, Map.class);
             List<Map<String, Object>> items = (List<Map<String, Object>>) resp.get("items");
+            List<String> prefixes = (List<String>) resp.get("prefixes");
+
+            // Build objects list (excluding placeholder folder objects — those ending with /)
             List<Map<String, Object>> objects = new ArrayList<>();
             if (items != null) {
                 for (Map<String, Object> item : items) {
+                    String name = (String) item.get("name");
+                    // Skip placeholder folder objects when delimiter is active
+                    if (delimiter != null && !delimiter.isEmpty() && name.endsWith("/")) {
+                        continue;
+                    }
                     Map<String, Object> obj = new LinkedHashMap<>();
-                    obj.put("name", item.get("name"));
+                    obj.put("name", name);
                     obj.put("size", item.get("size"));
                     obj.put("contentType", item.get("contentType"));
                     obj.put("updated", item.get("updated"));
                     objects.add(obj);
                 }
             }
-            return mapper.writeValueAsString(Map.of("objects", objects));
+
+            // Build folders list from prefixes
+            List<Map<String, Object>> folders = new ArrayList<>();
+            if (prefixes != null) {
+                for (String p : prefixes) {
+                    Map<String, Object> folder = new LinkedHashMap<>();
+                    // Strip trailing / for display, keep full prefix for navigation
+                    String displayName = p.endsWith("/") ? p.substring(0, p.length() - 1) : p;
+                    // If we have a current prefix, show relative name
+                    if (prefix != null && !prefix.isEmpty() && displayName.startsWith(prefix)) {
+                        displayName = displayName.substring(prefix.length());
+                    }
+                    folder.put("name", displayName);
+                    folder.put("prefix", p);
+                    folders.add(folder);
+                }
+            }
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("objects", objects);
+            result.put("folders", folders);
+            result.put("prefix", prefix != null ? prefix : "");
+            return mapper.writeValueAsString(result);
         }
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid GCS browse path"));
     }

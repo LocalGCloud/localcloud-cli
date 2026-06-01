@@ -36,6 +36,7 @@ dependencies {
     implementation "com.linecorp.armeria:armeria"
     implementation "com.linecorp.armeria:armeria-grpc"
     implementation "com.linecorp.armeria:armeria-graphql"
+    implementation "com.linecorp.armeria:armeria-protobuf"
 
     // Facade service stubs (services we implement ourselves)
     implementation 'com.google.api.grpc:proto-google-cloud-secretmanager-v1:2.86.0'
@@ -102,6 +103,10 @@ dependencies {
 
     // HikariCP
     implementation 'com.zaxxer:HikariCP:5.1.0'
+
+    // Flyway — versioned database migrations
+    implementation 'org.flywaydb:flyway-core:10.20.0'
+    implementation 'org.flywaydb:flyway-database-postgresql:10.20.0'
 
     // Jackson
     implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"

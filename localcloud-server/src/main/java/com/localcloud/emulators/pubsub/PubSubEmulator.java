@@ -337,6 +337,8 @@ public class PubSubEmulator extends AbstractEmulator {
 
     public class SubscriberServiceImpl extends SubscriberGrpc.SubscriberImplBase {
 
+        private final ConcurrentHashMap<String, SubscriptionFilter> filterCache = new ConcurrentHashMap<>();
+
         @Override
         public void createSubscription(Subscription request, StreamObserver<Subscription> obs) {
             incrementRequestCount();
@@ -473,8 +475,31 @@ public class PubSubEmulator extends AbstractEmulator {
                 String[] parts = PubSubStore.parseSubscriptionName(request.getSubscription());
                 var messages = store.pull(parts[0], parts[1], request.getMaxMessages());
 
+                // Apply subscription filter if configured
+                SubscriptionFilter filter = filterCache.get(request.getSubscription());
+
                 var builder = PullResponse.newBuilder();
                 for (var m : messages) {
+                    // Check filter
+                    if (filter != null) {
+                        Map<String, String> msgAttrs = new HashMap<>();
+                        if (m.get("attributes") != null) {
+                            String attrsJson = (String) m.get("attributes");
+                            if (attrsJson != null && attrsJson.length() > 2) {
+                                String inner = attrsJson.substring(1, attrsJson.length()-1);
+                                for (String pair : inner.split(",")) {
+                                    String[] kv = pair.split(":", 2);
+                                    if (kv.length == 2) {
+                                        msgAttrs.put(kv[0].trim().replaceAll("^\"|\"$", ""),
+                                                kv[1].trim().replaceAll("^\"|\"$", ""));
+                                    }
+                                }
+                            }
+                        }
+                        if (!filter.matches(msgAttrs)) {
+                            continue; // skip unmatched message
+                        }
+                    }
                     byte[] data = (byte[])m.get("data");
                     PubsubMessage.Builder msgBuilder = PubsubMessage.newBuilder();
                     if (data != null) msgBuilder.setData(com.google.protobuf.ByteString.copyFrom(data));

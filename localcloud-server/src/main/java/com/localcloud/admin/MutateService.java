@@ -22,6 +22,7 @@ import redis.clients.jedis.Jedis;
 import com.linecorp.armeria.common.AggregatedHttpRequest;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.server.ServiceRequestContext;
 import com.linecorp.armeria.server.annotation.Param;
 import com.linecorp.armeria.server.annotation.Post;
 import com.localcloud.config.LocalCloudConfig;
@@ -189,14 +190,32 @@ public class MutateService {
 
     // ========== Dispatcher endpoints ==========
 
+    private String resolveProject(ServiceRequestContext ctx) {
+        String project = ctx.queryParams().get("project");
+        return (project != null && !project.isBlank()) ? project : config.getProjectId();
+    }
+
+    /**
+     * Resolve the effective project for mutation operations.
+     * Uses the resolved project from the request body if available, falls back to config default.
+     */
+    private String effectiveProject(Map<String, Object> json) {
+        return json.containsKey("_projectId") ? (String) json.get("_projectId") : config.getProjectId();
+    }
+
     @Post("/{service}/{operation}")
-    public com.linecorp.armeria.common.HttpResponse mutate(@Param("service") String service,
+    public com.linecorp.armeria.common.HttpResponse mutate(ServiceRequestContext ctx,
+                                                            @Param("service") String service,
                                                             @Param("operation") String operation,
                                                             AggregatedHttpRequest request) {
         try {
             String body = request.contentUtf8();
             @SuppressWarnings("unchecked")
             Map<String, Object> json = mapper.readValue(body, Map.class);
+
+            // Inject resolved project into JSON body for service-specific methods
+            String resolvedProject = resolveProject(ctx);
+            json.putIfAbsent("_projectId", resolvedProject);
 
             String result = switch (service) {
                 case "gcs" -> mutateGcs(operation, null, json);
@@ -228,7 +247,8 @@ public class MutateService {
     }
 
     @Post("/{service}/{operation}/{subOp}")
-    public com.linecorp.armeria.common.HttpResponse mutateWithSubOp(@Param("service") String service,
+    public com.linecorp.armeria.common.HttpResponse mutateWithSubOp(ServiceRequestContext ctx,
+                                                                     @Param("service") String service,
                                                                      @Param("operation") String operation,
                                                                      @Param("subOp") String subOp,
                                                                      AggregatedHttpRequest request) {
@@ -236,6 +256,10 @@ public class MutateService {
             String body = request.contentUtf8();
             @SuppressWarnings("unchecked")
             Map<String, Object> json = mapper.readValue(body, Map.class);
+
+            // Inject resolved project into JSON body for service-specific methods
+            String resolvedProject = resolveProject(ctx);
+            json.putIfAbsent("_projectId", resolvedProject);
 
             String result = switch (service) {
                 case "gcs" -> mutateGcs(operation, subOp, json);
@@ -269,7 +293,7 @@ public class MutateService {
     // ========== New facade metadata CRUD ==========
 
     private String mutateCloudScheduler(String operation, String subOp, Map<String, Object> json) throws Exception {
-        String projectId = config.getProjectId();
+        String projectId = effectiveProject(json);
         if ("jobs".equals(operation) && subOp == null) {
             String name = stringValue(json, "name");
             String schedule = stringValue(json, "schedule");
@@ -331,7 +355,7 @@ public class MutateService {
     }
 
     private String mutateCloudFunctions(String operation, String subOp, Map<String, Object> json) throws Exception {
-        String projectId = config.getProjectId();
+        String projectId = effectiveProject(json);
         if ("functions".equals(operation) && subOp == null) {
             String name = stringValue(json, "name");
             String runtime = stringValue(json, "runtime");
@@ -384,7 +408,7 @@ public class MutateService {
     }
 
     private String mutateAlloyDB(String operation, String subOp, Map<String, Object> json) throws Exception {
-        String projectId = config.getProjectId();
+        String projectId = effectiveProject(json);
         if ("clusters".equals(operation) && subOp == null) {
             String name = stringValue(json, "name");
             if (name == null) return mapper.writeValueAsString(Map.of("error", true, "message", "name is required"));
@@ -785,7 +809,7 @@ public class MutateService {
     }
 
     private String mutateDataproc(String operation, String subOp, Map<String, Object> json) throws Exception {
-        String projectId = config.getProjectId();
+        String projectId = effectiveProject(json);
         if ("clusters".equals(operation) && subOp == null) {
             String clusterName = stringValue(json, "name");
             if (clusterName == null) return mapper.writeValueAsString(Map.of("error", true, "message", "name is required"));
@@ -881,7 +905,7 @@ public class MutateService {
         if (!config.isPersistenceEnabled()) {
             return mapper.writeValueAsString(Map.of("error", true, "message", "Persistence disabled"));
         }
-        String projectId = config.getProjectId();
+        String projectId = effectiveProject(json);
 
         if ("keyrings".equals(operation) && subOp == null) {
             String keyRingId = stringValue(json, "keyRingId");
@@ -1028,7 +1052,7 @@ public class MutateService {
     }
 
     private String mutateCloudSql(String operation, String subOp, Map<String, Object> json) throws Exception {
-        String projectId = config.getProjectId();
+        String projectId = effectiveProject(json);
         if ("instances".equals(operation) && subOp == null) {
             String name = stringValue(json, "name");
             String region = stringValue(json, "region", "us-central1");
@@ -1180,7 +1204,7 @@ public class MutateService {
     }
 
     private String mutateBigtableAdmin(String operation, String subOp, Map<String, Object> json) throws Exception {
-        String projectId = config.getProjectId();
+        String projectId = effectiveProject(json);
         if ("instances".equals(operation) && subOp == null) {
             String instanceId = stringValue(json, "instanceId");
             String displayName = stringValue(json, "displayName", instanceId);
@@ -1275,7 +1299,7 @@ public class MutateService {
     }
 
     private String mutateMemorystoreAdmin(String operation, String subOp, Map<String, Object> json) throws Exception {
-        String projectId = config.getProjectId();
+        String projectId = effectiveProject(json);
         if ("instances".equals(operation) && subOp == null) {
             String instanceId = stringValue(json, "instanceId");
             String displayName = stringValue(json, "displayName", instanceId);
@@ -1380,7 +1404,8 @@ public class MutateService {
             bucketBody.put("name", bucketName);
             bucketBody.put("location", location);
 
-            String projectId = config.getProjectId();
+            // Use resolved project from request (inserted by endpoint), fall back to config default
+            String projectId = json.containsKey("_projectId") ? (String) json.get("_projectId") : config.getProjectId();
             String url = gcsBase + "/storage/v1/b?project=" + projectId;
             String response = httpPostAndReturn(url, mapper.writeValueAsString(bucketBody), "application/json");
             // Track bucket→project ownership for project-level isolation
@@ -1422,6 +1447,20 @@ public class MutateService {
             logger.debug("Deleted GCS object: {}/{}", bucket, key);
             return mapper.writeValueAsString(Map.of("status", "deleted", "bucket", bucket, "key", key));
         }
+        if ("folders".equals(operation) && subOp == null) {
+            // Create folder (upload a zero-byte placeholder object ending with /)
+            String bucket = (String) json.get("bucket");
+            String prefix = (String) json.getOrDefault("prefix", "");
+            String name = (String) json.get("name");
+            String folderKey = (prefix != null && !prefix.isEmpty() ? prefix : "") + name + "/";
+
+            String url = gcsBase + "/upload/storage/v1/b/" + bucket
+                    + "/o?name=" + URLEncoder.encode(folderKey, StandardCharsets.UTF_8)
+                    + "&uploadType=media";
+            String response = httpPostAndReturn(url, "", "application/x-directory");
+            logger.debug("Created GCS folder: {}/{}", bucket, folderKey);
+            return mapper.writeValueAsString(Map.of("status", "created", "bucket", bucket, "key", folderKey));
+        }
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid GCS operation: " + operation));
     }
 
@@ -1429,7 +1468,7 @@ public class MutateService {
 
     @SuppressWarnings("unchecked")
     private String mutateSpanner(String operation, String subOp, Map<String, Object> json) throws Exception {
-        String projectId = config.getProjectId();
+        String projectId = effectiveProject(json);
 
         if ("rows".equals(operation) && subOp == null) {
             // Insert rows (insertOrUpdate mutation)
@@ -1717,7 +1756,7 @@ public class MutateService {
 
     @SuppressWarnings("unchecked")
     private String mutateBigQuery(String operation, String subOp, Map<String, Object> json) throws Exception {
-        String projectId = config.getProjectId();
+        String projectId = effectiveProject(json);
 
         if ("datasets".equals(operation) && subOp == null) {
             // Create dataset
@@ -1945,6 +1984,21 @@ public class MutateService {
             logger.debug("Executed MERGE on BigQuery {}.{}", dataset, table);
             return mapper.writeValueAsString(Map.of("status", "merged", "dataset", dataset, "table", table));
         }
+        if ("queries".equals(operation) && subOp == null) {
+            // Execute arbitrary SQL (DDL, DML, etc.) against the BigQuery emulator
+            String query = (String) json.get("query");
+            if (query == null || query.isBlank()) {
+                return mapper.writeValueAsString(Map.of("error", true, "message", "Missing query"));
+            }
+            Map<String, Object> queryBody = new LinkedHashMap<>();
+            queryBody.put("query", query);
+            queryBody.put("useLegacySql", false);
+
+            String url = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/queries";
+            String response = httpPostAndReturn(url, mapper.writeValueAsString(queryBody), "application/json");
+            logger.debug("Executed BigQuery SQL via console: {}", query.length() > 80 ? query.substring(0, 80) + "..." : query);
+            return mapper.writeValueAsString(Map.of("status", "executed", "response", response));
+        }
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid BigQuery operation: " + operation));
     }
 
@@ -1955,7 +2009,7 @@ public class MutateService {
         if (!config.isPersistenceEnabled()) {
             return mapper.writeValueAsString(Map.of("error", true, "message", "Persistence disabled"));
         }
-        String projectId = config.getProjectId();
+        String projectId = effectiveProject(json);
 
         if ("secrets".equals(operation) && subOp == null) {
             // Create secret with value
@@ -2176,7 +2230,7 @@ public class MutateService {
 
     @SuppressWarnings("unchecked")
     private String mutateFirestore(String operation, String subOp, Map<String, Object> json) throws Exception {
-        String projectId = config.getProjectId();
+        String projectId = effectiveProject(json);
 
         if ("documents".equals(operation) && subOp == null) {
             // Create/update document
@@ -2268,7 +2322,7 @@ public class MutateService {
 
     @SuppressWarnings("unchecked")
     private String mutatePubSub(String operation, String subOp, Map<String, Object> json) throws Exception {
-        String projectId = config.getProjectId();
+        String projectId = effectiveProject(json);
 
         if ("topics".equals(operation) && subOp == null) {
             // Create topic
@@ -2385,7 +2439,7 @@ public class MutateService {
             }
 
             try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
-                client.mutateRow(config.getProjectId(), instanceId, tableName, rowKey, cells);
+                client.mutateRow(effectiveProject(json), instanceId, tableName, rowKey, cells);
             }
             return mapper.writeValueAsString(Map.of("status", "created", "rowKey", rowKey));
         }
@@ -2406,7 +2460,7 @@ public class MutateService {
             }
 
             try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
-                client.deleteRow(config.getProjectId(), instanceId, tableName, rowKey);
+                client.deleteRow(effectiveProject(json), instanceId, tableName, rowKey);
             }
             return mapper.writeValueAsString(Map.of("status", "deleted", "rowKey", rowKey));
         }
@@ -2417,7 +2471,7 @@ public class MutateService {
     // ========== Cloud Tasks ==========
 
     private String mutateCloudTasks(String operation, String subOp, Map<String, Object> body) throws Exception {
-        String projectId = config.getProjectId();
+        String projectId = effectiveProject(body);
 
         if ("queues".equals(operation) && subOp == null) {
             // Create queue

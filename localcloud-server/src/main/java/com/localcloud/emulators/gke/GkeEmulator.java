@@ -72,6 +72,7 @@ public class GkeEmulator extends AbstractEmulator {
         return null;
     }
 
+    @SuppressWarnings("deprecation")
     private Cluster buildClusterProto(GkeStore.Cluster c) {
         Cluster.Builder builder = Cluster.newBuilder()
                 .setName(c.clusterId())
@@ -112,6 +113,7 @@ public class GkeEmulator extends AbstractEmulator {
 
     public class ClusterManagerServiceImpl extends ClusterManagerGrpc.ClusterManagerImplBase {
 
+        @SuppressWarnings("deprecation")
         @Override
         public void createCluster(CreateClusterRequest request, StreamObserver<Operation> responseObserver) {
             incrementRequestCount();

@@ -48,7 +48,7 @@ public class SpannerIamService implements HttpService {
         String method = matcher.group("method");
 
         // Aggregate the request to read the body, wrap in HttpResponse
-        return HttpResponse.from(req.aggregate().thenApply(aggReq -> {
+        return HttpResponse.of(req.aggregate().thenApply(aggReq -> {
             try {
                 return switch (method) {
                     case "setIamPolicy" -> echoPolicy(aggReq);

@@ -10,6 +10,9 @@ import com.google.protobuf.ByteString;
 import com.localcloud.emulators.AbstractEmulator;
 import com.localcloud.persistence.PostgresDataSource;
 
+import java.util.HashSet;
+import java.util.Set;
+
 import io.grpc.Attributes;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
@@ -31,6 +34,7 @@ public class IAMEmulator extends AbstractEmulator {
 
     private final IAMRepository repository;
     private volatile boolean logWarnings;
+    private volatile boolean permissiveIam = true;
     private final IAMService service = new IAMService();
 
     public IAMEmulator(PostgresDataSource dataSource) {
@@ -107,6 +111,28 @@ public class IAMEmulator extends AbstractEmulator {
                 logger.warn("IAM testIamPermissions: resource={} — all permissions granted (NOT enforced in LocalCloud)",
                         request.getResource());
             }
+            // Resolve permissions from granted roles
+            if (!permissiveIam) {
+                try {
+                    var policy = repository.get(request.getResource());
+                    Set<String> roles = new HashSet<>();
+                    for (var binding : policy.getBindingsList()) {
+                        roles.add(binding.getRole());
+                    }
+                    var allowedBuilder = TestIamPermissionsResponse.newBuilder();
+                    for (String permission : request.getPermissionsList()) {
+                        if (IAMRoleRegistry.hasPermission(roles, permission)) {
+                            allowedBuilder.addPermissions(permission);
+                        }
+                    }
+                    responseObserver.onNext(allowedBuilder.build());
+                    responseObserver.onCompleted();
+                    return;
+                } catch (Exception e) {
+                    // Fall through to permissive mode on error
+                }
+            }
+            // Permissive: return all permissions
             responseObserver.onNext(TestIamPermissionsResponse.newBuilder()
                     .addAllPermissions(request.getPermissionsList())
                     .build());
@@ -135,11 +161,25 @@ public class IAMEmulator extends AbstractEmulator {
         @Override public void setIamPolicy(SetIamPolicyRequest request, StreamObserver<Policy> responseObserver) {
             incrementRequestCount();
             try {
+                // Validate roles against known registry
+                var policy = request.getPolicy();
+                if (!permissiveIam) {
+                    for (var binding : policy.getBindingsList()) {
+                        if (!IAMRoleRegistry.isKnownRole(binding.getRole())) {
+                            responseObserver.onError(Status.INVALID_ARGUMENT
+                                    .withDescription("Unknown role: " + binding.getRole()
+                                            + " (use --permissive-iam to skip validation)")
+                                    .asRuntimeException());
+                            return;
+                        }
+                    }
+                }
+
                 if (logWarnings) {
                     logger.warn("IAM setIamPolicy: resource={} — stored but NOT enforced in LocalCloud",
                             request.getResource());
                 }
-                responseObserver.onNext(repository.set(request.getResource(), request.getPolicy()));
+                responseObserver.onNext(repository.set(request.getResource(), policy));
                 responseObserver.onCompleted();
             } catch (Exception e) {
                 responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());

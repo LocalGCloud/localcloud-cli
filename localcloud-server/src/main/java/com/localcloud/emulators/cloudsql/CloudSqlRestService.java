@@ -325,7 +325,21 @@ public class CloudSqlRestService {
         settings.put("dataDiskSizeGb", "10");
         settings.put("activationPolicy", "ALWAYS");
         settings.putNull("ipConfiguration");
-        settings.putNull("databaseFlags");
+        // Extract database flags from stored settings_json
+        String settingsJson = String.valueOf(row.getOrDefault("settings_json", "{}"));
+        try {
+            var settingsNode = mapper.readTree(settingsJson);
+            if (settingsNode.has("databaseFlags")) {
+                settings.set("databaseFlags", settingsNode.get("databaseFlags"));
+            } else {
+                settings.putArray("databaseFlags");
+            }
+            if (settingsNode.has("ipConfiguration")) {
+                settings.set("ipConfiguration", settingsNode.get("ipConfiguration"));
+            }
+        } catch (Exception e) {
+            settings.putArray("databaseFlags");
+        }
         settings.putNull("backupConfiguration");
         settings.putNull("maintenanceWindow");
         out.putNull("gceZone");

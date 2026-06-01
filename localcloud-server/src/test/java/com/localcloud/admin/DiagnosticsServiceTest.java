@@ -20,15 +20,13 @@ import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.config.ServiceRegistry;
 import com.localcloud.gateway.FaultInjectionRegistry;
 import com.localcloud.gateway.RequestLogger;
-import com.localcloud.licensing.LicenseTier;
-import com.localcloud.licensing.StaticLicenseTierProvider;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-class AdminApiServiceDiagnosticsTest {
+class DiagnosticsServiceTest {
 
-    private AdminApiService service;
+    private DiagnosticsService service;
     private FaultInjectionRegistry faultRegistry;
     private ServiceRequestContext ctx;
 
@@ -50,14 +48,9 @@ class AdminApiServiceDiagnosticsTest {
         });
 
         faultRegistry = new FaultInjectionRegistry();
-        service = new AdminApiService(
+        service = new DiagnosticsService(
                 config,
                 new RequestLogger(),
-                mock(ProjectService.class),
-                mock(ServiceRoutingRepository.class),
-                mock(CredentialBroker.class),
-                mock(ServiceConfigRepository.class),
-                new StaticLicenseTierProvider(LicenseTier.COMMUNITY),
                 faultRegistry);
 
         ctx = mock(ServiceRequestContext.class);

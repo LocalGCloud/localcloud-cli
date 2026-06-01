@@ -146,6 +146,7 @@ public class WorkflowsRestService {
 
     // ── Workflow CRUD endpoints ─────────────────────────────────────────────
 
+    @SuppressWarnings("unchecked")
     @Post("/projects/{project}/locations/{location}/workflows")
     public HttpResponse createWorkflow(ServiceRequestContext ctx,
                                        @Param String project,

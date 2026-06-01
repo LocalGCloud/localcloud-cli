@@ -9,6 +9,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.localcloud.persistence.PostgresDataSource;
 
 import org.slf4j.Logger;
@@ -22,6 +25,7 @@ import org.slf4j.LoggerFactory;
 public class ProjectService {
 
     private static final Logger logger = LoggerFactory.getLogger(ProjectService.class);
+    private static final ObjectMapper mapper = new ObjectMapper();
 
     private final PostgresDataSource dataSource;
 
@@ -55,7 +59,23 @@ public class ProjectService {
      * @return the created project as a map
      */
     public Map<String, Object> createProject(String projectId, String displayName) throws SQLException {
-        return createProject(projectId, displayName, null);
+        return createProject(projectId, displayName, null, null);
+    }
+
+    /**
+     * Create a new project with location and zone.
+     * Location and zone are stored in the labels JSONB field.
+     *
+     * @param projectId   the project identifier
+     * @param displayName the human-readable display name
+     * @param location    the default GCP region (e.g. "us-central1")
+     * @param zone        the default GCP zone (e.g. "us-central1-a")
+     * @return the created project as a map
+     */
+    public Map<String, Object> createProject(String projectId, String displayName,
+                                              String location, String zone) throws SQLException {
+        String labels = buildLabels(location, zone);
+        return createProject(projectId, displayName, labels);
     }
 
     /**
@@ -182,7 +202,42 @@ public class ProjectService {
         project.put("labels", labels != null ? labels : "{}");
         project.put("state", rs.getString("state"));
         project.put("created_at", rs.getTimestamp("created_at").toInstant().toString());
+        // Extract location and zone from labels for convenience
+        extractLocationZone(labels, project);
         return project;
+    }
+
+    /**
+     * Build a labels JSON string that includes location and zone.
+     */
+    private String buildLabels(String location, String zone) {
+        ObjectNode labels = mapper.createObjectNode();
+        if (location != null && !location.isBlank()) {
+            labels.put("location", location);
+        }
+        if (zone != null && !zone.isBlank()) {
+            labels.put("zone", zone);
+        }
+        return labels.toString();
+    }
+
+    /**
+     * Extract location and zone from the labels JSON string and put them
+     * as top-level keys on the project map for easy frontend access.
+     */
+    private void extractLocationZone(String labelsJson, Map<String, Object> project) {
+        if (labelsJson == null || labelsJson.isBlank() || "{}".equals(labelsJson)) return;
+        try {
+            var labels = mapper.readTree(labelsJson);
+            if (labels.has("location")) {
+                project.put("location", labels.get("location").asText());
+            }
+            if (labels.has("zone")) {
+                project.put("zone", labels.get("zone").asText());
+            }
+        } catch (JsonProcessingException e) {
+            // Ignore malformed labels
+        }
     }
 
     /**

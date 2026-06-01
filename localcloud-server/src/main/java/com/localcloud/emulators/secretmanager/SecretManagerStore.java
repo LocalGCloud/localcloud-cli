@@ -30,14 +30,22 @@ public class SecretManagerStore {
 
     // --- Secret operations ---
 
-    public void createSecret(String projectId, String secretId, String labelsJson) throws SQLException {
+    public void createSecret(String projectId, String secretId, String labelsJson,
+                             String replicationJson, java.sql.Timestamp expireAt, Long rotationPeriod) throws SQLException {
         try (Connection conn = dataSource.getConnection()) {
             try (PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO secrets (project_id, secret_id, labels, created_at) " +
-                     "VALUES (?, ?, ?, CURRENT_TIMESTAMP)")) {
+                     "INSERT INTO secrets (project_id, secret_id, labels, replication, expire_at, rotation_period, created_at) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)")) {
                 ps.setString(1, projectId);
                 ps.setString(2, secretId);
                 ps.setString(3, labelsJson != null ? labelsJson : "{}");
+                ps.setString(4, replicationJson != null ? replicationJson : "{}");
+                ps.setTimestamp(5, expireAt);
+                if (rotationPeriod != null) {
+                    ps.setLong(6, rotationPeriod);
+                } else {
+                    ps.setNull(6, java.sql.Types.BIGINT);
+                }
                 ps.executeUpdate();
                 logger.debug("Created secret: projects/{}/secrets/{}", projectId, secretId);
             }
@@ -53,13 +61,22 @@ public class SecretManagerStore {
         }
     }
 
-    public void updateSecret(String projectId, String secretId, String labelsJson) throws SQLException {
+    public void updateSecret(String projectId, String secretId, String labelsJson,
+                             String replicationJson, java.sql.Timestamp expireAt, Long rotationPeriod) throws SQLException {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "UPDATE secrets SET labels = ? WHERE project_id = ? AND secret_id = ?")) {
+                     "UPDATE secrets SET labels = ?, replication = ?, expire_at = ?, rotation_period = ? " +
+                     "WHERE project_id = ? AND secret_id = ?")) {
             ps.setString(1, labelsJson != null ? labelsJson : "{}");
-            ps.setString(2, projectId);
-            ps.setString(3, secretId);
+            ps.setString(2, replicationJson != null ? replicationJson : "{}");
+            ps.setTimestamp(3, expireAt);
+            if (rotationPeriod != null) {
+                ps.setLong(4, rotationPeriod);
+            } else {
+                ps.setNull(4, java.sql.Types.BIGINT);
+            }
+            ps.setString(5, projectId);
+            ps.setString(6, secretId);
             ps.executeUpdate();
             logger.debug("Updated secret: projects/{}/secrets/{}", projectId, secretId);
         }
@@ -68,8 +85,9 @@ public class SecretManagerStore {
     public Map<String, Object> getSecret(String projectId, String secretId) throws SQLException {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "SELECT project_id, secret_id, labels, created_at " +
-                     "FROM secrets WHERE project_id = ? AND secret_id = ?")) {
+                     "SELECT project_id, secret_id, labels, replication, expire_at, rotation_period, created_at " +
+                     "FROM secrets WHERE project_id = ? AND secret_id = ? " +
+                     "AND (expire_at IS NULL OR expire_at > NOW())")) {
             ps.setString(1, projectId);
             ps.setString(2, secretId);
             try (ResultSet rs = ps.executeQuery()) {
@@ -78,6 +96,9 @@ public class SecretManagerStore {
                     result.put("project_id", rs.getString("project_id"));
                     result.put("secret_id", rs.getString("secret_id"));
                     result.put("labels", rs.getString("labels"));
+                    result.put("replication", rs.getString("replication"));
+                    result.put("expire_at", rs.getTimestamp("expire_at"));
+                    result.put("rotation_period", rs.getObject("rotation_period") != null ? rs.getLong("rotation_period") : null);
                     result.put("created_at", rs.getTimestamp("created_at"));
                     return result;
                 }
@@ -92,8 +113,9 @@ public class SecretManagerStore {
 
     public List<Map<String, Object>> listSecrets(String projectId, int limit, int offset) throws SQLException {
         List<Map<String, Object>> secrets = new ArrayList<>();
-        String sql = "SELECT project_id, secret_id, labels, created_at " +
-                     "FROM secrets WHERE project_id = ? ORDER BY secret_id";
+        String sql = "SELECT project_id, secret_id, labels, replication, expire_at, rotation_period, created_at " +
+                     "FROM secrets WHERE project_id = ? " +
+                     "AND (expire_at IS NULL OR expire_at > NOW()) ORDER BY secret_id";
         if (limit > 0) {
             sql += " LIMIT " + limit + " OFFSET " + offset;
         }
@@ -106,6 +128,9 @@ public class SecretManagerStore {
                     result.put("project_id", rs.getString("project_id"));
                     result.put("secret_id", rs.getString("secret_id"));
                     result.put("labels", rs.getString("labels"));
+                    result.put("replication", rs.getString("replication"));
+                    result.put("expire_at", rs.getTimestamp("expire_at"));
+                    result.put("rotation_period", rs.getObject("rotation_period") != null ? rs.getLong("rotation_period") : null);
                     result.put("created_at", rs.getTimestamp("created_at"));
                     secrets.add(result);
                 }
@@ -314,6 +339,7 @@ public class SecretManagerStore {
     public void clearAll() {
         try (Connection conn = dataSource.getConnection();
              java.sql.Statement stmt = conn.createStatement()) {
+            stmt.execute("DELETE FROM secret_version_aliases");
             stmt.execute("DELETE FROM secret_versions");
             stmt.execute("DELETE FROM secrets");
             logger.info("Cleared all Secret Manager data");
@@ -336,6 +362,57 @@ public class SecretManagerStore {
             }
         } catch (SQLException e) {
             throw new RuntimeException("Failed to resolve latest version", e);
+        }
+    }
+
+    // ---- Version Alias operations ----
+
+    public void setVersionAlias(String projectId, String secretId, int versionNumber, String alias) throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            // Upsert: overwrite existing alias if it exists for this secret
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "INSERT INTO secret_version_aliases (project_id, secret_id, version_number, alias, create_time) " +
+                    "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) " +
+                    "ON CONFLICT (project_id, secret_id, alias) " +
+                    "DO UPDATE SET version_number = ?, create_time = CURRENT_TIMESTAMP")) {
+                ps.setString(1, projectId);
+                ps.setString(2, secretId);
+                ps.setInt(3, versionNumber);
+                ps.setString(4, alias);
+                ps.setInt(5, versionNumber);
+                ps.executeUpdate();
+                logger.debug("Set alias '{}' -> version {} for secret projects/{}/secrets/{}",
+                        alias, versionNumber, projectId, secretId);
+            }
+        }
+    }
+
+    public Integer resolveAlias(String projectId, String secretId, String alias) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT version_number FROM secret_version_aliases " +
+                     "WHERE project_id = ? AND secret_id = ? AND alias = ?")) {
+            ps.setString(1, projectId);
+            ps.setString(2, secretId);
+            ps.setString(3, alias);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt("version_number");
+                }
+                return null;
+            }
+        }
+    }
+
+    public void removeAlias(String projectId, String secretId, String alias) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "DELETE FROM secret_version_aliases " +
+                     "WHERE project_id = ? AND secret_id = ? AND alias = ?")) {
+            ps.setString(1, projectId);
+            ps.setString(2, secretId);
+            ps.setString(3, alias);
+            ps.executeUpdate();
         }
     }
 

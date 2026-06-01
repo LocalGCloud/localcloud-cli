@@ -147,6 +147,7 @@ class SyncCredentialRepositoryTest {
         verify(deleteStmt).executeUpdate();
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void save_upserts_replacesExisting() throws SQLException {
         // First save

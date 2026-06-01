@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -27,6 +28,8 @@ public class TaskDispatcher {
     private final CloudTasksStore store;
     private final ScheduledExecutorService scheduler;
     private final HttpClient httpClient;
+
+    private final ConcurrentHashMap<String, TokenBucket> rateLimiters = new ConcurrentHashMap<>();
 
     public TaskDispatcher(CloudTasksStore store) {
         this.store = store;
@@ -80,14 +83,36 @@ public class TaskDispatcher {
                     continue;
                 }
 
+                // Get or create rate limiter for this queue
+                TokenBucket bucket = rateLimiters.computeIfAbsent(queueName, k -> {
+                    double rate = store.getQueueMaxDispatchesPerSecond(queueName);
+                    return new TokenBucket(rate);
+                });
+
+                // Update rate if it changed in the store
+                double currentRate = store.getQueueMaxDispatchesPerSecond(queueName);
+                bucket.updateRate(currentRate);
+
                 List<CloudTasksStore.TaskEntry> tasks = store.getDispatchableTasks(queueName);
                 for (CloudTasksStore.TaskEntry task : tasks) {
+                    // Check token bucket before dispatching
+                    if (!bucket.tryConsume()) {
+                        // Bucket empty, skip remaining tasks for this queue
+                        break;
+                    }
                     dispatchTask(task);
                 }
             }
         } catch (Exception e) {
             logger.error("Error in dispatch cycle", e);
         }
+    }
+
+    /**
+     * Clean up rate limiter for a deleted queue.
+     */
+    public void removeRateLimiter(String queueName) {
+        rateLimiters.remove(queueName);
     }
 
     private void dispatchTask(CloudTasksStore.TaskEntry task) {
@@ -142,6 +167,48 @@ public class TaskDispatcher {
             }
         } catch (Exception e) {
             handleFailure(task, e.getMessage());
+        }
+    }
+
+    /**
+     * Token bucket rate limiter with nanosecond-precision refill.
+     * A rate of 0 means unlimited.
+     */
+    static class TokenBucket {
+        private double tokens;
+        private long lastRefillNanos;
+        private volatile double ratePerSecond;
+
+        TokenBucket(double ratePerSecond) {
+            this.ratePerSecond = ratePerSecond;
+            this.tokens = ratePerSecond > 0 ? ratePerSecond : Double.MAX_VALUE;
+            this.lastRefillNanos = System.nanoTime();
+        }
+
+        void updateRate(double newRate) {
+            this.ratePerSecond = newRate;
+            if (newRate <= 0) {
+                this.tokens = Double.MAX_VALUE;
+            }
+        }
+
+        synchronized boolean tryConsume() {
+            if (ratePerSecond <= 0) {
+                return true; // unlimited
+            }
+            refill();
+            if (tokens >= 1.0) {
+                tokens -= 1.0;
+                return true;
+            }
+            return false;
+        }
+
+        private void refill() {
+            long now = System.nanoTime();
+            double elapsedSeconds = (now - lastRefillNanos) / 1_000_000_000.0;
+            tokens = Math.min(ratePerSecond, tokens + elapsedSeconds * ratePerSecond);
+            lastRefillNanos = now;
         }
     }
 

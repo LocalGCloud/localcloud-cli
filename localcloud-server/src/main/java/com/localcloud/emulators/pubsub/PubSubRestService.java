@@ -39,6 +39,7 @@ public class PubSubRestService {
 
     // ==================== Topics ====================
 
+    @SuppressWarnings("unchecked")
     @Put("/projects/{project}/topics/{topic}")
     public HttpResponse createTopic(@Param String project, @Param String topic, String body) {
         if (emulator != null) emulator.incrementRequestCount();
@@ -62,6 +63,7 @@ public class PubSubRestService {
         }
     }
 
+    @SuppressWarnings("unchecked")
     @Patch("/projects/{project}/topics/{topic}")
     public HttpResponse updateTopic(@Param String project, @Param String topic, String body) {
         if (emulator != null) emulator.incrementRequestCount();
@@ -133,6 +135,7 @@ public class PubSubRestService {
 
     // ==================== Subscriptions ====================
 
+    @SuppressWarnings("unchecked")
     @Put("/projects/{project}/subscriptions/{subscription}")
     public HttpResponse createSubscription(@Param String project, @Param String subscription, String body) {
         if (emulator != null) emulator.incrementRequestCount();

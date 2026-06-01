@@ -113,9 +113,6 @@ public class KmsRestService {
             String purpose = firstNonBlank(text(root, "purpose"), "ENCRYPT_DECRYPT");
             String algorithm = root.path("versionTemplate").path("algorithm").asText("GOOGLE_SYMMETRIC_ENCRYPTION");
             String labelsJson = root.has("labels") ? mapper.writeValueAsString(root.get("labels")) : "{}";
-            if (!"ENCRYPT_DECRYPT".equals(purpose) || !"GOOGLE_SYMMETRIC_ENCRYPTION".equals(algorithm)) {
-                return error(HttpStatus.NOT_IMPLEMENTED, "Only ENCRYPT_DECRYPT with GOOGLE_SYMMETRIC_ENCRYPTION is supported in this LocalCloud KMS slice");
-            }
             store.createCryptoKey(project, location, keyRing, cryptoKeyId, purpose, algorithm, labelsJson);
             return json(HttpStatus.OK, cryptoKeyJson(project, location, keyRing, cryptoKeyId,
                     store.getCryptoKey(project, location, keyRing, cryptoKeyId)));

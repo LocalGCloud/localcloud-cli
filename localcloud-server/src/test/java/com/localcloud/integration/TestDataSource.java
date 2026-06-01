@@ -90,6 +90,9 @@ public final class TestDataSource {
                 "    project_id VARCHAR(255) NOT NULL," +
                 "    secret_id VARCHAR(255) NOT NULL," +
                 "    labels VARCHAR(4096) DEFAULT '{}'," +
+                "    replication VARCHAR(4096) DEFAULT '{}'," +
+                "    expire_at TIMESTAMP," +
+                "    rotation_period BIGINT," +
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
                 "    PRIMARY KEY (project_id, secret_id)" +
                 ")"
@@ -103,6 +106,17 @@ public final class TestDataSource {
                 "    state VARCHAR(20) DEFAULT 'ENABLED'," +
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
                 "    PRIMARY KEY (project_id, secret_id, version_number)" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS secret_version_aliases (" +
+                "    id BIGSERIAL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    secret_id VARCHAR(255) NOT NULL," +
+                "    version_number INT NOT NULL," +
+                "    alias VARCHAR(128) NOT NULL," +
+                "    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    UNIQUE (project_id, secret_id, alias)" +
                 ")"
             );
 
@@ -135,6 +149,20 @@ public final class TestDataSource {
                 "    response_count INT DEFAULT 0," +
                 "    state VARCHAR(20) DEFAULT 'PENDING'," +
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                ")"
+            );
+
+            // Cloud Logging exclusion filters
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS log_exclusion_filters (" +
+                "    id BIGSERIAL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    filter TEXT NOT NULL," +
+                "    name VARCHAR(255) NOT NULL," +
+                "    description TEXT," +
+                "    disabled BOOLEAN DEFAULT FALSE," +
+                "    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    UNIQUE (project_id, name)" +
                 ")"
             );
 
@@ -177,6 +205,71 @@ public final class TestDataSource {
                 "    value_type VARCHAR(20) DEFAULT 'DOUBLE'," +
                 "    double_value DOUBLE PRECISION DEFAULT 0," +
                 "    int_value BIGINT DEFAULT 0" +
+                ")"
+            );
+
+            // Cloud Monitoring: alert policies
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS alert_policies (" +
+                "    id BIGSERIAL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    name VARCHAR(512) NOT NULL," +
+                "    display_name VARCHAR(255)," +
+                "    conditions_json TEXT DEFAULT '[]'," +
+                "    combiner VARCHAR(32) DEFAULT 'OR'," +
+                "    notification_channels_json TEXT DEFAULT '[]'," +
+                "    enabled BOOLEAN DEFAULT TRUE," +
+                "    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    UNIQUE (project_id, name)" +
+                ")"
+            );
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS notification_channels (" +
+                "    id BIGSERIAL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    name VARCHAR(512) NOT NULL," +
+                "    type VARCHAR(64) NOT NULL," +
+                "    display_name VARCHAR(255)," +
+                "    labels_json TEXT DEFAULT '{}'," +
+                "    enabled BOOLEAN DEFAULT TRUE," +
+                "    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    UNIQUE (project_id, name)" +
+                ")"
+            );
+
+            // GKE: node pools
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS gke_node_pools (" +
+                "    id BIGSERIAL PRIMARY KEY," +
+                "    cluster_id BIGINT," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    name VARCHAR(256) NOT NULL," +
+                "    config_json TEXT DEFAULT '{}'," +
+                "    initial_node_count INT DEFAULT 1," +
+                "    locations_json TEXT DEFAULT '[]'," +
+                "    status VARCHAR(32) DEFAULT 'RUNNING'," +
+                "    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    UNIQUE (project_id, cluster_id, name)" +
+                ")"
+            );
+
+            // Cloud Run: services
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS cloudrun_services (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location VARCHAR(255) NOT NULL," +
+                "    service_id VARCHAR(255) NOT NULL," +
+                "    container_image VARCHAR(512) NOT NULL," +
+                "    container_port INT DEFAULT 8080," +
+                "    container_id VARCHAR(255)," +
+                "    host_port INT," +
+                "    uri VARCHAR(1024)," +
+                "    env_vars TEXT DEFAULT '{}'," +
+                "    revision_count INT DEFAULT 1," +
+                "    traffic_json TEXT DEFAULT '[]'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location, service_id)" +
                 ")"
             );
 
@@ -359,6 +452,9 @@ public final class TestDataSource {
                 "    state VARCHAR(32) DEFAULT 'READY'," +
                 "    host VARCHAR(255) DEFAULT 'localhost'," +
                 "    labels_json TEXT DEFAULT '{}'," +
+                "    auth_enabled BOOLEAN DEFAULT FALSE," +
+                "    auth_password VARCHAR(128)," +
+                "    persistence_mode VARCHAR(32) DEFAULT 'DISABLED'," +
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
                 "    PRIMARY KEY (project_id, instance_id)" +
                 ")"

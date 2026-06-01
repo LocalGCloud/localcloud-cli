@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.logging.v2.*;
 import com.google.protobuf.Empty;
 import com.localcloud.emulators.AbstractEmulator;
+import com.localcloud.emulators.logging.LoggingSinkRepository;
 import com.localcloud.persistence.PostgresDataSource;
 
 import io.grpc.Status;
@@ -26,12 +27,16 @@ public class LoggingEmulator extends AbstractEmulator {
 
     private final PostgresDataSource dataSource;
     private final LoggingService loggingService;
+    private final ConfigService configService;
+    private final LoggingSinkRepository sinkRepository;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public LoggingEmulator(PostgresDataSource dataSource) {
         super("logging", "Cloud Logging", 8080, "grpc", "LOGGING_EMULATOR_HOST");
         this.dataSource = dataSource;
+        this.sinkRepository = new LoggingSinkRepository(dataSource);
         this.loggingService = new LoggingService();
+        this.configService = new ConfigService();
     }
 
     @Override
@@ -53,12 +58,32 @@ public class LoggingEmulator extends AbstractEmulator {
 
     public LoggingService getLoggingService() { return loggingService; }
 
+    public ConfigService getConfigService() { return configService; }
+
     private static final java.util.Map<String, Integer> SEVERITY_ORDINALS = java.util.Map.of(
             "DEFAULT", 0, "DEBUG", 100, "INFO", 200, "NOTICE", 300,
             "WARNING", 400, "ERROR", 500, "CRITICAL", 600, "ALERT", 700
     );
     // Map.of supports max 10 entries; add EMERGENCY separately
     private static final int EMERGENCY_ORDINAL = 800;
+
+    private boolean matchesExclusionFilter(String filter, String severity, String textPayload, String resourceType) {
+        if (filter == null || filter.isEmpty()) return false;
+        if (filter.contains("severity>=") && severity != null) {
+            String sevFilter = filter.replaceAll(".*severity>=\\s*", "").trim();
+            var atOrAbove = severitiesAtOrAbove(sevFilter);
+            return atOrAbove.contains(severity);
+        }
+        if (filter.contains("resource.type") && resourceType != null) {
+            String typeFilter = filter.replaceAll(".*resource\\.type\\s*=\\s*\"([^\"]+)\".*", "$1");
+            return typeFilter.equals(resourceType);
+        }
+        if (filter.contains("textPayload:") && textPayload != null) {
+            String payloadFilter = filter.replaceAll(".*textPayload:\\s*\"([^\"]+)\".*", "$1");
+            return textPayload.contains(payloadFilter);
+        }
+        return false;
+    }
 
     private static List<String> severitiesAtOrAbove(String level) {
         int threshold = level.equals("EMERGENCY") ? EMERGENCY_ORDINAL
@@ -180,6 +205,21 @@ public class LoggingEmulator extends AbstractEmulator {
                         ps.setObject(i + 1, params.get(i));
                     }
                     java.sql.ResultSet rs = ps.executeQuery();
+
+                    // Load exclusion filters for this project
+                    List<String> exclusionFilters = new ArrayList<>();
+                    String exclusionProjectId = request.getResourceNamesCount() > 0
+                            ? request.getResourceNames(0).split("/")[1] : "";
+                    if (!exclusionProjectId.isEmpty()) {
+                        try (PreparedStatement efPs = conn.prepareStatement(
+                                "SELECT filter FROM log_exclusion_filters WHERE project_id = ? AND disabled = FALSE")) {
+                            efPs.setString(1, exclusionProjectId);
+                            try (var efRs = efPs.executeQuery()) {
+                                while (efRs.next()) exclusionFilters.add(efRs.getString("filter"));
+                            }
+                        }
+                    }
+
                     ListLogEntriesResponse.Builder resp = ListLogEntriesResponse.newBuilder();
                     while (rs.next()) {
                         LogEntry.Builder entry = LogEntry.newBuilder()
@@ -195,7 +235,19 @@ public class LoggingEmulator extends AbstractEmulator {
                                 entry.setSeverity(com.google.logging.type.LogSeverity.valueOf(sev));
                             } catch (IllegalArgumentException ignored) {}
                         }
-                        resp.addEntries(entry.build());
+
+                        // Apply exclusion filters
+                        boolean excluded = false;
+                        String textPayload = entry.getTextPayload();
+                        for (String ef : exclusionFilters) {
+                            if (matchesExclusionFilter(ef, sev, textPayload, rs.getString("resource_type"))) {
+                                excluded = true;
+                                break;
+                            }
+                        }
+                        if (!excluded) {
+                            resp.addEntries(entry.build());
+                        }
                     }
                     responseObserver.onNext(resp.build());
                     responseObserver.onCompleted();
@@ -247,6 +299,171 @@ public class LoggingEmulator extends AbstractEmulator {
             } catch (SQLException e) {
                 responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
             }
+        }
+    }
+
+    /**
+     * gRPC ConfigServiceV2 implementation for logging sink CRUD.
+     * Delegates to {@link LoggingSinkRepository} for persistence.
+     */
+    public class ConfigService extends ConfigServiceV2Grpc.ConfigServiceV2ImplBase {
+
+        @Override
+        public void createSink(CreateSinkRequest request, StreamObserver<LogSink> responseObserver) {
+            incrementRequestCount();
+            try {
+                LogSink sink = request.getSink();
+                // parent: "projects/{project}" or "projects/{project}/logs/{log}"
+                String parent = request.getParent();
+                String projectId = extractProjectId(parent);
+
+                String result = sinkRepository.create(projectId, sink.getName(), sink.getDestination());
+                LogSink created = parseSinkJson(result);
+                responseObserver.onNext(created);
+                responseObserver.onCompleted();
+            } catch (Exception e) {
+                logger.error("createSink failed", e);
+                responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
+            }
+        }
+
+        @Override
+        public void getSink(GetSinkRequest request, StreamObserver<LogSink> responseObserver) {
+            incrementRequestCount();
+            try {
+                // sinkName: "projects/{project}/sinks/{sink}"
+                String fullSinkName = request.getSinkName();
+                String[] parts = fullSinkName.split("/");
+                if (parts.length < 4) {
+                    responseObserver.onError(Status.INVALID_ARGUMENT
+                            .withDescription("Invalid sink name: " + fullSinkName)
+                            .asRuntimeException());
+                    return;
+                }
+                String projectId = parts[1];
+                String sinkId = parts[3];
+
+                String result = sinkRepository.find(projectId, sinkId);
+                if (result == null) {
+                    responseObserver.onError(Status.NOT_FOUND
+                            .withDescription("Sink not found: " + fullSinkName)
+                            .asRuntimeException());
+                    return;
+                }
+
+                LogSink logSink = parseSinkJson(result);
+                responseObserver.onNext(logSink);
+                responseObserver.onCompleted();
+            } catch (Exception e) {
+                logger.error("getSink failed", e);
+                responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
+            }
+        }
+
+        @Override
+        public void updateSink(UpdateSinkRequest request, StreamObserver<LogSink> responseObserver) {
+            incrementRequestCount();
+            try {
+                LogSink sink = request.getSink();
+                // sinkName: "projects/{project}/sinks/{sink}"
+                String sinkName = request.getSinkName();
+                String[] parts = sinkName.split("/");
+                if (parts.length < 4) {
+                    responseObserver.onError(Status.INVALID_ARGUMENT
+                            .withDescription("Invalid sink name: " + sinkName)
+                            .asRuntimeException());
+                    return;
+                }
+                String projectId = parts[1];
+                String sinkId = parts[3];
+
+                String destination = sink.getDestination();
+                String result = sinkRepository.create(projectId, sinkId,
+                        destination.isEmpty() ? null : destination);
+                if (result == null) {
+                    responseObserver.onError(Status.NOT_FOUND
+                            .withDescription("Sink not found: " + sinkName)
+                            .asRuntimeException());
+                    return;
+                }
+
+                LogSink updatedSink = parseSinkJson(result);
+                responseObserver.onNext(updatedSink);
+                responseObserver.onCompleted();
+            } catch (Exception e) {
+                logger.error("updateSink failed", e);
+                responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
+            }
+        }
+
+        @Override
+        public void deleteSink(DeleteSinkRequest request, StreamObserver<Empty> responseObserver) {
+            incrementRequestCount();
+            try {
+                // sinkName: "projects/{project}/sinks/{sink}"
+                String sinkName = request.getSinkName();
+                String[] parts = sinkName.split("/");
+                if (parts.length < 4) {
+                    responseObserver.onError(Status.INVALID_ARGUMENT
+                            .withDescription("Invalid sink name: " + sinkName)
+                            .asRuntimeException());
+                    return;
+                }
+                String projectId = parts[1];
+                String sinkId = parts[3];
+
+                boolean deleted = sinkRepository.delete(projectId, sinkId);
+                if (!deleted) {
+                    responseObserver.onError(Status.NOT_FOUND
+                            .withDescription("Sink not found: " + sinkName)
+                            .asRuntimeException());
+                    return;
+                }
+
+                responseObserver.onNext(Empty.getDefaultInstance());
+                responseObserver.onCompleted();
+            } catch (Exception e) {
+                logger.error("deleteSink failed", e);
+                responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
+            }
+        }
+
+        @Override
+        public void listSinks(ListSinksRequest request, StreamObserver<ListSinksResponse> responseObserver) {
+            incrementRequestCount();
+            try {
+                // parent: "projects/{project}"
+                String projectId = extractProjectId(request.getParent());
+                List<String> results = sinkRepository.list(projectId);
+
+                ListSinksResponse.Builder builder = ListSinksResponse.newBuilder();
+                for (String json : results) {
+                    builder.addSinks(parseSinkJson(json));
+                }
+                responseObserver.onNext(builder.build());
+                responseObserver.onCompleted();
+            } catch (Exception e) {
+                logger.error("listSinks failed", e);
+                responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
+            }
+        }
+
+        private String extractProjectId(String parent) {
+            if (parent == null || parent.isEmpty()) return "local-project";
+            if (parent.startsWith("projects/")) {
+                String[] parts = parent.split("/");
+                if (parts.length >= 2) return parts[1];
+            }
+            return "local-project";
+        }
+
+        private LogSink parseSinkJson(String json) throws Exception {
+            com.fasterxml.jackson.databind.JsonNode node = mapper.readTree(json);
+            LogSink.Builder builder = LogSink.newBuilder();
+            if (node.has("name")) builder.setName(node.get("name").asText());
+            if (node.has("destination")) builder.setDestination(node.get("destination").asText());
+            if (node.has("writerIdentity")) builder.setWriterIdentity(node.get("writerIdentity").asText());
+            return builder.build();
         }
     }
 }

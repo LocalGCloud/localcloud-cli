@@ -201,7 +201,7 @@ public class GraphQLGateway {
 
         GraphQLSchema schema = generator.makeExecutableSchema(typeDefs, wiring);
         return GraphqlService.builder()
-                .schema(schema)
+                .graphql(GraphQL.newGraphQL(schema).build())
                 .useBlockingTaskExecutor(true)
                 .build();
     }
@@ -212,6 +212,7 @@ public class GraphQLGateway {
 
     // ─── Spanner DataFetchers ───────────────────────────────────────────
 
+    @SuppressWarnings("unchecked")
     private List<Map<String, Object>> fetchSpannerInstances() {
         try {
             String url = spannerBase + "/v1/projects/" + config.getProjectId() + "/instances";
@@ -236,6 +237,7 @@ public class GraphQLGateway {
         }
     }
 
+    @SuppressWarnings("unchecked")
     private int countDatabases(String instance) {
         try {
             String url = spannerBase + "/v1/projects/" + config.getProjectId() + "/instances/" + instance + "/databases";
@@ -272,6 +274,7 @@ public class GraphQLGateway {
         }
     }
 
+    @SuppressWarnings("unchecked")
     private int countTables(String instance, String database) {
         try {
             String url = spannerBase + "/v1/projects/" + config.getProjectId() + "/instances/" + instance

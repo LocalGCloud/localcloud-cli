@@ -2,6 +2,7 @@ package com.localcloud;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import com.linecorp.armeria.common.HttpResponse;
@@ -15,7 +16,12 @@ import com.linecorp.armeria.server.Server;
 import com.linecorp.armeria.server.ServerBuilder;
 import com.linecorp.armeria.server.file.FileService;
 import com.linecorp.armeria.server.grpc.GrpcService;
-import com.localcloud.admin.AdminApiService;
+import com.linecorp.armeria.server.docs.DocService;
+import com.linecorp.armeria.server.logging.AccessLogWriter;
+import com.localcloud.admin.EnvService;
+import com.localcloud.admin.DiagnosticsService;
+import com.localcloud.admin.ProjectsApiService;
+import com.localcloud.admin.ServicesConfigService;
 import com.localcloud.admin.BrowseService;
 import com.localcloud.admin.CredentialBroker;
 import com.localcloud.admin.ExportService;
@@ -32,39 +38,32 @@ import com.localcloud.admin.TelemetryService;
 import com.localcloud.admin.ServiceRoutingRepository;
 import com.localcloud.admin.UsageMetricsRepository;
 import com.localcloud.config.LocalCloudConfig;
-import com.localcloud.emulators.secretmanager.SecretManagerEmulator;
-import com.localcloud.emulators.cloudtasks.CloudTasksEmulator;
-import com.localcloud.emulators.scheduler.CloudSchedulerEmulator;
-import com.localcloud.emulators.functions.CloudFunctionsEmulator;
-import com.localcloud.emulators.alloydb.AlloyDBEmulator;
-import com.localcloud.emulators.dataproc.DataprocEmulator;
-import com.localcloud.emulators.iam.IAMEmulator;
+import com.localcloud.emulators.common.ServiceRegistrar;
+import com.localcloud.emulators.common.ServiceRegistrationContext;
 import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 import com.localcloud.emulators.iam.IAMRepository;
-import com.localcloud.emulators.logging.LoggingEmulator;
-import com.localcloud.emulators.monitoring.MonitoringEmulator;
-import com.localcloud.emulators.compute.ComputeEmulator;
-import com.localcloud.emulators.cloudrun.CloudRunEmulator;
-import com.localcloud.emulators.gke.GkeEmulator;
-import com.localcloud.emulators.gke.K3dManager;
-import com.localcloud.emulators.cloudsql.CloudSqlEmulator;
-import com.localcloud.emulators.bigtable.BigtableEmulator;
-import com.localcloud.emulators.memorystore.MemorystoreEmulator;
-import com.localcloud.emulators.kms.KmsEmulator;
-import com.localcloud.emulators.vertexai.VertexAiEmulator;
-import com.localcloud.emulators.workflows.WorkflowsCallbackService;
-import com.localcloud.emulators.workflows.WorkflowsEmulator;
-import com.localcloud.emulators.workflows.WorkflowEnvVarsRepository;
-import com.localcloud.emulators.workflows.WorkflowEnvVarsService;
-import com.localcloud.emulators.workflows.WorkflowConnectorService;
-import com.localcloud.emulators.workflows.WorkflowsGrpcServiceImpl;
-import com.localcloud.emulators.workflows.ExecutionsGrpcServiceImpl;
-import com.localcloud.emulators.workflows.WorkflowsRestService;
-import com.localcloud.emulators.pubsub.PubSubRestService;
-import com.localcloud.emulators.pubsub.PubSubStore;
-import com.localcloud.emulators.secretmanager.SecretManagerRestService;
-import com.localcloud.emulators.cloudtasks.CloudTasksRestService;
-import com.localcloud.emulators.cloudresourcemanager.CloudResourceManagerRestService;
+import com.localcloud.emulators.cloudsql.CloudSqlRegistrar;
+import com.localcloud.emulators.bigtable.BigtableRegistrar;
+import com.localcloud.emulators.memorystore.MemorystoreRegistrar;
+import com.localcloud.emulators.pubsub.PubSubRestRegistrar;
+import com.localcloud.emulators.secretmanager.SecretManagerRegistrar;
+import com.localcloud.emulators.cloudtasks.CloudTasksRegistrar;
+import com.localcloud.emulators.scheduler.CloudSchedulerRegistrar;
+import com.localcloud.emulators.functions.CloudFunctionsRegistrar;
+import com.localcloud.emulators.alloydb.AlloyDBRegistrar;
+import com.localcloud.emulators.dataproc.DataprocRegistrar;
+import com.localcloud.emulators.iam.IAMRegistrar;
+import com.localcloud.emulators.logging.LoggingRegistrar;
+import com.localcloud.emulators.monitoring.MonitoringRegistrar;
+import com.localcloud.emulators.compute.ComputeRegistrar;
+import com.localcloud.emulators.cloudrun.CloudRunRegistrar;
+import com.localcloud.emulators.gke.GKERegistrar;
+import com.localcloud.emulators.vertexai.VertexAIRegistrar;
+import com.localcloud.emulators.kms.KMSRegistrar;
+import com.localcloud.emulators.workflows.WorkflowsRegistrar;
+import com.localcloud.emulators.cloudresourcemanager.CloudResourceManagerRegistrar;
+import com.localcloud.emulators.serviceusage.ServiceUsageRegistrar;
+import com.localcloud.emulators.cloudbilling.CloudBillingRegistrar;
 import com.localcloud.emulators.oauth2.OAuth2RestService;
 import com.localcloud.docker.ContainerManager;
 import com.localcloud.docker.DockerClientProvider;
@@ -78,6 +77,7 @@ import com.localcloud.gateway.ServiceGatingDecorator;
 import com.localcloud.gateway.ProcessHealthChecker;
 import com.localcloud.gateway.RequestLogger;
 import com.localcloud.gateway.SpannerIamService;
+import com.localcloud.persistence.FlywayMigrationRunner;
 import com.localcloud.persistence.PostgresDataSource;
 import com.localcloud.persistence.SchemaManager;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
@@ -113,7 +113,10 @@ public class LocalCloudApplication {
     private final ProcessHealthChecker processHealthChecker;
     private final HealthCheckService healthCheckService;
     private final ProjectService projectService;
-    private AdminApiService adminApiService;
+    private EnvService envService;
+    private DiagnosticsService diagnosticsService;
+    private ProjectsApiService projectsApiService;
+    private ServicesConfigService servicesConfigService;
     private final ServiceConfigRepository serviceConfigRepository;
     private final TelemetryService telemetryService;
     private final BrowseService browseService;
@@ -123,14 +126,12 @@ public class LocalCloudApplication {
     private final CredentialBroker credentialBroker;
     private final QueryService queryService;
     private final QueryHistoryRepository queryHistoryRepo;
-    private CloudSqlEmulator cloudSqlEmulator;
-    private BigtableEmulator bigtableEmulator;
-    private MemorystoreEmulator memorystoreEmulator;
     private IamMiddleware iamMiddleware;
     private Server server;
     private final IAMPolicyRestHandler iamPolicyRestHandler;
+    private final List<ServiceRegistrar> serviceRegistrars;
 
-    // Stored for deferred AdminApiService construction after license validation
+    // Stored for deferred admin API service construction after license validation
     private final ServiceRoutingRepository routingRepository;
 
     public LocalCloudApplication(LocalCloudConfig config) {
@@ -157,9 +158,31 @@ public class LocalCloudApplication {
         this.exportService = new ExportService(config, dataSource, config.getServiceRegistry());
         this.queryService = new QueryService(config, dataSource, config.getServiceRegistry(), usageMetrics, queryHistoryRepo);
         this.iamPolicyRestHandler = new IAMPolicyRestHandler(new IAMRepository(dataSource));
-        this.cloudSqlEmulator = new CloudSqlEmulator(dataSource, config.getGatewayPort(), iamPolicyRestHandler);
-        this.bigtableEmulator = new BigtableEmulator(dataSource, config.getGatewayPort(), iamPolicyRestHandler);
-        this.memorystoreEmulator = new MemorystoreEmulator(dataSource, config.getGatewayPort(), iamPolicyRestHandler);
+
+        this.serviceRegistrars = List.of(
+                new CloudSqlRegistrar(),
+                new BigtableRegistrar(),
+                new MemorystoreRegistrar(),
+                new PubSubRestRegistrar(),
+                new SecretManagerRegistrar(),
+                new CloudTasksRegistrar(),
+                new CloudSchedulerRegistrar(),
+                new CloudFunctionsRegistrar(),
+                new AlloyDBRegistrar(),
+                new DataprocRegistrar(),
+                new IAMRegistrar(),
+                new LoggingRegistrar(),
+                new MonitoringRegistrar(),
+                new ComputeRegistrar(),
+                new CloudRunRegistrar(),
+                new GKERegistrar(),
+                new VertexAIRegistrar(),
+                new KMSRegistrar(),
+                new WorkflowsRegistrar(),
+                new CloudResourceManagerRegistrar(),
+                new ServiceUsageRegistrar(),
+                new CloudBillingRegistrar()
+        );
     }
 
     /**
@@ -171,7 +194,14 @@ public class LocalCloudApplication {
             Files.createDirectories(config.getDataDir());
         }
 
-        // Initialize database schema
+        // Run Flyway migrations first (establishes flyway_schema_history, applies new migrations)
+        try {
+            new FlywayMigrationRunner(dataSource.getDataSource()).migrate();
+        } catch (Exception e) {
+            logger.warn("Flyway migration skipped: {}", e.getMessage());
+        }
+
+        // Initialize database schema (base tables, backward compatible with Flyway)
         try {
             schemaManager.initialize(config.getProjectId());
         } catch (Exception e) {
@@ -225,10 +255,13 @@ public class LocalCloudApplication {
         logger.info("License: tier={}, email={}, device={}", licenseResult.tier(), licenseResult.email(),
                 licenseManager.getDeviceId().substring(0, 8) + "...");
 
-        // Create tier provider and AdminApiService now that the license tier is known
+        // Create tier provider and admin API services now that the license tier is known
         LicenseTier currentTier = licenseResult.tier() != null ? licenseResult.tier() : LicenseTier.COMMUNITY;
         LicenseTierProvider tierProvider = new StaticLicenseTierProvider(currentTier);
-        this.adminApiService = new AdminApiService(config, requestLogger, projectService,
+        this.envService = new EnvService(config);
+        this.diagnosticsService = new DiagnosticsService(config, requestLogger, faultInjectionRegistry);
+        this.projectsApiService = new ProjectsApiService(config, projectService);
+        this.servicesConfigService = new ServicesConfigService(config, projectService,
                 routingRepository, credentialBroker, serviceConfigRepository, tierProvider, faultInjectionRegistry);
 
         // Apply tier-based service gating using minTier from services.yaml
@@ -246,6 +279,9 @@ public class LocalCloudApplication {
         // Build Armeria server
         ServerBuilder sb = Server.builder();
         sb.http(config.getGatewayPort());
+
+        // Access logging — structured request logs for debugging
+        sb.accessLogWriter(AccessLogWriter.combined(), true);
 
         // Load console SPA HTML early so we can use it in the routing decorator
         Path consoleDist = Path.of("/opt/localcloud/console/dist");
@@ -296,7 +332,10 @@ public class LocalCloudApplication {
 
         // Register developer-facing admin services at root-level paths.
         sb.annotatedService("/", healthCheckService);
-        sb.annotatedService("/", adminApiService);
+        sb.annotatedService("/", envService);
+        sb.annotatedService("/", diagnosticsService);
+        sb.annotatedService("/", projectsApiService);
+        sb.annotatedService("/", servicesConfigService);
         sb.annotatedService("/browse", browseService);
         sb.annotatedService("/mutate", mutateService);
         sb.annotatedService("/", seedService);
@@ -305,95 +344,6 @@ public class LocalCloudApplication {
         sb.annotatedService("/", new SnapshotService(config, exportService, seedService));
         sb.annotatedService("/", new FaultInjectionService(faultInjectionRegistry));
         sb.annotatedService("/computeMetadata/v1", new MetadataServerService(config));
-
-        // Cloud SQL Admin API facade (REST)
-        if (config.isServiceEnabled("cloudsql")) {
-            cloudSqlEmulator.start();
-            sb.annotatedService("/sql/v1", cloudSqlEmulator.getRestService());
-            sb.annotatedService("/sql/v1beta4", cloudSqlEmulator.getRestService());
-            sb.annotatedService("/sqladmin/v1", cloudSqlEmulator.getRestService());
-            sb.annotatedService("/sqladmin/v1beta4", cloudSqlEmulator.getRestService());
-            // The Terraform provider constructs database paths without the version prefix
-            // (e.g., POST /projects/.../instances/.../databases instead of /sql/v1beta4/projects/...)
-            sb.annotatedService("/", cloudSqlEmulator.getRestService());
-            seedService.setCloudSqlEmulator(cloudSqlEmulator);
-            mutateService.setCloudSqlEmulator(cloudSqlEmulator);
-            logger.info("Cloud SQL Admin API facade registered at /sql/v1, /sql/v1beta4, /sqladmin/v1, /sqladmin/v1beta4, /");
-        }
-
-        // Bigtable Admin API facade (REST)
-        if (config.isServiceEnabled("bigtable")) {
-            bigtableEmulator.start();
-            // Console/browse paths
-            sb.annotatedService("/bigtable/admin/v2", bigtableEmulator.getAdminService());
-            // Terraform provider path: GOOGLE_BIGTABLE_CUSTOM_ENDPOINT replaces
-            // bigtableadmin.googleapis.com base → hits /v2/projects/.../instances
-            sb.annotatedService("/v2", bigtableEmulator.getAdminService());
-            seedService.setBigtableEmulator(bigtableEmulator);
-            mutateService.setBigtableEmulator(bigtableEmulator);
-            logger.info("Bigtable Admin API facade registered at /bigtable/admin/v2 and /v2");
-
-            // Manual route for modifyColumnFamilies — Armeria's annotation parser treats ':'
-            // as a path-parameter regex delimiter, so {table}:modifyColumnFamilies is invalid.
-            sb.service(
-                Route.builder()
-                    .methods(HttpMethod.POST)
-                    .path("regex:^/bigtable/admin/v2/projects/(?<project>[^/]+)/instances/(?<instance>[^/]+)/tables/(?<table>[^/]+):modifyColumnFamilies$")
-                    .build(),
-                (ctx, req) -> {
-                    var aggregated = req.aggregate().join();
-                    return bigtableEmulator.getAdminService().modifyColumnFamilies(
-                        ctx.pathParam("project"), ctx.pathParam("instance"), ctx.pathParam("table"),
-                        aggregated.contentUtf8());
-                });
-            // Same route for the /v2 prefix used by Terraform provider
-            sb.service(
-                Route.builder()
-                    .methods(HttpMethod.POST)
-                    .path("regex:^/v2/projects/(?<project>[^/]+)/instances/(?<instance>[^/]+)/tables/(?<table>[^/]+):modifyColumnFamilies$")
-                    .build(),
-                (ctx, req) -> {
-                    var aggregated = req.aggregate().join();
-                    return bigtableEmulator.getAdminService().modifyColumnFamilies(
-                        ctx.pathParam("project"), ctx.pathParam("instance"), ctx.pathParam("table"),
-                        aggregated.contentUtf8());
-                });
-            logger.info("Bigtable modifyColumnFamilies routes registered");
-        }
-
-        // Memorystore Admin API facade (REST)
-        if (config.isServiceEnabled("memorystore")) {
-            memorystoreEmulator.start();
-            sb.annotatedService("/redis/v1", memorystoreEmulator.getAdminService());
-            seedService.setMemorystoreEmulator(memorystoreEmulator);
-            mutateService.setMemorystoreEmulator(memorystoreEmulator);
-            logger.info("Memorystore Admin API facade registered at /redis/v1");
-        }
-
-        // Pub/Sub Admin API facade (REST) — Terraform uses REST admin API, but the
-        // external Pub/Sub emulator (port 8085) only serves gRPC data-plane.
-        // This REST service handles topic and subscription CRUD via PostgreSQL.
-        if (config.isServiceEnabled("pubsub")) {
-            var pubsubStore = new PubSubStore(dataSource.getDataSource());
-            var pubsubRestService = new PubSubRestService(pubsubStore);
-            sb.annotatedService("/v1", pubsubRestService);
-            // Also register at root — the Google Pub/Sub REST client sends paths
-            // without the /v1/ version prefix (e.g., /projects/.../topics/...).
-            sb.annotatedService("/", pubsubRestService);
-            logger.info("Pub/Sub Admin API REST facade registered at /v1 and /");
-        }
-
-        // =============================================================================
-        // Register facade gRPC services (backed by PostgreSQL, running in-process).
-        // Enable HTTP/JSON transcoding so gRPC services are also accessible via REST
-        // (uses google.api.http annotations from proto files — enables gcloud CLI support).
-        //
-        // DUAL REGISTRATION: Secret Manager and Cloud Tasks register both gRPC (here)
-        // and explicit REST annotated services. The explicit REST handlers handle
-        // Terraform-compatible CRUD operations. gRPC transcoding handles remaining
-        // operations (e.g. secret versions, task operations) that the REST services
-        // don't explicitly cover.
-        // =============================================================================
 
         // Infrastructure services (Compute, Cloud Run, GKE) require Docker socket
         ContainerManager containerManager = null;
@@ -411,444 +361,22 @@ public class LocalCloudApplication {
 
         var grpcBuilder = GrpcService.builder()
                 .enableHttpJsonTranscoding(true);
-        boolean hasGrpcServices = true;
-        grpcBuilder.addService(new com.localcloud.gateway.OperationsGrpcService());
+        boolean hasGrpcServices = true; // OperationsGrpcService always registered
 
-        // Service Usage API endpoints — registered as manual regex routes to avoid
-        // prefix collisions with SecretManager and CRM on the shared /v1 path.
-        // (Armeria can route annotated services on the same prefix incorrectly.)
-        if (config.isServiceEnabled("serviceusage")) {
-            var suService = new com.localcloud.emulators.serviceusage.ServiceUsageRestService();
-            sb.service(Route.builder().methods(HttpMethod.GET)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/services/(?<service>[^/]+)$")
-                    .build(), (ctx, req) ->
-                            suService.getService(ctx.pathParam("project"), ctx.pathParam("service")));
-            sb.service(Route.builder().methods(HttpMethod.GET)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/services$")
-                    .build(), (ctx, req) -> suService.listServices(ctx.pathParam("project")));
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/services/(?<service>[^:]+):enable$")
-                    .build(), (ctx, req) -> suService.enableService(ctx.pathParam("project"), ctx.pathParam("service")));
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/services:batchEnable$")
-                    .build(), (ctx, req) -> {
-                        var agg = req.aggregate().join();
-                        return suService.batchEnableServices(ctx.pathParam("project"), agg.contentUtf8());
-                    });
-            logger.info("Service Usage API endpoints registered via regex routes on /v1");
-        }
+        // Build registration context with resolved ContainerManager and ApiGateway
+        var regCtx = new ServiceRegistrationContext(
+                config, dataSource, seedService, mutateService, credentialBroker,
+                containerManager, projectService, iamPolicyRestHandler, gateway);
 
-        // Cloud Billing API endpoints — manual regex routes (same /v1 prefix safety).
-        if (config.isServiceEnabled("cloudbilling")) {
-            var cbService = new com.localcloud.emulators.cloudbilling.CloudBillingRestService();
-            sb.service(Route.builder().methods(HttpMethod.GET)
-                    .path("regex:^/v1/projects/(?<projectId>[^/]+)/billingInfo$")
-                    .build(), (ctx, req) ->
-                            cbService.getBillingInfo(ctx.pathParam("projectId")));
-            sb.service(Route.builder().methods(HttpMethod.PUT)
-                    .path("regex:^/v1/projects/(?<projectId>[^/]+)/billingInfo$")
-                    .build(), (ctx, req) -> {
-                        var agg = req.aggregate().join();
-                        return cbService.updateBillingInfo(ctx.pathParam("projectId"), agg.contentUtf8());
-                    });
-            sb.service(Route.builder().methods(HttpMethod.GET)
-                    .path("regex:^/v1/billingAccounts$")
-                    .build(), (ctx, req) -> cbService.listBillingAccounts());
-            sb.service(Route.builder().methods(HttpMethod.GET)
-                    .path("regex:^/v1/billingAccounts/(?<accountName>[^/]+)/projects$")
-                    .build(), (ctx, req) ->
-                            cbService.listProjectBillingInfo(ctx.pathParam("accountName")));
-            logger.info("Cloud Billing API endpoints registered via regex routes on /v1");
-        }
-
-        // Secret Manager: gRPC + explicit REST (Terraform compatibility)
-        if (config.isServiceEnabled("secretmanager")) {
-            SecretManagerEmulator secretManagerEmulator = new SecretManagerEmulator(dataSource);
-            secretManagerEmulator.start();
-            grpcBuilder.addService(secretManagerEmulator.getServiceImpl());
-            gateway.registerGrpcEmulator(secretManagerEmulator, secretManagerEmulator.getServiceImpl());
-            sb.annotatedService("/v1", new SecretManagerRestService(
-                    secretManagerEmulator.getStore(), secretManagerEmulator, iamPolicyRestHandler));
-            hasGrpcServices = true;
-            logger.info("Secret Manager facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        // Cloud Tasks: gRPC + explicit REST (Terraform compatibility)
-        if (config.isServiceEnabled("cloudtasks")) {
-            CloudTasksEmulator cloudTasksEmulator = new CloudTasksEmulator(dataSource);
-            cloudTasksEmulator.start();
-            grpcBuilder.addService(cloudTasksEmulator.getServiceImpl());
-            gateway.registerGrpcEmulator(cloudTasksEmulator, cloudTasksEmulator.getServiceImpl());
-            sb.annotatedService("/v2", new CloudTasksRestService(
-                    cloudTasksEmulator.getStore(), cloudTasksEmulator, iamPolicyRestHandler));
-            hasGrpcServices = true;
-            logger.info("Cloud Tasks facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        // Cloud Scheduler: gRPC + explicit REST (Terraform compatibility)
-        if (config.isServiceEnabled("cloudscheduler")) {
-            CloudSchedulerEmulator schedulerEmulator = new CloudSchedulerEmulator(dataSource);
-            schedulerEmulator.start();
-            grpcBuilder.addService(schedulerEmulator.getServiceImpl());
-            gateway.registerGrpcEmulator(schedulerEmulator, schedulerEmulator.getServiceImpl());
-            sb.annotatedService("/v1", schedulerEmulator.getRestService());
-            // Regex route to intercept before gRPC transcoding
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/jobs$")
-                    .build(), (ctx, req) -> {
-                        var agg = req.aggregate().join();
-                        return schedulerEmulator.getRestService().createJob(
-                                ctx.pathParam("project"), ctx.pathParam("location"), agg.contentUtf8());
-                    });
-            sb.service(Route.builder().methods(HttpMethod.GET)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/jobs/(?<job>[^/]+)$")
-                    .build(), (ctx, req) ->
-                            schedulerEmulator.getRestService().getJob(ctx.pathParam("project"),
-                                    ctx.pathParam("location"), ctx.pathParam("job")));
-            sb.service(Route.builder().methods(HttpMethod.DELETE)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/jobs/(?<job>[^/]+)$")
-                    .build(), (ctx, req) ->
-                            schedulerEmulator.getRestService().deleteJob(ctx.pathParam("project"),
-                                    ctx.pathParam("location"), ctx.pathParam("job")));
-            seedService.setCloudSchedulerEmulator(schedulerEmulator);
-            hasGrpcServices = true;
-            logger.info("Cloud Scheduler facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        // Cloud Functions (2nd gen): REST only (Terraform compatibility)
-        // Note: gRPC service is NOT registered — Terraform provider uses gRPC protocol
-        // which bypasses our REST handlers and triggers SDK credential validation.
-        // By providing only REST handlers, Terraform falls back to REST API calls.
-        if (config.isServiceEnabled("cloudfunctions")) {
-            CloudFunctionsEmulator functionsEmulator = new CloudFunctionsEmulator(dataSource);
-            functionsEmulator.start();
-            grpcBuilder.addService(functionsEmulator.getServiceImpl());
-            gateway.registerGrpcEmulator(functionsEmulator, functionsEmulator.getServiceImpl());
-            sb.annotatedService("/v1", functionsEmulator.getRestService());
-            // Cloud Functions 2nd gen API uses /v2 prefix. Register REST handler
-            // via explicit regex routes to intercept before gRPC HTTP/2 handler.
-            sb.annotatedService("/v2", functionsEmulator.getRestService());
-            // Also intercept /v2 HTTPS paths to prevent gRPC 401 from blocking REST calls
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v2/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/functions$")
-                    .build(), (ctx, req) -> {
-                        var agg = req.aggregate().join();
-                        return functionsEmulator.getRestService().createFunction(ctx,
-                                ctx.pathParam("project"),
-                                ctx.pathParam("location"), agg.contentUtf8());
-                    });
-            sb.service(Route.builder().methods(HttpMethod.GET)
-                    .path("regex:^/v2/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/functions/(?<function>[^/]+)$")
-                    .build(), (ctx, req) ->
-                            functionsEmulator.getRestService().getFunction(ctx.pathParam("project"),
-                                    ctx.pathParam("location"), ctx.pathParam("function")));
-            sb.service(Route.builder().methods(HttpMethod.DELETE)
-                    .path("regex:^/v2/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/functions/(?<function>[^/]+)$")
-                    .build(), (ctx, req) ->
-                            functionsEmulator.getRestService().deleteFunction(ctx.pathParam("project"),
-                                    ctx.pathParam("location"), ctx.pathParam("function")));
-            seedService.setCloudFunctionsEmulator(functionsEmulator);
-            hasGrpcServices = true;
-            logger.info("Cloud Functions facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        // AlloyDB: gRPC + explicit REST (Terraform compatibility)
-        if (config.isServiceEnabled("alloydb")) {
-            AlloyDBEmulator alloyDBEmulator = new AlloyDBEmulator(dataSource);
-            alloyDBEmulator.start();
-            grpcBuilder.addService(alloyDBEmulator.getServiceImpl());
-            gateway.registerGrpcEmulator(alloyDBEmulator, alloyDBEmulator.getServiceImpl());
-            // Explicit REST handler — gRPC transcoding doesn't map Terraform provider v6 paths
-            sb.annotatedService("/v1", alloyDBEmulator.getRestService());
-            seedService.setAlloyDBEmulator(alloyDBEmulator);
-            hasGrpcServices = true;
-            logger.info("AlloyDB facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        // Dataproc: gRPC (ClusterController + JobController) + explicit REST
-        if (config.isServiceEnabled("dataproc")) {
-            DataprocEmulator dataprocEmulator = new DataprocEmulator(dataSource);
-            dataprocEmulator.start();
-            grpcBuilder.addService(dataprocEmulator.getClusterService());
-            grpcBuilder.addService(dataprocEmulator.getJobService());
-            gateway.registerGrpcEmulator(dataprocEmulator,
-                    dataprocEmulator.getClusterService(), dataprocEmulator.getJobService());
-            sb.annotatedService("/v1", dataprocEmulator.getRestService());
-            seedService.setDataprocEmulator(dataprocEmulator);
-            hasGrpcServices = true;
-            logger.info("Dataproc facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        // Cloud IAM: gRPC only
-        if (config.isServiceEnabled("cloudiam")) {
-            IAMEmulator iamEmulator = new IAMEmulator(dataSource, config.isIamLogWarningsEnabled());
-            iamEmulator.start();
-            var iamService = io.grpc.ServerInterceptors.intercept(
-                    iamEmulator.getServiceImpl(), IAMEmulator.warningInterceptor());
-            grpcBuilder.addService(iamService);
-            gateway.registerGrpcEmulator(iamEmulator, iamEmulator.getServiceImpl());
-            seedService.setIAMEmulator(iamEmulator);
-            hasGrpcServices = true;
-            logger.info("Cloud IAM facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        // Service Usage API endpoints are co-located in SecretManagerRestService (shared /v1 prefix)
-        // to avoid Armeria prefix conflicts with multiple annotated services on the same path.
-        logger.info("Service Usage API endpoints registered via SecretManagerRestService");
-
-        // Cloud Resource Manager: REST only (Terraform google_project support)
-        // Registered at /v1 and /v3 — Terraform google_project uses v3,
-        // but GCS/BigQuery/PubSub client libraries validate projects via v1.
-        if (config.isServiceEnabled("cloudresourcemanager")) {
-            var crmV1Service = new CloudResourceManagerRestService(projectService, config, "v1");
-            var crmV3Service = new CloudResourceManagerRestService(projectService, config, "v3");
-            sb.annotatedService("/v1", crmV1Service);
-            sb.annotatedService("/v3", crmV3Service);
-            logger.info("Cloud Resource Manager facade registered at /v1 and /v3 on gateway port {}", config.getGatewayPort());
-        }
-
-        // Cloud Logging: gRPC only (with transcoding) + REST stubs for sink CRUD
-        if (config.isServiceEnabled("logging")) {
-            LoggingEmulator loggingEmulator = new LoggingEmulator(dataSource);
-            loggingEmulator.start();
-            grpcBuilder.addService(loggingEmulator.getLoggingService());
-            gateway.registerGrpcEmulator(loggingEmulator, loggingEmulator.getLoggingService());
-            hasGrpcServices = true;
-
-            // Logging sink CRUD REST stubs — Terraform google_logging_project_sink uses these.
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v2/projects/(?<project>[^/]+)/sinks$")
-                    .build(), (ctx, req) -> {
-                        String project = ctx.pathParam("project");
-                        return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
-                            "{\"name\":\"projects/" + project + "/sinks/" +
-                            java.util.UUID.randomUUID().toString().substring(0, 8) +
-                            "\",\"destination\":\"bigquery.googleapis.com\",\"writerIdentity\":\"serviceAccount:cloud-logs@localcloud.iam.gserviceaccount.com\"}");
-                    });
-            sb.service(Route.builder().methods(HttpMethod.GET)
-                    .path("regex:^/v2/projects/(?<project>[^/]+)/sinks/(?<sink>[^/]+)$")
-                    .build(), (ctx, req) -> {
-                        String project = ctx.pathParam("project");
-                        String sink = ctx.pathParam("sink");
-                        return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
-                            "{\"name\":\"projects/" + project + "/sinks/" + sink +
-                            "\",\"destination\":\"bigquery.googleapis.com\",\"writerIdentity\":\"serviceAccount:cloud-logs@localcloud.iam.gserviceaccount.com\"}");
-                    });
-            sb.service(Route.builder().methods(HttpMethod.DELETE)
-                    .path("regex:^/v2/projects/(?<project>[^/]+)/sinks/(?<sink>[^/]+)$")
-                    .build(), (ctx, req) -> HttpResponse.of(HttpStatus.OK, MediaType.JSON, "{}"));
-            logger.info("Cloud Logging sink REST stubs registered");
-            logger.info("Cloud Logging facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        // Cloud Monitoring: gRPC only (with transcoding) + REST stubs for alert policies
-        if (config.isServiceEnabled("monitoring")) {
-            MonitoringEmulator monitoringEmulator = new MonitoringEmulator(dataSource);
-            monitoringEmulator.start();
-            grpcBuilder.addService(monitoringEmulator.getMonitoringService());
-            gateway.registerGrpcEmulator(monitoringEmulator, monitoringEmulator.getMonitoringService());
-            hasGrpcServices = true;
-
-            // Monitoring alert policy CRUD REST stubs — Terraform google_monitoring_alert_policy uses these.
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v3/projects/(?<project>[^/]+)/alertPolicies$")
-                    .build(), (ctx, req) -> {
-                        String project = ctx.pathParam("project");
-                        return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
-                            "{\"name\":\"projects/" + project + "/alertPolicies/" +
-                            java.util.UUID.randomUUID().toString().substring(0, 8) +
-                            "\",\"displayName\":\"localcloud-alert\",\"enabled\":true}");
-                    });
-            sb.service(Route.builder().methods(HttpMethod.GET)
-                    .path("regex:^/v3/projects/(?<project>[^/]+)/alertPolicies/(?<policy>[^/]+)$")
-                    .build(), (ctx, req) -> {
-                        String project = ctx.pathParam("project");
-                        String policy = ctx.pathParam("policy");
-                        return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
-                            "{\"name\":\"projects/" + project + "/alertPolicies/" + policy +
-                            "\",\"displayName\":\"localcloud-alert\",\"enabled\":true}");
-                    });
-            sb.service(Route.builder().methods(HttpMethod.DELETE)
-                    .path("regex:^/v3/projects/(?<project>[^/]+)/alertPolicies/(?<policy>[^/]+)$")
-                    .build(), (ctx, req) -> HttpResponse.of(HttpStatus.OK, MediaType.JSON, "{}"));
-            logger.info("Cloud Monitoring alert policy REST stubs registered");
-            logger.info("Cloud Monitoring facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        // Compute Engine: REST only
-        if (config.isServiceEnabled("compute")) {
-            ContainerManager cm = containerManager != null ? containerManager : new ContainerManager(null);
-            ComputeEmulator computeEmulator = new ComputeEmulator(dataSource, cm, credentialBroker, iamPolicyRestHandler);
-            computeEmulator.start();
-            sb.annotatedService("/compute/v1", computeEmulator.getRestService());
-            gateway.registerRestEmulator("/compute/v1", computeEmulator, null);
-            logger.info("Compute Engine facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        // Cloud Run: gRPC (Services + Revisions)
-        if (config.isServiceEnabled("cloudrun")) {
-            ContainerManager cm = containerManager != null ? containerManager : new ContainerManager(null);
-            CloudRunEmulator cloudRunEmulator = new CloudRunEmulator(dataSource, cm, credentialBroker);
-            cloudRunEmulator.start();
-            grpcBuilder.addService(cloudRunEmulator.getServicesService());
-            grpcBuilder.addService(cloudRunEmulator.getRevisionsService());
-            gateway.registerGrpcEmulator(cloudRunEmulator,
-                    cloudRunEmulator.getServicesService(), cloudRunEmulator.getRevisionsService());
-            hasGrpcServices = true;
-            logger.info("Cloud Run facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        // GKE: gRPC only
-        if (config.isServiceEnabled("gke")) {
-            K3dManager k3dManager = new K3dManager(credentialBroker);
-            GkeEmulator gkeEmulator = new GkeEmulator(dataSource, k3dManager);
-            gkeEmulator.start();
-            grpcBuilder.addService(gkeEmulator.getClusterManagerService());
-            gateway.registerGrpcEmulator(gkeEmulator, gkeEmulator.getClusterManagerService());
-            hasGrpcServices = true;
-            logger.info("GKE facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        // Cloud Workflows: gRPC + explicit REST + env vars + connector + callback
-        if (config.isServiceEnabled("workflows")) {
-            WorkflowsEmulator workflowsEmulator = new WorkflowsEmulator(dataSource);
-            workflowsEmulator.start();
-            var workflowsGrpc = new WorkflowsGrpcServiceImpl(workflowsEmulator.getWorkflowsService());
-            var executionsGrpc = new ExecutionsGrpcServiceImpl(workflowsEmulator.getWorkflowsService());
-            grpcBuilder.addService(workflowsGrpc);
-            grpcBuilder.addService(executionsGrpc);
-            gateway.registerGrpcEmulator(workflowsEmulator, workflowsGrpc, executionsGrpc);
-
-            // Workflow env vars and connector services (register before callbacks to avoid path conflicts)
-            var envVarsRepo = new WorkflowEnvVarsRepository(dataSource);
-            workflowsEmulator.getWorkflowsService().setEnvVarsRepository(envVarsRepo);
-            var envVarsService = new WorkflowEnvVarsService(config, envVarsRepo);
-            sb.annotatedService("/workflow-env", envVarsService);
-            var connectorService = new WorkflowConnectorService(config, envVarsRepo,
-                    workflowsEmulator.getWorkflowsService().getStore());
-            sb.annotatedService("/workflow", connectorService);
-            sb.annotatedService("/v1", new WorkflowsRestService(
-                    workflowsEmulator.getWorkflowsService(), workflowsEmulator, iamPolicyRestHandler));
-
-            // Register callback HTTP endpoint so external systems can wake waiting executions
-            WorkflowsCallbackService callbackService = new WorkflowsCallbackService(
-                    workflowsEmulator.getWorkflowsService().getCallbackManager());
-            sb.annotatedService("/workflows", callbackService);
-
-            // Wire WorkflowsServiceImpl into MutateService so console executions
-            // route through the full execution path (connectors, callbacks, env vars)
-            mutateService.setWorkflowsService(workflowsEmulator.getWorkflowsService());
-
-            hasGrpcServices = true;
-            logger.info("Cloud Workflows facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        // Vertex AI: REST only
-        if (config.isServiceEnabled("vertexai")) {
-            VertexAiEmulator vertexAiEmulator = new VertexAiEmulator(dataSource, config.getGatewayPort(), iamPolicyRestHandler);
-            vertexAiEmulator.start();
-            sb.annotatedService("/v1", vertexAiEmulator.getRestService());
-            gateway.registerRestEmulator("/v1/projects/*/locations/*/publishers/*/models", vertexAiEmulator, null);
-
-            // Manual regex routes for Vertex AI :verb custom methods.
-            // Armeria's annotation parser treats ':' as a regex delimiter inside
-            // path parameters, so @Post("/.../{model}:generateContent") fails to match.
-            var vaiService = vertexAiEmulator.getRestService();
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/publishers/(?<publisher>[^/]+)/models/(?<model>[^:]+):generateContent$")
-                    .build(), (ctx, req) -> {
-                        var agg = req.aggregate().join();
-                        return vaiService.generateContent(ctx.pathParam("project"), ctx.pathParam("location"),
-                                ctx.pathParam("publisher"), ctx.pathParam("model"), agg.contentUtf8());
-                    });
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/publishers/(?<publisher>[^/]+)/models/(?<model>[^:]+):streamGenerateContent$")
-                    .build(), (ctx, req) -> {
-                        var agg = req.aggregate().join();
-                        return vaiService.streamGenerateContent(ctx.pathParam("project"), ctx.pathParam("location"),
-                                ctx.pathParam("publisher"), ctx.pathParam("model"), agg.contentUtf8());
-                    });
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/publishers/(?<publisher>[^/]+)/models/(?<model>[^:]+):embedContent$")
-                    .build(), (ctx, req) -> {
-                        var agg = req.aggregate().join();
-                        return vaiService.embedContent(ctx.pathParam("project"), ctx.pathParam("location"),
-                                ctx.pathParam("publisher"), ctx.pathParam("model"), agg.contentUtf8());
-                    });
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/publishers/(?<publisher>[^/]+)/models/(?<model>[^:]+):countTokens$")
-                    .build(), (ctx, req) -> {
-                        var agg = req.aggregate().join();
-                        return vaiService.countTokens(ctx.pathParam("project"), ctx.pathParam("location"),
-                                ctx.pathParam("publisher"), ctx.pathParam("model"), agg.contentUtf8());
-                    });
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/publishers/(?<publisher>[^/]+)/models/(?<model>[^:]+):computeTokens$")
-                    .build(), (ctx, req) -> {
-                        var agg = req.aggregate().join();
-                        return vaiService.computeTokens(ctx.pathParam("project"), ctx.pathParam("location"),
-                                ctx.pathParam("publisher"), ctx.pathParam("model"), agg.contentUtf8());
-                    });
-            logger.info("Vertex AI :verb custom method routes registered");
-            logger.info("Vertex AI facade registered on gateway port {}", config.getGatewayPort());
-        }
-
-        // Cloud KMS: REST only
-        if (config.isServiceEnabled("kms")) {
-            KmsEmulator kmsEmulator = new KmsEmulator(dataSource, config.getGatewayPort(), iamPolicyRestHandler);
-            kmsEmulator.start();
-            sb.annotatedService("/v1", kmsEmulator.getRestService());
-            gateway.registerRestEmulator("/v1/projects/*/locations/*/keyRings", kmsEmulator, null);
-
-            // Manual regex routes for KMS :verb custom methods.
-            // Armeria's annotation parser treats ':' as a regex delimiter inside
-            // path parameters, so @Post("/.../{cryptoKey}:encrypt") fails to match.
-            var kmsService = kmsEmulator.getRestService();
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/keyRings/(?<keyRing>[^/]+)/cryptoKeys/(?<cryptoKey>[^:]+):encrypt$")
-                    .build(), (ctx, req) -> {
-                        var agg = req.aggregate().join();
-                        return kmsService.encrypt(ctx.pathParam("project"), ctx.pathParam("location"),
-                                ctx.pathParam("keyRing"), ctx.pathParam("cryptoKey"), agg.contentUtf8());
-                    });
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/keyRings/(?<keyRing>[^/]+)/cryptoKeys/(?<cryptoKey>[^:]+):decrypt$")
-                    .build(), (ctx, req) -> {
-                        var agg = req.aggregate().join();
-                        return kmsService.decrypt(ctx.pathParam("project"), ctx.pathParam("location"),
-                                ctx.pathParam("keyRing"), ctx.pathParam("cryptoKey"), agg.contentUtf8());
-                    });
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/keyRings/(?<keyRing>[^/]+)/cryptoKeys/(?<cryptoKey>[^:]+):updateCryptoKeyPrimaryVersion$")
-                    .build(), (ctx, req) -> {
-                        var agg = req.aggregate().join();
-                        return kmsService.updatePrimaryVersion(ctx.pathParam("project"), ctx.pathParam("location"),
-                                ctx.pathParam("keyRing"), ctx.pathParam("cryptoKey"), agg.contentUtf8());
-                    });
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/keyRings/(?<keyRing>[^/]+)/cryptoKeys/(?<cryptoKey>[^/]+)/cryptoKeyVersions/(?<version>[^:]+):destroy$")
-                    .build(), (ctx, req) -> {
-                        String p = ctx.pathParam("project");
-                        String l = ctx.pathParam("location");
-                        String kr = ctx.pathParam("keyRing");
-                        String ck = ctx.pathParam("cryptoKey");
-                        String v = ctx.pathParam("version");
-                        return HttpResponse.from(req.aggregate().thenApply(agg ->
-                                kmsService.destroyVersion(p, l, kr, ck, v)));
-                    });
-            sb.service(Route.builder().methods(HttpMethod.POST)
-                    .path("regex:^/v1/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/keyRings/(?<keyRing>[^/]+)/cryptoKeys/(?<cryptoKey>[^/]+)/cryptoKeyVersions/(?<version>[^:]+):restore$")
-                    .build(), (ctx, req) -> {
-                        String p = ctx.pathParam("project");
-                        String l = ctx.pathParam("location");
-                        String kr = ctx.pathParam("keyRing");
-                        String ck = ctx.pathParam("cryptoKey");
-                        String v = ctx.pathParam("version");
-                        return HttpResponse.from(req.aggregate().thenApply(agg ->
-                                kmsService.restoreVersion(p, l, kr, ck, v)));
-                    });
-            logger.info("Cloud KMS :verb custom method routes registered");
-            logger.info("Cloud KMS facade registered on gateway port {}", config.getGatewayPort());
+        // Delegate all facade emulator route registration to their registrars
+        logger.info("Registering {} facade emulator services...", serviceRegistrars.size());
+        for (var registrar : serviceRegistrars) {
+            try {
+                registrar.registerRoutes(sb, grpcBuilder, regCtx);
+            } catch (Exception e) {
+                logger.error("Failed to register {}: {}",
+                        registrar.getClass().getSimpleName(), e.getMessage(), e);
+            }
         }
 
         if (hasGrpcServices) {
@@ -947,10 +475,10 @@ public class LocalCloudApplication {
                                     return HttpResponse.of(HttpStatus.NOT_FOUND);
                                 }
                                 if (req.method() == HttpMethod.GET) {
-                                    return HttpResponse.from(spannerClient.get(path).aggregate()
+                                    return HttpResponse.of(spannerClient.get(path).aggregate()
                                             .thenApply(agg -> HttpResponse.of(agg.status(), agg.headers().contentType(), agg.content())));
                                 }
-                                return HttpResponse.from(req.aggregate().thenCompose(agg ->
+                                return HttpResponse.of(req.aggregate().thenCompose(agg ->
                                         spannerClient.execute(
                                                 com.linecorp.armeria.common.HttpRequest.of(
                                                         com.linecorp.armeria.common.RequestHeaders.of(req.method(), path,
@@ -1014,7 +542,7 @@ public class LocalCloudApplication {
         var oauth2Service = new OAuth2RestService();
         sb.service("/token", (ctx, req) -> {
             if (req.method() != HttpMethod.POST) return HttpResponse.of(HttpStatus.METHOD_NOT_ALLOWED);
-            return HttpResponse.from(req.aggregate().thenApply(
+            return HttpResponse.of(req.aggregate().thenApply(
                 agg -> oauth2Service.token(agg.contentUtf8())));
         });
         sb.service("/tokeninfo", (ctx, req) -> {
@@ -1111,6 +639,9 @@ public class LocalCloudApplication {
                     """.formatted(method, path));
             });
         }
+
+        // DocService — interactive debug console for all gRPC + REST operations
+        sb.serviceUnder("/docs", new DocService());
 
         server = sb.build();
         server.start().join();

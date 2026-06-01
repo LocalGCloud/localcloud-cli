@@ -121,6 +121,37 @@ public class CloudSchedulerEmulator extends AbstractEmulator {
         });
     }
 
+    /**
+     * Build a stub OIDC Authorization header from the job's OIDC token config.
+     * Generates a simple unsigned JWT with the service account email for local dev use.
+     */
+    private String buildOidcAuthHeader(com.google.cloud.scheduler.v1.OidcToken oidcToken) {
+        String saEmail = oidcToken.getServiceAccountEmail();
+        if (saEmail == null || saEmail.isEmpty()) {
+            throw new IllegalArgumentException("OIDC token requires service_account_email");
+        }
+
+        String audience = oidcToken.getAudience() != null && !oidcToken.getAudience().isEmpty()
+                ? oidcToken.getAudience() : saEmail;
+
+        // Build stub JWT with {"alg":"none","typ":"JWT"} header
+        String header = "{\"alg\":\"none\",\"typ\":\"JWT\"}";
+        String headerB64 = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(header.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        // Build claims payload
+        long now = System.currentTimeMillis() / 1000;
+        String payload = "{\"iss\":\"" + saEmail + "\"," +
+                "\"sub\":\"" + saEmail + "\"," +
+                "\"aud\":\"" + audience + "\"," +
+                "\"iat\":" + now + "," +
+                "\"exp\":" + (now + 3600) + "}";
+        String payloadB64 = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        return "Bearer " + headerB64 + "." + payloadB64 + ".";
+    }
+
     private void execute(Job job) {
         executeWithRetry(job, 0, Instant.now());
     }
@@ -134,6 +165,13 @@ public class CloudSchedulerEmulator extends AbstractEmulator {
                 case HTTP_TARGET -> {
                     var target = job.getHttpTarget();
                     HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(target.getUri()));
+
+                    // Inject OIDC auth header if configured
+                    if (target.hasOidcToken()) {
+                        String authHeader = buildOidcAuthHeader(target.getOidcToken());
+                        request.header("Authorization", authHeader);
+                    }
+
                     for (var header : target.getHeadersMap().entrySet()) {
                         request.header(header.getKey(), header.getValue());
                     }
@@ -370,5 +408,7 @@ public class CloudSchedulerEmulator extends AbstractEmulator {
                 responseObserver.onError(Status.INVALID_ARGUMENT.withDescription(e.getMessage()).asRuntimeException());
             }
         }
+
+
     }
 }

@@ -215,6 +215,9 @@ public class CloudTasksEmulator extends AbstractEmulator {
                     return;
                 }
 
+                // Clean up rate limiter for this queue
+                dispatcher.removeRateLimiter(fullName);
+
                 responseObserver.onNext(Empty.getDefaultInstance());
                 responseObserver.onCompleted();
             } catch (IllegalArgumentException e) {
@@ -464,6 +467,14 @@ public class CloudTasksEmulator extends AbstractEmulator {
             if (state != null) {
                 builder.setState(mapQueueState(state));
             }
+
+            // Populate rate limits
+            Object rateObj = data.get("max_dispatches_per_second");
+            double rate = rateObj instanceof Number ? ((Number) rateObj).doubleValue() : 0.0;
+            builder.setRateLimits(
+                    com.google.cloud.tasks.v2.RateLimits.newBuilder()
+                            .setMaxDispatchesPerSecond(rate)
+                            .build());
 
             return builder.build();
         }

@@ -116,26 +116,60 @@ public class SecretManagerEmulator extends AbstractEmulator {
                 // Extract labels as simple JSON
                 String labelsJson = "{}";
                 if (request.hasSecret() && request.getSecret().getLabelsCount() > 0) {
-                    StringBuilder sb = new StringBuilder("{");
-                    boolean first = true;
-                    for (Map.Entry<String, String> entry : request.getSecret().getLabelsMap().entrySet()) {
-                        if (!first) sb.append(",");
-                        sb.append("\"").append(entry.getKey()).append("\":\"").append(entry.getValue()).append("\"");
-                        first = false;
-                    }
-                    sb.append("}");
-                    labelsJson = sb.toString();
+                    labelsJson = labelsToJson(request.getSecret().getLabelsMap());
                 }
 
-                store.createSecret(projectId, secretId, labelsJson);
+                // Extract replication as JSON
+                String replicationJson = "{\"automatic\":{}}";
+                if (request.hasSecret() && request.getSecret().hasReplication()) {
+                    replicationJson = replicationToJson(request.getSecret().getReplication());
+                }
+
+                // Extract expiration
+                java.sql.Timestamp expireAt = null;
+                Long rotationPeriod = null;
+                if (request.hasSecret() && request.getSecret().hasExpireTime()) {
+                    var expireTime = request.getSecret().getExpireTime();
+                    expireAt = new java.sql.Timestamp(
+                            expireTime.getSeconds() * 1000 + expireTime.getNanos() / 1_000_000);
+                } else if (request.hasSecret() && request.getSecret().hasTtl()) {
+                    // Convert TTL to expire_at: NOW + ttl
+                    var ttl = request.getSecret().getTtl();
+                    long ttlSeconds = ttl.getSeconds();
+                    expireAt = new java.sql.Timestamp(System.currentTimeMillis() + ttlSeconds * 1000);
+                }
+                if (request.hasSecret() && request.getSecret().hasRotation()) {
+                    rotationPeriod = request.getSecret().getRotation().getRotationPeriod().getSeconds();
+                }
+
+                store.createSecret(projectId, secretId, labelsJson, replicationJson, expireAt, rotationPeriod);
 
                 String fullName = parent + "/secrets/" + secretId;
-                Secret response = Secret.newBuilder()
+                Secret.Builder responseBuilder = Secret.newBuilder()
                         .setName(fullName)
-                        .setReplication(Replication.newBuilder()
-                                .setAutomatic(Replication.Automatic.getDefaultInstance())
-                                .build())
-                        .build();
+                        .setReplication(request.hasSecret() && request.getSecret().hasReplication()
+                                ? request.getSecret().getReplication()
+                                : Replication.newBuilder()
+                                        .setAutomatic(Replication.Automatic.getDefaultInstance())
+                                        .build());
+
+                // Add labels if present
+                if (request.hasSecret() && request.getSecret().getLabelsCount() > 0) {
+                    responseBuilder.putAllLabels(request.getSecret().getLabelsMap());
+                }
+
+                // Add expiration if present (pass through expire_time or ttl from request)
+                if (request.hasSecret() && request.getSecret().hasExpireTime()) {
+                    responseBuilder.setExpireTime(request.getSecret().getExpireTime());
+                }
+                if (request.hasSecret() && request.getSecret().hasTtl()) {
+                    responseBuilder.setTtl(request.getSecret().getTtl());
+                }
+                if (request.hasSecret() && request.getSecret().hasRotation()) {
+                    responseBuilder.setRotation(request.getSecret().getRotation());
+                }
+
+                Secret response = responseBuilder.build();
 
                 responseObserver.onNext(response);
                 responseObserver.onCompleted();
@@ -166,21 +200,31 @@ public class SecretManagerEmulator extends AbstractEmulator {
                     return;
                 }
 
-                // Extract labels as simple JSON
                 String labelsJson = "{}";
                 if (secret.getLabelsCount() > 0) {
-                    StringBuilder sb = new StringBuilder("{");
-                    boolean first = true;
-                    for (Map.Entry<String, String> entry : secret.getLabelsMap().entrySet()) {
-                        if (!first) sb.append(",");
-                        sb.append("\"").append(entry.getKey()).append("\":\"").append(entry.getValue()).append("\"");
-                        first = false;
-                    }
-                    sb.append("}");
-                    labelsJson = sb.toString();
+                    labelsJson = labelsToJson(secret.getLabelsMap());
                 }
 
-                store.updateSecret(parts[0], parts[1], labelsJson);
+                String replicationJson = "{\"automatic\":{}}";
+                if (secret.hasReplication()) {
+                    replicationJson = replicationToJson(secret.getReplication());
+                }
+
+                java.sql.Timestamp expireAt = null;
+                Long rotationPeriod = null;
+                if (secret.hasExpireTime()) {
+                    var et = secret.getExpireTime();
+                    expireAt = new java.sql.Timestamp(et.getSeconds() * 1000 + et.getNanos() / 1_000_000);
+                } else if (secret.hasTtl()) {
+                    var ttl = secret.getTtl();
+                    long ttlSeconds = ttl.getSeconds();
+                    expireAt = new java.sql.Timestamp(System.currentTimeMillis() + ttlSeconds * 1000);
+                }
+                if (secret.hasRotation()) {
+                    rotationPeriod = secret.getRotation().getRotationPeriod().getSeconds();
+                }
+
+                store.updateSecret(parts[0], parts[1], labelsJson, replicationJson, expireAt, rotationPeriod);
 
                 Map<String, Object> data = store.getSecret(parts[0], parts[1]);
                 Secret response = buildSecret(fullName, data);
@@ -344,7 +388,16 @@ public class SecretManagerEmulator extends AbstractEmulator {
                 String fullName = request.getName();
                 String[] parts = SecretManagerStore.parseVersionName(fullName);
 
-                Map<String, Object> data = store.getSecretVersion(parts[0], parts[1], parts[2]);
+                // Resolve aliases for version lookup
+                String versionId = parts[2];
+                if (!"latest".equalsIgnoreCase(versionId) && !versionId.matches("\\d+")) {
+                    Integer resolved = store.resolveAlias(parts[0], parts[1], versionId);
+                    if (resolved != null) {
+                        versionId = String.valueOf(resolved);
+                    }
+                }
+
+                Map<String, Object> data = store.getSecretVersion(parts[0], parts[1], versionId);
                 if (data == null) {
                     responseObserver.onError(Status.NOT_FOUND
                             .withDescription("Secret version not found: " + fullName)
@@ -427,8 +480,19 @@ public class SecretManagerEmulator extends AbstractEmulator {
                 String fullName = request.getName();
                 String[] parts = SecretManagerStore.parseVersionName(fullName);
 
+                // Resolve aliases: if versionId is not "latest" and not numeric, treat as alias
+                String versionId = parts[2];
+                if (!"latest".equalsIgnoreCase(versionId) && !versionId.matches("\\d+")) {
+                    Integer resolved = store.resolveAlias(parts[0], parts[1], versionId);
+                    if (resolved != null) {
+                        versionId = String.valueOf(resolved);
+                        parts[2] = versionId;
+                    }
+                    // If alias not found, fall through — getSecretVersion will return null
+                }
+
                 // First check if version exists
-                Map<String, Object> versionData = store.getSecretVersion(parts[0], parts[1], parts[2]);
+                Map<String, Object> versionData = store.getSecretVersion(parts[0], parts[1], versionId);
                 if (versionData == null) {
                     responseObserver.onError(Status.NOT_FOUND
                             .withDescription("Secret version not found: " + fullName)
@@ -450,7 +514,7 @@ public class SecretManagerEmulator extends AbstractEmulator {
                     return;
                 }
 
-                byte[] payload = store.accessSecretVersion(parts[0], parts[1], parts[2]);
+                byte[] payload = store.accessSecretVersion(parts[0], parts[1], versionId);
                 if (payload == null) {
                     responseObserver.onError(Status.NOT_FOUND
                             .withDescription("Secret version payload not found: " + fullName)
@@ -504,8 +568,18 @@ public class SecretManagerEmulator extends AbstractEmulator {
 
         private int resolveVersionNumber(String projectId, String secretId, String versionStr) {
             if ("latest".equalsIgnoreCase(versionStr)) {
-                // Resolve "latest" to the highest version number
                 return store.getLatestVersionNumber(projectId, secretId);
+            }
+            // Try alias resolution for non-numeric version strings
+            if (!versionStr.matches("\\d+")) {
+                try {
+                    Integer resolved = store.resolveAlias(projectId, secretId, versionStr);
+                    if (resolved != null) {
+                        return resolved;
+                    }
+                } catch (SQLException e) {
+                    // Fall through to parse attempt
+                }
             }
             return Integer.parseInt(versionStr);
         }
@@ -556,12 +630,80 @@ public class SecretManagerEmulator extends AbstractEmulator {
 
         // --- Helpers ---
 
+        private String labelsToJson(Map<String, String> labelsMap) {
+            StringBuilder sb = new StringBuilder("{");
+            boolean first = true;
+            for (Map.Entry<String, String> entry : labelsMap.entrySet()) {
+                if (!first) sb.append(",");
+                sb.append("\"").append(entry.getKey()).append("\":\"").append(entry.getValue()).append("\"");
+                first = false;
+            }
+            sb.append("}");
+            return sb.toString();
+        }
+
+        private String replicationToJson(Replication replication) {
+            if (replication.hasAutomatic()) {
+                return "{\"automatic\":{}}";
+            } else if (replication.hasUserManaged()) {
+                var um = replication.getUserManaged();
+                StringBuilder sb = new StringBuilder("{\"user_managed\":{\"replicas\":[");
+                boolean first = true;
+                for (var replica : um.getReplicasList()) {
+                    if (!first) sb.append(",");
+                    sb.append("{\"location\":\"").append(replica.getLocation()).append("\"}");
+                    first = false;
+                }
+                sb.append("]}}");
+                return sb.toString();
+            }
+            return "{\"automatic\":{}}";
+        }
+
         private Secret buildSecret(String fullName, Map<String, Object> data) {
             Secret.Builder builder = Secret.newBuilder()
-                    .setName(fullName)
-                    .setReplication(Replication.newBuilder()
-                            .setAutomatic(Replication.Automatic.getDefaultInstance())
-                            .build());
+                    .setName(fullName);
+
+            // Add replication
+            builder.setReplication(Replication.newBuilder()
+                    .setAutomatic(Replication.Automatic.getDefaultInstance())
+                    .build());
+
+            // Add labels
+            Object labelsObj = data.get("labels");
+            if (labelsObj != null) {
+                String labelsJson = labelsObj.toString();
+                if (!"{}".equals(labelsJson) && !labelsJson.isEmpty()) {
+                    try {
+                        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                        var labelsMap = mapper.readValue(labelsJson,
+                                new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, String>>() {});
+                        builder.putAllLabels(labelsMap);
+                    } catch (Exception e) {
+                        // Non-critical — labels won't appear but won't break
+                    }
+                }
+            }
+
+            // Add expiration
+            java.sql.Timestamp expireAt = (java.sql.Timestamp) data.get("expire_at");
+            if (expireAt != null) {
+                builder.setExpireTime(Timestamp.newBuilder()
+                        .setSeconds(expireAt.getTime() / 1000)
+                        .setNanos((int) ((expireAt.getTime() % 1000) * 1_000_000))
+                        .build());
+            }
+
+            // Add rotation
+            Object rotObj = data.get("rotation_period");
+            if (rotObj != null) {
+                long rotationPeriod = ((Number) rotObj).longValue();
+                builder.setRotation(com.google.cloud.secretmanager.v1.Rotation.newBuilder()
+                        .setRotationPeriod(com.google.protobuf.Duration.newBuilder()
+                                .setSeconds(rotationPeriod)
+                                .build())
+                        .build());
+            }
 
             if (data.get("created_at") != null) {
                 java.sql.Timestamp ts = (java.sql.Timestamp) data.get("created_at");

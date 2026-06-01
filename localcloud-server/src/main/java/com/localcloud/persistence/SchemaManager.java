@@ -41,17 +41,8 @@ public class SchemaManager {
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
                 ")"
             );
-            // Migration: add labels/state columns for existing databases
-            stmt.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS labels VARCHAR(4096) DEFAULT '{}'");
-            stmt.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS state VARCHAR(20) DEFAULT 'ACTIVE'");
-
-            // Schema version tracking
-            stmt.execute(
-                "CREATE TABLE IF NOT EXISTS schema_version (" +
-                "    version INT NOT NULL," +
-                "    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
-                ")"
-            );
+            // Schema version tracking (deprecated — replaced by Flyway flyway_schema_history)
+            stmt.execute("DROP TABLE IF EXISTS schema_version");
 
             // Secret Manager: secrets
             stmt.execute(
@@ -59,11 +50,13 @@ public class SchemaManager {
                 "    project_id VARCHAR(255) NOT NULL," +
                 "    secret_id VARCHAR(255) NOT NULL," +
                 "    labels VARCHAR(4096) DEFAULT '{}'," +
+                "    replication VARCHAR(4096) DEFAULT '{}'," +
+                "    expire_at TIMESTAMP," +
+                "    rotation_period BIGINT," +
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
                 "    PRIMARY KEY (project_id, secret_id)" +
                 ")"
             );
-
             // Secret Manager: secret_versions
             stmt.execute(
                 "CREATE TABLE IF NOT EXISTS secret_versions (" +
@@ -74,6 +67,19 @@ public class SchemaManager {
                 "    state VARCHAR(20) DEFAULT 'ENABLED'," +
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
                 "    PRIMARY KEY (project_id, secret_id, version_number)" +
+                ")"
+            );
+
+            // Secret Manager: version aliases
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS secret_version_aliases (" +
+                "    id BIGSERIAL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    secret_id VARCHAR(255) NOT NULL," +
+                "    version_number INT NOT NULL," +
+                "    alias VARCHAR(128) NOT NULL," +
+                "    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    UNIQUE (project_id, secret_id, alias)" +
                 ")"
             );
 
@@ -89,6 +95,20 @@ public class SchemaManager {
                 "    max_attempts INT DEFAULT 100," +
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
                 "    PRIMARY KEY (project_id, location_id, queue_id)" +
+                ")"
+            );
+
+            // Cloud Logging: log_exclusion_filters
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS log_exclusion_filters (" +
+                "    id BIGSERIAL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    filter TEXT NOT NULL," +
+                "    name VARCHAR(255) NOT NULL," +
+                "    description TEXT," +
+                "    disabled BOOLEAN DEFAULT FALSE," +
+                "    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    UNIQUE (project_id, name)" +
                 ")"
             );
 
@@ -278,6 +298,9 @@ public class SchemaManager {
                 "    state VARCHAR(32) DEFAULT 'READY'," +
                 "    host VARCHAR(255) DEFAULT 'localhost'," +
                 "    labels_json JSONB DEFAULT '{}'," +
+                "    auth_enabled BOOLEAN DEFAULT FALSE," +
+                "    auth_password VARCHAR(128)," +
+                "    persistence_mode VARCHAR(32) DEFAULT 'DISABLED'," +
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
                 "    PRIMARY KEY (project_id, instance_id)" +
                 ")"
@@ -566,13 +589,6 @@ public class SchemaManager {
                 "    PRIMARY KEY (project_id, location_id, workflow_id)" +
                 ")"
             );
-            stmt.execute("ALTER TABLE workflows ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''");
-            stmt.execute("ALTER TABLE workflows ADD COLUMN IF NOT EXISTS call_log_level VARCHAR(30) DEFAULT 'LOG_NONE'");
-            stmt.execute("ALTER TABLE workflows ADD COLUMN IF NOT EXISTS execution_history_level VARCHAR(50) DEFAULT 'EXECUTION_HISTORY_BASIC'");
-            stmt.execute("ALTER TABLE workflows ADD COLUMN IF NOT EXISTS crypto_key_name VARCHAR(500)");
-            stmt.execute("ALTER TABLE workflows ADD COLUMN IF NOT EXISTS user_env_vars JSONB DEFAULT '{}'");
-            stmt.execute("ALTER TABLE workflows ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '{}'");
-
             // Cloud Workflows: workflow_executions
             stmt.execute(
                 "CREATE TABLE IF NOT EXISTS workflow_executions (" +
@@ -594,11 +610,6 @@ public class SchemaManager {
                 "    workflow_revision_id VARCHAR(50)" +
                 ")"
             );
-            stmt.execute("ALTER TABLE workflow_executions ADD COLUMN IF NOT EXISTS call_log_level VARCHAR(30) DEFAULT 'LOG_NONE'");
-            stmt.execute("ALTER TABLE workflow_executions ADD COLUMN IF NOT EXISTS labels JSONB DEFAULT '{}'");
-            stmt.execute("ALTER TABLE workflow_executions ADD COLUMN IF NOT EXISTS status JSONB DEFAULT '{}'");
-            stmt.execute("ALTER TABLE workflow_executions ADD COLUMN IF NOT EXISTS state_error JSONB");
-            stmt.execute("ALTER TABLE workflow_executions ADD COLUMN IF NOT EXISTS duration_ms BIGINT");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_workflow_executions_workflow ON workflow_executions (project_id, location_id, workflow_id)");
 
             // Cloud Workflows: persisted execution step history
@@ -626,6 +637,56 @@ public class SchemaManager {
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_log_entries_log_name ON log_entries (log_name)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_log_entries_timestamp ON log_entries (timestamp)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_log_entries_severity ON log_entries (severity)");
+            // Cloud Monitoring: alert policies (gRPC emulator + Terraform stubs)
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS alert_policies (" +
+                "    id BIGSERIAL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    name VARCHAR(512) NOT NULL," +
+                "    policy_id VARCHAR(255)," +
+                "    display_name VARCHAR(255)," +
+                "    conditions_json TEXT DEFAULT '[]'," +
+                "    combiner VARCHAR(32) DEFAULT 'OR'," +
+                "    notification_channels_json TEXT DEFAULT '[]'," +
+                "    documentation_json TEXT DEFAULT '{}'," +
+                "    enabled BOOLEAN DEFAULT TRUE," +
+                "    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    UNIQUE (project_id, name)," +
+                "    UNIQUE (project_id, policy_id)" +
+                ")"
+            );
+            // Cloud Monitoring: notification channels
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS notification_channels (" +
+                "    id BIGSERIAL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    name VARCHAR(512) NOT NULL," +
+                "    type VARCHAR(64) NOT NULL," +
+                "    display_name VARCHAR(255)," +
+                "    labels_json TEXT DEFAULT '{}'," +
+                "    description TEXT," +
+                "    enabled BOOLEAN DEFAULT TRUE," +
+                "    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    UNIQUE (project_id, name)" +
+                ")"
+            );
+
+            // GKE: node pools
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS gke_node_pools (" +
+                "    id BIGSERIAL PRIMARY KEY," +
+                "    cluster_id VARCHAR(255) NOT NULL," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    name VARCHAR(256) NOT NULL," +
+                "    config_json TEXT DEFAULT '{}'," +
+                "    initial_node_count INT DEFAULT 1," +
+                "    locations_json TEXT DEFAULT '[]'," +
+                "    status VARCHAR(32) DEFAULT 'RUNNING'," +
+                "    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    UNIQUE (project_id, cluster_id, name)" +
+                ")"
+            );
+
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_metric_points_series_id ON metric_points (series_id)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_metric_points_timestamp ON metric_points (end_time)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_secret_versions_secret ON secret_versions (project_id, secret_id)");
@@ -694,6 +755,40 @@ public class SchemaManager {
                 ps.setString(1, defaultProjectId);
                 ps.executeUpdate();
             }
+
+            // Cloud Billing: budgets
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS billing_budgets (" +
+                "    id BIGSERIAL PRIMARY KEY," +
+                "    billing_account VARCHAR(255) NOT NULL," +
+                "    budget_id VARCHAR(255) NOT NULL," +
+                "    display_name VARCHAR(255)," +
+                "    amount_json TEXT DEFAULT '{}'," +
+                "    threshold_rules_json TEXT DEFAULT '[]'," +
+                "    notifications_json TEXT DEFAULT '{}'," +
+                "    labels_json TEXT DEFAULT '{}'," +
+                "    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    UNIQUE (billing_account, budget_id)" +
+                ")"
+            );
+
+            // Logging: project-level sinks (Terraform google_logging_project_sink)
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS logging_sinks (" +
+                "    id BIGSERIAL PRIMARY KEY," +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    sink_id VARCHAR(255) NOT NULL," +
+                "    destination VARCHAR(1024) NOT NULL DEFAULT 'bigquery.googleapis.com'," +
+                "    filter TEXT," +
+                "    writer_identity VARCHAR(512)," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    UNIQUE (project_id, sink_id)" +
+                ")"
+            );
+
+            // Legacy deprecated table — drop if exists from previous versions
+            stmt.execute("DROP TABLE IF EXISTS monitoring_alert_policies");
 
             logger.info("Database schema initialized");
         }

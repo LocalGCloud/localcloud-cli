@@ -1,27 +1,22 @@
 package com.localcloud.emulators.scheduler;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.cloud.scheduler.v1.Job;
 import com.google.cloud.scheduler.v1.HttpTarget;
 import com.linecorp.armeria.common.HttpResponse;
-import com.linecorp.armeria.common.HttpStatus;
-import com.linecorp.armeria.common.MediaType;
 import com.linecorp.armeria.server.annotation.*;
+import com.localcloud.common.RestResponseHelper;
 
 import java.util.*;
 
 /**
  * REST endpoints for Cloud Scheduler job management.
- * <p>
- * The gRPC HTTP/JSON transcoding does not correctly map the Terraform provider v6 paths.
  */
 public class CloudSchedulerRestService {
 
     private final SchedulerRepository repo;
     private final CloudSchedulerEmulator emulator;
-    private final ObjectMapper mapper = new ObjectMapper();
 
     public CloudSchedulerRestService(SchedulerRepository repo, CloudSchedulerEmulator emulator) {
         this.repo = repo;
@@ -33,17 +28,14 @@ public class CloudSchedulerRestService {
         emulator.incrementRequestCount();
         String jobId = "";
         try {
-            var root = mapper.readTree(body);
+            var root = RestResponseHelper.parseBody(body);
             String jobName = root.path("name").asText(null);
-            if (jobName == null || jobName.isBlank()) return error(400, "Missing job name");
+            if (jobName == null || jobName.isBlank()) return RestResponseHelper.error(400, "Missing job name");
             jobId = jobName.contains("/") ? jobName.substring(jobName.lastIndexOf('/') + 1) : jobName;
 
-            // Idempotent: if job already exists, return it with success
             try {
                 Job existing = repo.get(project, location, jobId);
-                if (existing != null) {
-                    return jobToLroResponse(project, location, existing);
-                }
+                if (existing != null) return jobToResponse(project, location, existing);
             } catch (Exception ignored) {}
 
             String schedule = root.path("schedule").asText("* * * * *");
@@ -65,44 +57,15 @@ public class CloudSchedulerRestService {
                     .build();
 
             repo.create(project, location, jobId, proto, null);
-
-            return jobToLroResponse(project, location, proto);
+            return jobToResponse(project, location, proto);
         } catch (Exception e) {
-            // If duplicate key, return the existing job
             if (e.getMessage() != null && e.getMessage().contains("duplicate key")) {
                 try {
                     Job existing = repo.get(project, location, jobId);
-                    if (existing != null) return jobToLroResponse(project, location, existing);
+                    if (existing != null) return jobToResponse(project, location, existing);
                 } catch (Exception ignored) {}
             }
-            return error(500, e.getMessage());
-        }
-    }
-
-    private HttpResponse jobToLroResponse(String project, String location, Job job) {
-        try {
-            // Cloud Scheduler v1 API returns the Job object directly (NOT an LRO).
-            // The API is synchronous — no operation polling needed.
-            ObjectNode result = mapper.createObjectNode();
-            result.put("@type", "type.googleapis.com/google.cloud.scheduler.v1.Job");
-            result.put("name", job.getName());
-            result.put("schedule", job.getSchedule());
-            result.put("timeZone", job.getTimeZone());
-            result.put("state", job.getState().name());
-            if (job.hasHttpTarget()) {
-                ObjectNode ht = result.putObject("httpTarget");
-                ht.put("uri", job.getHttpTarget().getUri());
-                ht.put("httpMethod", job.getHttpTarget().getHttpMethod().name());
-            }
-            if (job.hasAppEngineHttpTarget()) {
-                result.putObject("appEngineHttpTarget");
-            }
-            if (job.hasPubsubTarget()) {
-                result.putObject("pubsubTarget");
-            }
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
-        } catch (Exception e) {
-            return error(500, e.getMessage());
+            return RestResponseHelper.error(500, e.getMessage());
         }
     }
 
@@ -111,10 +74,10 @@ public class CloudSchedulerRestService {
         emulator.incrementRequestCount();
         try {
             Job j = repo.get(project, location, job);
-            if (j == null) return error(404, "Job not found");
+            if (j == null) return RestResponseHelper.error(404, "Job not found");
             return jobToResponse(project, location, j);
         } catch (Exception e) {
-            return error(500, e.getMessage());
+            return RestResponseHelper.error(500, e.getMessage());
         }
     }
 
@@ -123,16 +86,16 @@ public class CloudSchedulerRestService {
         emulator.incrementRequestCount();
         try {
             List<Job> jobs = repo.list(project, location);
-            ObjectNode result = mapper.createObjectNode();
+            ObjectNode result = RestResponseHelper.MAPPER.createObjectNode();
             ArrayNode arr = result.putArray("jobs");
             for (Job j : jobs) {
                 ObjectNode node = arr.addObject();
                 node.put("name", j.getName());
                 node.put("state", j.getState().name());
             }
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+            return RestResponseHelper.ok(result);
         } catch (Exception e) {
-            return error(500, e.getMessage());
+            return RestResponseHelper.error(500, e.getMessage());
         }
     }
 
@@ -140,20 +103,19 @@ public class CloudSchedulerRestService {
     public HttpResponse deleteJob(@Param String project, @Param String location, @Param String job) {
         emulator.incrementRequestCount();
         try { repo.delete(project, location, job); } catch (Exception ignored) {}
-        return HttpResponse.of(HttpStatus.OK, MediaType.JSON, "{}");
+        return HttpResponse.of(com.linecorp.armeria.common.HttpStatus.OK,
+                com.linecorp.armeria.common.MediaType.JSON, "{}");
     }
-
-    // ── Custom methods for job lifecycle ──
 
     @Post("regex:^/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/jobs/(?<job>[^:]+):pause$")
     public HttpResponse pauseJob(@Param String project, @Param String location, @Param String job, String body) {
         emulator.incrementRequestCount();
         try {
             Job j = repo.get(project, location, job);
-            if (j == null) return error(404, "Job not found");
+            if (j == null) return RestResponseHelper.error(404, "Job not found");
             return jobToResponse(project, location, j);
         } catch (Exception e) {
-            return error(500, e.getMessage());
+            return RestResponseHelper.error(500, e.getMessage());
         }
     }
 
@@ -162,17 +124,16 @@ public class CloudSchedulerRestService {
         emulator.incrementRequestCount();
         try {
             Job j = repo.get(project, location, job);
-            if (j == null) return error(404, "Job not found");
+            if (j == null) return RestResponseHelper.error(404, "Job not found");
             return jobToResponse(project, location, j);
         } catch (Exception e) {
-            return error(500, e.getMessage());
+            return RestResponseHelper.error(500, e.getMessage());
         }
     }
 
-    /** Return Job object matching Google Cloud Scheduler v1 API response exactly */
     private HttpResponse jobToResponse(String project, String location, Job job) {
         try {
-            ObjectNode result = mapper.createObjectNode();
+            ObjectNode result = RestResponseHelper.MAPPER.createObjectNode();
             result.put("name", job.getName());
             result.put("schedule", job.getSchedule());
             result.put("timeZone", job.getTimeZone());
@@ -198,16 +159,9 @@ public class CloudSchedulerRestService {
             } else {
                 result.putObject("httpTarget");
             }
-            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, mapper.writeValueAsString(result));
+            return RestResponseHelper.ok(result);
         } catch (Exception e) {
-            return error(500, e.getMessage());
+            return RestResponseHelper.error(500, e.getMessage());
         }
-    }
-
-    private HttpResponse error(int code, String msg) {
-        ObjectNode out = mapper.createObjectNode();
-        ObjectNode inner = out.putObject("error");
-        inner.put("code", code); inner.put("message", msg); inner.put("status", String.valueOf(code));
-        return HttpResponse.of(HttpStatus.valueOf(code), MediaType.JSON, out.toString());
     }
 }

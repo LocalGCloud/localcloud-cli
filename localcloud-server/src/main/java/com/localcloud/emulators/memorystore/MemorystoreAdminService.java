@@ -40,7 +40,9 @@ public class MemorystoreAdminService {
             String tier = text(root, "tier", "BASIC");
             String redisVersion = text(root, "redisVersion", "7_0");
             int memorySizeGb = root.has("memorySizeGb") ? root.get("memorySizeGb").asInt(1) : 1;
-            Map<String, Object> row = store.createInstance(project, instanceId, displayName, tier, "REDIS", redisVersion, 6379, memorySizeGb);
+            boolean authEnabled = root.has("authEnabled") ? root.get("authEnabled").asBoolean(false) : false;
+            String persistenceMode = root.has("persistenceMode") ? root.get("persistenceMode").asText("DISABLED") : "DISABLED";
+            Map<String, Object> row = store.createInstance(project, instanceId, displayName, tier, "REDIS", redisVersion, 6379, memorySizeGb, authEnabled, persistenceMode);
             // Return an operation (LRO pattern) instead of the instance directly.
             // Terraform provider polls GET /operations/{name} until done=true.
             String opName = "projects/" + project + "/locations/" + location + "/operations/" + instanceId;
@@ -129,6 +131,14 @@ public class MemorystoreAdminService {
         out.put("state", String.valueOf(row.get("state")));
         out.put("host", String.valueOf(row.get("host")));
         out.put("port", String.valueOf(row.get("port")));
+        Object authObj = row.get("auth_enabled");
+        out.put("authEnabled", authObj instanceof Boolean ? (Boolean) authObj : false);
+        Object persistObj = row.get("persistence_mode");
+        out.put("persistenceMode", persistObj != null ? String.valueOf(persistObj) : "DISABLED");
+        String authPassword = (String) row.get("auth_password");
+        if (authPassword != null) {
+            out.put("authString", authPassword);
+        }
         return out;
     }
 

@@ -140,7 +140,7 @@ public class HealthCheckService {
                     ManagementFactory.getOperatingSystemMXBean();
 
             double processLoad = osBean.getProcessCpuLoad();
-            double systemLoad = osBean.getSystemCpuLoad();
+            double systemLoad = osBean.getCpuLoad();
 
             Map<String, Object> cpu = new LinkedHashMap<>();
             // getProcessCpuLoad returns -1 if not available (first call, etc.)

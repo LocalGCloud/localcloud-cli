@@ -89,6 +89,7 @@ class SyncManifestRepositoryTest {
         verify(insertStmt).executeUpdate();
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void upsert_replacesSameResource() throws SQLException {
         // First save

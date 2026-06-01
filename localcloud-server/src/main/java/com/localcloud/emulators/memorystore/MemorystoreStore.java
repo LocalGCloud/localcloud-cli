@@ -21,11 +21,13 @@ public class MemorystoreStore {
 
     public Map<String, Object> createInstance(String project, String instanceId, String displayName,
                                               String tier, String engine, String redisVersion,
-                                              int port, int memorySizeGb) throws SQLException {
+                                              int port, int memorySizeGb,
+                                              boolean authEnabled, String persistenceMode) throws SQLException {
+        String authPassword = authEnabled ? java.util.UUID.randomUUID().toString() : null;
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                 "INSERT INTO memorystore_instances (project_id, instance_id, display_name, tier, engine, redis_version, port, memory_size_gb, state, host) " +
-                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'READY', 'localhost')")) {
+                 "INSERT INTO memorystore_instances (project_id, instance_id, display_name, tier, engine, redis_version, port, memory_size_gb, state, host, auth_enabled, auth_password, persistence_mode) " +
+                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'READY', 'localhost', ?, ?, ?)")) {
             ps.setString(1, project);
             ps.setString(2, instanceId);
             ps.setString(3, displayName != null ? displayName : instanceId);
@@ -34,15 +36,20 @@ public class MemorystoreStore {
             ps.setString(6, redisVersion != null ? redisVersion : "7_0");
             ps.setInt(7, port > 0 ? port : 6379);
             ps.setInt(8, memorySizeGb > 0 ? memorySizeGb : 1);
+            ps.setBoolean(9, authEnabled);
+            ps.setString(10, authPassword);
+            ps.setString(11, persistenceMode != null ? persistenceMode : "DISABLED");
             ps.executeUpdate();
         }
-        return getInstance(project, instanceId);
+        Map<String, Object> result = getInstance(project, instanceId);
+        if (result != null) result.put("auth_password", authPassword);
+        return result;
     }
 
     public Map<String, Object> getInstance(String project, String instanceId) throws SQLException {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                 "SELECT project_id, instance_id, display_name, tier, engine, redis_version, port, memory_size_gb, state, host, labels_json, created_at " +
+                 "SELECT project_id, instance_id, display_name, tier, engine, redis_version, port, memory_size_gb, state, host, labels_json, auth_enabled, auth_password, persistence_mode, created_at " +
                  "FROM memorystore_instances WHERE project_id = ? AND instance_id = ?")) {
             ps.setString(1, project);
             ps.setString(2, instanceId);
@@ -56,7 +63,7 @@ public class MemorystoreStore {
         List<Map<String, Object>> result = new ArrayList<>();
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                 "SELECT project_id, instance_id, display_name, tier, engine, redis_version, port, memory_size_gb, state, host, labels_json, created_at " +
+                 "SELECT project_id, instance_id, display_name, tier, engine, redis_version, port, memory_size_gb, state, host, labels_json, auth_enabled, auth_password, persistence_mode, created_at " +
                  "FROM memorystore_instances WHERE project_id = ? ORDER BY instance_id")) {
             ps.setString(1, project);
             try (ResultSet rs = ps.executeQuery()) {
@@ -97,6 +104,9 @@ public class MemorystoreStore {
         row.put("state", rs.getString("state"));
         row.put("host", rs.getString("host"));
         row.put("labels_json", rs.getString("labels_json"));
+        row.put("auth_enabled", rs.getBoolean("auth_enabled"));
+        row.put("auth_password", rs.getString("auth_password"));
+        row.put("persistence_mode", rs.getString("persistence_mode"));
         row.put("created_at", rs.getTimestamp("created_at"));
         return row;
     }

@@ -5,7 +5,7 @@ import com.linecorp.armeria.common.HttpStatus;
 import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.config.ServiceRegistry;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
-import com.localcloud.gateway.RequestLogger;
+import com.localcloud.gateway.FaultInjectionRegistry;
 import com.localcloud.licensing.LicenseTier;
 import com.localcloud.licensing.LicenseTierProvider;
 import com.localcloud.licensing.StaticLicenseTierProvider;
@@ -21,16 +21,16 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Unit tests for license-tier gating in AdminApiService.
+ * Unit tests for license-tier gating in ServicesConfigService.
  *
  * Verifies that enableService() and updateServiceConfig() block services
  * whose minTier exceeds the current license tier.
  */
-class AdminServiceTierGatingTest {
+class ServicesConfigServiceTierGatingTest {
 
     private LocalCloudConfig config;
     private ServiceRegistry registry;
-    private AdminApiService service;
+    private ServicesConfigService service;
 
     /** Build a ServiceDefinition with the given minTier. */
     private static ServiceDefinition def(String id, LicenseTier minTier) {
@@ -42,27 +42,27 @@ class AdminServiceTierGatingTest {
                 "GOOGLE_SOME_ENDPOINT", minTier);
     }
 
-    private AdminApiService buildService(LicenseTier tier,
-                                         Map<String, ServiceDefinition> defs) {
+    private ServicesConfigService buildService(LicenseTier tier,
+                                               Map<String, ServiceDefinition> defs) {
         config = mock(LocalCloudConfig.class);
         registry = mock(ServiceRegistry.class);
         when(config.getServiceRegistry()).thenReturn(registry);
         when(registry.getAllServices()).thenReturn(defs);
 
-        // Services start as disabled so enableService() proceeds past the "already enabled" guard
         when(config.isServiceDynamicallyEnabled(anyString())).thenReturn(false);
         when(config.getConfigSource(anyString())).thenReturn("yaml");
 
         LicenseTierProvider tierProvider = new StaticLicenseTierProvider(tier);
 
-        RequestLogger requestLogger = mock(RequestLogger.class);
         ProjectService projectService = mock(ProjectService.class);
         ServiceRoutingRepository routingRepository = mock(ServiceRoutingRepository.class);
         CredentialBroker credentialBroker = mock(CredentialBroker.class);
         ServiceConfigRepository serviceConfigRepository = mock(ServiceConfigRepository.class);
+        FaultInjectionRegistry faultInjectionRegistry = mock(FaultInjectionRegistry.class);
 
-        return new AdminApiService(config, requestLogger, projectService,
-                routingRepository, credentialBroker, serviceConfigRepository, tierProvider);
+        return new ServicesConfigService(config, projectService,
+                routingRepository, credentialBroker, serviceConfigRepository,
+                tierProvider, faultInjectionRegistry);
     }
 
     // -----------------------------------------------------------------------
