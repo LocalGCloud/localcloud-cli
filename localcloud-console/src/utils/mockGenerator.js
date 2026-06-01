@@ -26,6 +26,12 @@ function randomDigits(length) {
     return result;
 }
 
+function cleanDatabaseType(type = 'STRING') {
+    const raw = String(type || 'STRING').toUpperCase().trim();
+    const match = raw.match(/^(DOUBLE\s+PRECISION|[A-Z0-9_]+)(?:\s*\([^)]*\))?/);
+    return match ? match[1].replace(/\s+/g, ' ') : raw.split(/\s+/)[0];
+}
+
 /**
  * Generates a mock value for a single field/column.
  * @param {string} columnName Name of the column (case-insensitive)
@@ -37,9 +43,9 @@ export function generateMockValue(columnName, type = 'STRING') {
     const rawType = type.toUpperCase().trim();
 
     // Handle ARRAY<INNER_TYPE> — generate an array of 2-3 mock values of the inner type.
-    const arrayMatch = rawType.match(/^ARRAY<(.+)>$/);
+    const arrayMatch = rawType.match(/^ARRAY\s*<(.+?)>(?:\s|$)/);
     if (arrayMatch) {
-        const innerType = arrayMatch[1].split('(')[0].trim(); // strip (MAX) etc.
+        const innerType = cleanDatabaseType(arrayMatch[1]);
         const count = 2 + Math.floor(Math.random() * 2); // 2 or 3
         const items = [];
         for (let i = 0; i < count; i++) {
@@ -48,7 +54,7 @@ export function generateMockValue(columnName, type = 'STRING') {
         return items;
     }
 
-    const cleanType = rawType.split('(')[0].trim();
+    const cleanType = cleanDatabaseType(rawType);
 
     // Type-specific values come first so numeric key columns like customer_id
     // do not receive UUID strings.

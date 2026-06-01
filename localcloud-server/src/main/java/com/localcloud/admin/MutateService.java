@@ -1645,16 +1645,37 @@ public class MutateService {
     }
 
     /**
-     * Convert a value for Spanner commit mutations. Scalars become strings;
-     * Lists are recursively converted, preserving array structure for ARRAY columns.
+     * Convert a value for Spanner commit mutations.
+     * - Booleans pass through as-is.
+     * - FLOAT64 passes through as a number (only numeric type that does).
+     * - INT64, NUMERIC, and other numerics become strings (per Spanner REST API).
+     * - Maps are serialized to JSON strings (for JSON/JSONB columns).
+     * - Lists are recursively converted (for ARRAY columns).
+     * - Everything else becomes a string.
      */
-    private Object spannerValue(Object val) {
+    private Object spannerValue(Object val, String columnType) {
         if (val == null) return null;
+        if (val instanceof Boolean) {
+            return val;
+        }
+        if (val instanceof Number) {
+            // FLOAT64 / DOUBLE are the only numeric types the Spanner REST API
+            // accepts as JSON numbers.  Everything else (INT64, NUMERIC, etc.)
+            // must be a string.
+            if (columnType != null && columnType.toUpperCase().contains("FLOAT")) {
+                return val;
+            }
+            return String.valueOf(val);
+        }
         if (val instanceof List<?> list) {
-            return list.stream().map(this::spannerValue).toList();
+            return list.stream().map(v -> spannerValue(v, columnType)).toList();
         }
         if (val instanceof Map) {
-            return String.valueOf(val);
+            try {
+                return mapper.writeValueAsString(val);
+            } catch (Exception e) {
+                return String.valueOf(val);
+            }
         }
         return String.valueOf(val);
     }
@@ -1683,11 +1704,15 @@ public class MutateService {
 
             // 2. Build mutation
             // Convert values to Spanner format, preserving arrays for ARRAY columns
+            @SuppressWarnings("unchecked")
+            Map<String, String> columnTypes = (Map<String, String>) json.get("columnTypes");
             List<List<Object>> mutationValues = new ArrayList<>();
             for (List<?> row : values) {
                 List<Object> rowValues = new ArrayList<>();
-                for (Object val : row) {
-                    rowValues.add(spannerValue(val));
+                for (int i = 0; i < row.size(); i++) {
+                    Object val = row.get(i);
+                    String colType = (columnTypes != null && i < columns.size()) ? columnTypes.get(columns.get(i)) : null;
+                    rowValues.add(spannerValue(val, colType));
                 }
                 mutationValues.add(rowValues);
             }

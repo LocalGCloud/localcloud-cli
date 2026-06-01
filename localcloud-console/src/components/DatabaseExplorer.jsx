@@ -72,7 +72,9 @@ function makeNode(type, id, label, raw, metadata = {}) {
 }
 
 function cleanType(type = 'STRING') {
-    return String(type || 'STRING').toUpperCase().replace(/\(.*/, '').trim();
+    const raw = String(type || 'STRING').toUpperCase().trim();
+    const match = raw.match(/^(DOUBLE\s+PRECISION|[A-Z0-9_]+)(?:\s*\([^)]*\))?/);
+    return match ? match[1].replace(/\s+/g, ' ') : raw.split(/\s+/)[0];
 }
 
 function coerceValue(value, type) {
@@ -179,7 +181,7 @@ function columnsFromCreateStatement(statement) {
         .map(part => part.trim().replace(/,$/, ''))
         .filter(part => part && !/^(?:CONSTRAINT|PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE|CHECK)\b/i.test(part))
         .map(part => {
-            const match = part.match(/^`?("?)([A-Za-z0-9_]+)\1`?\s+([A-Za-z0-9_() ]+)/);
+            const match = part.match(/^`?("?)([A-Za-z0-9_]+)\1`?\s+((?:ARRAY\s*<[^>]+>)|(?:[A-Za-z][A-Za-z0-9_]*(?:\s+PRECISION)?(?:\([^)]*\))?))/i);
             return match ? { name: match[2], type: match[3].trim() } : null;
         })
         .filter(Boolean);
@@ -228,11 +230,11 @@ const adapters = {
             return null;
         },
         tableActions: { ddl: true, importCsv: true, mockRow: true, addRow: true, deleteTable: true, editRow: true, deleteRow: true },
-        async insertRow(path, row) {
-            return api.mutate('spanner', 'rows', { instance: path[0].id, database: path[1].id, table: path[2].id, columns: Object.keys(row), values: [Object.values(row)] });
+        async insertRow(path, row, columnTypes) {
+            return api.mutate('spanner', 'rows', { instance: path[0].id, database: path[1].id, table: path[2].id, columns: Object.keys(row), values: [Object.values(row)], columnTypes });
         },
-        async updateRow(path, row) {
-            return api.mutateSub('spanner', 'rows', 'update', { instance: path[0].id, database: path[1].id, table: path[2].id, columns: Object.keys(row), values: [Object.values(row)] });
+        async updateRow(path, row, originalRow, table, columnTypes) {
+            return api.mutateSub('spanner', 'rows', 'update', { instance: path[0].id, database: path[1].id, table: path[2].id, columns: Object.keys(row), values: [Object.values(row)], columnTypes });
         },
         async deleteRow(path, row, table) {
             const key = (table.keyColumns?.[0]) || table.columns[0]?.name;
@@ -653,7 +655,9 @@ export default function DatabaseExplorer(props) {
 
     const insertRow = async (row, label = 'Insert Row') => {
         setTableError(null);
-        await adapter().insertRow(path(), coerceRow(row, insertableColumns()));
+        const cols = insertableColumns();
+        const columnTypes = Object.fromEntries(cols.map(c => [c.name, c.type]));
+        await adapter().insertRow(path(), coerceRow(row, cols), columnTypes);
         addOperation(label, 'SUCCESS', selected()?.label);
         await reloadCurrent();
     };
@@ -674,7 +678,9 @@ export default function DatabaseExplorer(props) {
         props.onAdd?.(`Add Row to ${selected()?.label}`, insertableColumns().map(c => ({ name: c.name, type: 'text' })), insertRow);
     };
     const openEditRow = (row) => props.onEdit?.('Edit Row', insertableColumns().map(c => ({ name: c.name, type: 'text', value: stringifyCell(rowValue(row, c.name)) })), async (formData) => {
-        await adapter().updateRow(path(), formData, row, table());
+        const cols = insertableColumns();
+        const columnTypes = Object.fromEntries(cols.map(c => [c.name, c.type]));
+        await adapter().updateRow(path(), coerceRow(formData, cols), row, table(), columnTypes);
         addOperation('Edit Row', 'SUCCESS', selected()?.label);
         await reloadCurrent();
     });
