@@ -20,7 +20,7 @@ CREATE TABLE customers (
   balance       NUMERIC NOT NULL DEFAULT (0.00),
   lifetime_value NUMERIC NOT NULL DEFAULT (0.00),
   preferred_currency STRING(3) NOT NULL DEFAULT ("USD"),
-  tags          ARRAY<STRING>,
+  tags          ARRAY<STRING(MAX)>,
   metadata      JSON,
   is_verified   BOOL NOT NULL DEFAULT (FALSE),
   signup_channel STRING(50),
@@ -35,7 +35,8 @@ CREATE UNIQUE INDEX idx_customers_email ON customers(email);
 
 CREATE NULL_FILTERED INDEX idx_customers_tier ON customers(tier, created_at DESC) STORING (display_name, email);
 
-CREATE INDEX idx_customers_risk ON customers(risk_score DESC) WHERE risk_score > 0.8;
+CREATE INDEX idx_customers_risk ON customers(risk_score DESC) WHERE risk_score IS NOT NULL;
+
 
 -- Orders: interleaved in customers with CASCADE
 CREATE TABLE orders (
@@ -56,7 +57,7 @@ CREATE TABLE orders (
   notes             STRING(MAX),
   is_gift           BOOL NOT NULL DEFAULT (FALSE),
   gift_message      STRING(500),
-  promo_codes       ARRAY<STRING>,
+  promo_codes       ARRAY<STRING(MAX)>,
   order_date        TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp = true),
   paid_at           TIMESTAMP OPTIONS (allow_commit_timestamp = true),
   shipped_at        TIMESTAMP OPTIONS (allow_commit_timestamp = true),
@@ -153,8 +154,8 @@ CREATE TABLE products (
   color           STRING(50),
   size            STRING(50),
   attributes      JSON,
-  tags            ARRAY<STRING>,
-  images          ARRAY<STRING>,
+  tags            ARRAY<STRING(MAX)>,
+  images          ARRAY<STRING(MAX)>,
   inventory_count INT64 NOT NULL DEFAULT (0),
   inventory_reserved INT64 NOT NULL DEFAULT (0),
   inventory_available INT64 AS (inventory_count - inventory_reserved) STORED,
@@ -252,7 +253,7 @@ CREATE TABLE reviews (
   is_verified_purchase BOOL NOT NULL DEFAULT (FALSE),
   is_approved  BOOL NOT NULL DEFAULT (FALSE),
   helpful_count INT64 DEFAULT (0),
-  images       ARRAY<STRING>,
+  images       ARRAY<STRING(MAX)>,
   created_at   TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp = true),
   updated_at   TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp = true),
   CONSTRAINT CHK_reviews_rating CHECK (rating >= 1 AND rating <= 5)
