@@ -52,9 +52,11 @@ const NON_SQL_SERVICES = new Set(['firestore', 'secretmanager']);
 
 // ─── Non-SQL service descriptions for the "no SQL" placeholder ───────────
 const NON_SQL_INFO = {
-    pubsub:    { label: 'Pub/Sub',        hint: 'Pub/Sub uses topic-based messaging. Use the Data Explorer tab to browse topics and subscriptions.' },
+    pubsub:    { label: 'Pub/Sub',        hint: 'Pub/Sub uses topic-based messaging. Use the Data Explorer tab to browse topics and subscriptions. Filtering supported on subscriptions.' },
     firestore: { label: 'Firestore',      hint: 'Firestore uses document-based NoSQL storage. Use the Data Explorer tab to browse collections and documents.' },
-    secretmanager: { label: 'Secret Manager', hint: 'Secret Manager stores API keys, passwords, and certificates. Use the Data Explorer tab to manage secrets and versions.' },
+    secretmanager: { label: 'Secret Manager', hint: 'Secret Manager stores API keys, passwords, certificates. Supports expiration, rotation periods, labels, and version aliases. Use Data Explorer to manage secrets and versions.' },
+    cloudbilling: { label: 'Cloud Billing', hint: 'Cloud Billing manages budgets with threshold rules. Use Data Explorer to browse budgets, or SQL console to query billing_budgets.' },
+    serviceusage:  { label: 'Service Usage', hint: 'Service Usage API provides service enablement and quota info. All services report as ENABLED with empty quota metrics.' },
 };
 
 // ─── GCS File Query Helpers ──────────────────────────────────────────────
@@ -1621,20 +1623,24 @@ export default function ServiceExplorer(props) {
     });
 
     const switchPrimaryMode = (nextMode) => {
-        if (!['explorer', 'editor', 'db-history', 'db-stats'].includes(nextMode)) return;
+        if (!['explorer', 'editor', 'db-history', 'db-stats', 'settings'].includes(nextMode)) return;
         lastSyncedView = nextMode;
         props.onViewChange?.(nextMode);
         setMode(nextMode);
+        // Reset scroll position so user lands at top of new tab content
+        document.getElementById('main-content')?.scrollTo({ top: 0, behavior: 'instant' });
     };
+
+    const showSettings = () => setMode('settings');
 
     const activeService = () => props.selectedService?.() || 'gcs';
     const meta = () => SERVICE_META[activeService()] || { label: activeService(), description: '' };
 
     const handleRefresh = () => setRefreshTrigger(prev => prev + 1);
-    const handleReset = () => {
-        if (confirm(`Reset all ${activeService()} data? This cannot be undone.`)) {
-            setResetTrigger(prev => prev + 1);
-        }
+
+    const triggerResetAndRefresh = () => {
+        setResetTrigger(prev => prev + 1);
+        setRefreshTrigger(prev => prev + 1);
     };
 
     const isWorkflows = () => activeService() === 'workflows';
@@ -1765,6 +1771,15 @@ export default function ServiceExplorer(props) {
                             </button>
                         </Show>
                         <button
+                            class={`se-mode-tab ${mode() === 'settings' ? 'active' : ''}`}
+                            onClick={showSettings}
+                        >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+                            </svg>
+                            Settings
+                        </button>
+                        <button
                             class={`se-mode-tab ${mode() === 'sync' ? 'active' : ''}`}
                             onClick={() => setMode('sync')}
                         >
@@ -1790,9 +1805,6 @@ export default function ServiceExplorer(props) {
                         <button class="btn btn-secondary" onClick={handleRefresh} style={{ height: "30px", "font-size": "11px", padding: "0 12px" }}>
                             Refresh
                         </button>
-                        <button class="btn btn-danger" onClick={handleReset} style={{ height: "30px", "font-size": "11px", padding: "0 12px" }}>
-                            Reset
-                        </button>
                     </div>
                 </div>
 
@@ -1806,8 +1818,8 @@ export default function ServiceExplorer(props) {
                             selectedService={props.selectedService}
                             onTabChange={props.onTabChange}
                             activeProject={props.activeProject}
+                            projectRegion={props.projectRegion}
                             refreshTrigger={refreshTrigger}
-                            resetTrigger={resetTrigger}
                             subpath={props.subpath}
                             onSubpathChange={props.onSubpathChange}
                         />
@@ -1854,6 +1866,498 @@ export default function ServiceExplorer(props) {
                         <SecretManagerStats activeProject={props.activeProject} />
                     </div>
                 </Show>
+
+                <Show when={mode() === 'settings'}>
+                    <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '24px', "overflow-y": 'auto' }}>
+                        <ServiceSettings
+                            serviceId={activeService()}
+                            serviceLabel={meta().label}
+                            onReset={triggerResetAndRefresh}
+                        />
+                    </div>
+                </Show>
+            </Show>
+        </div>
+    );
+}
+
+// ─── Service Configuration Data ─────────────────────────────────────────
+// Derived from services.yaml — used by the Settings tab to show read-only config
+const SERVICE_CONFIG = {
+    gcs:           { envVar: 'STORAGE_EMULATOR_HOST', envValue: 'http://localhost:4443', port: 4443, protocol: 'REST', type: 'External emulator', tier: 'Community', endpoint: 'http://localhost:4443', gcloudApi: 'storage', terraformVar: 'GOOGLE_STORAGE_CUSTOM_ENDPOINT', docPath: 'storage', sdkExample: `from google.cloud import storage\nclient = storage.Client()\nbucket = client.bucket("my-bucket")` },
+    pubsub:        { envVar: 'PUBSUB_EMULATOR_HOST', envValue: 'localhost:8085', port: 8085, protocol: 'gRPC', type: 'External emulator', tier: 'Community', endpoint: 'localhost:8085', gcloudApi: 'pubsub', terraformVar: 'GOOGLE_PUBSUB_CUSTOM_ENDPOINT', docPath: 'pubsub', sdkExample: `from google.cloud import pubsub_v1\npublisher = pubsub_v1.PublisherClient()\ntopic = publisher.topic_path("project", "my-topic")` },
+    firestore:     { envVar: 'FIRESTORE_EMULATOR_HOST', envValue: 'localhost:8086', port: 8086, protocol: 'gRPC', type: 'External emulator', tier: 'Community', endpoint: 'localhost:8086', gcloudApi: 'firestore', terraformVar: 'GOOGLE_FIRESTORE_CUSTOM_ENDPOINT', docPath: 'firestore', sdkExample: `from google.cloud import firestore\ndb = firestore.Client()\ndoc = db.collection("users").document("alice")` },
+    bigquery:      { envVar: 'BIGQUERY_EMULATOR_HOST', envValue: 'http://localhost:9050', port: 9050, protocol: 'REST', type: 'External emulator', tier: 'Community', endpoint: 'http://localhost:9050', gcloudApi: 'bigquery', terraformVar: 'GOOGLE_BIGQUERY_CUSTOM_ENDPOINT', docPath: 'bigquery', sdkExample: `from google.cloud import bigquery\nclient = bigquery.Client()\nrows = client.query("SELECT 1").result()` },
+    bigtable:      { envVar: 'BIGTABLE_EMULATOR_HOST', envValue: 'localhost:8087', port: 8087, protocol: 'gRPC', type: 'External emulator', tier: 'Pro', endpoint: 'localhost:8087', gcloudApi: null, terraformVar: 'GOOGLE_BIGTABLE_CUSTOM_ENDPOINT', docPath: 'bigtable', sdkExample: `from google.cloud import bigtable\nclient = bigtable.Client(project="project", admin=True)\ninstance = client.instance("my-instance")` },
+    spanner:       { envVar: 'SPANNER_EMULATOR_HOST', envValue: 'localhost:9010', port: 9010, protocol: 'gRPC', type: 'External emulator', tier: 'Pro', endpoint: 'localhost:9010', gcloudApi: 'spanner', terraformVar: 'GOOGLE_SPANNER_CUSTOM_ENDPOINT', docPath: 'spanner', sdkExample: `from google.cloud import spanner\nclient = spanner.Client()\ninstance = client.instance("my-instance")` },
+    memorystore:   { envVar: 'REDIS_HOST', envValue: 'localhost:6379', port: 6379, protocol: 'Redis', type: 'External emulator', tier: 'Community', endpoint: 'localhost:6379', gcloudApi: null, terraformVar: 'GOOGLE_REDIS_CUSTOM_ENDPOINT', docPath: 'memorystore', sdkExample: `import redis\nr = redis.Redis(host="localhost", port=6379)\nr.set("key", "value")` },
+    secretmanager: { envVar: 'SECRET_MANAGER_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'secretmanager', terraformVar: 'GOOGLE_SECRET_MANAGER_CUSTOM_ENDPOINT', docPath: 'secret-manager', sdkExample: `from google.cloud import secretmanager\nclient = secretmanager.SecretManagerServiceClient()\nsecret = client.create_secret(request={"parent": "projects/p", "secret_id": "my-secret"})` },
+    cloudtasks:    { envVar: 'CLOUD_TASKS_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'cloudtasks', terraformVar: 'GOOGLE_CLOUD_TASKS_CUSTOM_ENDPOINT', docPath: 'cloud-tasks', sdkExample: `from google.cloud import tasks_v2\nclient = tasks_v2.CloudTasksClient()\nqueue = client.create_queue(request={"parent": "projects/p/locations/us-central1", "queue": {}})` },
+    cloudscheduler:{ envVar: 'CLOUD_SCHEDULER_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'cloudscheduler', terraformVar: 'GOOGLE_CLOUD_SCHEDULER_CUSTOM_ENDPOINT', docPath: 'cloud-scheduler', sdkExample: `from google.cloud import scheduler_v1\nclient = scheduler_v1.CloudSchedulerClient()\njob = client.create_job(request={"parent": "projects/p/locations/us-central1", "job": {}})` },
+    cloudfunctions:{ envVar: 'CLOUD_FUNCTIONS_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'cloudfunctions', terraformVar: 'GOOGLE_CLOUD_FUNCTIONS_CUSTOM_ENDPOINT', docPath: 'cloud-functions', sdkExample: `gcloud functions deploy my-fn --runtime python311 --trigger-http` },
+    alloydb:       { envVar: 'ALLOYDB_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'alloydb', terraformVar: 'GOOGLE_ALLOYDB_CUSTOM_ENDPOINT', docPath: 'alloydb', sdkExample: `psql -h localhost -p 5432 -U postgres -d alloydb_<cluster_id>` },
+    dataproc:      { envVar: 'DATAPROC_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'dataproc', terraformVar: 'GOOGLE_DATAPROC_CUSTOM_ENDPOINT', docPath: 'dataproc', sdkExample: `gcloud dataproc clusters create my-cluster --region us-central1` },
+    cloudiam:      { envVar: 'IAM_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'iam', terraformVar: 'GOOGLE_IAM_CUSTOM_ENDPOINT', docPath: 'iam', sdkExample: `from google.cloud import iam\nclient = iam.IAMClient()` },
+    kms:           { envVar: 'CLOUD_KMS_EMULATOR_HOST', envValue: 'http://localhost:8080', port: 'gateway (8080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Pro', endpoint: 'http://localhost:8080', gcloudApi: 'cloudkms', terraformVar: 'GOOGLE_KMS_CUSTOM_ENDPOINT', docPath: 'kms', sdkExample: `from google.cloud import kms\nclient = kms.KeyManagementServiceClient()` },
+    logging:       { envVar: 'CLOUD_LOGGING_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'logging', terraformVar: 'GOOGLE_LOGGING_CUSTOM_ENDPOINT', docPath: 'logging', sdkExample: `from google.cloud import logging_v2\nclient = logging_v2.LoggingServiceV2Client()` },
+    monitoring:    { envVar: 'CLOUD_MONITORING_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'monitoring', terraformVar: 'GOOGLE_MONITORING_CUSTOM_ENDPOINT', docPath: 'monitoring', sdkExample: `from google.cloud import monitoring_v3\nclient = monitoring_v3.MetricServiceClient()` },
+    gke:           { envVar: 'GKE_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Pro', endpoint: 'localhost:8080', gcloudApi: 'container', terraformVar: 'GOOGLE_CONTAINER_CUSTOM_ENDPOINT', docPath: 'kubernetes-engine', sdkExample: `kubectl --kubeconfig=<(gcloud container clusters get-credentials my-cluster)` },
+    compute:       { envVar: 'COMPUTE_EMULATOR_HOST', envValue: 'http://localhost:8080', port: 'gateway (8080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Pro', endpoint: 'http://localhost:8080', gcloudApi: 'compute', terraformVar: 'GOOGLE_COMPUTE_CUSTOM_ENDPOINT', docPath: 'compute', sdkExample: `from google.cloud import compute_v1\nclient = compute_v1.InstancesClient()` },
+    cloudrun:      { envVar: 'CLOUD_RUN_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Pro', endpoint: 'localhost:8080', gcloudApi: 'run', terraformVar: 'GOOGLE_CLOUD_RUN_CUSTOM_ENDPOINT', docPath: 'cloud-run', sdkExample: `gcloud run deploy my-service --image gcr.io/project/image` },
+    cloudsql:      { envVar: 'CLOUD_SQL_EMULATOR_HOST', envValue: 'http://localhost:8080', port: 'gateway (8080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Community', endpoint: 'http://localhost:8080', gcloudApi: 'sqladmin', terraformVar: 'GOOGLE_SQL_CUSTOM_ENDPOINT', docPath: 'sql', sdkExample: `psql -h localhost -p 5432 -U postgres -d <db_name>` },
+    cloudbilling:  { envVar: 'CLOUD_BILLING_EMULATOR_HOST', envValue: 'http://localhost:8080', port: 'gateway (8080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Community', endpoint: 'http://localhost:8080', gcloudApi: 'cloudbilling', terraformVar: 'GOOGLE_CLOUD_BILLING_CUSTOM_ENDPOINT', docPath: 'billing', sdkExample: `from google.cloud import billing\nclient = billing.CloudBillingClient()` },
+    serviceusage:  { envVar: 'SERVICE_USAGE_EMULATOR_HOST', envValue: 'http://localhost:8080', port: 'gateway (8080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Community', endpoint: 'http://localhost:8080', gcloudApi: null, terraformVar: 'GOOGLE_SERVICE_USAGE_CUSTOM_ENDPOINT', docPath: 'service-usage', sdkExample: `gcloud services enable compute.googleapis.com` },
+    vertexai:      { envVar: 'AIPLATFORM_EMULATOR_HOST', envValue: 'http://localhost:8080', port: 'gateway (8080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Pro', endpoint: 'http://localhost:8080', gcloudApi: 'aiplatform', terraformVar: 'GOOGLE_VERTEX_AI_CUSTOM_ENDPOINT', docPath: 'vertex-ai', sdkExample: `from google.cloud import aiplatform\naiplatform.init(project="p", location="us-central1")` },
+    workflows:     { envVar: 'WORKFLOWS_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'workflows', terraformVar: 'GOOGLE_WORKFLOWS_CUSTOM_ENDPOINT', docPath: 'workflows', sdkExample: `gcloud workflows deploy my-wf --source=workflow.yaml` },
+};
+
+// ─── Service Settings Component ──────────────────────────────────────────
+function ServiceSettings(props) {
+    const config = () => SERVICE_CONFIG[props.serviceId] || null;
+    const [resetting, setResetting] = createSignal(false);
+    const [resetDone, setResetDone] = createSignal(false);
+    const [resetError, setResetError] = createSignal(null);
+    const [showConfirm, setShowConfirm] = createSignal(false);
+    const [confirmText, setConfirmText] = createSignal('');
+    const [copiedKey, setCopiedKey] = createSignal(null);
+
+    const isFetchableService = () => !['gke', 'compute', 'cloudrun', 'cloudbilling', 'serviceusage'].includes(props.serviceId);
+    const expectedText = () => `reset ${props.serviceId}`;
+
+    const copyText = (text, key) => {
+        navigator.clipboard.writeText(text).then(() => {
+            setCopiedKey(key);
+            setTimeout(() => setCopiedKey(null), 2000);
+        }).catch(() => {});
+    };
+
+    const handleReset = async () => {
+        const svc = props.serviceId;
+        if (confirmText().toLowerCase() !== expectedText()) return;
+        setShowConfirm(false);
+        setConfirmText('');
+        setResetting(true);
+        setResetError(null);
+        setResetDone(false);
+        try {
+            await api.resetService(svc, false);
+            setResetDone(true);
+            props.onReset?.();
+            setTimeout(() => setResetDone(false), 5000);
+        } catch (err) {
+            setResetError(err.message || 'Reset failed');
+        } finally {
+            setResetting(false);
+        }
+    };
+
+    const handleCloseConfirm = () => {
+        setShowConfirm(false);
+        setConfirmText('');
+    };
+
+    const navigateToSettingsPage = () => {
+        history.pushState(null, '', '/settings');
+        window.dispatchEvent(new PopStateEvent('popstate'));
+    };
+
+    const docUrl = () => config() ? `https://cloud.google.com/${config().docPath}/docs` : '#';
+    const sdkUrl = () => config() ? `https://cloud.google.com/${config().docPath}/docs/reference/libraries` : '#';
+    const terraformUrl = () => config() ? `https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/${config().docPath.replace(/-/g, '_')}` : '#';
+
+    const Row = (props) => (
+        <div style={{ display: 'flex', "justify-content": 'space-between', "align-items": 'center', padding: '10px 0', "border-bottom": '1px solid var(--border-subtle)' }}>
+            <span style={{ "font-size": '12px', color: 'var(--text-secondary)' }}>{props.label}</span>
+            <span style={{ "font-size": '13px', "font-weight": '500', color: 'var(--text-primary)', display: 'flex', "align-items": 'center', gap: '8px' }}>
+                {props.value}
+                {props.copy && (
+                    <button
+                        onClick={() => copyText(props.copy, props.copyKey)}
+                        style={{
+                            padding: '2px 6px',
+                            border: '1px solid var(--border)',
+                            "border-radius": '4px',
+                            background: copiedKey() === props.copyKey ? 'var(--success, #16a34a)' : 'var(--bg)',
+                            color: copiedKey() === props.copyKey ? '#fff' : 'var(--text-tertiary)',
+                            cursor: 'pointer',
+                            "font-size": '10px',
+                            "line-height": '1.4',
+                            transition: 'all 0.15s'
+                        }}
+                        title={`Copy ${props.copy}`}
+                        aria-label={`Copy ${props.label}`}
+                    >
+                        {copiedKey() === props.copyKey ? 'Copied!' : 'Copy'}
+                    </button>
+                )}
+            </span>
+        </div>
+    );
+
+    const Card = (props) => (
+        <div style={{
+            border: '1px solid var(--border)',
+            "border-radius": 'var(--radius-sm, 8px)',
+            overflow: 'hidden',
+            background: 'var(--surface)',
+            "margin-bottom": '16px'
+        }}>
+            <div style={{
+                padding: '10px 14px',
+                background: 'var(--surface-variant)',
+                "border-bottom": '1px solid var(--border)',
+                display: 'flex',
+                "align-items": 'center',
+                gap: '8px'
+            }}>
+                {props.icon}
+                <span style={{ "font-weight": '600', "font-size": '13px' }}>{props.title}</span>
+            </div>
+            <div style={{ padding: props.padding || '8px 18px' }}>
+                {props.children}
+            </div>
+        </div>
+    );
+
+    return (
+        <div style={{ "max-width": "680px" }}>
+            {/* Connection Card */}
+            <Show when={config()}>
+                <Card
+                    title="Connection"
+                    icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true" focusable="false"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>}
+                >
+                    <Row label="Environment Variable" value={<code style={{ "font-size": '12px', "font-weight": '500' }}>{config().envVar}</code>} copy={`${config().envVar}=${config().envValue}`} copyKey="env" />
+                    <Row label="Value" value={<code style={{ "font-size": '12px', "font-weight": '500' }}>{config().envValue}</code>} copy={config().envValue} copyKey="val" />
+                    <Row label="Endpoint" value={<code style={{ "font-size": '12px', "font-weight": '500' }}>{config().endpoint}</code>} />
+                    <div style={{
+                        padding: '12px 0 4px',
+                        display: 'flex',
+                        gap: '8px',
+                        "flex-wrap": 'wrap'
+                    }}>
+                        <button class="btn btn-secondary" style={{ "font-size": '11px', padding: '5px 12px' }} onClick={() => copyText(`${config().envVar}=${config().envValue}`, 'env')}>
+                            {copiedKey() === 'env' ? '✓ Copied' : 'Copy env var'}
+                        </button>
+                        <button class="btn btn-secondary" style={{ "font-size": '11px', padding: '5px 12px' }} onClick={() => copyText(config().envValue, 'val')}>
+                            {copiedKey() === 'val' ? '✓ Copied' : 'Copy endpoint'}
+                        </button>
+                    </div>
+                </Card>
+            </Show>
+
+            {/* Configuration Card */}
+            <Show when={config()}>
+                <Card
+                    title="Configuration"
+                    icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="var(--text-secondary)" aria-hidden="true" focusable="false"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>}
+                >
+                    <Row label="Protocol" value={<span class="badge badge-info" style={{ "font-size": '11px' }}>{config().protocol}</span>} />
+                    <Row label="Port" value={<code style={{ "font-size": '12px' }}>{config().port}</code>} />
+                    <Row label="Type" value={config().type} />
+                    <Row label="Tier" value={<span class={`badge ${config().tier === 'Pro' ? 'badge-warning' : 'badge-info'}`} style={{ "font-size": '11px' }}>{config().tier}</span>} />
+                    <Show when={config().gcloudApi}>
+                        <Row label="gcloud API" value={<code style={{ "font-size": '11px' }}>{config().gcloudApi}</code>} />
+                    </Show>
+                    <Row label="Terraform" value={<code style={{ "font-size": '10px' }}>{config().terraformVar}</code>} copy={config().terraformVar} copyKey="tf" />
+                </Card>
+            </Show>
+
+            {/* Resources Card */}
+            <Show when={config()}>
+                <Card
+                    title="Resources & Guides"
+                    icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="var(--info)" aria-hidden="true" focusable="false"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>}
+                >
+                    {/* LocalCloud Guides */}
+                    <div style={{ display: 'flex', "flex-direction": 'column', gap: '4px', padding: '4px 0' }}>
+                        {/* LocalCloud User Guide */}
+                        <a
+                            href="/settings"
+                            onClick={(e) => { e.preventDefault(); navigateToSettingsPage(); }}
+                            class="settings-resource-link"
+                            style={{ display: 'flex', "align-items": 'center', gap: '8px', padding: '8px 10px', "border-radius": '6px', color: 'var(--text-secondary)', "text-decoration": 'none', "font-size": '13px', transition: 'background 0.15s, color 0.15s' }}
+                        >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true" focusable="false"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+                            LocalCloud User Guide
+                            <span style={{ "font-size": '9px', "font-weight": '600', color: 'var(--primary)', background: 'var(--primary-softer)', padding: '1px 6px', "border-radius": '3px', "margin-left": 'auto' }}>Get Started</span>
+                        </a>
+                        {/* LocalCloud Examples */}
+                        <a
+                            href={`/settings#${props.serviceId}`}
+                            onClick={(e) => { e.preventDefault(); navigateToSettingsPage(); }}
+                            class="settings-resource-link"
+                            style={{ display: 'flex', "align-items": 'center', gap: '8px', padding: '8px 10px', "border-radius": '6px', color: 'var(--text-secondary)', "text-decoration": 'none', "font-size": '13px', transition: 'background 0.15s, color 0.15s' }}
+                        >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true" focusable="false"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+                            Code Examples & CLI Commands
+                            <span style={{ "font-size": '9px', "font-weight": '600', color: 'var(--text-tertiary)', background: 'var(--surface-variant)', padding: '1px 6px', "border-radius": '3px', "margin-left": 'auto' }}>SDK · CLI</span>
+                        </a>
+                    </div>
+
+                    {/* Google Cloud Official Docs (separator) */}
+                    <div style={{
+                        margin: '8px 0',
+                        display: 'flex',
+                        "align-items": 'center',
+                        gap: '8px',
+                        padding: '0 10px'
+                    }}>
+                        <div style={{ flex: 1, height: '1px', background: 'var(--border-subtle)' }} />
+                        <span style={{ "font-size": '9px', color: 'var(--text-tertiary)', "text-transform": 'uppercase', "letter-spacing": '0.5px', "font-weight": '600', "white-space": 'nowrap' }}>Google Cloud Docs</span>
+                        <div style={{ flex: 1, height: '1px', background: 'var(--border-subtle)' }} />
+                    </div>
+
+                    <div style={{ display: 'flex', "flex-direction": 'column', gap: '4px', padding: '0 0 4px 0' }}>
+                        <a
+                            href={docUrl()}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="settings-resource-link"
+                            style={{ display: 'flex', "align-items": 'center', gap: '8px', padding: '8px 10px', "border-radius": '6px', color: 'var(--text-secondary)', "text-decoration": 'none', "font-size": '13px', transition: 'background 0.15s, color 0.15s' }}
+                        >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+                            Google Cloud Documentation
+                        </a>
+                        <Show when={config().gcloudApi}>
+                            <a
+                                href={sdkUrl()}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="settings-resource-link"
+                                style={{ display: 'flex', "align-items": 'center', gap: '8px', padding: '8px 10px', "border-radius": '6px', color: 'var(--text-secondary)', "text-decoration": 'none', "font-size": '13px', transition: 'background 0.15s, color 0.15s' }}
+                            >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></svg>
+                                Client Library Reference
+                            </a>
+                        </Show>
+                        <a
+                            href={terraformUrl()}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="settings-resource-link"
+                            style={{ display: 'flex', "align-items": 'center', gap: '8px', padding: '8px 10px', "border-radius": '6px', color: 'var(--text-secondary)', "text-decoration": 'none', "font-size": '13px', transition: 'background 0.15s, color 0.15s' }}
+                        >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M17.5 1.25a.5.5 0 0 1 1 0v2.5H21a.5.5 0 0 1 0 1h-2.5v2.5a.5.5 0 0 1-1 0v-2.5H15a.5.5 0 0 1 0-1h2.5v-2.5zm-11 4.5a1 1 0 0 1 1-1H11a.5.5 0 0 0 0-1H7.5a2 2 0 0 0-2 2v14a.5.5 0 0 0 .8.4l5.7-4.4 5.7 4.4a.5.5 0 0 0 .8-.4v-8.5a.5.5 0 0 0-1 0v7.48l-5.2-4a.5.5 0 0 0-.6 0l-5.2 4V5.75z"/></svg>
+                            Terraform Registry
+                        </a>
+                    </div>
+                    <Show when={config().sdkExample}>
+                        <div style={{ "margin-top": '12px' }}>
+                            <div style={{ display: 'flex', "align-items": 'center', gap: '6px', "margin-bottom": '6px' }}>
+                                <span style={{ "font-size": '10px', "font-weight": '600', color: 'var(--text-tertiary)', "text-transform": 'uppercase', "letter-spacing": '0.5px' }}>Quick Example</span>
+                                <button
+                                    class="btn btn-secondary"
+                                    onClick={() => copyText(config().sdkExample, 'sdk')}
+                                    style={{ "font-size": '10px', padding: '2px 8px' }}
+                                >
+                                    {copiedKey() === 'sdk' ? 'Copied!' : 'Copy'}
+                                </button>
+                            </div>
+                            <pre style={{
+                                margin: 0,
+                                padding: '10px 14px',
+                                background: 'var(--bg-subtle)',
+                                "border-radius": '6px',
+                                "font-size": '11px',
+                                "line-height": '1.6',
+                                "font-family": 'var(--font-mono)',
+                                color: 'var(--text-secondary)',
+                                overflow: 'auto',
+                                "max-height": '160px'
+                            }}>{config().sdkExample}</pre>
+                        </div>
+                    </Show>
+                </Card>
+            </Show>
+
+            {/* Danger Zone */}
+            <div style={{
+                border: '1px solid var(--danger-border, #fecaca)',
+                "border-radius": 'var(--radius-sm, 8px)',
+                overflow: 'hidden',
+                background: 'var(--danger-bg, #fef2f2)'
+            }}>
+                <div style={{
+                    padding: '10px 14px',
+                    background: 'var(--danger-header-bg, #fee2e2)',
+                    "border-bottom": '1px solid var(--danger-border, #fecaca)',
+                    display: 'flex',
+                    "align-items": 'center',
+                    gap: '8px'
+                }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--danger, #dc2626)' }} aria-hidden="true" focusable="false">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                    </svg>
+                    <span style={{ "font-weight": '600', "font-size": '13px', color: 'var(--danger, #dc2626)' }}>Danger Zone</span>
+                </div>
+
+                <div style={{ padding: '16px 20px' }}>
+                    <Show when={isFetchableService()} fallback={
+                        <div style={{ padding: '8px 0' }}>
+                            <p style={{ margin: '0 0 4px', "font-size": '13px', color: 'var(--text-secondary)' }}>
+                                This service does not have resettable local data.
+                            </p>
+                            <p style={{ margin: 0, "font-size": '11px', color: 'var(--text-tertiary)' }}>
+                                {props.serviceLabel} is a connection-only facade — data lives in external resources.
+                            </p>
+                        </div>
+                    }>
+                        <div>
+                            <div style={{ "margin-bottom": '12px' }}>
+                                <p style={{ margin: '0 0 4px', "font-size": '13px', "font-weight": '600', color: 'var(--text-primary)' }}>
+                                    Reset all {props.serviceLabel} data
+                                </p>
+                                <p style={{ margin: 0, "font-size": '12px', color: 'var(--text-secondary)', "line-height": '1.5' }}>
+                                    This will permanently delete all data stored in the {props.serviceLabel} emulator. This action cannot be undone.
+                                </p>
+                            </div>
+
+                            <Show when={resetDone()}>
+                                <div style={{
+                                    padding: '8px 12px',
+                                    "margin-bottom": '12px',
+                                    "border-radius": '6px',
+                                    background: 'var(--success-bg, #ecfdf5)',
+                                    color: 'var(--success, #059669)',
+                                    "font-size": '12px',
+                                    display: 'flex',
+                                    "align-items": 'center',
+                                    gap: '6px'
+                                }}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                                    All {props.serviceLabel} data has been reset successfully.
+                                </div>
+                            </Show>
+
+                            <Show when={resetError()}>
+                                <div style={{
+                                    padding: '8px 12px',
+                                    "margin-bottom": '12px',
+                                    "border-radius": '6px',
+                                    background: 'var(--danger-bg, #fef2f2)',
+                                    color: 'var(--danger, #dc2626)',
+                                    "font-size": '12px'
+                                }}>
+                                    Error: {resetError()}
+                                </div>
+                            </Show>
+
+                            <button
+                                class="btn btn-danger-filled"
+                                onClick={() => setShowConfirm(true)}
+                                disabled={resetting()}
+                                style={{ "font-size": '12px', padding: '8px 18px', "border-radius": '6px' }}
+                            >
+                                <Show when={!resetting()} fallback={
+                                    <><div class="loading-spinner" style={{ width: '12px', height: '12px', "border-width": '1.5px', "border-color": 'rgba(255,255,255,0.3)', "border-top-color": '#fff' }} /> Resetting…</>
+                                }>
+                                    Reset {props.serviceLabel}
+                                </Show>
+                            </button>
+                        </div>
+                    </Show>
+                </div>
+            </div>
+
+            {/* Confirmation Modal */}
+            <Show when={showConfirm()}>
+                <div
+                    style={{
+                        position: 'fixed',
+                        inset: 0,
+                        background: 'rgba(0,0,0,0.45)',
+                        display: 'flex',
+                        "align-items": 'center',
+                        "justify-content": 'center',
+                        "z-index": 100
+                    }}
+                    onClick={handleCloseConfirm}
+                >
+                    <div
+                        style={{
+                            background: 'var(--surface)',
+                            "border-radius": 'var(--radius, 12px)',
+                            padding: '24px',
+                            "max-width": '440px',
+                            width: '90%',
+                            "box-shadow": '0 16px 48px rgba(0,0,0,0.2)',
+                            border: '1px solid var(--danger-border, #fecaca)'
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div style={{ display: 'flex', "align-items": 'flex-start', gap: '12px', "margin-bottom": '16px' }}>
+                            <div style={{
+                                width: '36px',
+                                height: '36px',
+                                "border-radius": '50%',
+                                background: 'var(--danger, #dc2626)',
+                                display: 'flex',
+                                "align-items": 'center',
+                                "justify-content": 'center',
+                                "flex-shrink": 0
+                            }}>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff" aria-hidden="true" focusable="false">
+                                    <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <h3 style={{ margin: '0 0 4px', "font-size": '16px', "font-weight": '600' }}>
+                                    Reset {props.serviceLabel}?
+                                </h3>
+                                <p style={{ margin: 0, "font-size": '13px', color: 'var(--text-secondary)', "line-height": '1.5' }}>
+                                    This will permanently delete all {props.serviceLabel} data. This action cannot be undone.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div style={{ "margin-bottom": '16px' }}>
+                            <label style={{ "font-size": '11px', color: 'var(--text-tertiary)', display: 'block', "margin-bottom": '6px' }}>
+                                Type <code style={{ "font-weight": '600', color: 'var(--danger, #dc2626)', background: 'var(--danger-bg, #fef2f2)', padding: '1px 5px', "border-radius": '3px' }}>{expectedText()}</code> to confirm:
+                            </label>
+                            <input
+                                type="text"
+                                value={confirmText()}
+                                onInput={(e) => setConfirmText(e.currentTarget.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter' && confirmText().toLowerCase() === expectedText()) handleReset(); if (e.key === 'Escape') handleCloseConfirm(); }}
+                                placeholder={expectedText()}
+                                autofocus
+                                style={{
+                                    width: '100%',
+                                    padding: '8px 12px',
+                                    border: '1px solid var(--border)',
+                                    "border-radius": '6px',
+                                    "font-size": '13px',
+                                    background: 'var(--bg)',
+                                    color: 'var(--text-primary)',
+                                    "box-sizing": 'border-box'
+                                }}
+                            />
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '8px', "justify-content": 'flex-end' }}>
+                            <button
+                                class="btn btn-secondary"
+                                onClick={handleCloseConfirm}
+                                style={{ "font-size": '12px', padding: '6px 14px' }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                class="btn btn-danger-filled"
+                                onClick={handleReset}
+                                disabled={confirmText().toLowerCase() !== expectedText() || resetting()}
+                                style={{
+                                    "font-size": '12px',
+                                    padding: '6px 14px',
+                                    opacity: confirmText().toLowerCase() !== expectedText() ? 0.5 : 1
+                                }}
+                            >
+                                Reset Data
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </Show>
         </div>
     );

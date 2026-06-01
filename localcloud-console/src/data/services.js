@@ -8,20 +8,22 @@ export const SERVICE_META = {
     spanner:       { label: 'Spanner',          description: 'Fully managed relational database with unlimited scale, strong consistency, and up to 99.999% availability.' },
     bigtable:      { label: 'Bigtable',         description: 'A fully managed, scalable NoSQL database service for large analytical and operational workloads.' },
     logging:       { label: 'Cloud Logging',    description: 'Real-time log management and analysis. Store, search, analyze, and alert on log data.' },
-    monitoring:    { label: 'Cloud Monitoring', description: 'Full-stack monitoring for cloud applications. Metrics, uptime checks, dashboards, and alerting.' },
+    monitoring:    { label: 'Cloud Monitoring', description: 'Full-stack monitoring for cloud applications. Metrics, uptime checks, dashboards, alert policies, and notification channels.' },
     gke:           { label: 'GKE',              description: 'Secured and managed Kubernetes service with four-way auto-scaling and multi-cluster support.' },
     compute:       { label: 'Compute Engine',   description: 'Virtual machines running in Google\'s data center. Scalable, high-performance VMs.' },
     cloudrun:      { label: 'Cloud Run',        description: 'Fully managed compute platform for deploying and scaling containerized applications quickly and securely.' },
-    memorystore:   { label: 'Memorystore',      description: 'Fully managed in-memory data store service for Redis and Memcached.' },
+    memorystore:   { label: 'Memorystore',      description: 'Fully managed in-memory data store service. Supports AUTH (password) and persistence (RDB/AOF) configuration.' },
     workflows:     { label: 'Cloud Workflows',  description: 'Orchestrate and automate Google Cloud and HTTP-based API services with serverless workflows.' },
     vertexai:      { label: 'Vertex AI',        description: 'Local Gemini-style generative AI endpoints with deterministic stub responses and optional backend wiring.', tag: 'Coming up' },
-    kms:           { label: 'Cloud KMS',         description: 'Local key rings, crypto keys, key versions, and software-backed encryption/decryption for development.' },
+    kms:           { label: 'Cloud KMS',         description: 'Local key rings, crypto keys, key versions. Supports symmetric and asymmetric (RSA/EC) algorithms for development.' },
     cloudsql:      { label: 'Cloud SQL',         description: 'Cloud SQL Admin API control plane for PostgreSQL and MySQL-compatible development workflows.' },
     alloydb:       { label: 'AlloyDB',          description: 'PostgreSQL-compatible managed database emulation with cluster/instance/backup CRUD and pgvector support.' },
     cloudscheduler: { label: 'Cloud Scheduler',  description: 'Cron job scheduling service. Create, pause, resume, and delete jobs with HTTP, Pub/Sub, or App Engine targets.' },
-    cloudfunctions: { label: 'Cloud Functions',   description: 'Lightweight serverless compute. Define function metadata and event triggers backed by the Cloud Run emulator.' },
+    cloudfunctions: { label: 'Cloud Functions',   description: 'Lightweight serverless compute. Supports Pub/Sub, Cloud Storage Eventarc, and Audit Log triggers backed by Cloud Run emulator.' },
     dataproc:      { label: 'Dataproc',          description: 'Managed Apache Spark and Hadoop service emulation with local spark-submit execution for Spark, PySpark, and SparkSQL jobs.' },
-    cloudiam:      { label: 'Cloud IAM',         description: 'Identity and Access Management policy stub. Permissive testIamPermissions for unblocking client library calls.' },
+    cloudiam:      { label: 'Cloud IAM',         description: 'Identity and Access Management with role validation against known GCP roles. Permissive mode available via --permissive-iam flag.' },
+    cloudbilling:  { label: 'Cloud Billing',     description: 'Billing account management and budget CRUD. Create, list, and delete budgets with threshold rules.' },
+    serviceusage:  { label: 'Service Usage',     description: 'Service enablement and consumer quota metric stubs for Terraform compatibility.' },
 };
 
 export const SQL_SERVICES = [
@@ -67,6 +69,10 @@ export const SQL_SERVICES = [
       placeholder: "SELECT cluster_name, region, created_at\nFROM dataproc_clusters\nORDER BY created_at DESC" },
     { id: 'cloudiam', label: 'Cloud IAM', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'cloudiam',
       placeholder: "SELECT resource_type, resource_id\nFROM iam_policies\nORDER BY resource_type" },
+    { id: 'cloudbilling', label: 'Cloud Billing', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'usage',
+      placeholder: "SELECT budget_id, display_name, create_time\nFROM billing_budgets\nORDER BY create_time DESC" },
+    { id: 'serviceusage', label: 'Service Usage', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'services',
+      placeholder: "" },
 ];
 
 export const SQL_RESULT_PAGE_SIZE = 50;
@@ -83,25 +89,32 @@ export const SERVICE_SCHEMAS = {
     ]},
     kms: { tables: [
         { name: 'kms_key_rings', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'key_ring_id', type: 'TEXT' }, { name: 'created_at', type: 'TIMESTAMP' }] },
-        { name: 'kms_crypto_keys', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'key_ring_id', type: 'TEXT' }, { name: 'crypto_key_id', type: 'TEXT' }, { name: 'purpose', type: 'TEXT' }, { name: 'primary_version', type: 'INT' }] }
+        { name: 'kms_crypto_keys', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'key_ring_id', type: 'TEXT' }, { name: 'crypto_key_id', type: 'TEXT' }, { name: 'purpose', type: 'TEXT' }, { name: 'algorithm', type: 'TEXT' }, { name: 'primary_version', type: 'INT' }] }
     ]},
     cloudsql: { tables: [
-        { name: 'cloudsql_instances', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'instance_id', type: 'TEXT' }, { name: 'database_version', type: 'TEXT' }, { name: 'backend_type', type: 'TEXT' }, { name: 'state', type: 'TEXT' }] },
+        { name: 'cloudsql_instances', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'instance_id', type: 'TEXT' }, { name: 'database_version', type: 'TEXT' }, { name: 'backend_type', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'settings_json', type: 'JSONB' }, { name: 'tier', type: 'TEXT' }] },
         { name: 'cloudsql_databases', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'instance_id', type: 'TEXT' }, { name: 'database_name', type: 'TEXT' }, { name: 'physical_name', type: 'TEXT' }] },
         { name: 'cloudsql_users', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'instance_id', type: 'TEXT' }, { name: 'user_name', type: 'TEXT' }, { name: 'host', type: 'TEXT' }] },
         { name: 'cloudsql_operations', columns: [{ name: 'operation_id', type: 'TEXT' }, { name: 'project_id', type: 'TEXT' }, { name: 'instance_id', type: 'TEXT' }, { name: 'operation_type', type: 'TEXT' }, { name: 'status', type: 'TEXT' }] },
         { name: 'cloudsql_flags', columns: [{ name: 'database_version', type: 'TEXT' }, { name: 'flag_name', type: 'TEXT' }, { name: 'allowed_string_values', type: 'TEXT' }] }
     ]},
-    memorystore: { tables: Array.from({ length: 16 }, (_, i) => ({
-        name: `db${i}`,
-        columns: [{ name: 'key', type: 'STRING' }, { name: 'type', type: 'STRING' }, { name: 'value', type: 'STRING' }, { name: 'ttl', type: 'INTEGER' }]
-    })) },
+    memorystore: { tables: [
+        { name: 'memorystore_instances', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'instance_id', type: 'TEXT' }, { name: 'display_name', type: 'TEXT' }, { name: 'tier', type: 'TEXT' }, { name: 'engine', type: 'TEXT' }, { name: 'redis_version', type: 'TEXT' }, { name: 'port', type: 'INT' }, { name: 'memory_size_gb', type: 'INT' }, { name: 'state', type: 'TEXT' }, { name: 'host', type: 'TEXT' }, { name: 'auth_enabled', type: 'BOOLEAN' }, { name: 'persistence_mode', type: 'TEXT' }, { name: 'created_at', type: 'TIMESTAMP' }] }
+    ]},
+    cloudrun: { tables: [
+        { name: 'cloudrun_services', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location', type: 'TEXT' }, { name: 'service_id', type: 'TEXT' }, { name: 'container_image', type: 'TEXT' }, { name: 'container_port', type: 'INT' }, { name: 'revision_count', type: 'INT' }, { name: 'traffic_json', type: 'JSONB' }, { name: 'created_at', type: 'TIMESTAMP' }] },
+        { name: 'cloudrun_revisions', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location', type: 'TEXT' }, { name: 'service_id', type: 'TEXT' }, { name: 'revision_id', type: 'TEXT' }, { name: 'created_at', type: 'TIMESTAMP' }] }
+    ]},
+    cloudtasks: { tables: [
+        { name: 'task_queues', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'queue_id', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'max_dispatches_per_second', type: 'DOUBLE' }, { name: 'max_concurrent_dispatches', type: 'INT' }, { name: 'max_attempts', type: 'INT' }, { name: 'created_at', type: 'TIMESTAMP' }] },
+        { name: 'cloud_tasks', columns: [{ name: 'task_id', type: 'TEXT' }, { name: 'queue_name', type: 'TEXT' }, { name: 'http_method', type: 'TEXT' }, { name: 'url', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'dispatch_count', type: 'INT' }, { name: 'created_at', type: 'TIMESTAMP' }] }
+    ]},
     cloudscheduler: { tables: [
-        { name: 'scheduler_jobs', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'job_id', type: 'TEXT' }, { name: 'schedule', type: 'TEXT' }, { name: 'time_zone', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'next_execution_time', type: 'TIMESTAMP' }] },
+        { name: 'scheduler_jobs', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'job_id', type: 'TEXT' }, { name: 'schedule', type: 'TEXT' }, { name: 'time_zone', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'job_proto', type: 'JSONB' }, { name: 'next_execution_time', type: 'TIMESTAMP' }] },
         { name: 'scheduler_executions', columns: [{ name: 'job_name', type: 'TEXT' }, { name: 'status', type: 'TEXT' }, { name: 'executed_at', type: 'TIMESTAMP' }, { name: 'output', type: 'TEXT' }] }
     ]},
     cloudfunctions: { tables: [
-        { name: 'cloud_functions', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'function_id', type: 'TEXT' }, { name: 'runtime', type: 'TEXT' }, { name: 'entry_point', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'build_config', type: 'JSONB' }, { name: 'service_config', type: 'JSONB' }, { name: 'event_trigger', type: 'JSONB' }, { name: 'created_at', type: 'TIMESTAMP' }, { name: 'updated_at', type: 'TIMESTAMP' }] }
+        { name: 'cloud_functions', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'function_id', type: 'TEXT' }, { name: 'runtime', type: 'TEXT' }, { name: 'entry_point', type: 'TEXT' }, { name: 'trigger_event_type', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'build_config', type: 'JSONB' }, { name: 'service_config', type: 'JSONB' }, { name: 'event_trigger', type: 'JSONB' }, { name: 'created_at', type: 'TIMESTAMP' }, { name: 'updated_at', type: 'TIMESTAMP' }] }
     ]},
     alloydb: { tables: [
         { name: 'alloydb_clusters', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'cluster_id', type: 'TEXT' }, { name: 'database_name', type: 'TEXT' }, { name: 'metadata', type: 'JSONB' }, { name: 'cluster_proto', type: 'BYTEA' }, { name: 'created_at', type: 'TIMESTAMP' }] },
@@ -115,7 +128,29 @@ export const SERVICE_SCHEMAS = {
     ]},
     cloudiam: { tables: [
         { name: 'iam_policies', columns: [{ name: 'resource_type', type: 'TEXT' }, { name: 'resource_id', type: 'TEXT' }, { name: 'policy', type: 'JSONB' }, { name: 'policy_proto', type: 'BYTEA' }, { name: 'updated_at', type: 'TIMESTAMP' }] }
-    ]}
+    ]},
+    secretmanager: { tables: [
+        { name: 'secrets', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'secret_id', type: 'TEXT' }, { name: 'labels', type: 'JSONB' }, { name: 'replication', type: 'JSONB' }, { name: 'expire_at', type: 'TIMESTAMP' }, { name: 'rotation_period', type: 'BIGINT' }, { name: 'created_at', type: 'TIMESTAMP' }] },
+        { name: 'secret_versions', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'secret_id', type: 'TEXT' }, { name: 'version_number', type: 'INT' }, { name: 'payload', type: 'BYTEA' }, { name: 'state', type: 'TEXT' }, { name: 'created_at', type: 'TIMESTAMP' }] },
+        { name: 'secret_version_aliases', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'secret_id', type: 'TEXT' }, { name: 'version_number', type: 'INT' }, { name: 'alias', type: 'TEXT' }, { name: 'create_time', type: 'TIMESTAMP' }] }
+    ]},
+    logging: { tables: [
+        { name: 'log_entries', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'log_name', type: 'TEXT' }, { name: 'resource_type', type: 'TEXT' }, { name: 'severity', type: 'TEXT' }, { name: 'text_payload', type: 'TEXT' }, { name: 'json_payload', type: 'TEXT' }, { name: 'timestamp', type: 'BIGINT' }, { name: 'insert_id', type: 'TEXT' }] },
+        { name: 'log_exclusion_filters', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'name', type: 'TEXT' }, { name: 'filter', type: 'TEXT' }, { name: 'description', type: 'TEXT' }, { name: 'disabled', type: 'BOOLEAN' }, { name: 'create_time', type: 'TIMESTAMP' }] }
+    ]},
+    monitoring: { tables: [
+        { name: 'alert_policies', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'name', type: 'TEXT' }, { name: 'display_name', type: 'TEXT' }, { name: 'conditions_json', type: 'JSONB' }, { name: 'combiner', type: 'TEXT' }, { name: 'enabled', type: 'BOOLEAN' }, { name: 'create_time', type: 'TIMESTAMP' }] },
+        { name: 'notification_channels', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'name', type: 'TEXT' }, { name: 'type', type: 'TEXT' }, { name: 'display_name', type: 'TEXT' }, { name: 'labels_json', type: 'JSONB' }, { name: 'enabled', type: 'BOOLEAN' }, { name: 'create_time', type: 'TIMESTAMP' }] }
+    ]},
+    gke: { tables: [
+        { name: 'gke_node_pools', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'cluster_id', type: 'BIGINT' }, { name: 'name', type: 'TEXT' }, { name: 'config_json', type: 'JSONB' }, { name: 'initial_node_count', type: 'INT' }, { name: 'locations_json', type: 'JSONB' }, { name: 'status', type: 'TEXT' }, { name: 'create_time', type: 'TIMESTAMP' }] }
+    ]},
+    cloudbilling: { tables: [
+        { name: 'billing_budgets', columns: [{ name: 'billing_account', type: 'TEXT' }, { name: 'budget_id', type: 'TEXT' }, { name: 'display_name', type: 'TEXT' }, { name: 'amount_json', type: 'JSONB' }, { name: 'threshold_rules_json', type: 'JSONB' }, { name: 'create_time', type: 'TIMESTAMP' }, { name: 'update_time', type: 'TIMESTAMP' }] }
+    ]},
+    pubsub: { tables: [
+        { name: 'pubsub_subscriptions', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'subscription_id', type: 'TEXT' }, { name: 'topic_project_id', type: 'TEXT' }, { name: 'topic_id', type: 'TEXT' }, { name: 'ack_deadline_seconds', type: 'INT' }, { name: 'push_endpoint', type: 'TEXT' }, { name: 'labels', type: 'JSONB' }, { name: 'max_delivery_attempts', type: 'INT' }, { name: 'dead_letter_topic', type: 'TEXT' }] }
+    ]},
 };
 
 export const TABS = Object.keys(SERVICE_META).filter(id => !['workflows'].includes(id)).map(id => ({

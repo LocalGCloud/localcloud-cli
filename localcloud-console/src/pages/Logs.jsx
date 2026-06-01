@@ -76,7 +76,11 @@ function prettyValue(value) {
 
 function LogDetailSection(props) {
     const [copied, setCopied] = createSignal(false);
+    const [expanded, setExpanded] = createSignal(false);
+    const maxLen = 10240; // 10 KB
     const text = () => prettyValue(props.value);
+    const isLarge = () => text().length > maxLen;
+    const displayText = () => isLarge() && !expanded() ? text().slice(0, maxLen) + '\n… (truncated — click to expand)' : text();
     const copy = async (e) => {
         e.stopPropagation();
         try {
@@ -89,11 +93,18 @@ function LogDetailSection(props) {
         <div class="log-detail-section">
             <div class="log-detail-title">
                 <span>{props.title}</span>
-                <button class="btn btn-icon log-copy-btn" onClick={copy} title={`Copy ${props.title}`} aria-label={`Copy ${props.title}`}>
-                    {copied() ? <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> : <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>}
-                </button>
+                <div style="display:flex;align-items:center;gap:6px">
+                    <Show when={isLarge()}>
+                        <button class="btn btn-icon log-copy-btn" onClick={() => setExpanded(!expanded())} title={expanded() ? 'Collapse' : 'Show full body'} style="font-size:11px;font-weight:600">
+                            {expanded() ? 'Collapse' : 'Show full'}
+                        </button>
+                    </Show>
+                    <button class="btn btn-icon log-copy-btn" onClick={copy} title={`Copy ${props.title}`} aria-label={`Copy ${props.title}`}>
+                        {copied() ? <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> : <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>}
+                    </button>
+                </div>
             </div>
-            <pre>{text()}</pre>
+            <pre style={{ "max-height": isLarge() && !expanded() ? '300px' : 'none', overflow: 'auto' }}>{displayText()}</pre>
         </div>
     );
 }
@@ -298,18 +309,33 @@ export default function Logs(props) {
                 </div>
             }>
                 <Show when={filteredRequests().length > 0} fallback={
-                    <div class="empty-state">
-                        <div class="empty-state-icon">
-                            <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+                    <Show when={requests().length > 0} fallback={
+                        <div class="empty-state">
+                            <div class="empty-state-icon">
+                                <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+                            </div>
+                            <div class="empty-state-title">No requests logged yet</div>
+                            <div class="empty-state-text">
+                                Send requests to the emulated services to see them appear here.
+                            </div>
+                            <div class="empty-state-hint">
+                                <code>curl http://localhost:8080/health</code>
+                            </div>
                         </div>
-                        <div class="empty-state-title">No requests logged yet</div>
-                        <div class="empty-state-text">
-                            Send requests to the emulated services to see them appear here.
+                    }>
+                        <div class="empty-state">
+                            <div class="empty-state-icon">
+                                <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M9.5 3a6.5 6.5 0 0 1 5.15 10.46l4.44 4.45-1.41 1.41-4.45-4.44A6.5 6.5 0 1 1 9.5 3m0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z"/></svg>
+                            </div>
+                            <div class="empty-state-title">No results match your filters</div>
+                            <div class="empty-state-text">
+                                {requests().length} request{requests().length !== 1 ? 's' : ''} logged, but none match the current search or method/status filters.
+                            </div>
+                            <div class="empty-state-hint" style="cursor:pointer" onClick={() => { setSearchQuery(''); setMethodFilter('ALL'); setStatusFilter('ALL'); }}>
+                                Click here to clear all filters
+                            </div>
                         </div>
-                        <div class="empty-state-hint">
-                            <code>curl http://localhost:8080/health</code>
-                        </div>
-                    </div>
+                    </Show>
                 }>
                     <div class={`data-table-wrapper logs-table-wrapper ${tailMode() ? 'tailing' : ''}`} ref={tableScrollRef}>
                         <table class="data-table">

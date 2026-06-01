@@ -7,6 +7,8 @@ import { formatDateTime, onActivate } from '../utils/a11y.js';
 import { formatSize } from '../utils/format.js';
 import CodeEditor from '../components/CodeEditor.jsx';
 import { generateMockRow } from '../utils/mockGenerator.js';
+import { GCP_REGIONS, getZonesForRegion } from '../data/gcpLocations.js';
+import ComboBox from '../components/ComboBox.jsx';
 
 const TABS = [
     { id: 'gcs', label: 'Cloud Storage' },
@@ -53,6 +55,18 @@ function EmptyState(props) {
             <div class="empty-state-icon">{'\u2205'}</div>
             <div class="empty-state-title">{props.title}</div>
             <div class="empty-state-text">{props.message}</div>
+            <Show when={props.snippet}>
+                <div class="empty-state-snippet">
+                    <code>{props.snippet}</code>
+                    <button class="empty-state-copy" onClick={async () => {
+                        try {
+                            await navigator.clipboard.writeText(props.snippet);
+                            const btn = document.activeElement;
+                            if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500); }
+                        } catch {}
+                    }}>Copy</button>
+                </div>
+            </Show>
         </div>
     );
 }
@@ -111,87 +125,197 @@ function ConnectionInfoCard(props) {
 // -- GCS View --
 function GcsView(props) {
     const [selectedBucket, setSelectedBucket] = createSignal(null);
-    const [bucketObjects, setBucketObjects] = createSignal(null);
+    const [currentPrefix, setCurrentPrefix] = createSignal('');
+    const [browseData, setBrowseData] = createSignal({ folders: [], objects: [], prefix: '' });
     const [objectsLoading, setObjectsLoading] = createSignal(false);
 
-    const fetchBucketObjects = async (bucketName) => {
+    const fetchBucketContents = async (bucketName, prefix) => {
         setSelectedBucket(bucketName);
+        setCurrentPrefix(prefix || '');
         setObjectsLoading(true);
-        setBucketObjects(null);
+        setBrowseData({ folders: [], objects: [], prefix: '' });
         try {
-            const result = await api.browse('gcs', bucketName);
-            setBucketObjects(result.objects || []);
+            const query = `?delimiter=/&prefix=${encodeURIComponent(prefix || '')}`;
+            const result = await api.browse('gcs', bucketName + query);
+            setBrowseData({ folders: result.folders || [], objects: result.objects || [], prefix: result.prefix || '' });
         } catch {
-            setBucketObjects([]);
+            setBrowseData({ folders: [], objects: [], prefix: prefix || '' });
         } finally {
             setObjectsLoading(false);
         }
     };
 
-    const goBack = () => {
+    const navigateToFolder = (folderPrefix) => {
+        fetchBucketContents(selectedBucket(), folderPrefix);
+    };
+
+    const navigateUp = () => {
+        const p = currentPrefix();
+        if (!p || p === '') {
+            setSelectedBucket(null);
+            setBrowseData({ folders: [], objects: [], prefix: '' });
+            return;
+        }
+        // Strip trailing / then find parent prefix
+        const trimmed = p.endsWith('/') ? p.slice(0, -1) : p;
+        const lastSlash = trimmed.lastIndexOf('/');
+        const parent = lastSlash >= 0 ? trimmed.slice(0, lastSlash + 1) : '';
+        fetchBucketContents(selectedBucket(), parent);
+    };
+
+    const goBackToBuckets = () => {
         setSelectedBucket(null);
-        setBucketObjects(null);
+        setBrowseData({ folders: [], objects: [], prefix: '' });
+        setCurrentPrefix('');
+    };
+
+    // Build breadcrumb from current prefix (using DataBreadcrumb-compatible format)
+    const breadcrumbs = () => {
+        const p = currentPrefix();
+        if (!p) return [{ label: selectedBucket(), type: 'bucket', onClick: null, active: true }];
+        const parts = p.split('/').filter(Boolean);
+        const crumbs = [{ label: selectedBucket(), type: 'bucket', onClick: () => fetchBucketContents(selectedBucket(), ''), active: false }];
+        let accum = '';
+        parts.forEach((part, i) => {
+            accum += part + '/';
+            crumbs.push({ label: part, type: 'folder', onClick: i < parts.length - 1 ? () => fetchBucketContents(selectedBucket(), accum) : null, active: i === parts.length - 1 });
+        });
+        return crumbs;
+    };
+
+    const refreshCurrent = () => {
+        if (selectedBucket()) fetchBucketContents(selectedBucket(), currentPrefix());
     };
 
     const d = () => props.data();
+    const bd = () => browseData();
+
+    const handleUploadObject = (keyPrefix) => {
+        const p = currentPrefix();
+        props.onAdd('Upload Object to ' + selectedBucket() + (p ? '/' + p : ''), [
+            { name: 'name', type: 'text', placeholder: 'filename.json' },
+            { name: 'content', type: 'textarea' },
+            { name: 'contentType', type: 'text', value: 'application/json' }
+        ], async (formData) => {
+            const fullKey = (p || '') + (keyPrefix || '') + formData.name;
+            await api.mutate('gcs', 'objects', { bucket: selectedBucket(), key: fullKey, content: formData.content, contentType: formData.contentType });
+            refreshCurrent();
+        });
+    };
+
+    const handleCreateFolder = () => {
+        const p = currentPrefix();
+        props.onAdd('Create Folder in ' + selectedBucket() + (p ? '/' + p : ''), [
+            { name: 'name', type: 'text', placeholder: 'folder-name' }
+        ], async (formData) => {
+            await api.mutate('gcs', 'folders', { bucket: selectedBucket(), prefix: p, name: formData.name });
+            refreshCurrent();
+        });
+    };
+
+    const handleDeleteObject = (objName) => {
+        props.onDelete('Delete "' + objName + '" from ' + selectedBucket() + '?', async () => {
+            await api.mutate('gcs', 'objects/delete', { bucket: selectedBucket(), key: objName });
+            refreshCurrent();
+        });
+    };
+
+    const handleDeleteFolder = (folderPrefix) => {
+        props.onDelete('Delete folder "' + folderPrefix + '" and all its contents from ' + selectedBucket() + '?', async () => {
+            // Delete the folder placeholder object
+            await api.mutate('gcs', 'objects/delete', { bucket: selectedBucket(), key: folderPrefix });
+            refreshCurrent();
+        });
+    };
+
+    const downloadUrl = (objName) =>
+        `${window.location.protocol}//${window.location.hostname}:4443/storage/v1/b/${selectedBucket()}/o/${encodeURIComponent(objName)}?alt=media`;
+
+    const isEmpty = () => !bd() || (bd().folders.length === 0 && bd().objects.length === 0);
+
+    // Drop zone for file upload
+    const onDropFiles = async (e) => {
+        e.preventDefault();
+        e.currentTarget.style.borderColor = 'var(--border)';
+        e.currentTarget.style.background = '';
+        const files = e.dataTransfer?.files;
+        if (!files || files.length === 0) return;
+        let uploaded = 0;
+        for (const file of files) {
+            try {
+                const text = await file.text();
+                const fullKey = (currentPrefix() || '') + file.name;
+                await api.mutate('gcs', 'objects', {
+                    bucket: selectedBucket(),
+                    key: fullKey,
+                    content: text,
+                    contentType: file.type || 'text/plain',
+                });
+                uploaded++;
+            } catch (err) { console.error('Upload failed for ' + file.name + ':', err); }
+        }
+        if (uploaded > 0) refreshCurrent();
+    };
+
+    const dropZoneStyle = {
+        border: '2px dashed var(--border)',
+        'border-radius': '8px',
+        cursor: 'pointer',
+        transition: 'border-color 150ms ease, background 150ms ease'
+    };
 
     return (
         <Show when={!selectedBucket()} fallback={
             <div>
-                <button class="back-link" onClick={goBack}>
-                    {'\u2190'} Back to buckets
-                </button>
+                {/* Breadcrumb navigation */}
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+                    <button class="back-link" onClick={goBackToBuckets} style="margin-right:4px">
+                        {'\u2190'} Buckets
+                    </button>
+                    <DataBreadcrumb crumbs={breadcrumbs()} />
+                </div>
+
+                {/* Toolbar */}
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                    <h2 style="margin:0">Bucket: {selectedBucket()}</h2>
-                    <Show when={props.onAdd}>
-                        <button onClick={() => props.onAdd('Upload Object to ' + selectedBucket(), [
-                            { name: 'key', type: 'text' },
-                            { name: 'content', type: 'textarea' },
-                            { name: 'contentType', type: 'text', value: 'application/json' }
-                        ], async (formData) => {
-                            await api.mutate('gcs', 'objects', { bucket: selectedBucket(), ...formData });
-                        })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
-                            + Upload Object
+                    <Show when={currentPrefix()} fallback={<div />}>
+                        <button onClick={navigateUp}
+                            style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px">
+                            {'\u2191'} Up
                         </button>
                     </Show>
+                    <div style="display:flex;gap:8px">
+                        <Show when={props.onAdd}>
+                            <button onClick={handleCreateFolder}
+                                style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/><line x1="12" y1="11" x2="12" y2="17" stroke="currentColor" stroke-width="2"/><line x1="9" y1="14" x2="15" y2="14" stroke="currentColor" stroke-width="2"/></svg>
+                                New Folder
+                            </button>
+                            <button onClick={() => handleUploadObject('')}
+                                style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                Upload File
+                            </button>
+                        </Show>
+                    </div>
                 </div>
+
                 <Show when={!objectsLoading()} fallback={
-                    <div class="loading-state"><div class="loading-spinner" /> Loading objects…</div>
+                    <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
                 }>
-                    <Show when={bucketObjects() && bucketObjects().length > 0} fallback={
+                    <Show when={!isEmpty()} fallback={
                         <div class="empty-state"
                             onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'var(--primary-softer)'; }}
                             onDragLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = ''; }}
-                            onDrop={async (e) => {
-                                e.preventDefault();
-                                e.currentTarget.style.borderColor = 'var(--border)';
-                                e.currentTarget.style.background = '';
-                                const files = e.dataTransfer?.files;
-                                if (!files || files.length === 0) return;
-                                let uploaded = 0;
-                                for (const file of files) {
-                                    try {
-                                        const text = await file.text();
-                                        await api.mutate('gcs', 'objects', {
-                                            bucket: selectedBucket(),
-                                            key: file.name,
-                                            content: text,
-                                            contentType: file.type || 'text/plain',
-                                        });
-                                        uploaded++;
-                                    } catch (err) { console.error('Upload failed for ' + file.name + ':', err); }
-                                }
-                                if (uploaded > 0) fetchBucketObjects(selectedBucket());
-                            }}
-                            style={{ border: '2px dashed var(--border)', 'border-radius': '8px', cursor: 'pointer', transition: 'border-color 150ms ease, background 150ms ease' }}
+                            onDrop={onDropFiles}
+                            style={dropZoneStyle}
                         >
                             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" aria-hidden="true" focusable="false" style={{ 'margin-bottom': '12px' }}>
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                                 <polyline points="17 8 12 3 7 8" />
                                 <line x1="12" y1="3" x2="12" y2="15" />
                             </svg>
-                            <div class="empty-state-title">No objects found</div>
-                            <div class="empty-state-text">Drag and drop text files here to upload (JSON, CSV, TXT, YAML), or use the SDK.</div>
+                            <div class="empty-state-title">This folder is empty</div>
+                            <div class="empty-state-text">Drag and drop files here, or use Upload File / New Folder above.</div>
                         </div>
                     }>
                         <div class="data-table-wrapper">
@@ -202,32 +326,50 @@ function GcsView(props) {
                                         <th>Size</th>
                                         <th>Content Type</th>
                                         <th>Updated</th>
-                                        <th>Actions</th>
+                                        <th style="width:120px">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <For each={bucketObjects()}>
+                                    {/* Folders first */}
+                                    <For each={bd().folders}>
+                                        {(folder) => (
+                                            <tr class="clickable-row" onClick={() => navigateToFolder(folder.prefix)} onKeyDown={onActivate(() => navigateToFolder(folder.prefix))} role="button" tabIndex="0">
+                                                <td style={{ "font-weight": "500", display: "flex", "align-items": "center", gap: "6px" }}>
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="var(--warning, #f9ab00)" aria-hidden="true"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                                                    {folder.name}/
+                                                </td>
+                                                <td style="color:var(--text-tertiary)">--</td>
+                                                <td style="color:var(--text-tertiary)">folder</td>
+                                                <td style="color:var(--text-tertiary)">--</td>
+                                                <td>
+                                                    <Show when={props.onDelete}>
+                                                        <button onClick={(e) => { e.stopPropagation(); handleDeleteFolder(folder.prefix); }}
+                                                            style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete folder">Del</button>
+                                                    </Show>
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </For>
+                                    {/* Objects */}
+                                    <For each={bd().objects}>
                                         {(obj) => (
                                             <tr>
-                                                <td style={{ "font-weight": "500" }}>{obj.name}</td>
+                                                <td style={{ "font-weight": "500", display: "flex", "align-items": "center", gap: "6px" }}>
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--text-tertiary)" aria-hidden="true"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 2l5 5h-5V4zM8 14h8v2H8v-2zm0 4h8v2H8v-2zm0-8h5v2H8v-2z"/></svg>
+                                                    {obj.name}
+                                                </td>
                                                 <td>{formatSize(obj.size)}</td>
                                                 <td>{obj.contentType || '--'}</td>
                                                 <td>{formatDate(obj.updated)}</td>
                                                 <td>
                                                     <div style="display:flex;gap:4px;align-items:center">
-                                                        <a
-                                                            href={`${window.location.protocol}//${window.location.hostname}:4443/storage/v1/b/${selectedBucket()}/o/${encodeURIComponent(obj.name)}?alt=media`}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
+                                                        <a href={downloadUrl(obj.name)} target="_blank" rel="noopener noreferrer"
                                                             class="btn btn-secondary"
                                                             style={{ "height": "28px", "font-size": "12px", "padding": "0 10px" }}
-                                                        >
-                                                            Download
-                                                        </a>
+                                                        >Download</a>
                                                         <Show when={props.onDelete}>
-                                                            <button onClick={() => props.onDelete('Delete object "' + obj.name + '" from ' + selectedBucket() + '?', async () => {
-                                                                await api.mutate('gcs', 'objects/delete', { bucket: selectedBucket(), key: obj.name });
-                                                            })} style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete">Del</button>
+                                                            <button onClick={() => handleDeleteObject(obj.name)}
+                                                                style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete">Del</button>
                                                         </Show>
                                                     </div>
                                                 </td>
@@ -244,12 +386,18 @@ function GcsView(props) {
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
                 <div />
                 <Show when={props.onAdd}>
-                    <button onClick={() => props.onAdd('Create Bucket', [
-                        { name: 'name', type: 'text' },
-                        { name: 'location', type: 'text', value: 'US' }
-                    ], async (formData) => {
-                        await api.mutate('gcs', 'buckets', formData);
-                    })} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
+                    <button onClick={() => {
+                        const defaultLoc = props.projectLocation?.() || 'us-central1';
+                        props.onAdd('Create Bucket', [
+                            { name: 'name', type: 'text', placeholder: 'my-bucket' },
+                            { name: 'location', type: 'combo', value: defaultLoc, placeholder: 'Type or select a region...', options: GCP_REGIONS },
+                            { name: 'zone', type: 'combo', value: '', placeholder: 'Type or select a zone (optional)', optionsFn: (fd) => fd.location ? getZonesForRegion(fd.location) : [] }
+                        ], async (formData) => {
+                            const payload = { name: formData.name, location: formData.location };
+                            if (formData.zone) payload.zone = formData.zone;
+                            await api.mutate('gcs', 'buckets', payload);
+                        });
+                    }} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
                         + Create Bucket
                     </button>
                 </Show>
@@ -259,7 +407,10 @@ function GcsView(props) {
                     <div class="empty-state-icon">{'\u2205'}</div>
                     <div class="empty-state-title">No buckets found</div>
                     <div class="empty-state-text">Create a bucket using the button above, or via the SDK:</div>
-                    <div class="empty-state-hint"><code>client = storage.Client(){'\n'}client.create_bucket("my-bucket")</code></div>
+                    <div class="empty-state-snippet">
+                        <code>client = storage.Client()
+client.create_bucket("my-bucket")</code>
+                    </div>
                 </div>
             }>
                 <div class="data-table-wrapper">
@@ -274,7 +425,7 @@ function GcsView(props) {
                         <tbody>
                             <For each={d().buckets}>
                                 {(bucket) => (
-                                    <tr class="clickable-row" onClick={() => fetchBucketObjects(bucket.name)} onKeyDown={onActivate(() => fetchBucketObjects(bucket.name))} role="button" tabIndex="0">
+                                    <tr class="clickable-row" onClick={() => fetchBucketContents(bucket.name, '')} onKeyDown={onActivate(() => fetchBucketContents(bucket.name, ''))} role="button" tabIndex="0">
                                         <td>{bucket.name}</td>
                                         <td>{bucket.location || '--'}</td>
                                         <td>{formatDate(bucket.timeCreated)}</td>
@@ -345,10 +496,13 @@ function PubSubView(props) {
                     </Show>
                 </div>
                 <Show when={d() && d().topics && d().topics.length > 0} fallback={
-                    <div class="empty-state">
-                        <div class="empty-state-icon">{'\u2205'}</div>
-                        <div class="empty-state-title">No topics found</div>
-                    </div>
+                    <EmptyState
+                        title="No topics found"
+                        message="Create a topic using the button above, or via the SDK:"
+                        snippet={`publisher = pubsub_v1.PublisherClient()
+topic_path = publisher.topic_path("local-project", "my-topic")
+topic = publisher.create_topic(name=topic_path)`}
+                    />
                 }>
                     <div class="data-table-wrapper">
                         <table class="data-table">
@@ -575,6 +729,9 @@ function BigQueryView(props) {
     const [infoSchemaData, setInfoSchemaData] = createSignal(null);
     const [showMerge, setShowMerge] = createSignal(false);
     const [isViewType, setIsViewType] = createSignal(false);
+    const [createTab, setCreateTab] = createSignal('interactive');
+    const [ddlText, setDdlText] = createSignal('');
+    const [ddlError, setDdlError] = createSignal(null);
 
     const datasets = () => {
         const raw = d();
@@ -605,7 +762,7 @@ function BigQueryView(props) {
             const result = await api.browse('bigquery', 'datasets/' + dsId);
             const tblList = result.tables || result.items || [];
             setTables(tblList);
-        } catch { setTables([]); }
+        } catch (e) { setError('Failed to load dataset tables: ' + (e.message || e)); setTables([]); }
         finally { setSubLoading(false); }
     };
 
@@ -648,31 +805,57 @@ function BigQueryView(props) {
 
     const handleCreateTable = async (formData) => {
         setBqActionLoading(true);
+        setDdlError(null);
         try {
-            const schema = formData.columns ? formData.columns.split('\n').filter(l => l.trim()).map(line => {
-                const parts = line.trim().split(':').map(s => s.trim());
-                return { name: parts[0], type: parts[1]?.toUpperCase() || 'STRING', mode: parts[2]?.toUpperCase() || 'NULLABLE' };
-            }) : [];
-            const payload = {
-                datasetId: selectedDataset(),
-                tableId: formData.tableId,
-                schema,
-                description: formData.description || '',
-                tableType: formData.tableType || 'TABLE',
-                viewQuery: formData.tableType === 'VIEW' ? formData.viewQuery : undefined
-            };
-            if (formData.partitionType) {
-                payload.timePartitioning = { type: formData.partitionType };
-                if (formData.partitionField) payload.timePartitioning.field = formData.partitionField;
+            if (createTab() === 'ddl') {
+                const sql = ddlText().trim();
+                if (!sql) {
+                    setDdlError('Please enter a DDL statement.');
+                    return;
+                }
+                await api.mutate('bigquery', 'queries', { query: sql });
+                setShowCreateTable(false);
+                setDdlText('');
+                setCreateTab('interactive');
+                try {
+                    const result = await api.browse('bigquery', 'datasets/' + selectedDataset());
+                    setTables(result.tables || result.items || []);
+                } catch (e) { setError('Table created but failed to refresh list: ' + (e.message || e)); }
+            } else {
+                const schema = formData.columns ? formData.columns.split('\n').filter(l => l.trim()).map(line => {
+                    const parts = line.trim().split(':').map(s => s.trim());
+                    return { name: parts[0], type: parts[1]?.toUpperCase() || 'STRING', mode: parts[2]?.toUpperCase() || 'NULLABLE' };
+                }) : [];
+                const payload = {
+                    datasetId: selectedDataset(),
+                    tableId: formData.tableId,
+                    schema,
+                    description: formData.description || '',
+                    tableType: formData.tableType || 'TABLE',
+                    viewQuery: formData.tableType === 'VIEW' ? formData.viewQuery : undefined
+                };
+                if (formData.partitionType) {
+                    payload.timePartitioning = { type: formData.partitionType };
+                    if (formData.partitionField) payload.timePartitioning.field = formData.partitionField;
+                }
+                if (formData.clusteringFields) {
+                    payload.clustering = formData.clusteringFields.split(',').map(s => s.trim()).filter(Boolean);
+                }
+                await api.mutate('bigquery', 'tables', payload);
+                setShowCreateTable(false);
+                try {
+                    const result = await api.browse('bigquery', 'datasets/' + selectedDataset());
+                    setTables(result.tables || result.items || []);
+                } catch (e) { setError('Table created but failed to refresh list: ' + (e.message || e)); }
             }
-            if (formData.clusteringFields) {
-                payload.clustering = formData.clusteringFields.split(',').map(s => s.trim()).filter(Boolean);
+        } catch (e) { 
+            const msg = e.message || String(e);
+            if (createTab() === 'ddl') {
+                setDdlError(msg);
+            } else {
+                setError('Failed to create table: ' + msg);
             }
-            await api.mutate('bigquery', 'tables', payload);
-            setShowCreateTable(false);
-            const result = await api.browse('bigquery', 'datasets/' + selectedDataset());
-            setTables(result.tables || result.items || []);
-        } catch (e) { setError('Failed to create table: ' + e.message); }
+        }
         finally { setBqActionLoading(false); }
     };
 
@@ -682,8 +865,10 @@ function BigQueryView(props) {
         try {
             await api.mutateSub('bigquery', 'tables', 'delete', { datasetId: selectedDataset(), tableId: tblId });
             if (selectedTable() === tblId) goBackToTables();
-            const result = await api.browse('bigquery', 'datasets/' + selectedDataset());
-            setTables(result.tables || result.items || []);
+            try {
+                const result = await api.browse('bigquery', 'datasets/' + selectedDataset());
+                setTables(result.tables || result.items || []);
+            } catch (e) { setError('Table deleted but failed to refresh list: ' + (e.message || e)); }
         } catch (e) { setError('Failed to delete table: ' + e.message); }
         finally { setBqActionLoading(false); }
     };
@@ -1086,7 +1271,7 @@ function BigQueryView(props) {
             <Show when={showCreateTable()}>
                 <div class="modal-overlay" onClick={() => setShowCreateTable(false)}>
                     <form onSubmit={e => { e.preventDefault(); handleCreateTable(Object.fromEntries(new FormData(e.target))); }}>
-                        <div class="create-dialog" style="width:min(560px, calc(100vw - 32px));max-height:calc(100vh - 64px)" onClick={(e) => e.stopPropagation()}>
+                        <div class="create-dialog" style="width:min(600px, calc(100vw - 32px));max-height:calc(100vh - 64px)" onClick={(e) => e.stopPropagation()}>
                             <div class="create-dialog-accent" style="background:#4285F4" />
                             <div class="create-dialog-header">
                                 <div class="create-dialog-header-icon" style="color:#4285F4;border-color:rgba(66,133,244,0.2);background:rgba(66,133,244,0.08)">
@@ -1095,57 +1280,95 @@ function BigQueryView(props) {
                                 <h2 class="create-dialog-title">Create Table</h2>
                                 <p class="create-dialog-context">In dataset <strong>{selectedDataset()}</strong></p>
                             </div>
+                            {/* Tab header */}
+                            <div style="display:flex;border-bottom:1px solid var(--border);padding:0 4px">
+                                <button type="button" onClick={() => setCreateTab('interactive')}
+                                    style={`padding:8px 16px;border:none;border-bottom:2px solid ${createTab() === 'interactive' ? 'var(--primary)' : 'transparent'};background:none;color:${createTab() === 'interactive' ? 'var(--text)' : 'var(--text-tertiary)'};cursor:pointer;font-size:13px;font-weight:${createTab() === 'interactive' ? 600 : 400};transition:all 0.15s`}>
+                                    Interactive
+                                </button>
+                                <button type="button" onClick={() => setCreateTab('ddl')}
+                                    style={`padding:8px 16px;border:none;border-bottom:2px solid ${createTab() === 'ddl' ? 'var(--primary)' : 'transparent'};background:none;color:${createTab() === 'ddl' ? 'var(--text)' : 'var(--text-tertiary)'};cursor:pointer;font-size:13px;font-weight:${createTab() === 'ddl' ? 600 : 400};transition:all 0.15s`}>
+                                    DDL
+                                </button>
+                            </div>
                             <div class="create-dialog-body" style="overflow-y:auto">
-                                <div class="create-dialog-field-inline">
-                                    <div class="create-dialog-field">
-                                        <label class="create-dialog-label" for="bq-table-id">Table ID <span style="color:var(--error)">*</span></label>
-                                        <input id="bq-table-id" name="tableId" required class="create-dialog-input create-dialog-input-mono" placeholder="my_table" autocomplete="off" />
-                                    </div>
-                                    <div class="create-dialog-field">
-                                        <label class="create-dialog-label" for="bq-table-type">Type</label>
-                                        <select id="bq-table-type" name="tableType" class="create-dialog-select" onChange={(e) => setIsViewType(e.target.value === 'VIEW')}>
-                                            <option value="TABLE">Table</option>
-                                            <option value="VIEW">View</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <Show when={isViewType()}>
-                                    <div class="create-dialog-field">
-                                        <label class="create-dialog-label" for="bq-view-query">View Query <span style="color:var(--error)">*</span></label>
-                                        <textarea id="bq-view-query" name="viewQuery" rows="3" class="create-dialog-input" style="resize:vertical;font-family:var(--font-mono);font-size:12px" placeholder="SELECT * FROM `dataset.table` WHERE active = true" />
-                                    </div>
-                                </Show>
-                                <div class="create-dialog-field">
-                                    <label class="create-dialog-label" for="bq-schema">Schema <span class="create-dialog-label-hint">(name:TYPE[:MODE], one per line)</span></label>
-                                    <textarea id="bq-schema" name="columns" rows="4" class="create-dialog-input" style="resize:vertical;font-family:var(--font-mono);font-size:12px" placeholder={"id:INT64\nname:STRING\nemail:STRING:REQUIRED\ncreated_at:TIMESTAMP"} />
-                                </div>
-                                <details open style="margin-bottom:2px">
-                                    <summary style="cursor:pointer;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.7px;color:var(--text-tertiary);padding:4px 0">Partitioning &amp; Clustering</summary>
-                                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px">
+                                {/* Interactive Tab */}
+                                <Show when={createTab() === 'interactive'}>
+                                    <div class="create-dialog-field-inline">
                                         <div class="create-dialog-field">
-                                            <label class="create-dialog-label" for="bq-partition-type">Partition type</label>
-                                            <select id="bq-partition-type" name="partitionType" class="create-dialog-select" style="font-size:13px">
-                                                <option value="">None</option>
-                                                <option value="DAY">DAY</option>
-                                                <option value="HOUR">HOUR</option>
-                                                <option value="MONTH">MONTH</option>
-                                                <option value="YEAR">YEAR</option>
+                                            <label class="create-dialog-label" for="bq-table-id">Table ID <span style="color:var(--error)">*</span></label>
+                                            <input id="bq-table-id" name="tableId" required class="create-dialog-input create-dialog-input-mono" placeholder="my_table" autocomplete="off" />
+                                        </div>
+                                        <div class="create-dialog-field">
+                                            <label class="create-dialog-label" for="bq-table-type">Type</label>
+                                            <select id="bq-table-type" name="tableType" class="create-dialog-select" onChange={(e) => setIsViewType(e.target.value === 'VIEW')}>
+                                                <option value="TABLE">Table</option>
+                                                <option value="VIEW">View</option>
                                             </select>
                                         </div>
-                                        <div class="create-dialog-field">
-                                            <label class="create-dialog-label" for="bq-partition-field">Partition field</label>
-                                            <input id="bq-partition-field" name="partitionField" class="create-dialog-input" style="font-size:13px" placeholder="event_date" autocomplete="off" />
-                                        </div>
-                                        <div class="create-dialog-field" style="grid-column:1/-1">
-                                            <label class="create-dialog-label" for="bq-clustering">Clustering columns <span class="create-dialog-label-hint">(comma-separated)</span></label>
-                                            <input id="bq-clustering" name="clusteringFields" class="create-dialog-input" style="font-size:13px" placeholder="user_id, event_type" autocomplete="off" />
-                                        </div>
                                     </div>
-                                </details>
-                                <div class="create-dialog-field" style="margin-top:4px">
-                                    <label class="create-dialog-label" for="bq-table-desc">Description</label>
-                                    <input id="bq-table-desc" name="description" class="create-dialog-input" placeholder="Optional description" autocomplete="off" />
-                                </div>
+                                    <Show when={isViewType()}>
+                                        <div class="create-dialog-field">
+                                            <label class="create-dialog-label" for="bq-view-query">View Query <span style="color:var(--error)">*</span></label>
+                                            <textarea id="bq-view-query" name="viewQuery" rows="3" class="create-dialog-input" style="resize:vertical;font-family:var(--font-mono);font-size:12px" placeholder="SELECT * FROM `dataset.table` WHERE active = true" />
+                                        </div>
+                                    </Show>
+                                    <div class="create-dialog-field">
+                                        <label class="create-dialog-label" for="bq-schema">Schema <span class="create-dialog-label-hint">(name:TYPE[:MODE], one per line)</span></label>
+                                        <textarea id="bq-schema" name="columns" rows="4" class="create-dialog-input" style="resize:vertical;font-family:var(--font-mono);font-size:12px" placeholder={"id:INT64\nname:STRING\nemail:STRING:REQUIRED\ncreated_at:TIMESTAMP"} />
+                                    </div>
+                                    <details open style="margin-bottom:2px">
+                                        <summary style="cursor:pointer;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.7px;color:var(--text-tertiary);padding:4px 0">Partitioning &amp; Clustering</summary>
+                                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px">
+                                            <div class="create-dialog-field">
+                                                <label class="create-dialog-label" for="bq-partition-type">Partition type</label>
+                                                <select id="bq-partition-type" name="partitionType" class="create-dialog-select" style="font-size:13px">
+                                                    <option value="">None</option>
+                                                    <option value="DAY">DAY</option>
+                                                    <option value="HOUR">HOUR</option>
+                                                    <option value="MONTH">MONTH</option>
+                                                    <option value="YEAR">YEAR</option>
+                                                </select>
+                                            </div>
+                                            <div class="create-dialog-field">
+                                                <label class="create-dialog-label" for="bq-partition-field">Partition field</label>
+                                                <input id="bq-partition-field" name="partitionField" class="create-dialog-input" style="font-size:13px" placeholder="event_date" autocomplete="off" />
+                                            </div>
+                                            <div class="create-dialog-field" style="grid-column:1/-1">
+                                                <label class="create-dialog-label" for="bq-clustering">Clustering columns <span class="create-dialog-label-hint">(comma-separated)</span></label>
+                                                <input id="bq-clustering" name="clusteringFields" class="create-dialog-input" style="font-size:13px" placeholder="user_id, event_type" autocomplete="off" />
+                                            </div>
+                                        </div>
+                                    </details>
+                                    <div class="create-dialog-field" style="margin-top:4px">
+                                        <label class="create-dialog-label" for="bq-table-desc">Description</label>
+                                        <input id="bq-table-desc" name="description" class="create-dialog-input" placeholder="Optional description" autocomplete="off" />
+                                    </div>
+                                </Show>
+
+                                {/* DDL Tab */}
+                                <Show when={createTab() === 'ddl'}>
+                                    <div style="margin-bottom:12px;padding:8px 12px;background:var(--surface-variant);border-radius:6px;font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                                        Creating in dataset: <code style="font-size:12px">{selectedDataset()}</code>
+                                    </div>
+                                    <div class="create-dialog-field">
+                                        <label class="create-dialog-label" for="bq-ddl">DDL Statement <span class="create-dialog-label-hint">(CREATE TABLE, CREATE VIEW, DROP TABLE IF EXISTS)</span></label>
+                                        <textarea id="bq-ddl"
+                                            value={ddlText()}
+                                            onInput={(e) => { setDdlText(e.target.value); setDdlError(null); }}
+                                            rows="10"
+                                            class="create-dialog-input"
+                                            style="resize:vertical;font-family:var(--font-mono);font-size:12px;line-height:1.6;min-height:200px"
+                                            placeholder={"CREATE TABLE `" + selectedDataset() + ".orders` (\n  order_id INT64 NOT NULL,\n  customer_id INT64,\n  amount FLOAT64,\n  order_date TIMESTAMP\n)\nPARTITION BY DATE(order_date)\nCLUSTER BY customer_id;"}
+                                            autocomplete="off"
+                                            spellcheck={false}
+                                        />
+                                    </div>
+                                    <Show when={ddlError()}>
+                                        <div style="margin-top:8px;padding:8px 12px;background:rgba(234,67,53,0.08);border:1px solid rgba(234,67,53,0.25);border-radius:6px;color:#ea4335;font-size:12px;font-family:var(--font-mono);white-space:pre-wrap;word-break:break-all">{ddlError()}</div>
+                                    </Show>
+                                </Show>
                             </div>
                             <div class="create-dialog-footer">
                                 <button type="button" class="create-dialog-btn-cancel" onClick={() => setShowCreateTable(false)}>Cancel</button>
@@ -2208,11 +2431,16 @@ function SecretManagerView(props) {
                 </Show>
             </div>
             <Show when={d() && d().secrets && d().secrets.length > 0} fallback={
-                <div class="empty-state">
-                    <div class="empty-state-icon">{'\u2205'}</div>
-                    <div class="empty-state-title">No secrets found</div>
-                    <div class="empty-state-text">Create a secret to store API keys, passwords, and certificates.</div>
-                </div>
+                <EmptyState
+                    title="No secrets found"
+                    message="Create a secret to store API keys, passwords, and certificates."
+                    snippet={`from google.cloud import secretmanager
+client = secretmanager.SecretManagerServiceClient()
+parent = "projects/local-project"
+secret = client.create_secret(
+    request={"parent": parent, "secret_id": "my-secret",
+             "secret": {"replication": {"automatic": {}}}})`}
+                />
             }>
                 <div class="data-table-wrapper">
                     <table class="data-table">
@@ -3166,224 +3394,6 @@ function SpannerView(props) {
                 <Breadcrumb />
             </Show>
 
-            {/* Sub-tab navigation */}
-            <div style="display:flex;gap:8px;margin-bottom:12px;margin-top:8px">
-                <button style={subTabStyle('browse')} onClick={() => setActiveSubTab('browse')}>Browse</button>
-                <button style={subTabStyle('history')} onClick={() => { setActiveSubTab('history'); fetchQueryHistory(); }}>History</button>
-                <button style={subTabStyle('stats')} onClick={() => { setActiveSubTab('stats'); fetchSpannerStats(); }}
-                    disabled={!selectedDatabase()}
-                    title={selectedDatabase() ? 'View database statistics' : 'Select a database first'}>Stats</button>
-            </div>
-
-            {/* Query History Panel */}
-            <Show when={activeSubTab() === 'history'}>
-                <Show when={historyLoading()}>
-                    <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
-                </Show>
-                <Show when={!historyLoading()}>
-                    <Show when={historyEntries().length === 0}>
-                        <div style="padding:24px;text-align:center;color:var(--text-secondary);font-size:14px">
-                            No query history yet. Run a Spanner SQL query to see it here.
-                        </div>
-                    </Show>
-                    <Show when={historyEntries().length > 0}>
-                        <div style="overflow-x:auto">
-                            <table style="width:100%;border-collapse:collapse;font-size:13px">
-                                <thead>
-                                    <tr style="border-bottom:2px solid var(--border)">
-                                        <th style="padding:8px 10px;text-align:left;white-space:nowrap">Time</th>
-                                        <th style="padding:8px 10px;text-align:left">SQL</th>
-                                        <th style="padding:8px 10px;text-align:left">Database</th>
-                                        <th style="padding:8px 10px;text-align:right;white-space:nowrap">Duration</th>
-                                        <th style="padding:8px 10px;text-align:right;white-space:nowrap">Rows</th>
-                                        <th style="padding:8px 10px;text-align:center;white-space:nowrap">Status</th>
-                                        <th style="padding:8px 10px;text-align:center;white-space:nowrap">Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <For each={historyEntries()}>
-                                        {(entry) => (
-                                            <tr style="border-bottom:1px solid var(--border);transition:background 0.1s"
-                                                class="btn-hover-bg"
-                                               >
-                                                <td style="padding:8px 10px;white-space:nowrap;color:var(--text-secondary);font-size:12px">
-                                                    {entry.executed_at ? entry.executed_at.replace('T', ' ').substring(0, 19) : ''}
-                                                </td>
-                                                <td style="padding:8px 10px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;font-size:12px">
-                                                    {entry.sql}
-                                                </td>
-                                                <td style="padding:8px 10px;white-space:nowrap;color:var(--text-secondary);font-size:12px">
-                                                    {entry.database || '-'}
-                                                </td>
-                                                <td style="padding:8px 10px;text-align:right;white-space:nowrap;font-family:monospace;font-size:12px">
-                                                    {entry.duration_ms > 1000 ? (entry.duration_ms / 1000).toFixed(1) + 's' : entry.duration_ms + 'ms'}
-                                                </td>
-                                                <td style="padding:8px 10px;text-align:right;white-space:nowrap;font-family:monospace;font-size:12px">
-                                                    {entry.row_count}
-                                                </td>
-                                                <td style="padding:8px 10px;text-align:center">
-                                                    <span style={{
-                                                        display:'inline-block',
-                                                        padding:'2px 8px',
-                                                        borderRadius:'10px',
-                                                        fontSize:'11px',
-                                                        fontWeight:'600',
-                                                        background: entry.success ? 'rgba(52,199,89,0.15)' : 'rgba(255,69,58,0.15)',
-                                                        color: entry.success ? '#34C759' : '#FF453A',
-                                                    }}>
-                                                        {entry.success ? 'OK' : 'FAIL'}
-                                                    </span>
-                                                </td>
-                                                <td style="padding:8px 10px;text-align:center">
-                                                    <Show when={entry.success && !entry.sql.startsWith('Batch:')}>
-                                                        <button onClick={() => {
-                                                            setActiveSubTab('browse');
-                                                            // Set SQL in the parent's query editor if available
-                                                            if (props.onSetQuery) props.onSetQuery(entry.sql);
-                                                        }} style={{
-                                                            padding:'4px 10px',
-                                                            border:'1px solid var(--border)',
-                                                            borderRadius:'4px',
-                                                            background:'var(--surface)',
-                                                            color:'var(--primary)',
-                                                            cursor:'pointer',
-                                                            fontSize:'11px',
-                                                            transition:'border-color 0.15s',
-                                                        }}
-                                                            class="btn-hover-border">
-                                                            Rerun
-                                                        </button>
-                                                    </Show>
-                                                </td>
-                                            </tr>
-                                        )}
-                                    </For>
-                                </tbody>
-                            </table>
-                        </div>
-                        {/* Pagination controls */}
-                        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;font-size:13px;color:var(--text-secondary)">
-                            <span>Showing {historyEntries().length} of {historyTotal()} entries</span>
-                            <Show when={historyHasMore()}>
-                                <button onClick={loadMoreHistory} style={{
-                                    padding:'6px 16px',
-                                    border:'1px solid var(--border)',
-                                    borderRadius:'4px',
-                                    background:'var(--surface)',
-                                    color:'var(--primary)',
-                                    cursor:'pointer',
-                                    fontSize:'13px',
-                                    fontWeight:'500',
-                                    transition:'border-color 0.15s',
-                                }}
-                                    class="btn-hover-border">
-                                    Load More
-                                </button>
-                            </Show>
-                        </div>
-                    </Show>
-                </Show>
-            </Show>
-
-            {/* Stats Panel */}
-            <Show when={activeSubTab() === 'stats'}>
-                <Show when={statsLoading()}>
-                    <div class="loading-state"><div class="loading-spinner" /> Loading stats…</div>
-                </Show>
-                <Show when={!statsLoading()}>
-                    <Show when={!statsData()}>
-                        <div style="padding:24px;text-align:center;color:var(--text-secondary);font-size:14px">
-                            Select a database and click Stats to view statistics.
-                        </div>
-                    </Show>
-                    <Show when={statsData()}>
-                        {/* Summary cards */}
-                        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:24px">
-                            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:16px;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
-                                <span style="font-size:28px;font-weight:700;color:var(--accent,#4285f4)">{statsData().tableCount}</span>
-                                <span style="font-size:12px;color:var(--text-secondary)">Tables</span>
-                            </div>
-                            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:16px;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
-                                <span style="font-size:28px;font-weight:700;color:var(--text)">{statsData().indexCount}</span>
-                                <span style="font-size:12px;color:var(--text-secondary)">Indexes</span>
-                            </div>
-                            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:16px;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
-                                <span style="font-size:28px;font-weight:700;color:#34A853">{statsData().searchIndexCount}</span>
-                                <span style="font-size:12px;color:var(--text-secondary)">Search Indexes</span>
-                            </div>
-                            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:16px;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
-                                <span style="font-size:28px;font-weight:700;color:#FBBC04">{statsData().vectorIndexCount}</span>
-                                <span style="font-size:12px;color:var(--text-secondary)">Vector Indexes</span>
-                            </div>
-                            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:16px;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
-                                <span style="font-size:28px;font-weight:700;color:var(--text)">{statsData().totalObjects}</span>
-                                <span style="font-size:12px;color:var(--text-secondary)">Total Objects</span>
-                            </div>
-                        </div>
-
-                        {/* Detail table */}
-                        <Show when={statsData().details && statsData().details.length > 0}>
-                            <h3 style="font-size:14px;margin:0 0 8px 0;color:var(--text-secondary)">Objects</h3>
-                            <div class="data-table-wrapper">
-                                <table class="data-table" style="font-size:13px">
-                                    <thead>
-                                        <tr>
-                                            <th>Type</th>
-                                            <th>Name</th>
-                                            <th style="text-align:right">Columns</th>
-                                            <th style="text-align:center">Interleaved</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <For each={statsData().details}>
-                                            {(item) => (
-                                                <tr>
-                                                    <td>
-                                                        <span style={{
-                                                            display:'inline-block',
-                                                            padding:'2px 8px',
-                                                            borderRadius:'10px',
-                                                            fontSize:'11px',
-                                                            fontWeight:'600',
-                                                            background: item.type === 'TABLE' ? 'rgba(66,133,244,0.15)' :
-                                                                item.type === 'SEARCH_INDEX' ? 'rgba(52,168,83,0.15)' :
-                                                                item.type === 'VECTOR_INDEX' ? 'rgba(251,188,4,0.15)' :
-                                                                'rgba(128,128,128,0.15)',
-                                                            color: item.type === 'TABLE' ? '#4285f4' :
-                                                                item.type === 'SEARCH_INDEX' ? '#34A853' :
-                                                                item.type === 'VECTOR_INDEX' ? '#FBBC04' :
-                                                                '#808080',
-                                                        }}>
-                                                            {item.type === 'TABLE' ? 'TABLE' :
-                                                             item.type === 'SEARCH_INDEX' ? 'SEARCH' :
-                                                             item.type === 'VECTOR_INDEX' ? 'VECTOR' :
-                                                             item.type}
-                                                        </span>
-                                                    </td>
-                                                    <td style={{fontWeight:'500', fontFamily:'monospace', fontSize:'12px'}}>{item.name}</td>
-                                                    <td style={{textAlign:'right'}}>
-                                                        {item.columnCount != null ? item.columnCount : '-'}
-                                                    </td>
-                                                    <td style={{textAlign:'center'}}>
-                                                        {item.hasInterleaved != null
-                                                            ? (item.hasInterleaved
-                                                                ? <span style={{color:'#34A853', fontSize:'14px'}}>&#10003;</span>
-                                                                : <span style={{color:'var(--text-tertiary)', fontSize:'14px'}}>&#8212;</span>)
-                                                            : '-'}
-                                                    </td>
-                                                </tr>
-                                            )}
-                                        </For>
-                                    </tbody>
-                                </table>
-                            </div>
-                        </Show>
-                    </Show>
-                </Show>
-            </Show>
-
-            {/* Browse Panel */}
-            <Show when={activeSubTab() === 'browse'}>
             <Show when={subLoading()}>
                 <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
             </Show>
@@ -3588,11 +3598,13 @@ function SpannerView(props) {
                         <button class="btn btn-primary" style="height:30px;font-size:11px;padding:0 12px" onClick={() => { setCreateName(''); setCreateError(null); setShowCreateInstance(true); }}>+ Create Instance</button>
                     </div>
                     <Show when={instances().length > 0} fallback={
-                        <div class="empty-state">
-                            <div class="empty-state-icon">{'\u2205'}</div>
-                            <div class="empty-state-title">No Spanner instances found</div>
-                            <div class="empty-state-text">Click "Create Instance" above to get started.</div>
-                        </div>
+                        <EmptyState
+                            title="No Spanner instances found"
+                            message="Click Create Instance above, or use the gcloud CLI:"
+                            snippet={`gcloud spanner instances create my-instance \\
+  --config=emulator-config --nodes=1 \\
+  --description="My Instance"`}
+                        />
                     }>
                         <div class="data-table-wrapper">
                             <table class="data-table">
@@ -3803,7 +3815,6 @@ function SpannerView(props) {
                         </div>
                     </div>
                 </Show>
-            </Show>
             </Show>
         </div>
     );
@@ -5047,12 +5058,29 @@ function CrudModal(props) {
                                         <label class="create-dialog-label" for={fieldId}>{field.name}</label>
                                         {field.type === 'select' ? (
                                             <select id={fieldId} class="create-dialog-select" value={formData()[field.name] || ''} onChange={e => updateField(field.name, e.target.value)}>
-                                                <For each={field.options || []}>{opt => <option value={opt}>{opt}</option>}</For>
+                                                <Show when={field.placeholder && !(formData()[field.name])}>
+                                                    <option value="" disabled selected hidden>{field.placeholder}</option>
+                                                </Show>
+                                                <For each={typeof field.optionsFn === 'function' ? (field.optionsFn(formData()) || []) : (field.options || [])}>{opt => <option value={opt}>{opt}</option>}</For>
                                             </select>
+                                        ) : field.type === 'combo' ? (
+                                            <ComboBox
+                                                value={formData()[field.name] || ''}
+                                                onChange={v => updateField(field.name, v)}
+                                                options={typeof field.optionsFn === 'function' ? (field.optionsFn(formData()) || []) : (field.options || [])}
+                                                placeholder={field.placeholder || ''}
+                                            />
                                         ) : field.type === 'textarea' ? (
                                             <textarea id={fieldId} class="create-dialog-input" style="resize:vertical;font-family:var(--font-mono);font-size:12px;min-height:80px" autocomplete="off" value={formData()[field.name] || ''} onInput={e => updateField(field.name, e.target.value)} />
+                                        ) : field.type === 'autocomplete' ? (
+                                            <>
+                                                <input id={fieldId} autocomplete="off" type="text" class="create-dialog-input create-dialog-input-mono" value={formData()[field.name] || ''} onInput={e => updateField(field.name, e.target.value)} list={`${fieldId}-list`} placeholder={field.placeholder || ''} />
+                                                <datalist id={`${fieldId}-list`}>
+                                                    <For each={field.options || []}>{opt => <option value={opt} />}</For>
+                                                </datalist>
+                                            </>
                                         ) : (
-                                            <input id={fieldId} autocomplete="off" type="text" class="create-dialog-input create-dialog-input-mono" value={formData()[field.name] || ''} onInput={e => updateField(field.name, e.target.value)} />
+                                            <input id={fieldId} autocomplete="off" type="text" class="create-dialog-input create-dialog-input-mono" value={formData()[field.name] || ''} onInput={e => updateField(field.name, e.target.value)} placeholder={field.placeholder || ''} />
                                         )}
                                     </div>
                                 );
@@ -5183,17 +5211,10 @@ export default function DataBrowser(props) {
 
     const loadData = () => fetchData(selectedTab());
 
-    // Watch for parent-triggered refresh/reset
+    // Watch for parent-triggered refresh
     createEffect(() => {
         const trigger = props.refreshTrigger?.();
         if (trigger > 0) loadData();
-    });
-    createEffect(() => {
-        const trigger = props.resetTrigger?.();
-        if (trigger > 0) {
-            setLoading(true);
-            api.resetService(selectedTab(), false).then(() => loadData());
-        }
     });
 
     const handleAdd = (title, fields, callback) => {
@@ -5310,7 +5331,7 @@ export default function DataBrowser(props) {
             case 'bigtable': return <BigtableView data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
             case 'memorystore': return <MemorystoreView data={data} onRefresh={loadData} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
             case 'firestore': return <FirestoreView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} subpath={props.subpath} onSubpathChange={props.onSubpathChange} />;
-            case 'gcs': return <GcsView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} />;
+            case 'gcs': return <GcsView data={data} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} projectLocation={props.projectRegion || (() => 'us-central1')} />;
             case 'pubsub': return <PubSubView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
             case 'secretmanager': return <SecretManagerView data={data} onAdd={handleAdd} onDelete={handleDelete} />;
             case 'cloudtasks': return <CloudTasksView data={data} onAdd={handleAdd} onDelete={handleDelete} />;

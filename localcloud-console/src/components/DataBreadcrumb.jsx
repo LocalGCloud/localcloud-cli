@@ -15,6 +15,8 @@ export default function DataBreadcrumb(props) {
             table: ['#c5221f', 'rgba(197,34,31,0.12)'],
             collection: ['#b06000', 'rgba(176,96,0,0.13)'],
             keyspace: ['#5f6368', 'rgba(95,99,104,0.12)'],
+            bucket: ['#f9ab00', 'rgba(249,171,0,0.13)'],
+            folder: ['#5f6368', 'rgba(95,99,104,0.12)'],
         };
         const [color, background] = colors[type] || colors.service;
         return {

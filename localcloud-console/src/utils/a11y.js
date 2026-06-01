@@ -37,7 +37,7 @@ function toDate(value) {
 export function formatDateTime(value, options = { dateStyle: 'medium', timeStyle: 'short' }) {
   const date = toDate(value);
   if (!date) {
-    return '';
+    return 'Unknown';
   }
   return new Intl.DateTimeFormat(undefined, options).format(date);
 }
@@ -49,7 +49,7 @@ export function formatTime(value, options = {
 }) {
   const date = toDate(value);
   if (!date) {
-    return '';
+    return 'Unknown';
   }
   return new Intl.DateTimeFormat(undefined, options).format(date);
 }

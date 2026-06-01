@@ -9,6 +9,9 @@ import Usage from './pages/Usage.jsx';
 import { trapFocus } from './utils/a11y.js';
 import { normalizeLocalSchema, normalizeRemoteBrowse } from './components/SchemaExplorer.jsx';
 import Onboarding from './components/Onboarding.jsx';
+import GetStarted from './pages/GetStarted.jsx';
+import ComboBox from './components/ComboBox.jsx';
+import { GCP_REGIONS, getZonesForRegion } from './data/gcpLocations.js';
 
 const ICON_PATHS = {
     dashboard: 'M4 13h6a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1zm-1 7h6a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1zm10 0h6a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1zM13 4v4a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1z',
@@ -36,19 +39,52 @@ function Icon(props) {
 
 const NAV_ITEMS = [
     { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
+    { id: 'getstarted', label: 'Get Started', icon: 'spark' },
     { id: 'logs', label: 'Logs', icon: 'logs' },
     { id: 'usage', label: 'Cost Analysis', icon: 'usage' },
-    { id: 'settings', label: 'User Docs', icon: 'docs' },
+    { id: 'settings', label: 'Setup & SDKs', icon: 'docs' },
 ];
 
 const SERVICE_GROUPS = [
-    { name: 'Storage', tone: 'green', services: [{ id: 'gcs', label: 'Cloud Storage' }] },
-    { name: 'Databases', tone: 'blue', services: [{ id: 'firestore', label: 'Firestore', tag: 'Coming up' }, { id: 'spanner', label: 'Spanner' }, { id: 'bigtable', label: 'Bigtable' }, { id: 'memorystore', label: 'Memorystore' }, { id: 'cloudsql', label: 'Cloud SQL' }, { id: 'alloydb', label: 'AlloyDB' }] },
-    { name: 'Analytics', tone: 'amber', services: [{ id: 'bigquery', label: 'BigQuery' }, { id: 'pubsub', label: 'Pub/Sub' }] },
-    { name: 'AI/ML', tone: 'violet', services: [{ id: 'vertexai', label: 'Vertex AI', tag: 'Coming up' }] },
-    { name: 'Security', tone: 'teal', services: [{ id: 'secretmanager', label: 'Secret Manager' }, { id: 'kms', label: 'Cloud KMS' }, { id: 'cloudiam', label: 'Cloud IAM' }] },
-    { name: 'Compute', tone: 'red', services: [{ id: 'cloudrun', label: 'Cloud Run' }, { id: 'gke', label: 'GKE' }, { id: 'compute', label: 'Compute Engine' }, { id: 'dataproc', label: 'Dataproc' }, { id: 'cloudtasks', label: 'Cloud Tasks' }, { id: 'workflows', label: 'Workflows' }, { id: 'cloudscheduler', label: 'Cloud Scheduler' }, { id: 'cloudfunctions', label: 'Cloud Functions' }] },
-    { name: 'Operations', tone: 'violet', services: [{ id: 'logging', label: 'Logging' }, { id: 'monitoring', label: 'Monitoring' }] },
+    { name: 'Storage', tone: 'green', services: [
+        { id: 'gcs', label: 'Cloud Storage', desc: 'Object storage — buckets, blobs, lifecycle' },
+    ]},
+    { name: 'Streaming', tone: 'amber', services: [
+        { id: 'pubsub', label: 'Pub/Sub', desc: 'Async messaging — topics, subscriptions, pull/push' },
+    ]},
+    { name: 'Databases', tone: 'blue', services: [
+        { id: 'spanner', label: 'Spanner', desc: 'OLTP — globally distributed, strongly consistent SQL' },
+        { id: 'bigtable', label: 'Bigtable', desc: 'Wide-column NoSQL — petabyte-scale analytical workloads' },
+        { id: 'memorystore', label: 'Memorystore', desc: 'In-memory — managed Redis / Valkey, sub-ms latency' },
+        { id: 'cloudsql', label: 'Cloud SQL', desc: 'OLTP — managed PostgreSQL, MySQL, SQL Server' },
+        { id: 'alloydb', label: 'AlloyDB', desc: 'OLTP — PostgreSQL-compatible, enterprise-grade' },
+        { id: 'bigquery', label: 'BigQuery', desc: 'OLAP / Analytics — serverless data warehouse, petabyte SQL' },
+        { id: 'firestore', label: 'Firestore', desc: 'Document DB — serverless, real-time, mobile-ready', tag: 'Coming up' },
+    ]},
+    { name: 'Compute', tone: 'red', services: [
+        { id: 'cloudrun', label: 'Cloud Run', desc: 'Serverless containers — scale-to-zero, HTTP/gRPC' },
+        { id: 'gke', label: 'GKE', desc: 'Managed Kubernetes — clusters, node pools, autopilot' },
+        { id: 'compute', label: 'Compute Engine', desc: 'VMs — instances, disks, snapshots, networking' },
+        { id: 'dataproc', label: 'Dataproc', desc: 'Managed Spark & Hadoop — batch, streaming, ML' },
+        { id: 'cloudtasks', label: 'Cloud Tasks', desc: 'Distributed task queues — async, rate-limited dispatch' },
+        { id: 'workflows', label: 'Workflows', desc: 'Orchestration — YAML-based service chaining' },
+        { id: 'cloudscheduler', label: 'Cloud Scheduler', desc: 'Managed cron — HTTP/PubSub/App Engine targets' },
+        { id: 'cloudfunctions', label: 'Cloud Functions', desc: 'FaaS — event-driven, serverless, zero ops' },
+    ]},
+    { name: 'Security', tone: 'teal', services: [
+        { id: 'secretmanager', label: 'Secret Manager', desc: 'Secrets — API keys, passwords, certificates' },
+        { id: 'kms', label: 'Cloud KMS', desc: 'Key management — symmetric/asymmetric, HSM, rotation' },
+        { id: 'cloudiam', label: 'Cloud IAM', desc: 'Identity & access — policies, roles, service accounts' },
+    ]},
+    { name: 'Operations', tone: 'violet', services: [
+        { id: 'logging', label: 'Logging', desc: 'Logs — ingestion, storage, query, export' },
+        { id: 'monitoring', label: 'Monitoring', desc: 'Metrics — dashboards, alerts, uptime checks' },
+        { id: 'cloudbilling', label: 'Billing', desc: 'Cost — budgets, alerts, cost breakdown' },
+        { id: 'serviceusage', label: 'Service Usage', desc: 'API enablement — service activation & quotas' },
+    ]},
+    { name: 'AI/ML', tone: 'purple', services: [
+        { id: 'vertexai', label: 'Vertex AI', desc: 'ML platform — training, prediction, model registry', tag: 'Coming up' },
+    ]},
 ];
 const FLAT_SERVICES = SERVICE_GROUPS.flatMap(group => group.services.map(svc => ({ ...svc, group: group.name, tone: group.tone })));
 const DOCKERHUB_IMAGE = 'localcloud/localcloud';
@@ -69,8 +105,13 @@ function parseBuildDate(health) {
     return Number.isFinite(parsed) ? parsed : null;
 }
 
-const STANDALONE_PAGES = ['dashboard', 'logs', 'usage', 'settings'];
+const STANDALONE_PAGES = ['dashboard', 'getstarted', 'logs', 'usage', 'settings'];
 const SERVICE_PAGES = ['explorer', 'editor', 'db-history', 'db-stats'];
+
+function parseProject() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('project') || null;
+}
 
 function parsePath() {
     const pathname = window.location.pathname.replace(/\/$/, '').replace(/\/+$/, '');
@@ -92,10 +133,16 @@ function buildPath(page, service, subpath) {
     return '/' + segments.join('/');
 }
 
-function navigate(path) {
-    const full = path + window.location.search;
-    if (window.location.pathname + window.location.search !== full) {
-        history.pushState(null, '', full);
+function buildUrl(page, service, subpath, projectId) {
+    let url = buildPath(page, service, subpath);
+    if (projectId) url += '?project=' + encodeURIComponent(projectId);
+    return url;
+}
+
+function navigateWithProject(page, service, subpath, projectId) {
+    const url = buildUrl(page, service, subpath, projectId);
+    if (window.location.pathname + window.location.search !== url) {
+        history.pushState(null, '', url);
     }
 }
 
@@ -129,28 +176,52 @@ function App() {
     const [onboardingVisible, setOnboardingVisible] = createSignal((() => {
         try { return localStorage.getItem('localcloud-onboarding-complete') !== 'true'; } catch { return true; }
     })());
+    // Recently used services (persisted in localStorage)
+    const [recentServices, setRecentServices] = createSignal((() => {
+        try { return JSON.parse(localStorage.getItem('localcloud-recent-services') || '[]'); } catch { return []; }
+    })());
     // All groups expanded by default
     const [collapsedGroups, setCollapsedGroups] = createSignal({});
     let healthFailCount = 0;
     let imageUpdateCheckStarted = false;
 
+    const urlProject = parseProject();
     const storedProject = (() => {
         try { return localStorage.getItem('localcloud-active-project') || null; } catch { return null; }
     })();
+    // Prefer URL project, then localStorage, then default
+    const initialProject = urlProject || storedProject || 'local-project';
 
     const [projects, setProjects] = createSignal([]);
-    const [activeProject, setActiveProjectState] = createSignal(storedProject || 'local-project');
+    const [activeProject, setActiveProjectState] = createSignal(initialProject);
+    // Sync activeProject to api.js and localStorage, and update URL if needed
+    const syncProject = (projectId) => {
+        setActiveProject(projectId);
+        setActiveProjectState(projectId);
+        try { localStorage.setItem('localcloud-active-project', projectId); } catch {}
+        // Update URL to reflect project — pushState so project switches are in browser history
+        const currentUrlProject = parseProject();
+        if (currentUrlProject !== projectId) {
+            const page = currentPage();
+            const svc = selectedService();
+            const sp = subpath();
+            const url = buildUrl(page, svc, sp, projectId);
+            if (window.location.pathname + window.location.search !== url) {
+                history.pushState(null, '', url);
+            }
+        }
+    };
     const [projectDropdownOpen, setProjectDropdownOpen] = createSignal(false);
     const [showNewProjectDialog, setShowNewProjectDialog] = createSignal(false);
     const [newProjectId, setNewProjectId] = createSignal('');
     const [newProjectName, setNewProjectName] = createSignal('');
+    const [newProjectLocation, setNewProjectLocation] = createSignal('us-central1');
+    const [newProjectZone, setNewProjectZone] = createSignal('');
     const [projectError, setProjectError] = createSignal(null);
 
     const switchProject = (projectId) => {
-        setActiveProject(projectId);
-        setActiveProjectState(projectId);
+        syncProject(projectId);
         setProjectDropdownOpen(false);
-        try { localStorage.setItem('localcloud-active-project', projectId); } catch {}
     };
 
     const fetchProjects = async () => {
@@ -159,8 +230,8 @@ function App() {
             const list = Array.isArray(data?.projects) ? data.projects : (Array.isArray(data) ? data : []);
             setProjects(list);
             if (!activeProject() && list.length > 0) {
-                const match = list.find(p => p.project_id === storedProject);
-                switchProject(match ? match.project_id : list[0].project_id);
+                const match = list.find(p => p.project_id === initialProject);
+                syncProject(match ? match.project_id : list[0].project_id);
             }
         } catch (err) {
             console.error('Failed to fetch projects:', err);
@@ -173,12 +244,14 @@ function App() {
         const name = newProjectName().trim();
         if (!id) return;
         try {
-            await api.createProject(id, name || id);
+            await api.createProject(id, name || id, newProjectLocation(), newProjectZone());
             setNewProjectId('');
             setNewProjectName('');
+            setNewProjectLocation('us-central1');
+            setNewProjectZone('');
             setShowNewProjectDialog(false);
             await fetchProjects();
-            switchProject(id);
+            syncProject(id);
         } catch (err) {
             setProjectError('Failed to create project: ' + err.message);
             setTimeout(() => setProjectError(null), 8000);
@@ -208,18 +281,26 @@ function App() {
         const page = currentPage();
         const svc = selectedService();
         const sp = subpath();
-        const path = buildPath(page, svc, sp) + window.location.search;
-        if (window.location.pathname + window.location.search !== path) {
-            history.replaceState(null, '', path);
+        const project = activeProject();
+        const url = buildUrl(page, svc, sp, project);
+        if (window.location.pathname + window.location.search !== url) {
+            history.replaceState(null, '', url);
         }
     });
 
     const onPopState = () => {
         const { page, service, subpath: sp } = parsePath();
+        const urlProject = parseProject();
         setCurrentPage(page);
         if (service) setSelectedService(service);
         else setSelectedService(null);
         setSubpath(sp || []);
+        // Restore project from URL if present
+        if (urlProject && urlProject !== activeProject()) {
+            setActiveProject(urlProject);
+            setActiveProjectState(urlProject);
+            try { localStorage.setItem('localcloud-active-project', urlProject); } catch {}
+        }
     };
     window.addEventListener('popstate', onPopState);
     onCleanup(() => window.removeEventListener('popstate', onPopState));
@@ -288,8 +369,8 @@ function App() {
             setSelectedService(null);
             setCurrentPage(page);
             setSubpath([]);
+            navigateWithProject(page, null, null, activeProject());
         });
-        navigate(buildPath(page, null));
         setSearchOpen(false);
         setSettingsMenuOpen(false);
         setMobileSidebarOpen(false);
@@ -300,13 +381,18 @@ function App() {
             setSelectedService(serviceId);
             setCurrentPage('explorer');
             setSubpath([]);
+            navigateWithProject('explorer', serviceId, null, activeProject());
         });
+        // Track recently used
+        const recent = recentServices().filter(s => s !== serviceId);
+        const updated = [serviceId, ...recent].slice(0, 5);
+        setRecentServices(updated);
+        try { localStorage.setItem('localcloud-recent-services', JSON.stringify(updated)); } catch {}
         // Expand the sidebar group containing this service
         const svc = FLAT_SERVICES.find(s => s.id === serviceId);
         if (svc) {
             setCollapsedGroups(prev => ({ ...prev, [svc.group]: false }));
         }
-        navigate(buildPath('explorer', serviceId));
         setSearchOpen(false);
         setSettingsMenuOpen(false);
         setMobileSidebarOpen(false);
@@ -319,7 +405,17 @@ function App() {
     const healthStatus = (serviceId) => connectionStatus() === 'offline' ? 'offline' : (healthData()?.services?.[serviceId]?.status || 'unknown');
     const routingMode = (serviceId) => routingData()?.[serviceId]?.mode || 'local';
     const projectId = () => activeProject() || healthData()?.project_id || 'local-project';
-    const projectRegion = () => routingData()?.__default_region || credentialData()?.region || 'us-central1';
+    const projectRegion = () => {
+        // Prefer project-level location stored in DB
+        const active = projects().find(p => p.project_id === activeProject());
+        if (active?.location) return active.location;
+        return routingData()?.__default_region || credentialData()?.region || 'us-central1';
+    };
+    const projectZone = () => {
+        const active = projects().find(p => p.project_id === activeProject());
+        if (active?.zone) return active.zone;
+        return '';
+    };
     const persistenceMode = () => healthData()?.persistence || 'PostgreSQL';
     const versionDisplay = () => shortVersion(healthData());
     const versionTitle = () => healthData()?.version_display || healthData()?.version || versionDisplay();
@@ -385,7 +481,7 @@ function App() {
                                 setSearchOpen(false);
                                 setCurrentPage('explorer');
                                 setSelectedService(svc);
-                                navigate(buildPath('explorer', svc));
+                                navigateWithProject('explorer', svc, null, activeProject());
                             }
                         });
                         if (n.children && n.children.length > 0) {
@@ -412,13 +508,15 @@ function App() {
         switch (currentPage()) {
             case 'dashboard':
                 return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={activeProject} />;
+            case 'getstarted':
+                return <GetStarted healthData={healthData} activeProject={activeProject} onServiceClick={handleServiceClick} recentServices={recentServices} projectRegion={projectRegion} />;
             case 'logs':
                 return <Logs activeProject={activeProject} />;
             case 'explorer':
             case 'editor':
             case 'db-history':
             case 'db-stats':
-                return <ServiceExplorer selectedService={selectedService} activeView={currentPage} onViewChange={setCurrentPage} onTabChange={setSelectedService} activeProject={activeProject} subpath={subpath} onSubpathChange={setSubpath} />;
+                return <ServiceExplorer selectedService={selectedService} activeView={currentPage} onViewChange={setCurrentPage} onTabChange={setSelectedService} activeProject={activeProject} projectRegion={projectRegion} subpath={subpath} onSubpathChange={setSubpath} />;
             case 'usage':
                 return <Usage activeProject={activeProject} />;
             case 'settings':
@@ -469,7 +567,7 @@ function App() {
                     <div class="aura-project-wrap">
                         <button class="topbar-project-chip aura-project-chip" onClick={() => setProjectDropdownOpen(!projectDropdownOpen())} aria-expanded={projectDropdownOpen()}>
                             <span class="aura-project-main">{projectId()}</span>
-                            <span class="aura-project-sub">{projectRegion()} · {persistenceMode()}</span>
+                            <span class="aura-project-sub">{projectRegion()}{projectZone() ? ' (' + projectZone() + ')' : ''} · {persistenceMode()}</span>
                         </button>
                         <Show when={projectDropdownOpen()}>
                             <div class="project-dropdown aura-project-dropdown">
@@ -532,7 +630,7 @@ function App() {
             <nav class={`sidebar aura-sidebar ${sidebarPinned() ? 'pinned' : ''} ${mobileSidebarOpen() ? 'mobile-open' : ''}`} aria-label="Service navigation">
                 <div class="aura-sidebar-header">
                     <button class={`aura-sidebar-nav-item ${currentPage() === 'dashboard' ? 'active' : ''}`} onClick={() => navigateTo('dashboard')}>
-                        <Icon name="dashboard" size={18} />
+                        <Icon name="dashboard" size={22} />
                         <span class="aura-sidebar-nav-label">Dashboard</span>
                         <div class="aura-tooltip">Dashboard</div>
                     </button>
@@ -561,10 +659,13 @@ function App() {
                                         >
                                             <img src={`/icons/${svc.id}.svg`} alt="" width="20" height="20" class="sidebar-sub-item-icon" />
                                             <span class="sidebar-sub-item-label">{svc.label}</span>
+                                            <Show when={svc.desc && sidebarPinned()}>
+                                                <span class="sidebar-sub-item-desc">{svc.desc}</span>
+                                            </Show>
                                             <Show when={svc.tag}><span class="badge badge-coming-up">{svc.tag}</span></Show>
                                             <Show when={routingMode(svc.id) === 'remote'}><span class="badge badge-cloud">Cloud</span></Show>
                                             <span class={`sidebar-sub-item-dot ${healthStatus(svc.id)}`} title={healthStatus(svc.id)} />
-                                            <div class="aura-tooltip">{svc.label}</div>
+                                            <div class="aura-tooltip">{svc.label}{svc.desc ? ' — ' + svc.desc : ''}</div>
                                         </button>}
                                     </For>
                                 </div>
@@ -572,6 +673,27 @@ function App() {
                         </div>}
                     </For>
                 </div>
+                <Show when={recentServices().length > 0}>
+                    <div class="aura-recent-section">
+                        <div class="aura-group-label" style="cursor:default;opacity:0.7">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="opacity:0.6"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+                            <span>Recent</span>
+                        </div>
+                        <div class="aura-group-services">
+                            <For each={recentServices().map(sid => FLAT_SERVICES.find(s => s.id === sid)).filter(Boolean)}>
+                                {(svc) => <button
+                                    class={`sidebar-sub-item ${selectedService() === svc.id && SERVICE_PAGES.includes(currentPage()) ? 'active' : ''}`}
+                                    onClick={() => handleServiceClick(svc.id)}
+                                    title={svc.label}
+                                >
+                                    <img src={`/icons/${svc.id}.svg`} alt="" width="18" height="18" class="sidebar-sub-item-icon" />
+                                    <span class="sidebar-sub-item-label">{svc.label}</span>
+                                    <span class={`sidebar-sub-item-dot ${healthStatus(svc.id)}`} title={healthStatus(svc.id)} />
+                                </button>}
+                            </For>
+                        </div>
+                    </div>
+                </Show>
             </nav>
 
             <main id="main-content" class="main-content aura-main">
@@ -665,6 +787,14 @@ function App() {
                             <div class="create-dialog-field">
                                 <label class="create-dialog-label" for="project-name-input">Display Name</label>
                                 <input id="project-name-input" name="project-display-name" autocomplete="off" class="create-dialog-input" value={newProjectName()} onInput={(e) => setNewProjectName(e.currentTarget.value)} placeholder="My Project" />
+                            </div>
+                            <div class="create-dialog-field">
+                                <label class="create-dialog-label" for="project-location">Default Location (Region)</label>
+                                <ComboBox value={newProjectLocation()} onChange={setNewProjectLocation} options={GCP_REGIONS} placeholder="Type or select a region..." />
+                            </div>
+                            <div class="create-dialog-field">
+                                <label class="create-dialog-label" for="project-zone">Default Zone</label>
+                                <ComboBox value={newProjectZone()} onChange={setNewProjectZone} options={newProjectLocation() ? getZonesForRegion(newProjectLocation()) : []} placeholder="Type or select a zone (optional)" />
                             </div>
                         </div>
                         <div class="create-dialog-footer">

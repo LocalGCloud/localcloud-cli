@@ -104,21 +104,21 @@ export const api = {
     reset: () => post(appendProject('/reset')),
     browse: (service, sub) => get(appendProject(`/browse/${service}${sub ? '/' + sub : ''}`)),
     mutate: async (service, operation, data) => {
-        const res = await postJson(`/mutate/${service}/${operation}`, data);
+        const res = await postJson(appendProject(`/mutate/${service}/${operation}`), data);
         if (res && res.error) {
             throw new Error(res.message || 'Mutation failed');
         }
         return res;
     },
     mutateSub: async (service, operation, subOp, data) => {
-        const res = await postJson(`/mutate/${service}/${operation}/${subOp}`, data);
+        const res = await postJson(appendProject(`/mutate/${service}/${operation}/${subOp}`), data);
         if (res && res.error) {
             throw new Error(res.message || 'Mutation failed');
         }
         return res;
     },
     merge: async (service, data) => {
-        const res = await postJson(`/mutate/${service}/merge`, data);
+        const res = await postJson(appendProject(`/mutate/${service}/merge`), data);
         if (res && res.error) {
             throw new Error(res.message || 'Merge failed');
         }
@@ -128,7 +128,7 @@ export const api = {
     export: () => get('/export'),
     // Project management
     projects: () => get('/projects'),
-    createProject: (projectId, displayName) => post('/projects', { project_id: projectId, display_name: displayName }),
+    createProject: (projectId, displayName, location, zone) => postJson('/projects', { project_id: projectId, display_name: displayName, location: location, zone: zone }),
     deleteProject: (projectId) => del(`/projects/${encodeURIComponent(projectId)}`),
     // Routing & credentials
     routing: () => get(appendProject('/routing')),

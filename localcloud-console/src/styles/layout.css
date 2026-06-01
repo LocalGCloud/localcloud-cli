@@ -212,6 +212,18 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: block;
+}
+
+.sidebar-sub-item-desc {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  line-height: 1.3;
+  display: block;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-sub-item-dot {
@@ -755,6 +767,7 @@
   gap: 4px;
   margin-bottom: 12px;
   padding: 0 4px;
+  position: relative;
 }
 
 .aura-sidebar-header .aura-sidebar-nav-item {
@@ -853,8 +866,28 @@
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background var(--transition), color var(--transition);
+  transition: background var(--transition), color var(--transition), opacity var(--transition);
   flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+
+/* When sidebar is collapsed, stack pin button below the dashboard button */
+.aura-sidebar:not(.pinned):not(:hover) .aura-sidebar-header {
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 2px;
+}
+
+.aura-sidebar:not(.pinned):not(:hover) .aura-sidebar-header .aura-sidebar-nav-item {
+  width: 100%;
+}
+
+.aura-sidebar:not(.pinned):not(:hover) .aura-sidebar-pin-btn {
+  width: 100%;
+  height: 24px;
+  border-radius: 6px;
+  opacity: 0.7;
 }
 
 .aura-sidebar-pin-btn:hover {
@@ -973,6 +1006,7 @@
 .aura-service-groups {
   display: grid;
   gap: 12px;
+  padding-right: 12px;
 }
 
 .aura-service-group {
