@@ -295,7 +295,7 @@ public class BrowseService {
                 case "cloudtasks" -> browseCloudTasks(resourceType, resourceId, projectId);
                 case "logging" -> browseLogging(resourceType, resourceId, projectId);
                 case "monitoring" -> browseMonitoring(resourceType, resourceId, projectId);
-                case "memorystore" -> browseMemorystoreAdmin(resourceType, resourceId, projectId);
+                case "memorystore" -> browseMemorystore(resourceType, resourceId, projectId);
                 case "spanner" -> browseSpanner(resourceType, resourceId, projectId);
                 case "firestore" -> browseFirestore(resourceType, resourceId, projectId);
                 case "bigtable" -> browseBigtableAdmin(resourceType, resourceId, projectId);
@@ -335,6 +335,10 @@ public class BrowseService {
         if (reqCtx != null) {
             prefix = reqCtx.queryParams().get("prefix");
             delimiter = reqCtx.queryParams().get("delimiter");
+        }
+
+        if ("object-content".equals(resourceType)) {
+            return browseGcsObjectContent(projectId);
         }
 
         if (resourceType == null || "buckets".equals(resourceType) && resourceId == null) {
@@ -443,6 +447,262 @@ public class BrowseService {
             return mapper.writeValueAsString(result);
         }
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid GCS browse path"));
+    }
+
+    // ─── GCS Object Content ─────────────────────────────────────────
+
+    /** Max file size for inline preview (10 MB). */
+    private static final long MAX_GCS_CONTENT_SIZE = 10 * 1024 * 1024;
+
+    @SuppressWarnings("unchecked")
+    private String browseGcsObjectContent(String projectId) throws Exception {
+        ServiceRequestContext reqCtx = ServiceRequestContext.currentOrNull();
+        if (reqCtx == null) {
+            return mapper.writeValueAsString(Map.of("error", "No request context"));
+        }
+        String bucket = reqCtx.queryParams().get("bucket");
+        String object = reqCtx.queryParams().get("object");
+
+        if (bucket == null || bucket.isBlank() || object == null || object.isBlank()) {
+            return mapper.writeValueAsString(Map.of("error", "Missing required params: bucket, object"));
+        }
+
+        if (!SAFE_GCS_PATH.matcher(bucket).matches() || !SAFE_GCS_PATH.matcher(object).matches()
+                || bucket.contains("..") || object.contains("..")) {
+            return mapper.writeValueAsString(Map.of("error", "Invalid bucket or object name"));
+        }
+
+        String gcsDataDir = System.getenv("GCS_DATA_DIR");
+        if (gcsDataDir == null || gcsDataDir.isBlank()) gcsDataDir = "/var/lib/localcloud/gcs-data";
+        java.io.File file = new java.io.File(gcsDataDir, bucket + "/" + object);
+
+        if (!file.exists() || !file.isFile()) {
+            return mapper.writeValueAsString(Map.of("error", "File not found: " + bucket + "/" + object));
+        }
+
+        long fileSize = file.length();
+        if (fileSize > MAX_GCS_CONTENT_SIZE) {
+            return mapper.writeValueAsString(Map.of("error",
+                    "File too large for inline preview (" + formatGcsSize(fileSize)
+                            + "). Download the file instead."));
+        }
+
+        byte[] bytes;
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(file)) {
+            bytes = fis.readAllBytes();
+        }
+
+        boolean isBinary = false;
+        int checkLen = Math.min(bytes.length, 8192);
+        for (int i = 0; i < checkLen; i++) {
+            if (bytes[i] == 0) { isBinary = true; break; }
+        }
+
+        if (isBinary) {
+            return mapper.writeValueAsString(Map.of(
+                    "error", "Cannot preview binary files. Download the file instead.",
+                    "binary", true, "size", fileSize));
+        }
+
+        String content = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+
+        // Layered detection: extension → validate → content-sniff fallback
+        String extType = detectTypeFromExtension(object);
+        String validationError = validateContent(content, extType);
+        String detectedType;
+        String warning = null;
+
+        if (validationError == null) {
+            detectedType = extType;
+        } else {
+            String sniffedType = sniffContentType(content);
+            if (!sniffedType.equals("text") && !sniffedType.equals(extType)) {
+                detectedType = sniffedType;
+                warning = "File has ." + getExtension(object) + " extension but content appears to be "
+                        + sniffedType + ". Displaying as " + sniffedType + ".";
+            } else {
+                detectedType = extType;
+                warning = "File appears to be " + extType + " but could not be parsed: " + validationError;
+            }
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("content", content);
+        result.put("detectedType", detectedType);
+        result.put("size", fileSize);
+        result.put("encoding", "UTF-8");
+        if (warning != null) result.put("warning", warning);
+
+        return mapper.writeValueAsString(result);
+    }
+
+    // ─── Type detection helpers ─────────────────────────────────────
+
+    private static final java.util.regex.Pattern SAFE_GCS_PATH =
+            java.util.regex.Pattern.compile("^[a-zA-Z0-9._\\-/]+$");
+
+    private static String validateContent(String content, String type) {
+        if (content == null || content.isEmpty()) return "empty file";
+        return switch (type) {
+            case "json" -> {
+                try { new com.fasterxml.jackson.databind.ObjectMapper().readTree(content); yield null; }
+                catch (Exception e) { String msg = e.getMessage(); yield msg != null ? msg : "invalid JSON"; }
+            }
+            case "csv" -> isCsvContent(content) ? null : "inconsistent column counts";
+            case "xml", "html" -> {
+                String t = content.trim();
+                yield (t.startsWith("<?xml") || t.startsWith("<!DOCTYPE") || t.startsWith("<")) ? null : "does not appear to be " + type;
+            }
+            case "yaml" -> {
+                String t = content.trim();
+                yield (t.startsWith("---") || isYamlContent(t)) ? null : "does not appear to be YAML";
+            }
+            case "markdown" -> isMarkdownContent(content) ? null : "no markdown markers detected";
+            case "sql" -> isSqlContent(content) ? null : "no SQL keywords detected";
+            case "toml" -> isTomlContent(content) ? null : "no TOML markers detected";
+            case "ini" -> isIniContent(content) ? null : "no INI patterns detected";
+            default -> null;
+        };
+    }
+
+    private static String sniffContentType(String content) {
+        if (content == null || content.isEmpty()) return "text";
+        String trimmed = content.trim();
+        if (trimmed.isEmpty()) return "text";
+        if (isJsonContent(trimmed)) return "json";
+        if (trimmed.startsWith("<?xml") ||
+            (trimmed.startsWith("<!DOCTYPE") && trimmed.contains("<html")) ||
+            (trimmed.startsWith("<") && (trimmed.contains("<html") || trimmed.contains("<HTML") ||
+             trimmed.contains("<rss") || trimmed.contains("<feed")))) {
+            return (trimmed.contains("<html") || trimmed.contains("<HTML") || trimmed.contains("<!DOCTYPE html")) ? "html" : "xml";
+        }
+        if (isCsvContent(trimmed)) return "csv";
+        if (trimmed.startsWith("---") || isYamlContent(trimmed)) return "yaml";
+        if (isTomlContent(trimmed)) return "toml";
+        if (isMarkdownContent(trimmed)) return "markdown";
+        if (isSqlContent(trimmed)) return "sql";
+        if (isIniContent(trimmed)) return "ini";
+        if (trimmed.startsWith("#!/bin/") || trimmed.startsWith("#! /bin/")
+                || trimmed.startsWith("#!/usr/bin/") || trimmed.startsWith("#! /usr/bin/")) return "shell";
+        return "text";
+    }
+
+    private static boolean isJsonContent(String s) {
+        char first = s.charAt(0);
+        if (first != '{' && first != '[') return false;
+        try { new com.fasterxml.jackson.databind.ObjectMapper().readTree(s); return true; }
+        catch (Exception e) { return false; }
+    }
+
+    private static boolean isCsvContent(String s) {
+        String[] lines = s.split("\\R");
+        int samples = 0, prevCommas = -1, prevTabs = -1;
+        for (String line : lines) {
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("#")) continue;
+            int commas = (int) t.chars().filter(ch -> ch == ',').count();
+            int tabs = (int) t.chars().filter(ch -> ch == '\t').count();
+            int fields = Math.max(commas, tabs);
+            if (fields == 0) return false;
+            if (prevCommas < 0) { prevCommas = commas; prevTabs = tabs; }
+            else if (commas != prevCommas && tabs != prevTabs) return false;
+            if (++samples >= 50) break;
+        }
+        return samples >= 2;
+    }
+
+    private static boolean isYamlContent(String s) {
+        if (s.contains("{") || s.contains("[")) return false;
+        int keyVal = 0, total = 0;
+        for (String line : s.split("\\R")) {
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("#")) continue;
+            total++;
+            if (t.matches("^[a-zA-Z_][a-zA-Z0-9_]*\\s*:.*")) keyVal++;
+        }
+        return total > 0 && (double) keyVal / total >= 0.4;
+    }
+
+    private static boolean isTomlContent(String s) {
+        if (s.contains("{") && s.contains("}")) return false;
+        int markers = 0;
+        for (String line : s.split("\\R")) {
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("#")) continue;
+            if (t.matches("^\\[.*\\]$")) markers++;
+            else if (t.matches("^[a-zA-Z_][a-zA-Z0-9_.]*\\s*=\\s*.*")) markers++;
+        }
+        return markers >= 2;
+    }
+
+    private static boolean isMarkdownContent(String s) {
+        int markers = 0;
+        for (String line : s.split("\\R")) {
+            String t = line.trim();
+            if (t.isEmpty()) continue;
+            if (t.startsWith("#") || t.startsWith(">") || t.startsWith("- ") || t.startsWith("* ")
+                    || t.startsWith("```") || t.startsWith("~~~") || t.startsWith("|")
+                    || t.matches("^\\d+\\.\\s.*") || t.contains("](")) markers++;
+        }
+        return markers >= 3;
+    }
+
+    private static boolean isSqlContent(String s) {
+        String upper = s.substring(0, Math.min(s.length(), 500)).toUpperCase();
+        return upper.contains("SELECT ") || upper.contains("CREATE TABLE")
+                || upper.contains("INSERT INTO") || upper.contains("UPDATE ")
+                || upper.contains("DELETE FROM") || upper.contains("ALTER TABLE");
+    }
+
+    private static boolean isIniContent(String s) {
+        if (s.contains("{") || (s.contains("[") && !s.contains("]"))) return false;
+        int markers = 0;
+        for (String line : s.split("\\R")) {
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("#") || t.startsWith(";")) continue;
+            if (t.startsWith("[") && t.endsWith("]")) markers++;
+            else if (t.matches("^[a-zA-Z_][a-zA-Z0-9_.]*\\s*=\\s*.*")) markers++;
+        }
+        return markers >= 2;
+    }
+
+    private static String getExtension(String name) {
+        if (name == null || !name.contains(".")) return "";
+        return name.substring(name.lastIndexOf('.') + 1).toLowerCase();
+    }
+
+    private static String detectTypeFromExtension(String objectName) {
+        if (objectName == null) return "text";
+        String name = objectName.toLowerCase();
+        if (name.endsWith(".json") || name.endsWith(".jsonl") || name.endsWith(".ndjson")) return "json";
+        if (name.endsWith(".csv") || name.endsWith(".tsv")) return "csv";
+        if (name.endsWith(".md") || name.endsWith(".markdown")) return "markdown";
+        if (name.endsWith(".sql")) return "sql";
+        if (name.endsWith(".xml") || name.endsWith(".svg")) return "xml";
+        if (name.endsWith(".yaml") || name.endsWith(".yml")) return "yaml";
+        if (name.endsWith(".js") || name.endsWith(".jsx")) return "javascript";
+        if (name.endsWith(".ts") || name.endsWith(".tsx")) return "typescript";
+        if (name.endsWith(".py")) return "python";
+        if (name.endsWith(".html") || name.endsWith(".htm")) return "html";
+        if (name.endsWith(".css") || name.endsWith(".scss") || name.endsWith(".less")) return "css";
+        if (name.endsWith(".txt") || name.endsWith(".log")) return "text";
+        if (name.endsWith(".sh") || name.endsWith(".bash") || name.endsWith(".zsh")) return "shell";
+        if (name.endsWith(".java")) return "java";
+        if (name.endsWith(".go")) return "go";
+        if (name.endsWith(".rs")) return "rust";
+        if (name.endsWith(".toml")) return "toml";
+        if (name.endsWith(".ini") || name.endsWith(".cfg") || name.endsWith(".conf")) return "ini";
+        if (name.endsWith(".env") || name.equals("dockerfile") || name.equals("makefile")) return "text";
+        if (name.endsWith(".proto")) return "protobuf";
+        if (name.endsWith(".graphql") || name.endsWith(".gql")) return "graphql";
+        return "text";
+    }
+
+    private static String formatGcsSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        int exp = (int) (Math.log(bytes) / Math.log(1024));
+        String pre = "KMGTPE".charAt(exp - 1) + "";
+        return String.format("%.1f %sB", bytes / Math.pow(1024, exp), pre);
     }
 
     // ========== Pub/Sub ==========
@@ -975,15 +1235,20 @@ public class BrowseService {
     // ========== Memorystore (Redis/Valkey) ==========
 
     private String browseMemorystore(String resourceType, String resourceId, String projectId) throws Exception {
+        // Admin path: /browse/memorystore/instances → PostgreSQL instance metadata
+        if ("instances".equals(resourceType)) {
+            return browseMemorystoreAdmin(resourceType, resourceId, projectId);
+        }
+
         int redisPort = config.getServiceRegistry().getService("memorystore") != null
                 ? config.getServiceRegistry().getService("memorystore").port() : 6379;
 
-        // Browse path: null -> list databases, "db" + resourceId -> browse keys in that database
+        // Browse path: "db" + resourceId -> browse keys in that database
         if ("db".equals(resourceType) && resourceId != null) {
             return browseMemorystoreKeys(redisPort, Integer.parseInt(resourceId), null);
         }
 
-        // Default: list all 16 databases with key counts
+        // Default (null/null): list all 16 databases with key counts from Valkey
         return browseMemorystoreDatabases(redisPort);
     }
 
@@ -2338,46 +2603,37 @@ public class BrowseService {
     }
 
     private String browseBigtableAdmin(String resourceType, String resourceId, String projectId) throws Exception {
-        if (!config.isPersistenceEnabled()) {
-            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
-        }
+        // Bigtable emulator (little_bigtable) supports its own persistence.
+        // Read directly from the emulator via gRPC — same source the SQL editor uses.
         if (resourceType == null || "instances".equals(resourceType) && resourceId == null) {
+            // Root: list instances
             List<Map<String, Object>> instances = new ArrayList<>();
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(
-                     "SELECT instance_id, display_name, instance_type, state, created_at " +
-                     "FROM bigtable_instances WHERE project_id = ? ORDER BY instance_id")) {
-                ps.setString(1, projectId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        Map<String, Object> inst = new LinkedHashMap<>();
-                        inst.put("instanceId", rs.getString("instance_id"));
-                        inst.put("displayName", rs.getString("display_name"));
-                        inst.put("instanceType", rs.getString("instance_type"));
-                        inst.put("state", rs.getString("state"));
-                        inst.put("createdAt", rs.getTimestamp("created_at"));
-                        instances.add(inst);
-                    }
+            try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+                for (Map<String, Object> inst : client.listInstancesWithDetails(projectId)) {
+                    Object rawId = inst.get("id");
+                    if (rawId == null) rawId = inst.get("name");
+                    if (rawId == null) continue;
+                    String instanceId = String.valueOf(rawId);
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("instanceId", instanceId);
+                    item.put("displayName", inst.getOrDefault("displayName", instanceId));
+                    item.put("instanceType", inst.getOrDefault("instanceType", inst.getOrDefault("type", "PRODUCTION")));
+                    item.put("state", inst.getOrDefault("state", "READY"));
+                    item.put("tableCount", inst.get("tables") instanceof List<?> t ? t.size() : 0);
+                    instances.add(item);
                 }
             }
             return mapper.writeValueAsString(Map.of("instances", instances));
         }
         if ("instances".equals(resourceType) && resourceId != null) {
+            // List tables within an instance — targeted query, no full cluster scan
             List<Map<String, Object>> tables = new ArrayList<>();
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(
-                     "SELECT table_id, granularity, created_at " +
-                     "FROM bigtable_tables WHERE project_id = ? AND instance_id = ? ORDER BY table_id")) {
-                ps.setString(1, projectId);
-                ps.setString(2, resourceId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        Map<String, Object> table = new LinkedHashMap<>();
-                        table.put("tableId", rs.getString("table_id"));
-                        table.put("granularity", rs.getString("granularity"));
-                        table.put("createdAt", rs.getTimestamp("created_at"));
-                        tables.add(table);
-                    }
+            try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+                for (Map<String, Object> t : client.listTablesForInstance(projectId, resourceId)) {
+                    Map<String, Object> table = new LinkedHashMap<>();
+                    table.put("tableId", t.get("table"));
+                    table.put("granularity", t.getOrDefault("granularity", "MILLIS"));
+                    tables.add(table);
                 }
             }
             return mapper.writeValueAsString(Map.of("instance", resourceId, "tables", tables));

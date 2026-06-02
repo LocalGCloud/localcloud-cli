@@ -703,6 +703,7 @@ public class LocalCloudApplication {
                 || normalized.startsWith("/mutate/")
                 || normalized.startsWith("/query")
                 || normalized.startsWith("/schema/")
+                || normalized.startsWith("/gcs/")
                 || normalized.startsWith("/reset")
                 || normalized.startsWith("/services")
                 || normalized.startsWith("/health")

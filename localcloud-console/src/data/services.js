@@ -58,7 +58,7 @@ export const SQL_SERVICES = [
     { id: 'kms', label: 'Cloud KMS', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'kms',
       placeholder: "SELECT key_ring_id, crypto_key_id, primary_version, created_at\nFROM kms_crypto_keys\nORDER BY created_at DESC" },
     { id: 'cloudsql', label: 'Cloud SQL', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'cloudsql',
-      placeholder: "SELECT instance_id, database_version, backend_type, state, created_at\nFROM cloudsql_instances\nORDER BY created_at DESC" },
+      placeholder: "SELECT * FROM myinstance.mydb.mytable LIMIT 10" },
     { id: 'alloydb', label: 'AlloyDB', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'alloydb',
       placeholder: "SELECT cluster_id, database_name, created_at\nFROM alloydb_clusters\nORDER BY created_at DESC" },
     { id: 'cloudscheduler', label: 'Cloud Scheduler', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'cloudscheduler',
@@ -90,13 +90,6 @@ export const SERVICE_SCHEMAS = {
     kms: { tables: [
         { name: 'kms_key_rings', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'key_ring_id', type: 'TEXT' }, { name: 'created_at', type: 'TIMESTAMP' }] },
         { name: 'kms_crypto_keys', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'location_id', type: 'TEXT' }, { name: 'key_ring_id', type: 'TEXT' }, { name: 'crypto_key_id', type: 'TEXT' }, { name: 'purpose', type: 'TEXT' }, { name: 'algorithm', type: 'TEXT' }, { name: 'primary_version', type: 'INT' }] }
-    ]},
-    cloudsql: { tables: [
-        { name: 'cloudsql_instances', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'instance_id', type: 'TEXT' }, { name: 'database_version', type: 'TEXT' }, { name: 'backend_type', type: 'TEXT' }, { name: 'state', type: 'TEXT' }, { name: 'settings_json', type: 'JSONB' }, { name: 'tier', type: 'TEXT' }] },
-        { name: 'cloudsql_databases', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'instance_id', type: 'TEXT' }, { name: 'database_name', type: 'TEXT' }, { name: 'physical_name', type: 'TEXT' }] },
-        { name: 'cloudsql_users', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'instance_id', type: 'TEXT' }, { name: 'user_name', type: 'TEXT' }, { name: 'host', type: 'TEXT' }] },
-        { name: 'cloudsql_operations', columns: [{ name: 'operation_id', type: 'TEXT' }, { name: 'project_id', type: 'TEXT' }, { name: 'instance_id', type: 'TEXT' }, { name: 'operation_type', type: 'TEXT' }, { name: 'status', type: 'TEXT' }] },
-        { name: 'cloudsql_flags', columns: [{ name: 'database_version', type: 'TEXT' }, { name: 'flag_name', type: 'TEXT' }, { name: 'allowed_string_values', type: 'TEXT' }] }
     ]},
     memorystore: { tables: [
         { name: 'memorystore_instances', columns: [{ name: 'project_id', type: 'TEXT' }, { name: 'instance_id', type: 'TEXT' }, { name: 'display_name', type: 'TEXT' }, { name: 'tier', type: 'TEXT' }, { name: 'engine', type: 'TEXT' }, { name: 'redis_version', type: 'TEXT' }, { name: 'port', type: 'INT' }, { name: 'memory_size_gb', type: 'INT' }, { name: 'state', type: 'TEXT' }, { name: 'host', type: 'TEXT' }, { name: 'auth_enabled', type: 'BOOLEAN' }, { name: 'persistence_mode', type: 'TEXT' }, { name: 'created_at', type: 'TIMESTAMP' }] }

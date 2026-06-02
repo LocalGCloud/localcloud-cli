@@ -29,15 +29,28 @@ function appendProject(path) {
 }
 
 async function handleResponse(r) {
+    const ct = (r.headers.get('content-type') || '').toLowerCase();
+    const isJson = ct.includes('application/json') || ct.includes('+json');
     if (!r.ok) {
-        // Try to extract server error message from JSON body
-        try {
-            const body = await r.json();
-            throw new Error(body.message || `${r.status} ${r.statusText}`);
-        } catch (e) {
-            if (e.message && !e.message.startsWith('Unexpected')) throw e;
-            throw new Error(`${r.status} ${r.statusText}`);
+        if (isJson) {
+            try {
+                const body = await r.json();
+                throw new Error(body.message || `${r.status} ${r.statusText}`);
+            } catch (e) {
+                if (e.message && !e.message.startsWith('Unexpected')) throw e;
+            }
         }
+        // Non-JSON error response — try to extract useful text
+        try {
+            const text = await r.text();
+            const snippet = text.replace(/<[^>]+>/g, '').trim().substring(0, 300);
+            throw new Error(`${r.status}: ${snippet || r.statusText}`);
+        } catch {}
+        throw new Error(`${r.status} ${r.statusText}`);
+    }
+    if (!isJson) {
+        const text = await r.text();
+        throw new Error(`Expected JSON but got ${ct || 'unknown'}: ${text.substring(0, 200)}`);
     }
     return r.json();
 }
@@ -152,6 +165,8 @@ export const api = {
     },
     // BigQuery INFORMATION_SCHEMA browsing
     bigqueryInfoSchema: (viewType) => get(appendProject(`/browse/bigquery/information_schema${viewType ? '/' + encodeURIComponent(viewType) : ''}`)),
+    // GCS file content (for inline preview) — served via BrowseService at /browse/gcs/object-content
+    gcsFileContent: (bucket, object) => get(appendProject(`/browse/gcs/object-content?bucket=${encodeURIComponent(bucket)}&object=${encodeURIComponent(object)}`)),
     // GCS file schema detection
     gcsFileSchema: (bucket, object) => get(appendProject(`/gcs/file-schema?bucket=${encodeURIComponent(bucket)}&object=${encodeURIComponent(object)}`)),
     // Secret Manager stats

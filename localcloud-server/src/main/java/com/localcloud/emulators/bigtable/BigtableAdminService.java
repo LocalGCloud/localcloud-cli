@@ -9,23 +9,32 @@ import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
 import com.linecorp.armeria.server.annotation.*;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
+import com.localcloud.admin.BigtableGrpcClient;
 import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 
+/**
+ * REST facade for the Bigtable emulator (little_bigtable).
+ * All operations are proxied to the emulator via gRPC.
+ * No PostgreSQL dependency — the emulator handles its own persistence.
+ */
 public class BigtableAdminService {
 
-    private final BigtableStore store;
+    private final int emulatorPort;
     private final BigtableEmulator emulator;
     private final ObjectMapper mapper = new ObjectMapper();
     private final IAMPolicyRestHandler iamHandler;
 
-    public BigtableAdminService(BigtableStore store, BigtableEmulator emulator) {
-        this(store, emulator, null);
+    public BigtableAdminService(int emulatorPort, BigtableEmulator emulator) {
+        this(emulatorPort, emulator, null);
     }
 
-    public BigtableAdminService(BigtableStore store, BigtableEmulator emulator, IAMPolicyRestHandler iamHandler) {
-        this.store = store;
+    public BigtableAdminService(int emulatorPort, BigtableEmulator emulator, IAMPolicyRestHandler iamHandler) {
+        this.emulatorPort = emulatorPort;
         this.emulator = emulator;
         this.iamHandler = iamHandler;
     }
@@ -38,8 +47,14 @@ public class BigtableAdminService {
             String instanceId = required(root, "instanceId");
             String displayName = text(root, "displayName", instanceId);
             String instanceType = text(root, "instanceType", "PRODUCTION");
-            String clustersJson = root.has("clusters") ? mapper.writeValueAsString(root.get("clusters")) : "[]";
-            Map<String, Object> row = store.createInstance(project, instanceId, displayName, instanceType, clustersJson);
+            try (BigtableGrpcClient client = new BigtableGrpcClient(emulatorPort)) {
+                client.ensureInstance(project, instanceId, displayName, instanceType);
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("project_id", project);
+            row.put("instance_id", instanceId);
+            row.put("display_name", displayName);
+            row.put("instance_type", instanceType);
             return json(HttpStatus.OK, instanceJson(row));
         } catch (Exception e) {
             return exception(e, "create instance");
@@ -52,8 +67,17 @@ public class BigtableAdminService {
         try {
             ObjectNode out = mapper.createObjectNode();
             ArrayNode items = out.putArray("instances");
-            for (Map<String, Object> row : store.listInstances(project)) {
-                items.add(instanceJson(row));
+            try (BigtableGrpcClient client = new BigtableGrpcClient(emulatorPort)) {
+                for (Map<String, Object> inst : client.listInstancesWithDetails(project)) {
+                    ObjectNode node = mapper.createObjectNode();
+                    String instId = String.valueOf(inst.getOrDefault("id", inst.get("name")));
+                    node.put("name", "projects/" + project + "/instances/" + instId);
+                    node.put("displayName", String.valueOf(inst.getOrDefault("displayName", instId)));
+                    node.put("type", String.valueOf(inst.getOrDefault("instanceType",
+                            inst.getOrDefault("type", "PRODUCTION"))));
+                    node.put("state", String.valueOf(inst.getOrDefault("state", "READY")));
+                    items.add(node);
+                }
             }
             return json(HttpStatus.OK, out);
         } catch (Exception e) {
@@ -65,9 +89,18 @@ public class BigtableAdminService {
     public HttpResponse getInstance(@Param String project, @Param String instance) {
         emulator.incrementRequestCount();
         try {
-            Map<String, Object> row = store.getInstance(project, instance);
-            return row == null ? error(HttpStatus.NOT_FOUND, "Bigtable instance not found: " + instance)
-                    : json(HttpStatus.OK, instanceJson(row));
+            try (BigtableGrpcClient client = new BigtableGrpcClient(emulatorPort)) {
+                Map<String, Object> row = client.getInstance(project, instance);
+                if (row == null) {
+                    return error(HttpStatus.NOT_FOUND, "Bigtable instance not found: " + instance);
+                }
+                ObjectNode node = mapper.createObjectNode();
+                node.put("name", "projects/" + project + "/instances/" + instance);
+                node.put("displayName", String.valueOf(row.getOrDefault("displayName", instance)));
+                node.put("type", String.valueOf(row.getOrDefault("instanceType", "PRODUCTION")));
+                node.put("state", String.valueOf(row.getOrDefault("state", "READY")));
+                return json(HttpStatus.OK, node);
+            }
         } catch (Exception e) {
             return exception(e, "get instance");
         }
@@ -77,8 +110,13 @@ public class BigtableAdminService {
     public HttpResponse deleteInstance(@Param String project, @Param String instance) {
         emulator.incrementRequestCount();
         try {
-            if (!store.deleteInstance(project, instance)) {
-                return error(HttpStatus.NOT_FOUND, "Bigtable instance not found: " + instance);
+            try (BigtableGrpcClient client = new BigtableGrpcClient(emulatorPort)) {
+                client.deleteInstance(project, instance);
+            } catch (io.grpc.StatusRuntimeException e) {
+                if (e.getStatus().getCode() == io.grpc.Status.Code.NOT_FOUND) {
+                    return error(HttpStatus.NOT_FOUND, "Bigtable instance not found: " + instance);
+                }
+                throw e;
             }
             return json(HttpStatus.OK, mapper.createObjectNode()
                     .put("status", "deleted")
@@ -92,14 +130,29 @@ public class BigtableAdminService {
     public HttpResponse createTable(@Param String project, @Param String instance, String body) {
         emulator.incrementRequestCount();
         try {
-            if (store.getInstance(project, instance) == null) {
-                return error(HttpStatus.NOT_FOUND, "Bigtable instance not found: " + instance);
-            }
             JsonNode root = readTree(body);
             String tableId = required(root, "tableId");
-            String granularity = text(root, "granularity", "MILLIS");
-            String columnFamiliesJson = root.has("columnFamilies") ? mapper.writeValueAsString(root.get("columnFamilies")) : "[]";
-            Map<String, Object> row = store.createTable(project, instance, tableId, columnFamiliesJson, granularity);
+            List<String> families = new ArrayList<>();
+            if (root.has("columnFamilies") && root.get("columnFamilies").isArray()) {
+                for (JsonNode f : root.get("columnFamilies")) {
+                    if (f.isTextual()) families.add(f.asText());
+                    else if (f.isObject() && f.has("name")) families.add(f.get("name").asText());
+                }
+            }
+            if (families.isEmpty()) {
+                families.add("cf1");
+            }
+            try (BigtableGrpcClient client = new BigtableGrpcClient(emulatorPort)) {
+                if (client.getInstance(project, instance) == null) {
+                    return error(HttpStatus.NOT_FOUND, "Bigtable instance not found: " + instance);
+                }
+                client.ensureTable(project, instance, tableId, families, text(root, "granularity", "MILLIS"));
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("project_id", project);
+            row.put("instance_id", instance);
+            row.put("table_id", tableId);
+            row.put("granularity", text(root, "granularity", "MILLIS"));
             return json(HttpStatus.OK, tableJson(row));
         } catch (Exception e) {
             return exception(e, "create table");
@@ -112,8 +165,14 @@ public class BigtableAdminService {
         try {
             ObjectNode out = mapper.createObjectNode();
             ArrayNode items = out.putArray("tables");
-            for (Map<String, Object> row : store.listTables(project, instance)) {
-                items.add(tableJson(row));
+            try (BigtableGrpcClient client = new BigtableGrpcClient(emulatorPort)) {
+                for (Map<String, Object> t : client.listTablesForInstance(project, instance)) {
+                    ObjectNode node = mapper.createObjectNode();
+                    String tid = String.valueOf(t.get("table"));
+                    node.put("name", "projects/" + project + "/instances/" + instance + "/tables/" + tid);
+                    node.put("granularity", String.valueOf(t.getOrDefault("granularity", "MILLIS")));
+                    items.add(node);
+                }
             }
             return json(HttpStatus.OK, out);
         } catch (Exception e) {
@@ -125,9 +184,22 @@ public class BigtableAdminService {
     public HttpResponse getTable(@Param String project, @Param String instance, @Param String table) {
         emulator.incrementRequestCount();
         try {
-            Map<String, Object> row = store.getTable(project, instance, table);
-            return row == null ? error(HttpStatus.NOT_FOUND, "Bigtable table not found: " + table)
-                    : json(HttpStatus.OK, tableJson(row));
+            try (BigtableGrpcClient client = new BigtableGrpcClient(emulatorPort)) {
+                List<String> families = client.getColumnFamilies(project, instance, table);
+                ObjectNode node = mapper.createObjectNode();
+                node.put("name", "projects/" + project + "/instances/" + instance + "/tables/" + table);
+                node.put("granularity", "MILLIS");
+                ArrayNode cfArray = node.putArray("columnFamilies");
+                for (String f : families) {
+                    cfArray.add(f);
+                }
+                return json(HttpStatus.OK, node);
+            } catch (io.grpc.StatusRuntimeException e) {
+                if (e.getStatus().getCode() == io.grpc.Status.Code.NOT_FOUND) {
+                    return error(HttpStatus.NOT_FOUND, "Bigtable table not found: " + table);
+                }
+                throw e;
+            }
         } catch (Exception e) {
             return exception(e, "get table");
         }
@@ -137,8 +209,13 @@ public class BigtableAdminService {
     public HttpResponse deleteTable(@Param String project, @Param String instance, @Param String table) {
         emulator.incrementRequestCount();
         try {
-            if (!store.deleteTable(project, instance, table)) {
-                return error(HttpStatus.NOT_FOUND, "Bigtable table not found: " + table);
+            try (BigtableGrpcClient client = new BigtableGrpcClient(emulatorPort)) {
+                client.deleteTable(project, instance, table);
+            } catch (io.grpc.StatusRuntimeException e) {
+                if (e.getStatus().getCode() == io.grpc.Status.Code.NOT_FOUND) {
+                    return error(HttpStatus.NOT_FOUND, "Bigtable table not found: " + table);
+                }
+                throw e;
             }
             return json(HttpStatus.OK, mapper.createObjectNode()
                     .put("status", "deleted")
@@ -153,9 +230,21 @@ public class BigtableAdminService {
         emulator.incrementRequestCount();
         try {
             JsonNode root = readTree(body);
-            String columnFamiliesJson = root.has("columnFamilies") ? mapper.writeValueAsString(root.get("columnFamilies")) : "[]";
-            if (!store.modifyColumnFamilies(project, instance, table, columnFamiliesJson)) {
-                return error(HttpStatus.NOT_FOUND, "Bigtable table not found: " + table);
+            List<String> addFamilies = new ArrayList<>();
+            List<String> dropFamilies = new ArrayList<>();
+            if (root.has("modifications") && root.get("modifications").isArray()) {
+                for (JsonNode mod : root.get("modifications")) {
+                    String id = mod.has("id") ? mod.get("id").asText() : null;
+                    if (id == null) continue;
+                    if (mod.has("drop") && (mod.get("drop").asBoolean() || "true".equalsIgnoreCase(mod.get("drop").asText()))) {
+                        dropFamilies.add(id);
+                    } else {
+                        addFamilies.add(id);
+                    }
+                }
+            }
+            try (BigtableGrpcClient client = new BigtableGrpcClient(emulatorPort)) {
+                client.modifyColumnFamilies(project, instance, table, addFamilies, dropFamilies);
             }
             return json(HttpStatus.OK, mapper.createObjectNode().put("status", "updated"));
         } catch (Exception e) {
@@ -201,8 +290,6 @@ public class BigtableAdminService {
     private HttpResponse json(HttpStatus status, JsonNode node) {
         return HttpResponse.of(status, MediaType.JSON, node.toString());
     }
-
-    // IAM Policy endpoints are handled by the generic catch-all in LocalCloudApplication.
 
     private HttpResponse exception(Exception e, String action) {
         HttpStatus status = e instanceof IllegalArgumentException ? HttpStatus.BAD_REQUEST : HttpStatus.INTERNAL_SERVER_ERROR;

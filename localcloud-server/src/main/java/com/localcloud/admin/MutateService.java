@@ -1235,6 +1235,7 @@ public class MutateService {
     }
 
     private String mutateBigtableAdmin(String operation, String subOp, Map<String, Object> json) throws Exception {
+        // Use BigtableGrpcClient to talk directly to the emulator — no PostgreSQL.
         String projectId = effectiveProject(json);
         if ("instances".equals(operation) && subOp == null) {
             String instanceId = stringValue(json, "instanceId");
@@ -1243,16 +1244,8 @@ public class MutateService {
             if (instanceId == null) {
                 return mapper.writeValueAsString(Map.of("error", true, "message", "instanceId is required"));
             }
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO bigtable_instances (project_id, instance_id, display_name, instance_type, state, clusters_json) " +
-                     "VALUES (?, ?, ?, ?, 'READY', ?)")) {
-                ps.setString(1, projectId);
-                ps.setString(2, instanceId);
-                ps.setString(3, displayName);
-                ps.setString(4, instanceType);
-                ps.setString(5, "[]");
-                ps.executeUpdate();
+            try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+                client.ensureInstance(projectId, instanceId, displayName, instanceType);
             }
             if (bigtableEmulator != null) bigtableEmulator.incrementRequestCount();
             return mapper.writeValueAsString(Map.of("status", "created", "instance", instanceId));
@@ -1262,28 +1255,13 @@ public class MutateService {
             if (instanceId == null) {
                 return mapper.writeValueAsString(Map.of("error", true, "message", "instanceId is required"));
             }
-            try (Connection conn = dataSource.getConnection()) {
-                conn.setAutoCommit(false);
-                try {
-                    try (PreparedStatement ps = conn.prepareStatement(
-                            "DELETE FROM bigtable_tables WHERE project_id = ? AND instance_id = ?")) {
-                        ps.setString(1, projectId);
-                        ps.setString(2, instanceId);
-                        ps.executeUpdate();
-                    }
-                    try (PreparedStatement ps = conn.prepareStatement(
-                            "DELETE FROM bigtable_instances WHERE project_id = ? AND instance_id = ?")) {
-                        ps.setString(1, projectId);
-                        ps.setString(2, instanceId);
-                        ps.executeUpdate();
-                    }
-                    conn.commit();
-                } catch (SQLException e) {
-                    conn.rollback();
-                    throw e;
-                } finally {
-                    conn.setAutoCommit(true);
+            try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+                client.deleteInstance(projectId, instanceId);
+            } catch (io.grpc.StatusRuntimeException e) {
+                if (e.getStatus().getCode() == io.grpc.Status.Code.NOT_FOUND) {
+                    return mapper.writeValueAsString(Map.of("error", true, "message", "Instance not found: " + instanceId));
                 }
+                throw e;
             }
             if (bigtableEmulator != null) bigtableEmulator.incrementRequestCount();
             return mapper.writeValueAsString(Map.of("status", "deleted", "instance", instanceId));
@@ -1295,16 +1273,11 @@ public class MutateService {
             if (instanceId == null || tableId == null) {
                 return mapper.writeValueAsString(Map.of("error", true, "message", "instanceId and tableId are required"));
             }
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO bigtable_tables (project_id, instance_id, table_id, column_families_json, granularity) " +
-                     "VALUES (?, ?, ?, ?, ?)")) {
-                ps.setString(1, projectId);
-                ps.setString(2, instanceId);
-                ps.setString(3, tableId);
-                ps.setString(4, "[]");
-                ps.setString(5, granularity);
-                ps.executeUpdate();
+            try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+                if (client.getInstance(projectId, instanceId) == null) {
+                    return mapper.writeValueAsString(Map.of("error", true, "message", "Instance not found: " + instanceId));
+                }
+                client.ensureTable(projectId, instanceId, tableId, List.of("cf1"), granularity);
             }
             if (bigtableEmulator != null) bigtableEmulator.incrementRequestCount();
             return mapper.writeValueAsString(Map.of("status", "created", "table", tableId, "instance", instanceId));
@@ -1315,13 +1288,13 @@ public class MutateService {
             if (instanceId == null || tableId == null) {
                 return mapper.writeValueAsString(Map.of("error", true, "message", "instanceId and tableId are required"));
             }
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(
-                     "DELETE FROM bigtable_tables WHERE project_id = ? AND instance_id = ? AND table_id = ?")) {
-                ps.setString(1, projectId);
-                ps.setString(2, instanceId);
-                ps.setString(3, tableId);
-                ps.executeUpdate();
+            try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+                client.deleteTable(projectId, instanceId, tableId);
+            } catch (io.grpc.StatusRuntimeException e) {
+                if (e.getStatus().getCode() == io.grpc.Status.Code.NOT_FOUND) {
+                    return mapper.writeValueAsString(Map.of("error", true, "message", "Table not found: " + tableId));
+                }
+                throw e;
             }
             if (bigtableEmulator != null) bigtableEmulator.incrementRequestCount();
             return mapper.writeValueAsString(Map.of("status", "deleted", "table", tableId, "instance", instanceId));
@@ -1686,7 +1659,7 @@ public class MutateService {
         String database = (String) json.get("database");
         String table = (String) json.get("table");
         List<String> columns = (List<String>) json.get("columns");
-        List<List<String>> values = (List<List<String>>) json.get("values");
+        List<List<?>> values = (List<List<?>>) json.get("values");
 
         String dbPath = "projects/" + projectId + "/instances/" + instance + "/databases/" + database;
         String sessionName = null;
@@ -1706,6 +1679,7 @@ public class MutateService {
             // Convert values to Spanner format, preserving arrays for ARRAY columns
             @SuppressWarnings("unchecked")
             Map<String, String> columnTypes = (Map<String, String>) json.get("columnTypes");
+
             List<List<Object>> mutationValues = new ArrayList<>();
             for (List<?> row : values) {
                 List<Object> rowValues = new ArrayList<>();

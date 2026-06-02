@@ -336,7 +336,7 @@ public class SeedService {
             logger.info("Skipping Firestore seed — emulator not yet implemented");
         }
         if (seedData.containsKey("bigtable")) {
-            int count = seedBigtable(seedData.get("bigtable"));
+            int count = seedBigtable(seedData.get("bigtable"), projectId);
             results.put("bigtable", results.containsKey("bigtable") ? ((int) results.get("bigtable")) + count : count);
             totalSeeded += count;
         }
@@ -411,11 +411,8 @@ public class SeedService {
                 addResult(results, "cloudsql", count);
                 totalSeeded += count;
             }
-            if (seedData.containsKey("bigtable")) {
-                int count = seedBigtableAdmin(seedData.get("bigtable"), projectId);
-                addResult(results, "bigtable", count);
-                totalSeeded += count;
-            }
+            // Bigtable: emulator handles persistence natively via gRPC.
+            // Only volatile seed is needed; persistent state is in the emulator.
             if (seedData.containsKey("memorystore")) {
                 int count = seedMemorystoreAdmin(seedData.get("memorystore"), projectId);
                 addResult(results, "memorystore", count);
@@ -509,7 +506,6 @@ public class SeedService {
         cleared += resetDataproc(projectId);
         cleared += resetCloudIAM(projectId);
         cleared += resetCloudSql(projectId);
-        cleared += resetBigtableAdmin(projectId);
         cleared += resetMemorystoreAdmin(projectId);
         return cleared;
     }
@@ -608,7 +604,7 @@ public class SeedService {
                                 logger.info("Skipping Firestore seed — emulator not yet implemented");
                                 yield 0;
                             }
-                            case "bigtable" -> seedBigtable(seedData.get("bigtable"));
+                            case "bigtable" -> seedBigtable(seedData.get("bigtable"), config.getProjectId());
                             case "cloudtasks" -> seedCloudTasks(seedData.get("cloudtasks"));
                             case "workflows" -> seedWorkflows(seedData.get("workflows"), config.getProjectId());
                             case "cloudscheduler" -> seedCloudScheduler(seedData.get("cloudscheduler"), config.getProjectId());
@@ -1843,45 +1839,43 @@ public class SeedService {
     // ========== Bigtable seed ==========
 
     @SuppressWarnings("unchecked")
-    private int seedBigtable(Object btData) {
+    private int seedBigtable(Object btData, String projectId) {
         if (!(btData instanceof Map)) return 0;
         Map<String, Object> bt = (Map<String, Object>) btData;
         int count = 0;
 
         List<Map<String, Object>> instances = (List<Map<String, Object>>) bt.get("instances");
         if (instances != null) {
-            for (Map<String, Object> instance : instances) {
-                String instanceName = (String) instance.get("name");
-                List<Map<String, Object>> tables = (List<Map<String, Object>>) instance.get("tables");
-                if (tables != null) {
-                    for (Map<String, Object> table : tables) {
-                        try {
-                            String tableName = (String) table.get("name");
-                            List<String> columnFamilies = (List<String>) table.get("columnFamilies");
-                            List<Map<String, Object>> rows = (List<Map<String, Object>>) table.get("rows");
-                            if (columnFamilies == null || columnFamilies.isEmpty()) {
-                                columnFamilies = List.of("cf1");
-                            }
+            try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
+                for (Map<String, Object> instance : instances) {
+                    String instanceName = (String) instance.get("name");
+                    List<Map<String, Object>> tables = (List<Map<String, Object>>) instance.get("tables");
+                    if (tables != null) {
+                        for (Map<String, Object> table : tables) {
+                            try {
+                                String tableName = (String) table.get("name");
+                                List<String> columnFamilies = (List<String>) table.get("columnFamilies");
+                                List<Map<String, Object>> rows = (List<Map<String, Object>>) table.get("rows");
+                                if (columnFamilies == null || columnFamilies.isEmpty()) {
+                                    columnFamilies = List.of("cf1");
+                                }
 
-                            try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
-                                client.ensureTable(config.getProjectId(), instanceName, tableName, columnFamilies);
-                            }
+                                client.ensureTable(projectId, instanceName, tableName, columnFamilies);
 
-                            if (rows != null) {
-                                for (Map<String, Object> row : rows) {
-                                    String rowKey = (String) row.get("key");
-                                    Map<String, Object> cells = (Map<String, Object>) row.get("cells");
-                                    if (rowKey != null && cells != null) {
-                                        try (BigtableGrpcClient client = new BigtableGrpcClient(bigtablePort)) {
-                                            client.mutateRow(config.getProjectId(), instanceName, tableName, rowKey, cells);
+                                if (rows != null) {
+                                    for (Map<String, Object> row : rows) {
+                                        String rowKey = (String) row.get("key");
+                                        Map<String, Object> cells = (Map<String, Object>) row.get("cells");
+                                        if (rowKey != null && cells != null) {
+                                            client.mutateRow(projectId, instanceName, tableName, rowKey, cells);
+                                            count++;
                                         }
-                                        count++;
                                     }
                                 }
+                                logger.debug("Seeded Bigtable table: {}/{} ({} rows)", instanceName, tableName, rows != null ? rows.size() : 0);
+                            } catch (Exception e) {
+                                logger.warn("Failed to seed Bigtable table: {}", e.getMessage());
                             }
-                            logger.debug("Seeded Bigtable table: {}/{} ({} rows)", instanceName, tableName, rows != null ? rows.size() : 0);
-                        } catch (Exception e) {
-                            logger.warn("Failed to seed Bigtable table: {}", e.getMessage());
                         }
                     }
                 }
@@ -3113,98 +3107,6 @@ public class SeedService {
         }
         if (cloudSqlEmulator != null) cloudSqlEmulator.reset();
         logger.info("Reset Cloud SQL: deleted {} resources", count);
-        return count;
-    }
-
-    @SuppressWarnings("unchecked")
-    private int seedBigtableAdmin(Object bigtableData, String projectId) {
-        int count = 0;
-        if (!(bigtableData instanceof Map<?, ?> raw)) return 0;
-        Map<String, Object> data = new LinkedHashMap<>();
-        raw.forEach((k, v) -> data.put(String.valueOf(k), v));
-
-        List<Map<String, Object>> instances = mapList(data, "instances");
-        for (Map<String, Object> instance : instances) {
-            String instanceId = stringValue(instance, "instanceId");
-            if (instanceId == null) continue;
-            String displayName = stringValue(instance, "displayName", instanceId);
-            String instanceType = stringValue(instance, "instanceType", "PRODUCTION");
-            if (seedBigtableInstance(projectId, instanceId, displayName, instanceType)) count++;
-
-            List<Map<String, Object>> tables = mapList(instance, "tables");
-            for (Map<String, Object> table : tables) {
-                String tableId = stringValue(table, "tableId");
-                if (tableId != null && seedBigtableTable(projectId, instanceId, tableId,
-                        stringValue(table, "granularity", "MILLIS"))) count++;
-            }
-        }
-        logger.info("Seeded Bigtable: {} resources for project {}", count, projectId);
-        return count;
-    }
-
-    private boolean seedBigtableInstance(String projectId, String instanceId, String displayName, String instanceType) {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                 "INSERT INTO bigtable_instances (project_id, instance_id, display_name, instance_type, state, clusters_json) " +
-                 "VALUES (?, ?, ?, ?, 'READY', ?) ON CONFLICT DO NOTHING")) {
-            ps.setString(1, projectId);
-            ps.setString(2, instanceId);
-            ps.setString(3, displayName);
-            ps.setString(4, instanceType);
-            ps.setString(5, "[]");
-            ps.executeUpdate();
-            return true;
-        } catch (Exception e) {
-            logger.warn("Failed to seed Bigtable instance {}: {}", instanceId, e.getMessage());
-            return false;
-        }
-    }
-
-    private boolean seedBigtableTable(String projectId, String instanceId, String tableId, String granularity) {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                 "INSERT INTO bigtable_tables (project_id, instance_id, table_id, column_families_json, granularity) " +
-                 "VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")) {
-            ps.setString(1, projectId);
-            ps.setString(2, instanceId);
-            ps.setString(3, tableId);
-            ps.setString(4, "[]");
-            ps.setString(5, granularity);
-            ps.executeUpdate();
-            return true;
-        } catch (Exception e) {
-            logger.warn("Failed to seed Bigtable table {}: {}", tableId, e.getMessage());
-            return false;
-        }
-    }
-
-    private int resetBigtableAdmin(String projectId) {
-        int count = 0;
-        try (Connection conn = dataSource.getConnection()) {
-            conn.setAutoCommit(false);
-            try {
-                try (PreparedStatement ps = conn.prepareStatement(
-                        "DELETE FROM bigtable_tables WHERE project_id = ?")) {
-                    ps.setString(1, projectId);
-                    count += ps.executeUpdate();
-                }
-                try (PreparedStatement ps = conn.prepareStatement(
-                        "DELETE FROM bigtable_instances WHERE project_id = ?")) {
-                    ps.setString(1, projectId);
-                    count += ps.executeUpdate();
-                }
-                conn.commit();
-            } catch (SQLException e) {
-                conn.rollback();
-                throw e;
-            } finally {
-                conn.setAutoCommit(true);
-            }
-        } catch (Exception e) {
-            logger.warn("Failed to reset Bigtable: {}", e.getMessage());
-        }
-        if (bigtableEmulator != null) bigtableEmulator.reset();
-        logger.info("Reset Bigtable: deleted {} resources", count);
         return count;
     }
 

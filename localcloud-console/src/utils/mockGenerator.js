@@ -75,9 +75,11 @@ export function generateMockValue(columnName, type = 'STRING') {
         case 'DOUBLE':
         case 'DOUBLE PRECISION':
         case 'REAL':
+            return parseFloat((Math.random() * 100).toFixed(4));
+
         case 'NUMERIC':
         case 'DECIMAL':
-            return parseFloat((Math.random() * 100).toFixed(4));
+            return (Math.random() * 100).toFixed(4);
 
         case 'DATE':
             const d = new Date();

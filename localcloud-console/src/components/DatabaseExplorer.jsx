@@ -6,19 +6,11 @@ import { generateMockRow } from '../utils/mockGenerator.js';
 
 const QUERY_HISTORY_SERVICES = new Set(['spanner', 'bigquery', 'alloydb', 'cloudsql', 'bigtable', 'memorystore']);
 
-const SERVICES_WITH_INFO_SCHEMA = new Set(['bigquery', 'spanner', 'alloydb', 'cloudsql']);
-
 const INFO_SCHEMA_VIEWS = {
     bigquery: ['tables', 'columns', 'schemata', 'views', 'routines', 'partitions', 'table_storage'],
     spanner: ['tables', 'columns', 'table_statistics'],
     alloydb: ['tables', 'columns', 'schemata', 'views', 'routines'],
     cloudsql: ['tables', 'columns', 'schemata', 'views', 'routines'],
-};
-
-const INFO_SCHEMA_VIEW_LABELS = {
-    tables: 'TABLES', columns: 'COLUMNS', schemata: 'SCHEMATA', views: 'VIEWS',
-    routines: 'ROUTINES', partitions: 'PARTITIONS', table_storage: 'TABLE_STORAGE',
-    table_statistics: 'TABLE_STATISTICS',
 };
 
 function idFromName(name) {
@@ -485,21 +477,41 @@ const adapters = {
                     )),
                 ];
             }
+            if (path.length === 2) {
+                // List tables for the selected instance/database
+                const schema = await api.schema('cloudsql');
+                const tables = (schema?.tables || [])
+                    .filter(t => t.instance === path[0].id && t.database === path[1].id)
+                    .map(t => makeNode('table', t.name, t.name.split('.').pop(), t));
+                return tables;
+            }
             return [];
         },
         async table(path) {
-            return { columns: [], rows: [], ddl: '-- Cloud SQL metadata view --' };
+            // Query actual data from the physical database
+            const tableName = path[2].id; // instance.database.tableName
+            try {
+                const result = await api.query('cloudsql', `SELECT * FROM ${tableName} LIMIT 200`);
+                const columns = (result.columns || []).map(c => ({ name: c, type: 'STRING' }));
+                return { columns, rows: result.rows || [], keyColumns: columns.slice(0, 1).map(c => c.name) };
+            } catch (e) {
+                return { columns: [], rows: [], ddl: `-- Error: ${e.message || 'Failed to load table'}` };
+            }
         },
         tableActions: {},
         infoSchema: {
             views: INFO_SCHEMA_VIEWS.cloudsql,
-            async load(viewType) {
+            async load(viewType, path) {
+                // Build instance.database reference from the current path for proper physical DB resolution
+                const instanceId = path?.[0]?.id || '';
+                const databaseId = path?.[1]?.id || '';
+                const dbRef = instanceId && databaseId ? `${instanceId}.${databaseId}.` : '';
                 const viewMap = {
-                    tables: "SELECT table_catalog, table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
-                    columns: "SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position",
-                    schemata: "SELECT catalog_name, schema_name, schema_owner FROM information_schema.schemata ORDER BY schema_name",
-                    views: "SELECT table_catalog, table_schema, table_name, view_definition FROM information_schema.views WHERE table_schema = 'public' ORDER BY table_name",
-                    routines: "SELECT routine_name, routine_type, data_type FROM information_schema.routines WHERE routine_schema = 'public' ORDER BY routine_name",
+                    tables: `SELECT table_catalog, table_schema, table_name, table_type FROM ${dbRef}information_schema.tables WHERE table_schema = 'public' ORDER BY table_name`,
+                    columns: `SELECT table_name, column_name, data_type, is_nullable FROM ${dbRef}information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position`,
+                    schemata: `SELECT catalog_name, schema_name, schema_owner FROM ${dbRef}information_schema.schemata ORDER BY schema_name`,
+                    views: `SELECT table_catalog, table_schema, table_name, view_definition FROM ${dbRef}information_schema.views WHERE table_schema = 'public' ORDER BY table_name`,
+                    routines: `SELECT routine_name, routine_type, data_type FROM ${dbRef}information_schema.routines WHERE routine_schema = 'public' ORDER BY routine_name`,
                 };
                 const sql = viewMap[viewType] || viewMap.tables;
                 const result = await api.query('cloudsql', sql);
@@ -532,10 +544,7 @@ export default function DatabaseExplorer(props) {
     const [ddlCopied, setDdlCopied] = createSignal(false);
     const [tableError, setTableError] = createSignal(null);
     const [addMenuOpen, setAddMenuOpen] = createSignal(false);
-    const [showInfoSchema, setShowInfoSchema] = createSignal(false);
-    const [infoSchemaView, setInfoSchemaView] = createSignal(null);
-    const [infoSchemaData, setInfoSchemaData] = createSignal(null);
-    const [infoSchemaLoading, setInfoSchemaLoading] = createSignal(false);
+
 
     const rootNodes = createMemo(() => adapter()?.root(props.data?.()) || []);
     const selected = createMemo(() => path()[path().length - 1] || null);
@@ -620,9 +629,6 @@ export default function DatabaseExplorer(props) {
         setTableError(null);
         setAddMenuOpen(false);
         setActiveTab('browse');
-        setShowInfoSchema(false);
-        setInfoSchemaView(null);
-        setInfoSchemaData(null);
     });
 
     const breadcrumbs = createMemo(() => [
@@ -734,43 +740,6 @@ export default function DatabaseExplorer(props) {
         });
     };
 
-    const infoSchemaAdapter = () => {
-        const a = adapter()?.infoSchema;
-        if (!a) return null;
-        // Spanner Info Schema requires a database (path.length >= 2)
-        if (props.serviceId === 'spanner' && path().length < 2) return null;
-        // AlloyDB Info Schema requires a database (path.length >= 3: cluster > instance > database)
-        if (props.serviceId === 'alloydb' && path().length < 3) return null;
-        return a;
-    };
-
-    const loadInfoSchema = async (viewType) => {
-        const is = infoSchemaAdapter();
-        if (!is) return;
-        setInfoSchemaLoading(true);
-        try {
-            const data = await is.load(viewType, path());
-            setInfoSchemaData(data);
-        } catch (e) {
-            setInfoSchemaData({ columns: ['error'], rows: [{ error: e.message || 'Failed to load' }] });
-        } finally {
-            setInfoSchemaLoading(false);
-        }
-    };
-
-    const toggleInfoSchema = () => {
-        const is = infoSchemaAdapter();
-        if (!is) return;
-        if (showInfoSchema()) {
-            setShowInfoSchema(false);
-        } else {
-            setShowInfoSchema(true);
-            const defaultView = is.views?.[0] || 'tables';
-            setInfoSchemaView(defaultView);
-            loadInfoSchema(defaultView);
-        }
-    };
-
     const ContextActions = () => {
         const tableColumns = () => table()?.columns || [];
         const canAddRows = () => isTableLevel() && table() && tableActions().addRow && adapter()?.insertRow;
@@ -782,9 +751,6 @@ export default function DatabaseExplorer(props) {
             <div class="data-explorer-actions" aria-label="Data explorer actions">
                 <Show when={!isTableLevel() && action()}>
                     <button class="btn btn-primary" onClick={runPrimaryAction}>{action().label}</button>
-                </Show>
-                <Show when={infoSchemaAdapter()}>
-                    <button class="btn btn-secondary" onClick={toggleInfoSchema}>{showInfoSchema() ? 'Hide Info Schema' : 'Info Schema'}</button>
                 </Show>
                 <Show when={canShowDdl()}><button class="btn btn-secondary" onClick={showDdl}>Show DDL</button></Show>
                 <Show when={canImportCsv()}><button class="btn btn-secondary" onClick={() => setShowCsvImport(true)}>Import CSV</button></Show>
@@ -877,18 +843,6 @@ export default function DatabaseExplorer(props) {
                 </Show>
             </div>
 
-            <Show when={!loading() && showInfoSchema() && infoSchemaAdapter()}>
-                <InfoSchemaBrowser
-                    serviceId={props.serviceId}
-                    views={infoSchemaAdapter().views}
-                    view={infoSchemaView()}
-                    onSelectView={(v) => { setInfoSchemaView(v); loadInfoSchema(v); }}
-                    loading={infoSchemaLoading()}
-                    data={infoSchemaData()}
-                    onClose={() => setShowInfoSchema(false)}
-                />
-            </Show>
-
             <Show when={ddlText()}>
                 <div class="modal-overlay" role="dialog" aria-modal="true" onClick={() => setDdlText(null)}>
                     <div class="card modal-card" onClick={e => e.stopPropagation()} style="max-width:900px;width:90vw">
@@ -970,52 +924,6 @@ function OperationsPanel(props) {
                 <thead><tr><th>Time</th><th>Operation</th><th>Target</th><th>Status</th><th>Error</th></tr></thead>
                 <tbody><For each={props.operations}>{op => <tr><td>{op.at}</td><td>{op.operation}</td><td>{op.target}</td><td>{op.status}</td><td>{op.error || ''}</td></tr>}</For></tbody>
             </table>
-        </div>
-    );
-}
-
-function InfoSchemaBrowser(props) {
-    const views = () => props.views || [];
-    return (
-        <div style="margin-bottom:20px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
-            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface-variant);border-bottom:1px solid var(--border)">
-                <div style="display:flex;align-items:center;gap:8px">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
-                    <span style="font-size:13px;font-weight:600">INFORMATION_SCHEMA</span>
-                    <span style="font-size:11px;color:var(--text-tertiary);text-transform:uppercase">{props.serviceId}</span>
-                </div>
-                <button onClick={props.onClose} style="padding:2px 8px;border:none;background:none;color:var(--text-tertiary);cursor:pointer;font-size:16px;line-height:1">&times;</button>
-            </div>
-            <div style="display:flex;gap:2px;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--border);overflow-x:auto">
-                <For each={views()}>{v => (
-                    <button onClick={() => props.onSelectView(v)} style={{
-                        padding: '5px 12px', border: 'none', borderRadius: '5px', cursor: 'pointer',
-                        fontSize: '11px', fontWeight: props.view === v ? 600 : 400,
-                        background: props.view === v ? 'var(--primary)' : 'transparent',
-                        color: props.view === v ? '#fff' : 'var(--text-secondary)',
-                        transition: 'all 0.15s', whiteSpace: 'nowrap'
-                    }}>{INFO_SCHEMA_VIEW_LABELS[v] || v}</button>
-                )}</For>
-            </div>
-            <div style="max-height:400px;overflow:auto;padding:12px 14px;background:var(--bg)">
-                <Show when={!props.loading && props.data} fallback={
-                    <Show when={props.loading} fallback={
-                        <div class="empty-state" style="padding:24px;text-align:center;color:var(--text-tertiary);font-size:13px">Select a view above to browse system metadata</div>
-                    }>
-                        <div class="loading-state" style="padding:24px"><div class="loading-spinner" /> Loading…</div>
-                    </Show>
-                }>
-                    <table class="data-table" style="font-size:12px">
-                        <thead><tr><For each={(props.data?.columns || [])}>{(col) => <th style="position:sticky;top:0;background:var(--bg)">{col}</th>}</For></tr></thead>
-                        <tbody>
-                            <For each={(props.data?.rows || [])}>{(row) => (
-                                <tr><For each={(props.data?.columns || [])}>{(col) => <td style="font-family:var(--font-mono);font-size:11px">{row[col] != null ? String(row[col]) : <span style="color:var(--text-tertiary);font-style:italic">NULL</span>}</td>}</For></tr>
-                            )}</For>
-                        </tbody>
-                    </table>
-                    <div style="padding:6px 0;font-size:10px;color:var(--text-tertiary)">{(props.data?.rows || []).length} rows</div>
-                </Show>
-            </div>
         </div>
     );
 }

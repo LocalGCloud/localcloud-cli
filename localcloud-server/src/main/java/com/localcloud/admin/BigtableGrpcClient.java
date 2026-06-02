@@ -57,6 +57,24 @@ public final class BigtableGrpcClient implements AutoCloseable {
         this.instanceAdmin = BigtableInstanceAdminGrpc.newBlockingStub(channel);
     }
 
+    /**
+     * List tables for a single instance without scanning the entire cluster.
+     */
+    public List<Map<String, Object>> listTablesForInstance(String projectId, String instanceId) {
+        List<Map<String, Object>> tables = new ArrayList<>();
+        var response = tableAdmin.listTables(ListTablesRequest.newBuilder()
+                .setParent(instanceName(projectId, instanceId))
+                .build());
+        for (Table table : response.getTablesList()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("instance", instanceId);
+            item.put("table", tail(table.getName(), "/tables/"));
+            item.put("granularity", table.getGranularity().name());
+            tables.add(item);
+        }
+        return tables;
+    }
+
     public List<Map<String, Object>> listTables(String projectId) {
         List<Map<String, Object>> tables = new ArrayList<>();
         var instances = instanceAdmin.listInstances(ListInstancesRequest.newBuilder()
@@ -131,6 +149,10 @@ public final class BigtableGrpcClient implements AutoCloseable {
     }
 
     public void ensureInstance(String projectId, String instanceId) {
+        ensureInstance(projectId, instanceId, instanceId, "PRODUCTION");
+    }
+
+    public void ensureInstance(String projectId, String instanceId, String displayName, String instanceType) {
         String name = instanceName(projectId, instanceId);
         try {
             instanceAdmin.getInstance(GetInstanceRequest.newBuilder().setName(name).build());
@@ -140,12 +162,18 @@ public final class BigtableGrpcClient implements AutoCloseable {
                 throw e;
             }
         }
+        Instance.Type type;
+        try {
+            type = Instance.Type.valueOf(instanceType != null ? instanceType : "PRODUCTION");
+        } catch (IllegalArgumentException e) {
+            type = Instance.Type.PRODUCTION;
+        }
         instanceAdmin.createInstance(CreateInstanceRequest.newBuilder()
                 .setParent(project(projectId))
                 .setInstanceId(instanceId)
                 .setInstance(Instance.newBuilder()
-                        .setDisplayName(instanceId)
-                        .setType(Instance.Type.PRODUCTION)
+                        .setDisplayName(displayName != null ? displayName : instanceId)
+                        .setType(type)
                         .build())
                 .putClusters(DEFAULT_CLUSTER, Cluster.newBuilder()
                         .setLocation(project(projectId) + "/locations/local")
@@ -156,6 +184,10 @@ public final class BigtableGrpcClient implements AutoCloseable {
     }
 
     public void ensureTable(String projectId, String instanceId, String tableId, List<String> families) {
+        ensureTable(projectId, instanceId, tableId, families, "MILLIS");
+    }
+
+    public void ensureTable(String projectId, String instanceId, String tableId, List<String> families, String granularity) {
         ensureInstance(projectId, instanceId);
         String name = tableName(projectId, instanceId, tableId);
         try {
@@ -167,6 +199,9 @@ public final class BigtableGrpcClient implements AutoCloseable {
             }
         }
         Table.Builder table = Table.newBuilder();
+        if ("MILLIS".equalsIgnoreCase(granularity)) {
+            table.setGranularity(Table.TimestampGranularity.MILLIS);
+        }
         for (String family : families) {
             table.putColumnFamilies(family, ColumnFamily.newBuilder().build());
         }
@@ -210,6 +245,37 @@ public final class BigtableGrpcClient implements AutoCloseable {
                 .addMutations(Mutation.newBuilder()
                         .setDeleteFromRow(Mutation.DeleteFromRow.newBuilder().build())
                         .build())
+                .build());
+    }
+
+    /**
+     * Get a single instance by ID. Returns null if not found.
+     */
+    public Map<String, Object> getInstance(String projectId, String instanceId) {
+        try {
+            Instance instance = instanceAdmin.getInstance(GetInstanceRequest.newBuilder()
+                    .setName(instanceName(projectId, instanceId))
+                    .build());
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("instanceId", instanceId);
+            result.put("displayName", instance.getDisplayName());
+            result.put("instanceType", instance.getType().name());
+            result.put("state", instance.getState().name());
+            return result;
+        } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Delete a single instance and all its tables.
+     */
+    public void deleteInstance(String projectId, String instanceId) {
+        instanceAdmin.deleteInstance(DeleteInstanceRequest.newBuilder()
+                .setName(instanceName(projectId, instanceId))
                 .build());
     }
 

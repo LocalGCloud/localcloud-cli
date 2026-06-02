@@ -200,13 +200,17 @@ function SQLEditor(props) {
         if (isGcsMode()) loadGcsFiles();
     });
 
-    // Spanner: auto-select instance from schema response
+    // Auto-select instance/database from schema response
     createEffect(() => {
         const svc = service();
         if (svc === 'spanner') {
             const schema = dynamicSchema();
             if (schema?.selectedInstance && !selectedInstance()) setSelectedInstance(schema.selectedInstance);
             if (schema?.databases?.length > 0 && !selectedDatabase()) setSelectedDatabase(schema.databases[0]);
+        }
+        if (svc === 'alloydb') {
+            const schema = dynamicSchema();
+            if (schema?.selectedDatabase && !selectedDatabase()) setSelectedDatabase(schema.selectedDatabase);
         }
     });
 
@@ -339,6 +343,35 @@ function SQLEditor(props) {
             // Group tables by instance to find database names per instance
             for (const t of (data.tables || [])) {
                 if (t.instance && t.database) exp['db:' + t.instance + '/' + t.database] = true;
+            }
+            setExpanded(prev => ({ ...prev, ...exp }));
+        } else if (svc === 'cloudsql' && data && data.instances) {
+            const exp = {};
+            // Expand all instances and their databases
+            for (const inst of (data.instances || [])) exp['inst:' + inst] = true;
+            // Expand databases from tables OR from databasesByInstance
+            for (const t of (data.tables || [])) {
+                if (t.instance && t.database) exp['db:' + t.instance + '/' + t.database] = true;
+            }
+            // Also expand from databasesByInstance when no tables exist
+            if (data.databasesByInstance) {
+                for (const [inst, dbs] of Object.entries(data.databasesByInstance)) {
+                    for (const db of dbs) {
+                        exp['db:' + inst + '/' + db] = true;
+                    }
+                }
+            }
+            setExpanded(prev => ({ ...prev, ...exp }));
+        } else if (svc === 'alloydb' && data && data.tables) {
+            const exp = {};
+            // Expand all clusters and their databases
+            const clusters = new Set();
+            for (const t of (data.tables || [])) {
+                if (t.cluster) {
+                    clusters.add(t.cluster);
+                    exp['cluster:' + t.cluster] = true;
+                }
+                if (t.cluster && t.database) exp['db:' + t.cluster + '/' + t.database] = true;
             }
             setExpanded(prev => ({ ...prev, ...exp }));
         } else {
@@ -552,7 +585,7 @@ function SQLEditor(props) {
         const svc = currentServiceInfo();
         const ds = dynamicSchema();
         if (!svc || !ds || !ds.tables) return ds;
-        if (svc.dialect === 'bigquery' || svc.dialect === 'googlesql' || svc.id === 'pubsub' || svc.id === 'bigtable' || svc.id === 'memorystore') return ds;
+        if (svc.dialect === 'bigquery' || svc.dialect === 'googlesql' || svc.id === 'pubsub' || svc.id === 'bigtable' || svc.id === 'memorystore' || svc.id === 'cloudsql' || svc.id === 'alloydb') return ds;
         const staticTables = SERVICE_SCHEMAS[service()]?.tables;
         if (staticTables && staticTables.length > 0) {
             const allowedNames = new Set(staticTables.map(t => t.name));
@@ -577,6 +610,7 @@ function SQLEditor(props) {
         const isBigQuery = svcInfo?.dialect === 'bigquery';
         const isSpanner = svcInfo?.id === 'spanner';
         const isAlloyDB = svcInfo?.id === 'alloydb';
+        const isCloudSql = svcInfo?.id === 'cloudsql';
         const isBigtable = svcInfo?.id === 'bigtable';
 
         // Group tables by database/dataset
@@ -591,6 +625,11 @@ function SQLEditor(props) {
                 const parts = t.name.split('.');
                 dbName = parts[0];
                 tableName = parts.slice(1).join('.');
+            } else if (isCloudSql && t.name.includes('.')) {
+                // Cloud SQL: tables are prefixed as "instance.database.TableName"
+                const parts = t.name.split('.');
+                dbName = parts[0] + '.' + parts[1];
+                tableName = parts.slice(2).join('.');
             } else if (isSpanner && t.name.includes('.')) {
                 // Spanner: tables are prefixed as "database.TableName"
                 const parts = t.name.split('.');
@@ -613,7 +652,10 @@ function SQLEditor(props) {
             }
             // For Spanner: group key is "instance/database" to separate same-named dbs across instances
             // For AlloyDB: group key is "cluster/database" to separate same-named dbs across clusters
-            const groupKey = isSpanner && t.instance ? t.instance + '/' + dbName : (isAlloyDB && t.cluster ? t.cluster + '/' + dbName : dbName);
+            // For Cloud SQL: group key is "instance/database" to separate same-named dbs across instances
+            const groupKey = isSpanner && t.instance ? t.instance + '/' + dbName
+                : (isAlloyDB && t.cluster ? t.cluster + '/' + dbName
+                : (isCloudSql && t.instance ? t.instance + '/' + dbName : dbName));
             groups[groupKey] ||= [];
             groups[groupKey].push({ ...t, shortName: tableName, _instance: t.instance, _cluster: t.cluster, _database: t.database || dbName });
         }
@@ -644,6 +686,32 @@ function SQLEditor(props) {
         return clusterGroups;
     });
 
+    const cloudsqlInstanceTree = createMemo(() => {
+        const tree = schemaTree();
+        const schema = currentSchema();
+        const instanceGroups = {};
+
+        // First, build from tables (if any exist)
+        for (const [groupKey, tables] of Object.entries(tree)) {
+            const inst = tables[0]?._instance || schema?.selectedInstance || 'default';
+            const dbName = tables[0]?._database || groupKey;
+            if (!instanceGroups[inst]) instanceGroups[inst] = {};
+            instanceGroups[inst][dbName] = tables;
+        }
+
+        // If no tables found, fall back to databasesByInstance to show instances even when empty
+        if (Object.keys(instanceGroups).length === 0 && schema?.databasesByInstance) {
+            for (const [inst, dbs] of Object.entries(schema.databasesByInstance)) {
+                if (!instanceGroups[inst]) instanceGroups[inst] = {};
+                for (const db of dbs) {
+                    if (!instanceGroups[inst][db]) instanceGroups[inst][db] = [];
+                }
+            }
+        }
+
+        return instanceGroups;
+    });
+
     const dynamicPlaceholder = createMemo(() => {
         const svc = currentServiceInfo();
         if (!svc) return '';
@@ -652,6 +720,7 @@ function SQLEditor(props) {
             const tbl = ds.tables[0];
             // Strip database prefix for Spanner (e.g., "my-database.Users" → "Users")
             // Strip cluster.database prefix for AlloyDB (e.g., "my-cluster.my-db.Users" → "Users")
+            // For Cloud SQL, keep full instance.database.table name so backend can resolve physical DB
             const isPrefixed = (svc.id === 'spanner' || svc.id === 'alloydb') && tbl.name.includes('.');
             const tableName = isPrefixed ? tbl.name.split('.').pop() : tbl.name;
             return `SELECT * FROM ${quoteTableName(svc, tableName)} LIMIT 10`;
@@ -873,7 +942,7 @@ function SQLEditor(props) {
                     </Show>
 
                     {/* ── Standard Schema Tree (non-GCS) ── */}
-                    <Show when={!isGcsMode() && !schemaLoading() && Object.keys(schemaTree()).length === 0}>
+                    <Show when={!isGcsMode() && !schemaLoading() && Object.keys(schemaTree()).length === 0 && !(service() === 'cloudsql' && currentSchema()?.instances?.length > 0)}>
                         <div class="sql-explorer-empty">
 	                            <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false" style={{ opacity: 0.12 }}>
                                 <ellipse cx="12" cy="5.5" rx="9" ry="3.5"/>
@@ -1050,8 +1119,91 @@ function SQLEditor(props) {
                             }}
                         </For>
                     </Show>
-                    {/* Non-Spanner/AlloyDB services: flat database grouping */}
-                    <Show when={service() !== 'spanner' && service() !== 'alloydb'}>
+                    {/* Cloud SQL: instance → database → table hierarchy */}
+                    <Show when={service() === 'cloudsql' && currentSchema()?.instances?.length > 0}>
+                        <For each={Object.entries(cloudsqlInstanceTree())}>
+                            {([instName, databases]) => {
+                                const instKey = 'inst:' + instName;
+                                const dbCount = Object.keys(databases).length;
+                                return (
+                                    <div class="tree-group">
+                                        <div class="tree-row tree-row-db" onClick={() => toggle(instKey)} onKeyDown={onActivate(() => toggle(instKey))} role="button" tabIndex={0} aria-expanded={expanded()[instKey] !== false}>
+                                            <IconChevron open={expanded()[instKey] !== false} />
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true" focusable="false" style={{"flex-shrink":"0"}}><path d="M19 15v4H5v-4h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 18.5c-.82 0-1.5-.67-1.5-1.5s.68-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM19 3v4H5V3h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V2c0-.55-.45-1-1-1zM7 6.5c-.82 0-1.5-.67-1.5-1.5S6.19 3.5 7 3.5s1.5.67 1.5 1.5S7.83 6.5 7 6.5z"/></svg>
+                                            <span class="tree-name" style={{"font-weight":"600"}}>{instName}</span>
+                                            <span class="tree-badge tree-badge-db">{dbCount} db{dbCount !== 1 ? 's' : ''}</span>
+                                        </div>
+                                        <Show when={expanded()[instKey] !== false}>
+                                            <div class="tree-children">
+                                                <For each={Object.entries(databases)}>
+                                                    {([dbName, tables]) => {
+                                                        const dbKey = 'db:' + instName + '/' + dbName;
+                                                        const tableCount = tables.length;
+                                                        return (
+                                                            <div class="tree-group">
+                                                                <div class="tree-row tree-row-db"
+                                                                    onClick={() => toggle(dbKey)}
+                                                                    onKeyDown={onActivate(() => toggle(dbKey))}
+                                                                    role="button" tabIndex={0} aria-expanded={!!expanded()[dbKey]}>
+                                                                    <IconChevron open={expanded()[dbKey]} />
+                                                                    <IconDatabase />
+                                                                    <span class="tree-name">{dbName}</span>
+                                                                    <span class="tree-badge tree-badge-db">{tableCount} table{tableCount !== 1 ? 's' : ''}</span>
+                                                                </div>
+                                                                <Show when={expanded()[dbKey]}>
+                                                                    <div class="tree-children">
+                                                                        <For each={tables}>
+                                                                            {(table) => {
+                                                                                const tblKey = 'tbl:' + instName + '/' + table.name;
+                                                                                const colCount = (table.columns || []).length;
+                                                                                return (
+                                                                                    <div class="tree-group">
+                                                                                        <div class="tree-row tree-row-tbl"
+                                                                                            onClick={() => toggle(tblKey)}
+                                                                                            onKeyDown={onActivate(() => toggle(tblKey))}
+                                                                                            role="button" tabIndex={0} aria-expanded={!!expanded()[tblKey]}>
+                                                                                            <IconChevron open={expanded()[tblKey]} />
+                                                                                            <IconTable />
+                                                                                            <span class="tree-name">{table.shortName}</span>
+                                                                                            <span class="tree-badge">{colCount}</span>
+                                                                                            <button class="tree-run-btn" title="SELECT * LIMIT 10" aria-label={`Run SELECT * for ${table.shortName}`} onClick={(e) => quickSelect(table.name, e)}>
+                                                                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg>
+                                                                                            </button>
+                                                                                        </div>
+                                                                                        <Show when={expanded()[tblKey]}>
+                                                                                            <div class="tree-children">
+                                                                                                <For each={table.columns || []}>
+                                                                                                    {(col) => (
+                                                                                                        <div class="tree-row tree-row-col" title={`${col.name || col} (${col.type || ''})`}>
+                                                                                                            <IconColumn />
+                                                                                                            <span class="tree-col-name">{col.name || col}</span>
+                                                                                                            <Show when={col.type}>
+                                                                                                                <span class="tree-col-type">{col.type}</span>
+                                                                                                            </Show>
+                                                                                                        </div>
+                                                                                                    )}
+                                                                                                </For>
+                                                                                            </div>
+                                                                                        </Show>
+                                                                                    </div>
+                                                                                );
+                                                                            }}
+                                                                        </For>
+                                                                    </div>
+                                                                </Show>
+                                                            </div>
+                                                        );
+                                                    }}
+                                                </For>
+                                            </div>
+                                        </Show>
+                                    </div>
+                                );
+                            }}
+                        </For>
+                    </Show>
+                    {/* Non-hierarchical services: flat database grouping */}
+                    <Show when={service() !== 'spanner' && service() !== 'alloydb' && service() !== 'cloudsql'}>
                     <For each={Object.entries(schemaTree())}>
                         {([dbName, tables]) => {
                             const dbKey = 'db:' + dbName;
@@ -1398,11 +1550,134 @@ function SQLEditor(props) {
 // ─── Database Panels Component (History + Stats) ─────────────────────
 const QUERY_HISTORY_SERVICES = new Set(['spanner', 'bigquery', 'alloydb', 'cloudsql', 'bigtable', 'memorystore']);
 
+const SERVICES_WITH_INFO_SCHEMA = new Set(['bigquery', 'spanner', 'alloydb', 'cloudsql']);
+const INFO_SCHEMA_VIEWS = {
+    bigquery: ['tables', 'columns', 'schemata', 'views', 'routines', 'partitions', 'table_storage'],
+    spanner: ['tables', 'columns', 'table_statistics'],
+    alloydb: ['tables', 'columns', 'schemata', 'views', 'routines'],
+    cloudsql: ['tables', 'columns', 'schemata', 'views', 'routines'],
+};
+const INFO_SCHEMA_VIEW_LABELS = {
+    tables: 'TABLES', columns: 'COLUMNS', schemata: 'SCHEMATA', views: 'VIEWS',
+    routines: 'ROUTINES', partitions: 'PARTITIONS', table_storage: 'TABLE_STORAGE',
+    table_statistics: 'TABLE_STATISTICS',
+};
+
+// Info schema loaders per service — shared between Data Explorer and Stats panel
+const INFO_SCHEMA_LOADERS = {
+    bigquery: {
+        views: INFO_SCHEMA_VIEWS.bigquery,
+        async load(viewType) {
+            return api.bigqueryInfoSchema(viewType);
+        },
+    },
+    spanner: {
+        views: INFO_SCHEMA_VIEWS.spanner,
+        async load(viewType) {
+            const viewMap = {
+                tables: "SELECT t.table_catalog, t.table_schema, t.table_name, t.table_type FROM information_schema.tables t WHERE t.table_schema = '' ORDER BY t.table_name",
+                columns: "SELECT c.table_name, c.column_name, c.spanner_type, c.is_nullable FROM information_schema.columns c WHERE c.table_schema = '' ORDER BY c.table_name, c.ordinal_position",
+                table_statistics: "SELECT table_name, row_count, file_count FROM information_schema.table_statistics WHERE table_schema = '' ORDER BY table_name",
+            };
+            const sql = viewMap[viewType] || viewMap.tables;
+            const result = await api.query('spanner', sql, { instance: 'local-instance', database: 'local-database' });
+            return { columns: result.columns || [], rows: (result.rows || []).map(row => {
+                const obj = {};
+                result.columns.forEach((col, i) => obj[col] = row[i]);
+                return obj;
+            })};
+        },
+    },
+    alloydb: {
+        views: INFO_SCHEMA_VIEWS.alloydb,
+        async load(viewType) {
+            const viewMap = {
+                tables: "SELECT table_catalog, table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
+                columns: "SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position",
+                schemata: "SELECT catalog_name, schema_name, schema_owner FROM information_schema.schemata ORDER BY schema_name",
+                views: "SELECT table_catalog, table_schema, table_name, view_definition FROM information_schema.views WHERE table_schema = 'public' ORDER BY table_name",
+                routines: "SELECT routine_name, routine_type, data_type FROM information_schema.routines WHERE routine_schema = 'public' ORDER BY routine_name",
+            };
+            const sql = viewMap[viewType] || viewMap.tables;
+            const result = await api.query('alloydb', sql);
+            return { columns: result.columns || [], rows: (result.rows || []).map(row => {
+                const obj = {};
+                result.columns.forEach((col, i) => obj[col] = row[i]);
+                return obj;
+            })};
+        },
+    },
+    cloudsql: {
+        views: INFO_SCHEMA_VIEWS.cloudsql,
+        async load(viewType) {
+            const viewMap = {
+                tables: "SELECT table_catalog, table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
+                columns: "SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position",
+                schemata: "SELECT catalog_name, schema_name, schema_owner FROM information_schema.schemata ORDER BY schema_name",
+                views: "SELECT table_catalog, table_schema, table_name, view_definition FROM information_schema.views WHERE table_schema = 'public' ORDER BY table_name",
+                routines: "SELECT routine_name, routine_type, data_type FROM information_schema.routines WHERE routine_schema = 'public' ORDER BY routine_name",
+            };
+            const sql = viewMap[viewType] || viewMap.tables;
+            const result = await api.query('cloudsql', sql);
+            return { columns: result.columns || [], rows: (result.rows || []).map(row => {
+                const obj = {};
+                result.columns.forEach((col, i) => obj[col] = row[i]);
+                return obj;
+            })};
+        },
+    },
+};
+
+function InfoSchemaPanel(props) {
+    const views = () => props.views || [];
+    return (
+        <div style="margin-top:24px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+            <div style="display:flex;align-items:center;padding:10px 14px;background:var(--surface-variant);border-bottom:1px solid var(--border);gap:8px">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                <span style="font-size:13px;font-weight:600">INFORMATION_SCHEMA</span>
+            </div>
+            <div style="display:flex;gap:2px;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--border);overflow-x:auto">
+                <For each={views()}>{v => (
+                    <button onClick={() => props.onSelectView(v)} style={{
+                        padding: '5px 12px', border: 'none', borderRadius: '5px', cursor: 'pointer',
+                        fontSize: '11px', fontWeight: props.view === v ? 600 : 400,
+                        background: props.view === v ? 'var(--primary)' : 'transparent',
+                        color: props.view === v ? '#fff' : 'var(--text-secondary)',
+                        transition: 'all 0.15s', whiteSpace: 'nowrap'
+                    }}>{INFO_SCHEMA_VIEW_LABELS[v] || v}</button>
+                )}</For>
+            </div>
+            <div style="max-height:400px;overflow:auto;padding:12px 14px;background:var(--bg)">
+                <Show when={!props.loading && props.data} fallback={
+                    <Show when={props.loading} fallback={
+                        <div class="empty-state" style="padding:24px;text-align:center;color:var(--text-tertiary);font-size:13px">Select a view above to browse system metadata</div>
+                    }>
+                        <div class="loading-state" style="padding:24px"><div class="loading-spinner" /> Loading…</div>
+                    </Show>
+                }>
+                    <table class="data-table" style="font-size:12px">
+                        <thead><tr><For each={(props.data?.columns || [])}>{(col) => <th style="position:sticky;top:0;background:var(--bg)">{col}</th>}</For></tr></thead>
+                        <tbody>
+                            <For each={(props.data?.rows || [])}>{(row) => (
+                                <tr><For each={(props.data?.columns || [])}>{(col) => <td style="font-family:var(--font-mono);font-size:11px">{row[col] != null ? String(row[col]) : <span style="color:var(--text-tertiary);font-style:italic">NULL</span>}</td>}</For></tr>
+                            )}</For>
+                        </tbody>
+                    </table>
+                    <div style="padding:6px 0;font-size:10px;color:var(--text-tertiary)">{(props.data?.rows || []).length} rows</div>
+                </Show>
+            </div>
+        </div>
+    );
+}
+
 function DatabasePanels(props) {
     const [historyEntries, setHistoryEntries] = createSignal([]);
     const [historyLoading, setHistoryLoading] = createSignal(false);
     const [statsData, setStatsData] = createSignal(null);
     const [statsLoading, setStatsLoading] = createSignal(false);
+    const [infoSchemaView, setInfoSchemaView] = createSignal(null);
+    const [infoSchemaData, setInfoSchemaData] = createSignal(null);
+    const [infoSchemaLoading, setInfoSchemaLoading] = createSignal(false);
 
     const currentMode = () => props.modeSignal?.();
     const canShowHistory = () => QUERY_HISTORY_SERVICES.has(props.serviceId);
@@ -1445,10 +1720,34 @@ function DatabasePanels(props) {
         }
     };
 
+    const canShowInfoSchema = () => SERVICES_WITH_INFO_SCHEMA.has(props.serviceId);
+
+    const loadInfoSchema = async (viewType) => {
+        const loader = INFO_SCHEMA_LOADERS[props.serviceId];
+        if (!loader) return;
+        setInfoSchemaLoading(true);
+        try {
+            const data = await loader.load(viewType);
+            setInfoSchemaData(data);
+        } catch (e) {
+            setInfoSchemaData({ columns: ['error'], rows: [{ error: e.message || 'Failed to load' }] });
+        } finally {
+            setInfoSchemaLoading(false);
+        }
+    };
+
     createEffect(() => {
         const m = currentMode();
         if (m === 'db-history') loadHistory();
-        if (m === 'db-stats') loadStats();
+        if (m === 'db-stats') {
+            loadStats();
+            if (canShowInfoSchema()) {
+                const loader = INFO_SCHEMA_LOADERS[props.serviceId];
+                const defaultView = loader?.views?.[0] || 'tables';
+                setInfoSchemaView(defaultView);
+                loadInfoSchema(defaultView);
+            }
+        }
     });
 
     if (currentMode() === 'db-history') {
@@ -1598,6 +1897,15 @@ function DatabasePanels(props) {
                                 </table>
                             </div>
                         </Show>
+                    </Show>
+                    <Show when={canShowInfoSchema()}>
+                        <InfoSchemaPanel
+                            views={INFO_SCHEMA_LOADERS[props.serviceId]?.views || []}
+                            view={infoSchemaView()}
+                            onSelectView={(v) => { setInfoSchemaView(v); loadInfoSchema(v); }}
+                            loading={infoSchemaLoading()}
+                            data={infoSchemaData()}
+                        />
                     </Show>
                 </Show>
             </div>

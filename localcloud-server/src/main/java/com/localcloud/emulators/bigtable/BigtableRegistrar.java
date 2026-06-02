@@ -3,6 +3,7 @@ package com.localcloud.emulators.bigtable;
 import com.linecorp.armeria.common.HttpMethod;
 import com.linecorp.armeria.server.ServerBuilder;
 import com.linecorp.armeria.server.grpc.GrpcServiceBuilder;
+import com.localcloud.admin.BigtableGrpcClient;
 import com.localcloud.emulators.common.RegexRouteHelper;
 import com.localcloud.emulators.common.ServiceRegistrar;
 import com.localcloud.emulators.common.ServiceRegistrationContext;
@@ -19,15 +20,27 @@ public class BigtableRegistrar implements ServiceRegistrar {
                                ServiceRegistrationContext ctx) throws Exception {
         if (!ctx.config().isServiceEnabled("bigtable")) return;
 
-        var emulator = new BigtableEmulator(ctx.dataSource(), ctx.config().getGatewayPort(),
+        int emulatorPort = ctx.config().getServiceRegistry().getService("bigtable") != null
+                ? ctx.config().getServiceRegistry().getService("bigtable").port() : 8087;
+
+        var emulator = new BigtableEmulator(emulatorPort, ctx.config().getGatewayPort(),
                 ctx.iamPolicyRestHandler());
         emulator.start();
+
+        // Verify emulator is reachable before registering routes
+        try (BigtableGrpcClient probe = new BigtableGrpcClient(emulatorPort)) {
+            probe.listInstancesWithDetails(ctx.config().getProjectId());
+            logger.info("Bigtable emulator reachable on port {}", emulatorPort);
+        } catch (Exception e) {
+            logger.warn("Bigtable emulator not reachable on port {} — routes registered but may fail: {}",
+                    emulatorPort, e.getMessage());
+        }
         sb.annotatedService("/bigtable/admin/v2", emulator.getAdminService());
         sb.annotatedService("/v2", emulator.getAdminService());
         ctx.seedService().setBigtableEmulator(emulator);
         ctx.mutateService().setBigtableEmulator(emulator);
         ctx.gateway().registerRestEmulator("/bigtable/admin/v2", emulator, null);
-        logger.info("Bigtable Admin API facade registered");
+        logger.info("Bigtable Admin API facade registered (emulator port: {})", emulatorPort);
 
         // modifyColumnFamilies via RegexRouteHelper — works around Armeria annotation parser limitation
         RegexRouteHelper.registerVerbRoute(sb, HttpMethod.POST,

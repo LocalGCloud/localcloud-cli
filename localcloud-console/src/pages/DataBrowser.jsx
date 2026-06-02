@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createMemo, Show, For, untrack, onCleanup } from 'solid-js';
+import { createSignal, createEffect, createMemo, Show, For, untrack, onCleanup, onMount } from 'solid-js';
 import { api } from '../api.js';
 import CsvImportWizard from '../components/CsvImportWizard.jsx';
 import DataBreadcrumb from '../components/DataBreadcrumb.jsx';
@@ -9,6 +9,11 @@ import CodeEditor from '../components/CodeEditor.jsx';
 import { generateMockRow } from '../utils/mockGenerator.js';
 import { GCP_REGIONS, getZonesForRegion } from '../data/gcpLocations.js';
 import ComboBox from '../components/ComboBox.jsx';
+import { EditorView, lineNumbers, highlightActiveLine } from '@codemirror/view';
+import { EditorState } from '@codemirror/state';
+import { json as jsonLang } from '@codemirror/lang-json';
+import { sql as sqlLang, PostgreSQL } from '@codemirror/lang-sql';
+import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 
 const TABS = [
     { id: 'gcs', label: 'Cloud Storage' },
@@ -149,20 +154,6 @@ function GcsView(props) {
         fetchBucketContents(selectedBucket(), folderPrefix);
     };
 
-    const navigateUp = () => {
-        const p = currentPrefix();
-        if (!p || p === '') {
-            setSelectedBucket(null);
-            setBrowseData({ folders: [], objects: [], prefix: '' });
-            return;
-        }
-        // Strip trailing / then find parent prefix
-        const trimmed = p.endsWith('/') ? p.slice(0, -1) : p;
-        const lastSlash = trimmed.lastIndexOf('/');
-        const parent = lastSlash >= 0 ? trimmed.slice(0, lastSlash + 1) : '';
-        fetchBucketContents(selectedBucket(), parent);
-    };
-
     const goBackToBuckets = () => {
         setSelectedBucket(null);
         setBrowseData({ folders: [], objects: [], prefix: '' });
@@ -170,16 +161,31 @@ function GcsView(props) {
     };
 
     // Build breadcrumb from current prefix (using DataBreadcrumb-compatible format)
+    // Consistent with DatabaseExplorer: root crumb is the service name, all levels clickable.
     const breadcrumbs = () => {
         const p = currentPrefix();
-        if (!p) return [{ label: selectedBucket(), type: 'bucket', onClick: null, active: true }];
+        const soi = selectedObject();
+        const crumbs = [
+            { label: 'Cloud Storage', type: 'service', onClick: goBackToBuckets, active: !selectedBucket() },
+        ];
+        if (!selectedBucket()) return crumbs;
+        crumbs.push({ label: selectedBucket(), type: 'bucket', onClick: () => { setSelectedObject(null); fetchBucketContents(selectedBucket(), ''); }, active: !p && !soi });
+        if (!p) {
+            if (soi) crumbs.push({ label: soi.name, type: 'file', active: true });
+            return crumbs;
+        }
         const parts = p.split('/').filter(Boolean);
-        const crumbs = [{ label: selectedBucket(), type: 'bucket', onClick: () => fetchBucketContents(selectedBucket(), ''), active: false }];
         let accum = '';
         parts.forEach((part, i) => {
             accum += part + '/';
-            crumbs.push({ label: part, type: 'folder', onClick: i < parts.length - 1 ? () => fetchBucketContents(selectedBucket(), accum) : null, active: i === parts.length - 1 });
+            crumbs.push({
+                label: part,
+                type: 'folder',
+                onClick: i < parts.length - 1 ? () => fetchBucketContents(selectedBucket(), accum) : null,
+                active: i === parts.length - 1 && !soi
+            });
         });
+        if (soi) crumbs.push({ label: soi.name, type: 'file', active: true });
         return crumbs;
     };
 
@@ -233,6 +239,126 @@ function GcsView(props) {
 
     const isEmpty = () => !bd() || (bd().folders.length === 0 && bd().objects.length === 0);
 
+    // ─── File Content View State ────────────────────────────────────
+    const ONE_MB = 1048576;
+    const [selectedObject, setSelectedObject] = createSignal(null);
+    const [objectContent, setObjectContent] = createSignal(null);
+    const [contentLoading, setContentLoading] = createSignal(false);
+    const [contentError, setContentError] = createSignal(null);
+
+    const isSmallFile = (obj) => obj && obj.size != null && Number(obj.size) < ONE_MB;
+
+    const handleViewObject = async (obj) => {
+        if (!isSmallFile(obj)) {
+            window.open(downloadUrl(obj.name), '_blank');
+            return;
+        }
+        setSelectedObject(obj);
+        setObjectContent(null);
+        setContentError(null);
+        setContentLoading(true);
+        try {
+            const result = await api.gcsFileContent(selectedBucket(), obj.name);
+            setObjectContent(result);
+        } catch (e) {
+            setContentError(e.message || 'Failed to load file content');
+        } finally {
+            setContentLoading(false);
+        }
+    };
+
+    const goBackFromObject = () => {
+        setSelectedObject(null);
+        setObjectContent(null);
+        setContentError(null);
+    };
+
+    // ─── CSV parser for file content ────────────────────────────────
+    function parseCsv(content) {
+        if (!content) return [];
+        const rows = [];
+        let row = [];
+        let cell = '';
+        let inQuotes = false;
+        for (let i = 0; i < content.length; i++) {
+            const ch = content[i];
+            const next = content[i + 1];
+            if (inQuotes) {
+                if (ch === '"') {
+                    if (next === '"') { cell += '"'; i++; }
+                    else inQuotes = false;
+                } else {
+                    cell += ch;
+                }
+            } else {
+                if (ch === '"') { inQuotes = true; }
+                else if (ch === ',' || ch === '\t') { row.push(cell); cell = ''; }
+                else if (ch === '\n' || (ch === '\r' && next === '\n')) {
+                    row.push(cell);
+                    cell = '';
+                    if (row.length > 0 || rows.length > 0) rows.push(row);
+                    row = [];
+                    if (ch === '\r') i++;
+                    if (rows.length > 5000) break; // safety limit
+                }
+                else if (ch === '\r') {
+                    row.push(cell); cell = '';
+                    if (row.length > 0 || rows.length > 0) rows.push(row);
+                    row = [];
+                    if (rows.length > 5000) break;
+                }
+                else { cell += ch; }
+            }
+        }
+        if (cell || row.length > 0) { row.push(cell); rows.push(row); }
+        return rows;
+    }
+
+    // ─── CodeMirror viewer for file content ─────────────────────────
+    let cmViewerRef;
+    let cmViewerInstance;
+
+    function mountCodeViewer(content, lang) {
+        if (cmViewerInstance) cmViewerInstance.destroy();
+        if (!cmViewerRef) return;
+        const langExt = lang === 'json' ? jsonLang() : lang === 'sql' ? sqlLang({ dialect: PostgreSQL }) : [];
+        cmViewerInstance = new EditorView({
+            parent: cmViewerRef,
+            state: EditorState.create({
+                doc: content || '',
+                extensions: [
+                    lineNumbers(),
+                    highlightActiveLine(),
+                    EditorState.readOnly.of(true),
+                    EditorView.editable.of(false),
+                    langExt,
+                    syntaxHighlighting(defaultHighlightStyle),
+                    EditorView.theme({
+                        '&': { fontSize: '13px', fontFamily: 'var(--font-mono)', backgroundColor: 'var(--bg)', color: 'var(--text)' },
+                        '.cm-scroller': { fontFamily: 'var(--font-mono)', lineHeight: '21px', overflow: 'auto' },
+                        '.cm-content': { padding: '12px 0', caretColor: 'transparent' },
+                        '.cm-line': { padding: '0 12px' },
+                        '.cm-gutters': { backgroundColor: 'var(--surface-variant)', borderRight: '1px solid var(--border)', color: 'var(--text-tertiary)', fontSize: '12px', minWidth: '40px' },
+                        '.cm-gutterElement': { padding: '0 8px 0 4px', minWidth: '32px', textAlign: 'right' },
+                        '.cm-activeLineGutter': { backgroundColor: 'var(--surface-hover)', color: 'var(--text)' },
+                        '.cm-activeLine': { backgroundColor: 'var(--primary-softer)' },
+                    }),
+                ],
+            }),
+        });
+    }
+
+    createEffect(() => {
+        const oc = objectContent();
+        if (oc && selectedObject()) {
+            mountCodeViewer(oc.content, oc.detectedType || 'text');
+        }
+    });
+
+    onCleanup(() => {
+        if (cmViewerInstance) cmViewerInstance.destroy();
+    });
+
     // Drop zone for file upload
     const onDropFiles = async (e) => {
         e.preventDefault();
@@ -265,39 +391,117 @@ function GcsView(props) {
     };
 
     return (
-        <Show when={!selectedBucket()} fallback={
-            <div>
-                {/* Breadcrumb navigation */}
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
-                    <button class="back-link" onClick={goBackToBuckets} style="margin-right:4px">
-                        {'\u2190'} Buckets
-                    </button>
+        <div>
+            {/* Fixed-height header — shared by both bucket-list and bucket-contents views */}
+            <div class="data-explorer-header">
+                <div class="data-explorer-path">
                     <DataBreadcrumb crumbs={breadcrumbs()} />
                 </div>
-
-                {/* Toolbar */}
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                    <Show when={currentPrefix()} fallback={<div />}>
-                        <button onClick={navigateUp}
-                            style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px">
-                            {'\u2191'} Up
-                        </button>
-                    </Show>
-                    <div style="display:flex;gap:8px">
+                <div class="data-explorer-actions">
+                    <Show when={!selectedBucket()}>
                         <Show when={props.onAdd}>
-                            <button onClick={handleCreateFolder}
-                                style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px">
+                            <button class="btn btn-primary" onClick={() => {
+                                const defaultLoc = props.projectLocation?.() || 'us-central1';
+                                props.onAdd('Create Bucket', [
+                                    { name: 'name', type: 'text', placeholder: 'my-bucket' },
+                                    { name: 'location', type: 'combo', value: defaultLoc, placeholder: 'Type or select a region...', options: GCP_REGIONS },
+                                    { name: 'zone', type: 'combo', value: '', placeholder: 'Type or select a zone (optional)', optionsFn: (fd) => fd.location ? getZonesForRegion(fd.location) : [] }
+                                ], async (formData) => {
+                                    const payload = { name: formData.name, location: formData.location };
+                                    if (formData.zone) payload.zone = formData.zone;
+                                    await api.mutate('gcs', 'buckets', payload);
+                                });
+                            }}>+ Create Bucket</button>
+                        </Show>
+                    </Show>
+                    <Show when={selectedBucket() && !selectedObject()}>
+                        <Show when={props.onAdd}>
+                            <button class="btn btn-secondary" onClick={handleCreateFolder} style="gap:4px">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/><line x1="12" y1="11" x2="12" y2="17" stroke="currentColor" stroke-width="2"/><line x1="9" y1="14" x2="15" y2="14" stroke="currentColor" stroke-width="2"/></svg>
                                 New Folder
                             </button>
-                            <button onClick={() => handleUploadObject('')}
-                                style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px">
+                            <button class="btn btn-primary" onClick={() => handleUploadObject('')} style="gap:4px">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                                 Upload File
                             </button>
                         </Show>
-                    </div>
+                    </Show>
+                    <Show when={selectedObject()}>
+                        <button class="btn btn-secondary" onClick={goBackFromObject} style="gap:4px;font-size:12px">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                            Back to bucket
+                        </button>
+                        <a href={downloadUrl(selectedObject().name)} target="_blank" rel="noopener noreferrer"
+                            class="btn btn-secondary"
+                            style={{ "height": "32px", "font-size": "12px", "padding": "0 12px", "display": "inline-flex", "align-items": "center", "gap": "4px" }}
+                        >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                            Download
+                        </a>
+                    </Show>
                 </div>
+            </div>
+
+            <Show when={!selectedBucket()} fallback={
+                <Show when={!selectedObject()} fallback={
+                    <div class="file-content-panel">
+                        <Show when={contentLoading()}>
+                            <div class="loading-state"><div class="loading-spinner" /> Loading file content…</div>
+                        </Show>
+                        <Show when={contentError()}>
+                            <div class="empty-state">
+                                <div class="empty-state-icon">⚠</div>
+                                <div class="empty-state-title">Failed to load file</div>
+                                <div class="empty-state-text">{contentError()}</div>
+                            </div>
+                        </Show>
+                        <Show when={objectContent()}>
+                            <div class="file-content-meta" style="display:flex;align-items:center;gap:16px;padding:8px 12px;background:var(--surface-variant);border:1px solid var(--border);border-radius:6px;margin-bottom:12px;font-size:12px;color:var(--text-secondary)">
+                                <span style="font-weight:600;color:var(--text)">{selectedObject()?.name}</span>
+                                <span>{formatSize(selectedObject()?.size)}</span>
+                                <span class="badge badge-info">{objectContent()?.detectedType || 'text'}</span>
+                            </div>
+                            <Show when={objectContent()?.warning}>
+                                <div style="display:flex;align-items:flex-start;gap:8px;padding:8px 12px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;margin-bottom:12px;font-size:12px;color:#92400e">
+                                    <span style="flex-shrink:0;font-size:14px">⚠</span>
+                                    <span>{objectContent().warning}</span>
+                                </div>
+                            </Show>
+                            <Show when={objectContent()?.detectedType === 'csv'} fallback={
+                                <div class="file-content-viewer" ref={cmViewerRef}
+                                    style="border:1px solid var(--border);border-radius:6px;overflow:hidden;max-height:70vh;overflow-y:auto"
+                                />
+                            }>
+                                {(() => {
+                                    const rows = parseCsv(objectContent()?.content || '');
+                                    if (rows.length === 0) return <div class="empty-state"><div class="empty-state-text">Empty CSV file</div></div>;
+                                    const headers = rows[0];
+                                    const dataRows = rows.length > 1 ? rows.slice(1) : [];
+                                    const isHeader = dataRows.length > 0;
+                                    return (
+                                        <div class="data-table-wrapper" style="max-height:70vh;overflow:auto;border:1px solid var(--border);border-radius:6px">
+                                            <table class="data-table" style="font-size:12px">
+                                                <thead>
+                                                    <tr>
+                                                        {headers.map((h, i) => <th key={i} style="position:sticky;top:0;background:var(--bg);z-index:1">{isHeader ? h : `Col ${i + 1}`}</th>)}
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {(isHeader ? dataRows : rows).map((row, ri) => (
+                                                        <tr key={ri}>
+                                                            {(isHeader ? row : row).map((cell, ci) => <td key={ci} style="font-family:var(--font-mono);font-size:11px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={String(cell)}>{String(cell)}</td>)}
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                            <div style="padding:6px 12px;font-size:10px;color:var(--text-tertiary);border-top:1px solid var(--border)">{(isHeader ? dataRows : rows).length} rows × {headers.length} columns</div>
+                                        </div>
+                                    );
+                                })()}
+                            </Show>
+                        </Show>
+                    </div>
+                }>
 
                 <Show when={!objectsLoading()} fallback={
                     <div class="loading-state"><div class="loading-spinner" /> Loading…</div>
@@ -352,8 +556,10 @@ function GcsView(props) {
                                     </For>
                                     {/* Objects */}
                                     <For each={bd().objects}>
-                                        {(obj) => (
-                                            <tr>
+                                        {(obj) => {
+                                            const canView = isSmallFile(obj);
+                                            return (
+                                            <tr class={canView ? 'clickable-row' : ''} onClick={canView ? () => handleViewObject(obj) : undefined} onKeyDown={canView ? onActivate(() => handleViewObject(obj)) : undefined} role={canView ? 'button' : undefined} tabIndex={canView ? 0 : undefined}>
                                                 <td style={{ "font-weight": "500", display: "flex", "align-items": "center", gap: "6px" }}>
                                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--text-tertiary)" aria-hidden="true"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 2l5 5h-5V4zM8 14h8v2H8v-2zm0 4h8v2H8v-2zm0-8h5v2H8v-2z"/></svg>
                                                     {obj.name}
@@ -363,45 +569,33 @@ function GcsView(props) {
                                                 <td>{formatDate(obj.updated)}</td>
                                                 <td>
                                                     <div style="display:flex;gap:4px;align-items:center">
+                                                        <Show when={canView}>
+                                                            <button onClick={(e) => { e.stopPropagation(); handleViewObject(obj); }}
+                                                                class="btn btn-primary"
+                                                                style={{ "height": "28px", "font-size": "12px", "padding": "0 10px" }}
+                                                            >View</button>
+                                                        </Show>
                                                         <a href={downloadUrl(obj.name)} target="_blank" rel="noopener noreferrer"
+                                                            onClick={(e) => e.stopPropagation()}
                                                             class="btn btn-secondary"
                                                             style={{ "height": "28px", "font-size": "12px", "padding": "0 10px" }}
                                                         >Download</a>
                                                         <Show when={props.onDelete}>
-                                                            <button onClick={() => handleDeleteObject(obj.name)}
+                                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteObject(obj.name); }}
                                                                 style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:#ea4335;cursor:pointer;font-size:11px" title="Delete">Del</button>
                                                         </Show>
                                                     </div>
                                                 </td>
                                             </tr>
-                                        )}
+                                        )}}
                                     </For>
                                 </tbody>
                             </table>
                         </div>
                     </Show>
                 </Show>
-            </div>
-        }>
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                <div />
-                <Show when={props.onAdd}>
-                    <button onClick={() => {
-                        const defaultLoc = props.projectLocation?.() || 'us-central1';
-                        props.onAdd('Create Bucket', [
-                            { name: 'name', type: 'text', placeholder: 'my-bucket' },
-                            { name: 'location', type: 'combo', value: defaultLoc, placeholder: 'Type or select a region...', options: GCP_REGIONS },
-                            { name: 'zone', type: 'combo', value: '', placeholder: 'Type or select a zone (optional)', optionsFn: (fd) => fd.location ? getZonesForRegion(fd.location) : [] }
-                        ], async (formData) => {
-                            const payload = { name: formData.name, location: formData.location };
-                            if (formData.zone) payload.zone = formData.zone;
-                            await api.mutate('gcs', 'buckets', payload);
-                        });
-                    }} style="padding:6px 14px;border:none;border-radius:4px;background:var(--accent, #4285f4);color:white;cursor:pointer;font-size:13px">
-                        + Create Bucket
-                    </button>
                 </Show>
-            </div>
+        }>
             <Show when={d() && d().buckets && d().buckets.length > 0} fallback={
                 <div class="empty-state">
                     <div class="empty-state-icon">{'\u2205'}</div>
@@ -437,6 +631,7 @@ client.create_bucket("my-bucket")</code>
                 </div>
             </Show>
         </Show>
+    </div>
     );
 }
 
@@ -969,12 +1164,14 @@ function BigQueryView(props) {
         }
     });
 
-    // Breadcrumb
+    // Breadcrumb — matches DatabaseExplorer pattern: service root → dataset → table
     const breadcrumbs = createMemo(() => {
-        const crumbs = [{ label: 'Datasets', onClick: goBackToDatasets, active: !selectedDataset() }];
+        const crumbs = [
+            { label: 'BigQuery', type: 'service', onClick: goBackToDatasets, active: !selectedDataset() },
+        ];
         if (selectedDataset()) {
-            crumbs.push({ label: selectedDataset(), onClick: goBackToTables, active: !selectedTable() });
-            if (selectedTable()) crumbs.push({ label: selectedTable(), onClick: null, active: true });
+            crumbs.push({ label: selectedDataset(), type: 'dataset', onClick: goBackToTables, active: !selectedTable() });
+            if (selectedTable()) crumbs.push({ label: selectedTable(), type: 'table', onClick: null, active: true });
         }
         return crumbs;
     });
@@ -1216,9 +1413,11 @@ function BigQueryView(props) {
 
     return (
         <div>
-            <Show when={selectedDataset()}>
-                <DataBreadcrumb crumbs={breadcrumbs()} />
-            </Show>
+            <div class="data-explorer-header">
+                <div class="data-explorer-path">
+                    <DataBreadcrumb crumbs={breadcrumbs()} />
+                </div>
+            </div>
             <Show when={datasets().length > 0 && selectedDataset()} fallback={<ContentArea />}>
                 <div class="data-tree-layout">
                     <TreeSidebar />
@@ -2963,13 +3162,16 @@ function SpannerView(props) {
             }));
 
             const mockRow = generateMockRow(columnDefs);
+            const columnTypes = {};
+            for (const c of columnDefs) columnTypes[c.name] = c.type;
 
             await api.mutate('spanner', 'rows', {
                 instance: selectedInstance(),
                 database: selectedDatabase(),
                 table: selectedTable(),
                 columns: Object.keys(mockRow),
-                values: [Object.values(mockRow)]
+                values: [Object.values(mockRow)],
+                columnTypes
             });
 
             await selectTable(selectedTable());

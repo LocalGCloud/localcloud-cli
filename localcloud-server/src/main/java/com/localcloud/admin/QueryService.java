@@ -50,7 +50,7 @@ public class QueryService {
     private static final Set<String> POSTGRES_SERVICES = Set.of(
             "secretmanager", "cloudtasks", "logging", "monitoring",
             "bigtable", "compute", "cloudrun", "gke", "memorystore", "workflows",
-            "vertexai", "kms", "cloudsql", "alloydb", "cloudscheduler",
+            "vertexai", "kms", "alloydb", "cloudscheduler",
             "cloudfunctions", "dataproc", "cloudiam"
     );
 
@@ -133,11 +133,9 @@ public class QueryService {
             } else if ("memorystore".equals(service)) {
                 return executeMemorystoreQuery(sql, projectId, startTime);
             } else if ("alloydb".equals(service)) {
-                String database = (String) request.get("database");
-                if (database != null && !database.matches("^[a-zA-Z0-9_-]+$")) {
-                    return errorResponse("Invalid database name");
-                }
-                return executePostgresQuery(sql, projectId, database, startTime);
+                return executeAlloyDBQuery(sql, projectId, startTime);
+            } else if ("cloudsql".equals(service)) {
+                return executeCloudSqlQuery(sql, projectId, startTime);
             } else if (POSTGRES_SERVICES.contains(service)) {
                 return executePostgresQuery(sql, projectId, null, startTime);
             } else if ("bigquery".equals(service)) {
@@ -559,6 +557,267 @@ public class QueryService {
             }
         } catch (Exception e) {
             logger.warn("PostgreSQL query failed: {}", e.getMessage());
+            return errorResponse(e.getMessage());
+        }
+    }
+
+    // ─── AlloyDB Query ─────────────────────────────────────────────
+
+    private HttpResponse executeAlloyDBQuery(String sql, String projectId, long startTime) {
+        String trimmed = sql.trim().toUpperCase();
+        if (!trimmed.startsWith("SELECT") && !trimmed.startsWith("EXPLAIN") && !trimmed.startsWith("WITH")) {
+            return errorResponse("Only SELECT, EXPLAIN, and WITH (CTE) queries are allowed");
+        }
+
+        // Parse cluster.database.table references from SQL and resolve the physical database.
+        // Pattern: FROM/JOIN cluster.database.table_name
+        // The cluster and database prefix are stripped, leaving just the table name.
+        String resolvedCluster = null;
+        String resolvedDatabase = null;
+        String resolvedPhysical = null;
+        String rewrittenSql = sql;
+
+        java.util.regex.Matcher dottedMatcher = java.util.regex.Pattern.compile(
+                "(?i)(?:FROM|JOIN|INTO|UPDATE)\\s+([A-Za-z_][A-Za-z0-9_-]*)\\.([A-Za-z_][A-Za-z0-9_-]*)\\.([A-Za-z_][A-Za-z0-9_]*)")
+                .matcher(sql);
+        if (dottedMatcher.find()) {
+            String sqlCluster = dottedMatcher.group(1);
+            String sqlDatabase = dottedMatcher.group(2);
+            String sqlTable = dottedMatcher.group(3);
+            String prefix = sqlCluster + "." + sqlDatabase + "." + sqlTable;
+
+            // Check not inside a string literal
+            int matchPos = sql.indexOf(prefix);
+            boolean insideQuote = false;
+            for (int i = 0; i < matchPos && i < sql.length(); i++) {
+                if (sql.charAt(i) == '\'') insideQuote = !insideQuote;
+            }
+            if (!insideQuote) {
+                // Look up the physical database name from alloydb_databases
+                try (Connection conn = dataSource.getConnection();
+                     PreparedStatement ps = conn.prepareStatement(
+                             "SELECT physical_name FROM alloydb_databases WHERE project_id = ? AND cluster_id = ? AND database_name = ?")) {
+                    ps.setString(1, projectId);
+                    ps.setString(2, sqlCluster);
+                    ps.setString(3, sqlDatabase);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            resolvedCluster = sqlCluster;
+                            resolvedDatabase = sqlDatabase;
+                            resolvedPhysical = rs.getString("physical_name");
+                            if (resolvedPhysical == null || resolvedPhysical.isEmpty()) {
+                                resolvedPhysical = sqlDatabase;
+                            }
+                            // Strip cluster.database. prefix from all table references
+                            String prefixPattern = java.util.regex.Pattern.quote(sqlCluster + "." + sqlDatabase + ".");
+                            rewrittenSql = sql.replaceAll(prefixPattern, "");
+                        }
+                    }
+                } catch (Exception e) {
+                    logger.warn("Failed to resolve AlloyDB database: {}", e.getMessage());
+                }
+            }
+        }
+
+        if (resolvedPhysical == null) {
+            // No cluster.database.table reference found — resolve first available database
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                         "SELECT cluster_id, database_name, physical_name FROM alloydb_databases WHERE project_id = ? ORDER BY cluster_id, database_name LIMIT 1")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        resolvedCluster = rs.getString("cluster_id");
+                        resolvedDatabase = rs.getString("database_name");
+                        resolvedPhysical = rs.getString("physical_name");
+                        if (resolvedPhysical == null || resolvedPhysical.isEmpty()) {
+                            resolvedPhysical = resolvedDatabase;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                logger.warn("Failed to resolve AlloyDB default database: {}", e.getMessage());
+            }
+
+            if (resolvedPhysical == null) {
+                return errorResponse("No AlloyDB database found. Create a cluster and database first.");
+            }
+        }
+
+        try (Connection conn = dataSource.getConnection(resolvedPhysical)) {
+            conn.setAutoCommit(false);
+            conn.setReadOnly(true);
+
+            try (Statement stmt = conn.createStatement()) {
+                stmt.setQueryTimeout(30);
+                stmt.execute("SET localcloud.project_id = " + quoteStringLiteral(projectId));
+
+                // Auto-inject project_id filter for tables that have the column.
+                String filteredSql = wrapWithProjectFilter(rewrittenSql, projectId);
+
+                ResultSet rs = stmt.executeQuery(filteredSql);
+                java.sql.ResultSetMetaData meta = rs.getMetaData();
+                int colCount = meta.getColumnCount();
+
+                List<String> columns = new ArrayList<>(colCount);
+                for (int i = 1; i <= colCount; i++) {
+                    columns.add(meta.getColumnLabel(i));
+                }
+
+                List<List<Object>> rows = new ArrayList<>();
+                while (rs.next()) {
+                    List<Object> row = new ArrayList<>(colCount);
+                    for (int i = 1; i <= colCount; i++) {
+                        Object val = rs.getObject(i);
+                        if (val instanceof org.postgresql.util.PGobject) {
+                            row.add(((org.postgresql.util.PGobject) val).getValue());
+                        } else {
+                            row.add(val);
+                        }
+                    }
+                    rows.add(row);
+                }
+
+                long elapsed = System.currentTimeMillis() - startTime;
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("columns", columns);
+                result.put("rows", rows);
+                result.put("row_count", rows.size());
+                result.put("execution_time_ms", elapsed);
+                result.put("cluster", resolvedCluster);
+                result.put("database", resolvedDatabase);
+
+                return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                        mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
+
+            } finally {
+                conn.rollback();
+                conn.setReadOnly(false);
+                conn.setAutoCommit(true);
+            }
+        } catch (Exception e) {
+            logger.warn("AlloyDB query failed: {}", e.getMessage());
+            return errorResponse(e.getMessage());
+        }
+    }
+
+    // ─── Cloud SQL Query ─────────────────────────────────────────────
+
+    private HttpResponse executeCloudSqlQuery(String sql, String projectId, long startTime) {
+        String trimmed = sql.trim().toUpperCase();
+        if (!trimmed.startsWith("SELECT") && !trimmed.startsWith("EXPLAIN") && !trimmed.startsWith("WITH")) {
+            return errorResponse("Only SELECT, EXPLAIN, and WITH (CTE) queries are allowed");
+        }
+
+        // Parse instance.database.table references from SQL and resolve the physical database.
+        // Pattern: FROM/JOIN instance_id.database_name.table_name
+        // The instance and database are stripped, leaving just the table name.
+        String resolvedInstance = null;
+        String resolvedDatabase = null;
+        String resolvedPhysical = null;
+        String rewrittenSql = sql;
+
+        java.util.regex.Matcher dottedMatcher = java.util.regex.Pattern.compile(
+                "(?i)(?:FROM|JOIN|INTO|UPDATE)\\s+([A-Za-z_][A-Za-z0-9_-]*)\\.([A-Za-z_][A-Za-z0-9_-]*)\\.([A-Za-z_][A-Za-z0-9_]*)")
+                .matcher(sql);
+        if (dottedMatcher.find()) {
+            String sqlInstance = dottedMatcher.group(1);
+            String sqlDatabase = dottedMatcher.group(2);
+            String sqlTable = dottedMatcher.group(3);
+            String prefix = sqlInstance + "." + sqlDatabase + "." + sqlTable;
+
+            // Check not inside a string literal
+            int matchPos = sql.indexOf(prefix);
+            boolean insideQuote = false;
+            for (int i = 0; i < matchPos && i < sql.length(); i++) {
+                if (sql.charAt(i) == '\'') insideQuote = !insideQuote;
+            }
+            if (!insideQuote) {
+                // Look up the physical database name
+                try (Connection conn = dataSource.getConnection();
+                     PreparedStatement ps = conn.prepareStatement(
+                             "SELECT physical_name FROM cloudsql_databases WHERE project_id = ? AND instance_id = ? AND database_name = ?")) {
+                    ps.setString(1, projectId);
+                    ps.setString(2, sqlInstance);
+                    ps.setString(3, sqlDatabase);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            resolvedInstance = sqlInstance;
+                            resolvedDatabase = sqlDatabase;
+                            resolvedPhysical = rs.getString("physical_name");
+                            if (resolvedPhysical == null || resolvedPhysical.isEmpty()) {
+                                resolvedPhysical = sqlDatabase;
+                            }
+                            // Strip instance.database. prefix from all table references
+                            String prefixPattern = java.util.regex.Pattern.quote(sqlInstance + "." + sqlDatabase + ".");
+                            rewrittenSql = sql.replaceAll(prefixPattern, "");
+                            logger.info("Cloud SQL query: resolved {}.{} -> physical DB {}, stripped prefix",
+                                    sqlInstance, sqlDatabase, resolvedPhysical);
+                        }
+                    }
+                } catch (Exception e) {
+                    logger.warn("Failed to resolve Cloud SQL database: {}", e.getMessage());
+                }
+            }
+        }
+
+        if (resolvedPhysical == null) {
+            // No instance.database.table reference found — fall back to main database
+            // (handles info schema queries, metadata queries, and cross-database queries)
+            logger.debug("Cloud SQL query: no instance.database reference found, using main database");
+            return executePostgresQuery(sql, projectId, null, startTime);
+        }
+
+        try (Connection conn = dataSource.getConnection(resolvedPhysical)) {
+            conn.setAutoCommit(false);
+            conn.setReadOnly(true);
+
+            try (Statement stmt = conn.createStatement()) {
+                stmt.setQueryTimeout(30);
+                stmt.execute("SET localcloud.project_id = " + quoteStringLiteral(projectId));
+
+                ResultSet rs = stmt.executeQuery(rewrittenSql);
+                java.sql.ResultSetMetaData meta = rs.getMetaData();
+                int colCount = meta.getColumnCount();
+
+                List<String> columns = new ArrayList<>(colCount);
+                for (int i = 1; i <= colCount; i++) {
+                    columns.add(meta.getColumnLabel(i));
+                }
+
+                List<List<Object>> rows = new ArrayList<>();
+                while (rs.next()) {
+                    List<Object> row = new ArrayList<>(colCount);
+                    for (int i = 1; i <= colCount; i++) {
+                        Object val = rs.getObject(i);
+                        if (val instanceof org.postgresql.util.PGobject) {
+                            row.add(((org.postgresql.util.PGobject) val).getValue());
+                        } else {
+                            row.add(val);
+                        }
+                    }
+                    rows.add(row);
+                }
+
+                long elapsed = System.currentTimeMillis() - startTime;
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("columns", columns);
+                result.put("rows", rows);
+                result.put("row_count", rows.size());
+                result.put("execution_time_ms", elapsed);
+                result.put("database", resolvedDatabase);
+                result.put("instance", resolvedInstance);
+
+                return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                        mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
+
+            } finally {
+                conn.rollback();
+                conn.setReadOnly(false);
+                conn.setAutoCommit(true);
+            }
+        } catch (Exception e) {
+            logger.warn("Cloud SQL query failed: {}", e.getMessage());
             return errorResponse(e.getMessage());
         }
     }
@@ -1606,6 +1865,10 @@ public class QueryService {
                 return schemaAlloyDB(projectId, clusterFilter, databaseFilter);
             }
 
+            if ("cloudsql".equals(service)) {
+                return schemaCloudSql(projectId);
+            }
+
             if ("pubsub".equals(service)) {
                 return schemaPubSub(projectId);
             }
@@ -1635,8 +1898,7 @@ public class QueryService {
                 Map.entry("compute", List.of()),
                 Map.entry("cloudrun", List.of()),
                 Map.entry("gke", List.of()),
-                Map.entry("cloudsql", List.of("cloudsql_instances", "cloudsql_databases",
-                        "cloudsql_users", "cloudsql_operations", "cloudsql_flags")),
+
                 Map.entry("workflows", List.of("workflows", "workflow_executions", "workflow_step_entries")),
                 Map.entry("cloudscheduler", List.of("scheduler_jobs", "scheduler_executions")),
                 Map.entry("cloudfunctions", List.of("cloud_functions")),
@@ -1739,6 +2001,8 @@ public class QueryService {
     private HttpResponse schemaAlloyDB(String projectId, String clusterFilter, String databaseFilter) {
         try {
             List<Map<String, Object>> tables = new ArrayList<>();
+            String selectedDatabase = null;
+            Map<String, List<String>> databasesByCluster = new LinkedHashMap<>();
 
             // Query all alloydb databases to discover physical databases
             try (Connection conn = dataSource.getConnection();
@@ -1758,19 +2022,29 @@ public class QueryService {
                         if (clusterFilter != null && !clusterFilter.equals(clusterId)) continue;
                         if (databaseFilter != null && !databaseFilter.equals(databaseName)) continue;
 
+                        // Collect databases per cluster for hierarchy display
+                        databasesByCluster.computeIfAbsent(clusterId, k -> new ArrayList<>()).add(databaseName);
+
+                        // Track first database as selected default
+                        if (selectedDatabase == null) {
+                            selectedDatabase = databaseName;
+                        }
+
                         if (physicalName == null || physicalName.isEmpty()) {
                             physicalName = databaseName;
                         }
 
                         // Query the physical database for user tables
                         try (Connection physConn = dataSource.getConnection(physicalName);
-                             Statement stmt = physConn.createStatement()) {
-                            ResultSet tableRs = stmt.executeQuery("""
-                                    SELECT table_name, column_name, data_type, ordinal_position
-                                    FROM information_schema.columns
-                                    WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-                                    ORDER BY table_name, ordinal_position
-                                    """);
+                             PreparedStatement pstmt = physConn.prepareStatement("""
+                                     SELECT c.table_name, c.column_name, c.data_type, c.ordinal_position
+                                     FROM information_schema.columns c
+                                     JOIN information_schema.tables t
+                                       ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+                                     WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+                                     ORDER BY c.table_name, c.ordinal_position
+                                     """)) {
+                            ResultSet tableRs = pstmt.executeQuery();
 
                             String currentTable = null;
                             List<Map<String, String>> currentColumns = null;
@@ -1803,18 +2077,133 @@ public class QueryService {
                                 tables.add(tableObj);
                             }
                         } catch (Exception e) {
-                            logger.debug("Could not read tables from AlloyDB physical DB {}: {}", physicalName, e.getMessage());
+                            logger.warn("Could not read tables from AlloyDB physical DB {}: {}", physicalName, e.getMessage());
                         }
                     }
                 }
             }
 
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("tables", tables);
+            result.put("selectedDatabase", selectedDatabase != null ? selectedDatabase : "");
+            result.put("databasesByCluster", databasesByCluster);
+
             return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
-                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of("tables", tables)));
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
 
         } catch (Exception e) {
             logger.warn("AlloyDB schema fetch failed: {}", e.getMessage());
             return errorResponse("AlloyDB schema fetch failed: " + e.getMessage());
+        }
+    }
+
+    // ─── Cloud SQL Schema (dynamic discovery of physical databases) ──
+
+    private HttpResponse schemaCloudSql(String projectId) {
+        try {
+            List<Map<String, Object>> tables = new ArrayList<>();
+            List<String> instanceNames = new ArrayList<>();
+            List<String> databaseNames = new ArrayList<>();
+            Map<String, List<String>> databasesByInstance = new LinkedHashMap<>();
+
+            // 1. List all Cloud SQL instances
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                         "SELECT instance_id, database_version FROM cloudsql_instances WHERE project_id = ? ORDER BY instance_id")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        String instanceId = rs.getString("instance_id");
+                        String dbVersion = rs.getString("database_version");
+                        instanceNames.add(instanceId);
+                        List<String> instDatabases = new ArrayList<>();
+
+                        // 2. List databases for this instance
+                        try (PreparedStatement dbPs = conn.prepareStatement(
+                                "SELECT database_name, physical_name FROM cloudsql_databases WHERE project_id = ? AND instance_id = ? ORDER BY database_name")) {
+                            dbPs.setString(1, projectId);
+                            dbPs.setString(2, instanceId);
+                            try (ResultSet dbRs = dbPs.executeQuery()) {
+                                while (dbRs.next()) {
+                                    String databaseName = dbRs.getString("database_name");
+                                    String physicalName = dbRs.getString("physical_name");
+                                    if (physicalName == null || physicalName.isEmpty()) {
+                                        physicalName = databaseName;
+                                    }
+                                    databaseNames.add(databaseName);
+                                    instDatabases.add(databaseName);
+
+                                    // Only discover tables for PostgreSQL instances (MySQL requires OpenHalo)
+                                    if (dbVersion == null || !dbVersion.startsWith("MYSQL")) {
+                                        try {
+                                            // 3. Query the physical database for user tables/columns
+                                            try (Connection physConn = dataSource.getConnection(physicalName);
+                                                 Statement stmt = physConn.createStatement()) {
+                                                ResultSet tableRs = stmt.executeQuery("""
+                                                        SELECT c.table_name, c.column_name, c.data_type, c.ordinal_position
+                                                        FROM information_schema.columns c
+                                                        JOIN information_schema.tables t
+                                                          ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+                                                        WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+                                                        ORDER BY c.table_name, c.ordinal_position
+                                                        """);
+
+                                                String currentTable = null;
+                                                List<Map<String, String>> currentColumns = null;
+
+                                                while (tableRs.next()) {
+                                                    String tableName = tableRs.getString("table_name");
+                                                    if (!tableName.equals(currentTable)) {
+                                                        if (currentTable != null) {
+                                                            Map<String, Object> tableObj = new LinkedHashMap<>();
+                                                            tableObj.put("name", instanceId + "." + databaseName + "." + currentTable);
+                                                            tableObj.put("columns", currentColumns);
+                                                            tableObj.put("instance", instanceId);
+                                                            tableObj.put("database", databaseName);
+                                                            tables.add(tableObj);
+                                                        }
+                                                        currentTable = tableName;
+                                                        currentColumns = new ArrayList<>();
+                                                    }
+                                                    currentColumns.add(Map.of(
+                                                            "name", tableRs.getString("column_name"),
+                                                            "type", tableRs.getString("data_type").toUpperCase()
+                                                    ));
+                                                }
+                                                if (currentTable != null) {
+                                                    Map<String, Object> tableObj = new LinkedHashMap<>();
+                                                    tableObj.put("name", instanceId + "." + databaseName + "." + currentTable);
+                                                    tableObj.put("columns", currentColumns);
+                                                    tableObj.put("instance", instanceId);
+                                                    tableObj.put("database", databaseName);
+                                                    tables.add(tableObj);
+                                                }
+                                            }
+                                        } catch (Exception e) {
+                                            logger.debug("Could not read tables from Cloud SQL physical DB {} (instance={}, db={}): {}",
+                                                    physicalName, instanceId, databaseName, e.getMessage());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        databasesByInstance.put(instanceId, instDatabases);
+                    }
+                }
+            }
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("tables", tables);
+            result.put("instances", instanceNames);
+            result.put("databases", databaseNames);
+            result.put("databasesByInstance", databasesByInstance);
+
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
+
+        } catch (Exception e) {
+            logger.warn("Cloud SQL schema fetch failed: {}", e.getMessage());
+            return errorResponse("Cloud SQL schema fetch failed: " + e.getMessage());
         }
     }
 
