@@ -1900,20 +1900,39 @@ public class SeedService {
                     String queueId = (String) queue.get("name");
                     String locationId = (String) queue.getOrDefault("location", "us-central1");
                     String state = (String) queue.getOrDefault("state", "RUNNING");
-                    int maxAttempts = queue.containsKey("maxAttempts")
-                        ? ((Number) queue.get("maxAttempts")).intValue()
-                        : queue.containsKey("max_attempts")
-                        ? ((Number) queue.get("max_attempts")).intValue() : 5;
+                    int maxAttempts = queue.containsKey("maxAttempts") ? ((Number) queue.get("maxAttempts")).intValue()
+                        : queue.containsKey("max_attempts") ? ((Number) queue.get("max_attempts")).intValue() : 100;
+                    double rate = queue.containsKey("maxDispatchesPerSecond") ? ((Number) queue.get("maxDispatchesPerSecond")).doubleValue() : 500;
+                    int concurrent = queue.containsKey("maxConcurrentDispatches") ? ((Number) queue.get("maxConcurrentDispatches")).intValue() : 1000;
+                    int burst = queue.containsKey("maxBurstSize") ? ((Number) queue.get("maxBurstSize")).intValue() : 0;
+                    String minBackoff = (String) queue.getOrDefault("minBackoff", "0.100s");
+                    String maxBackoff = (String) queue.getOrDefault("maxBackoff", "3600s");
+                    int maxDoublings = queue.containsKey("maxDoublings") ? ((Number) queue.get("maxDoublings")).intValue() : 16;
+                    String maxRetryDuration = (String) queue.getOrDefault("maxRetryDuration", "0s");
+                    String httpTargetUri = (String) queue.get("httpTargetUri");
+                    String httpTargetMethod = (String) queue.get("httpTargetMethod");
 
                     try (var conn = dataSource.getConnection();
                          var ps = conn.prepareStatement(
-                             "INSERT INTO task_queues (project_id, queue_id, location_id, state, max_attempts) " +
-                             "VALUES (?, ?, ?, ?, ?) ON CONFLICT (project_id, queue_id) DO NOTHING")) {
+                             "INSERT INTO task_queues (project_id, location_id, queue_id, state, max_attempts, " +
+                             "max_dispatches_per_second, max_concurrent_dispatches, max_burst_size, " +
+                             "min_backoff, max_backoff, max_doublings, max_retry_duration, " +
+                             "http_target_uri, http_target_method) " +
+                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (project_id, location_id, queue_id) DO NOTHING")) {
                         ps.setString(1, projectId);
-                        ps.setString(2, queueId);
-                        ps.setString(3, locationId);
+                        ps.setString(2, locationId);
+                        ps.setString(3, queueId);
                         ps.setString(4, state);
                         ps.setInt(5, maxAttempts);
+                        ps.setDouble(6, rate);
+                        ps.setInt(7, concurrent);
+                        ps.setInt(8, burst);
+                        ps.setString(9, minBackoff);
+                        ps.setString(10, maxBackoff);
+                        ps.setInt(11, maxDoublings);
+                        ps.setString(12, maxRetryDuration);
+                        ps.setString(13, httpTargetUri);
+                        ps.setString(14, httpTargetMethod);
                         ps.executeUpdate();
                     }
                     count++;

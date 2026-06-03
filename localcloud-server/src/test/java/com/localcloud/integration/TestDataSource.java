@@ -129,7 +129,14 @@ public final class TestDataSource {
                 "    state VARCHAR(20) DEFAULT 'RUNNING'," +
                 "    max_dispatches_per_second DOUBLE PRECISION DEFAULT 500," +
                 "    max_concurrent_dispatches INT DEFAULT 1000," +
+                "    max_burst_size INT DEFAULT 0," +
                 "    max_attempts INT DEFAULT 100," +
+                "    min_backoff VARCHAR(20) DEFAULT '0.100s'," +
+                "    max_backoff VARCHAR(20) DEFAULT '3600s'," +
+                "    max_doublings INT DEFAULT 16," +
+                "    max_retry_duration VARCHAR(20) DEFAULT '0s'," +
+                "    http_target_uri VARCHAR(2000)," +
+                "    http_target_method VARCHAR(10)," +
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
                 "    PRIMARY KEY (project_id, location_id, queue_id)" +
                 ")"
@@ -145,9 +152,12 @@ public final class TestDataSource {
                 "    headers TEXT," +
                 "    body BYTEA," +
                 "    schedule_time TIMESTAMP," +
+                "    dispatch_deadline TIMESTAMP," +
                 "    dispatch_count INT DEFAULT 0," +
                 "    response_count INT DEFAULT 0," +
                 "    state VARCHAR(20) DEFAULT 'PENDING'," +
+                "    first_attempt_time TIMESTAMP," +
+                "    last_attempt_time TIMESTAMP," +
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
                 ")"
             );

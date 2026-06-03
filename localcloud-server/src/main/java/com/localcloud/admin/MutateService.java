@@ -2519,19 +2519,42 @@ public class MutateService {
         String projectId = effectiveProject(body);
 
         if ("queues".equals(operation) && subOp == null) {
-            // Create queue
+            // Create queue with full config support
             String queueId = (String) body.get("name");
             String locationId = (String) body.getOrDefault("location", "us-central1");
-            int maxAttempts = body.containsKey("maxAttempts") ? ((Number) body.get("maxAttempts")).intValue() : 5;
+            String state = (String) body.getOrDefault("state", "RUNNING");
+            int maxAttempts = body.containsKey("maxAttempts") ? ((Number) body.get("maxAttempts")).intValue() : 100;
+            double rate = body.containsKey("maxDispatchesPerSecond") ? ((Number) body.get("maxDispatchesPerSecond")).doubleValue() : 500;
+            int concurrent = body.containsKey("maxConcurrentDispatches") ? ((Number) body.get("maxConcurrentDispatches")).intValue() : 1000;
+            int burst = body.containsKey("maxBurstSize") ? ((Number) body.get("maxBurstSize")).intValue() : 0;
+            String minBackoff = (String) body.getOrDefault("minBackoff", "0.100s");
+            String maxBackoff = (String) body.getOrDefault("maxBackoff", "3600s");
+            int maxDoublings = body.containsKey("maxDoublings") ? ((Number) body.get("maxDoublings")).intValue() : 16;
+            String maxRetryDuration = (String) body.getOrDefault("maxRetryDuration", "0s");
+            String httpTargetUri = (String) body.get("httpTargetUri");
+            String httpTargetMethod = (String) body.get("httpTargetMethod");
 
             try (var conn = dataSource.getConnection();
                  var ps = conn.prepareStatement(
-                     "INSERT INTO task_queues (project_id, queue_id, location_id, state, max_attempts) " +
-                     "VALUES (?, ?, ?, 'RUNNING', ?) ON CONFLICT (project_id, queue_id) DO NOTHING")) {
+                     "INSERT INTO task_queues (project_id, location_id, queue_id, state, max_attempts, " +
+                     "max_dispatches_per_second, max_concurrent_dispatches, max_burst_size, " +
+                     "min_backoff, max_backoff, max_doublings, max_retry_duration, " +
+                     "http_target_uri, http_target_method) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (project_id, location_id, queue_id) DO NOTHING")) {
                 ps.setString(1, projectId);
-                ps.setString(2, queueId);
-                ps.setString(3, locationId);
-                ps.setInt(4, maxAttempts);
+                ps.setString(2, locationId);
+                ps.setString(3, queueId);
+                ps.setString(4, state);
+                ps.setInt(5, maxAttempts);
+                ps.setDouble(6, rate);
+                ps.setInt(7, concurrent);
+                ps.setInt(8, burst);
+                ps.setString(9, minBackoff);
+                ps.setString(10, maxBackoff);
+                ps.setInt(11, maxDoublings);
+                ps.setString(12, maxRetryDuration);
+                ps.setString(13, httpTargetUri);
+                ps.setString(14, httpTargetMethod);
                 ps.executeUpdate();
             }
             return mapper.writeValueAsString(Map.of("status", "created", "queue", queueId));

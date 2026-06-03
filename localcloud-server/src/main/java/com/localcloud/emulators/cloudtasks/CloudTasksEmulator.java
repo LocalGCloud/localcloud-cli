@@ -20,18 +20,25 @@ import com.google.cloud.tasks.v2.ListQueuesResponse;
 import com.google.cloud.tasks.v2.ListTasksRequest;
 import com.google.cloud.tasks.v2.ListTasksResponse;
 import com.google.cloud.tasks.v2.PauseQueueRequest;
+import com.google.cloud.tasks.v2.PurgeQueueRequest;
 import com.google.cloud.tasks.v2.Queue;
+import com.google.cloud.tasks.v2.RateLimits;
 import com.google.cloud.tasks.v2.ResumeQueueRequest;
+import com.google.cloud.tasks.v2.RetryConfig;
 import com.google.cloud.tasks.v2.RunTaskRequest;
 import com.google.cloud.tasks.v2.Task;
+import com.google.cloud.tasks.v2.UpdateQueueRequest;
 import com.google.iam.v1.GetIamPolicyRequest;
 import com.google.iam.v1.Policy;
 import com.google.iam.v1.SetIamPolicyRequest;
 import com.google.iam.v1.TestIamPermissionsRequest;
 import com.google.iam.v1.TestIamPermissionsResponse;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.Duration;
 import com.google.protobuf.Empty;
+import com.google.protobuf.FieldMask;
 import com.google.protobuf.Timestamp;
+import com.google.protobuf.util.Durations;
 import com.localcloud.emulators.AbstractEmulator;
 import com.localcloud.emulators.iam.IAMPolicyGrpcHelper;
 import com.localcloud.emulators.iam.IAMRepository;
@@ -42,7 +49,7 @@ import io.grpc.stub.StreamObserver;
 
 /**
  * Cloud Tasks gRPC emulator.
- * Implements the CloudTasks gRPC API with PostgreSQL-backed queues and in-memory tasks.
+ * Implements the CloudTasks gRPC API with PostgreSQL-backed queues and persisted tasks.
  */
 public class CloudTasksEmulator extends AbstractEmulator {
 
@@ -61,8 +68,10 @@ public class CloudTasksEmulator extends AbstractEmulator {
 
     @Override
     protected void doStart() throws Exception {
+        // Reload persisted tasks from database
+        store.reloadTasks();
         dispatcher.start();
-        logger.info("Cloud Tasks emulator gRPC services ready");
+        logger.info("Cloud Tasks emulator gRPC services ready (tasks reloaded from DB)");
     }
 
     @Override
@@ -100,7 +109,7 @@ public class CloudTasksEmulator extends AbstractEmulator {
                 Queue queueProto = request.getQueue();
                 String queueName = queueProto.getName();
 
-                // Extract queue ID from full name or generate
+                // Extract queue ID from full name
                 String queueId;
                 if (queueName != null && !queueName.isEmpty()) {
                     String[] parts = CloudTasksStore.parseQueueName(queueName);
@@ -119,15 +128,12 @@ public class CloudTasksEmulator extends AbstractEmulator {
                     return;
                 }
 
-                store.createQueue(locParts[0], locParts[1], queueId);
+                CloudTasksStore.QueueConfig config = protoToQueueConfig(queueProto);
+                store.createQueue(locParts[0], locParts[1], queueId, config);
 
+                CloudTasksStore.QueueConfig created = store.getQueueConfig(locParts[0], locParts[1], queueId);
                 String fullName = parent + "/queues/" + queueId;
-                Queue response = Queue.newBuilder()
-                        .setName(fullName)
-                        .setState(Queue.State.RUNNING)
-                        .build();
-
-                responseObserver.onNext(response);
+                responseObserver.onNext(buildQueue(fullName, created));
                 responseObserver.onCompleted();
             } catch (IllegalArgumentException e) {
                 responseObserver.onError(Status.INVALID_ARGUMENT
@@ -142,21 +148,142 @@ public class CloudTasksEmulator extends AbstractEmulator {
         }
 
         @Override
-        public void getQueue(GetQueueRequest request, StreamObserver<Queue> responseObserver) {
+        public void updateQueue(UpdateQueueRequest request, StreamObserver<Queue> responseObserver) {
+            incrementRequestCount();
+            try {
+                Queue queueProto = request.getQueue();
+                String queueName = queueProto.getName();
+                if (queueName == null || queueName.isEmpty()) {
+                    responseObserver.onError(Status.INVALID_ARGUMENT
+                            .withDescription("Queue name is required for update")
+                            .asRuntimeException());
+                    return;
+                }
+
+                String[] parts = CloudTasksStore.parseQueueName(queueName);
+                if (!store.queueExists(parts[0], parts[1], parts[2])) {
+                    responseObserver.onError(Status.NOT_FOUND
+                            .withDescription("Queue not found: " + queueName)
+                            .asRuntimeException());
+                    return;
+                }
+
+                FieldMask updateMask = request.getUpdateMask();
+                CloudTasksStore.QueueConfig config = protoToQueueConfig(queueProto);
+
+                // If update mask is empty, update all fields; otherwise merge only specified paths
+                if (updateMask == null || updateMask.getPathsCount() == 0) {
+                    store.updateQueue(parts[0], parts[1], parts[2], config);
+                } else {
+                    // Start with current config from DB, then apply only masked fields
+                    CloudTasksStore.QueueConfig partial = store.getQueueConfig(parts[0], parts[1], parts[2]);
+                    if (partial == null) {
+                        responseObserver.onError(Status.NOT_FOUND
+                                .withDescription("Queue not found: " + queueName)
+                                .asRuntimeException());
+                        return;
+                    }
+                    for (String path : updateMask.getPathsList()) {
+                        switch (path) {
+                            case "rate_limits.max_dispatches_per_second":
+                                partial.maxDispatchesPerSecond = config.maxDispatchesPerSecond;
+                                break;
+                            case "rate_limits.max_concurrent_dispatches":
+                                partial.maxConcurrentDispatches = config.maxConcurrentDispatches;
+                                break;
+                            case "rate_limits.max_burst_size":
+                                partial.maxBurstSize = config.maxBurstSize;
+                                break;
+                            case "retry_config.max_attempts":
+                                partial.maxAttempts = config.maxAttempts;
+                                break;
+                            case "retry_config.min_backoff":
+                                partial.minBackoff = config.minBackoff;
+                                break;
+                            case "retry_config.max_backoff":
+                                partial.maxBackoff = config.maxBackoff;
+                                break;
+                            case "retry_config.max_doublings":
+                                partial.maxDoublings = config.maxDoublings;
+                                break;
+                            case "retry_config.max_retry_duration":
+                                partial.maxRetryDuration = config.maxRetryDuration;
+                                break;
+                            case "http_target.uri_override":
+                            case "http_target":
+                                partial.httpTargetUri = config.httpTargetUri;
+                                partial.httpTargetMethod = config.httpTargetMethod;
+                                break;
+                            default:
+                                logger.debug("Ignoring unknown FieldMask path: {}", path);
+                                break;
+                        }
+                    }
+                    store.updateQueue(parts[0], parts[1], parts[2], partial);
+                }
+
+                CloudTasksStore.QueueConfig updated = store.getQueueConfig(parts[0], parts[1], parts[2]);
+                responseObserver.onNext(buildQueue(queueName, updated));
+                responseObserver.onCompleted();
+            } catch (IllegalArgumentException e) {
+                responseObserver.onError(Status.INVALID_ARGUMENT
+                        .withDescription(e.getMessage())
+                        .asRuntimeException());
+            } catch (SQLException e) {
+                logger.error("Failed to update queue", e);
+                responseObserver.onError(Status.INTERNAL
+                        .withDescription("Database error: " + e.getMessage())
+                        .asRuntimeException());
+            }
+        }
+
+        @Override
+        public void purgeQueue(PurgeQueueRequest request, StreamObserver<Queue> responseObserver) {
             incrementRequestCount();
             try {
                 String fullName = request.getName();
                 String[] parts = CloudTasksStore.parseQueueName(fullName);
 
-                Map<String, Object> data = store.getQueue(parts[0], parts[1], parts[2]);
-                if (data == null) {
+                if (!store.queueExists(parts[0], parts[1], parts[2])) {
                     responseObserver.onError(Status.NOT_FOUND
                             .withDescription("Queue not found: " + fullName)
                             .asRuntimeException());
                     return;
                 }
 
-                responseObserver.onNext(buildQueue(fullName, data));
+                store.purgeQueue(parts[0], parts[1], parts[2]);
+
+                CloudTasksStore.QueueConfig config = store.getQueueConfig(parts[0], parts[1], parts[2]);
+                responseObserver.onNext(buildQueue(fullName, config));
+                responseObserver.onCompleted();
+            } catch (IllegalArgumentException e) {
+                responseObserver.onError(Status.INVALID_ARGUMENT
+                        .withDescription(e.getMessage())
+                        .asRuntimeException());
+            } catch (SQLException e) {
+                logger.error("Failed to purge queue", e);
+                responseObserver.onError(Status.INTERNAL
+                        .withDescription("Database error: " + e.getMessage())
+                        .asRuntimeException());
+            }
+        }
+
+        @Override
+        public void getQueue(GetQueueRequest request, StreamObserver<Queue> responseObserver) {
+            incrementRequestCount();
+            try {
+                String fullName = request.getName();
+                String[] parts = CloudTasksStore.parseQueueName(fullName);
+
+                CloudTasksStore.QueueConfig config = store.getQueueConfig(parts[0], parts[1], parts[2]);
+                if (config == null) {
+                    responseObserver.onError(Status.NOT_FOUND
+                            .withDescription("Queue not found: " + fullName)
+                            .asRuntimeException());
+                    return;
+                }
+
+                responseObserver.onNext(buildQueue(fullName, config));
                 responseObserver.onCompleted();
             } catch (IllegalArgumentException e) {
                 responseObserver.onError(Status.INVALID_ARGUMENT
@@ -246,8 +373,8 @@ public class CloudTasksEmulator extends AbstractEmulator {
                     return;
                 }
 
-                Map<String, Object> data = store.getQueue(parts[0], parts[1], parts[2]);
-                responseObserver.onNext(buildQueue(fullName, data));
+                CloudTasksStore.QueueConfig config = store.getQueueConfig(parts[0], parts[1], parts[2]);
+                responseObserver.onNext(buildQueue(fullName, config));
                 responseObserver.onCompleted();
             } catch (IllegalArgumentException e) {
                 responseObserver.onError(Status.INVALID_ARGUMENT
@@ -275,8 +402,8 @@ public class CloudTasksEmulator extends AbstractEmulator {
                     return;
                 }
 
-                Map<String, Object> data = store.getQueue(parts[0], parts[1], parts[2]);
-                responseObserver.onNext(buildQueue(fullName, data));
+                CloudTasksStore.QueueConfig config = store.getQueueConfig(parts[0], parts[1], parts[2]);
+                responseObserver.onNext(buildQueue(fullName, config));
                 responseObserver.onCompleted();
             } catch (IllegalArgumentException e) {
                 responseObserver.onError(Status.INVALID_ARGUMENT
@@ -313,7 +440,7 @@ public class CloudTasksEmulator extends AbstractEmulator {
                     taskId = taskParts[3];
                 }
 
-                // Extract HTTP target
+                // Extract HTTP target — fall back to queue-level target
                 String httpMethod = "POST";
                 String httpUrl = "";
                 Map<String, String> httpHeaders = new HashMap<>();
@@ -331,6 +458,22 @@ public class CloudTasksEmulator extends AbstractEmulator {
                     }
                 }
 
+                // Fall back to queue-level HTTP target
+                if ((httpUrl == null || httpUrl.isEmpty())) {
+                    String[] queueTarget = store.getQueueHttpTarget(parent);
+                    if (queueTarget != null && queueTarget[0] != null && !queueTarget[0].isEmpty()) {
+                        httpUrl = queueTarget[0];
+                        if (queueTarget[1] != null && !queueTarget[1].isEmpty()) {
+                            httpMethod = queueTarget[1];
+                        }
+                    } else {
+                        responseObserver.onError(Status.INVALID_ARGUMENT
+                                .withDescription("No URL specified in task or queue HTTP target")
+                                .asRuntimeException());
+                        return;
+                    }
+                }
+
                 // Extract schedule time
                 Instant scheduleTime = null;
                 if (taskProto.hasScheduleTime()) {
@@ -339,8 +482,16 @@ public class CloudTasksEmulator extends AbstractEmulator {
                             taskProto.getScheduleTime().getNanos());
                 }
 
+                // Extract dispatch deadline
+                Instant deadline = null;
+                if (taskProto.hasDispatchDeadline()) {
+                    deadline = Instant.ofEpochSecond(
+                            taskProto.getDispatchDeadline().getSeconds(),
+                            taskProto.getDispatchDeadline().getNanos());
+                }
+
                 CloudTasksStore.TaskEntry entry = store.createTask(
-                        parent, taskId, httpMethod, httpUrl, httpHeaders, httpBody, scheduleTime);
+                        parent, taskId, httpMethod, httpUrl, httpHeaders, httpBody, scheduleTime, deadline);
 
                 responseObserver.onNext(buildTask(parent, entry));
                 responseObserver.onCompleted();
@@ -460,21 +611,60 @@ public class CloudTasksEmulator extends AbstractEmulator {
         // --- Helpers ---
 
         private Queue buildQueue(String fullName, Map<String, Object> data) {
-            Queue.Builder builder = Queue.newBuilder()
-                    .setName(fullName);
+            CloudTasksStore.QueueConfig config = new CloudTasksStore.QueueConfig();
+            config.state = (String) data.get("state");
+            config.maxDispatchesPerSecond = getDouble(data, "max_dispatches_per_second", 500);
+            config.maxConcurrentDispatches = getInt(data, "max_concurrent_dispatches", 1000);
+            config.maxBurstSize = getInt(data, "max_burst_size", 0);
+            config.maxAttempts = getInt(data, "max_attempts", 100);
+            config.minBackoff = getString(data, "min_backoff", "0.100s");
+            config.maxBackoff = getString(data, "max_backoff", "3600s");
+            config.maxDoublings = getInt(data, "max_doublings", 16);
+            config.maxRetryDuration = getString(data, "max_retry_duration", "0s");
+            config.httpTargetUri = (String) data.get("http_target_uri");
+            config.httpTargetMethod = (String) data.get("http_target_method");
+            return buildQueue(fullName, config);
+        }
 
-            String state = (String) data.get("state");
-            if (state != null) {
-                builder.setState(mapQueueState(state));
+        private Queue buildQueue(String fullName, CloudTasksStore.QueueConfig config) {
+            Queue.Builder builder = Queue.newBuilder().setName(fullName);
+
+            if (config == null) {
+                return builder.build();
             }
 
-            // Populate rate limits
-            Object rateObj = data.get("max_dispatches_per_second");
-            double rate = rateObj instanceof Number ? ((Number) rateObj).doubleValue() : 0.0;
-            builder.setRateLimits(
-                    com.google.cloud.tasks.v2.RateLimits.newBuilder()
-                            .setMaxDispatchesPerSecond(rate)
-                            .build());
+            // State
+            if (config.state != null) {
+                builder.setState(mapQueueState(config.state));
+            }
+
+            // Rate limits
+            builder.setRateLimits(RateLimits.newBuilder()
+                    .setMaxDispatchesPerSecond(config.maxDispatchesPerSecond)
+                    .setMaxBurstSize(config.maxBurstSize)
+                    .setMaxConcurrentDispatches(config.maxConcurrentDispatches)
+                    .build());
+
+            // Retry config
+            RetryConfig.Builder retryBuilder = RetryConfig.newBuilder()
+                    .setMaxAttempts(config.maxAttempts)
+                    .setMaxDoublings(config.maxDoublings);
+
+            if (config.minBackoff != null && !config.minBackoff.isEmpty()) {
+                retryBuilder.setMinBackoff(parseDuration(config.minBackoff));
+            }
+            if (config.maxBackoff != null && !config.maxBackoff.isEmpty()) {
+                retryBuilder.setMaxBackoff(parseDuration(config.maxBackoff));
+            }
+            if (config.maxRetryDuration != null && !config.maxRetryDuration.isEmpty()
+                    && !"0s".equals(config.maxRetryDuration)) {
+                retryBuilder.setMaxRetryDuration(parseDuration(config.maxRetryDuration));
+            }
+            builder.setRetryConfig(retryBuilder.build());
+
+            // HTTP target (queue-level) — stored in DB, used by dispatcher, but
+            // not exposed via v2 Queue proto (only v2beta3 has httpTarget on Queue).
+            // The REST API JSON response includes it for developer visibility.
 
             return builder.build();
         }
@@ -487,7 +677,7 @@ public class CloudTasksEmulator extends AbstractEmulator {
                     .setDispatchCount(entry.dispatchCount)
                     .setResponseCount(entry.responseCount);
 
-            // Set schedule time
+            // Schedule time
             if (entry.scheduleTime != null) {
                 builder.setScheduleTime(Timestamp.newBuilder()
                         .setSeconds(entry.scheduleTime.getEpochSecond())
@@ -495,7 +685,7 @@ public class CloudTasksEmulator extends AbstractEmulator {
                         .build());
             }
 
-            // Set create time
+            // Create time
             if (entry.createTime != null) {
                 builder.setCreateTime(Timestamp.newBuilder()
                         .setSeconds(entry.createTime.getEpochSecond())
@@ -503,7 +693,44 @@ public class CloudTasksEmulator extends AbstractEmulator {
                         .build());
             }
 
-            // Set HTTP request details
+            // Dispatch deadline
+            if (entry.dispatchDeadline != null) {
+                builder.setDispatchDeadline(Duration.newBuilder()
+                        .setSeconds(entry.dispatchDeadline.getEpochSecond() - entry.scheduleTime.getEpochSecond())
+                        .build());
+            }
+
+            // First attempt
+            if (entry.firstAttemptTime != null) {
+                builder.setFirstAttempt(
+                        com.google.cloud.tasks.v2.Attempt.newBuilder()
+                                .setScheduleTime(Timestamp.newBuilder()
+                                        .setSeconds(entry.firstAttemptTime.getEpochSecond())
+                                        .setNanos(entry.firstAttemptTime.getNano())
+                                        .build())
+                                .setDispatchTime(Timestamp.newBuilder()
+                                        .setSeconds(entry.firstAttemptTime.getEpochSecond())
+                                        .setNanos(entry.firstAttemptTime.getNano())
+                                        .build())
+                                .build());
+            }
+
+            // Last attempt
+            if (entry.lastAttemptTime != null) {
+                builder.setLastAttempt(
+                        com.google.cloud.tasks.v2.Attempt.newBuilder()
+                                .setScheduleTime(Timestamp.newBuilder()
+                                        .setSeconds(entry.lastAttemptTime.getEpochSecond())
+                                        .setNanos(entry.lastAttemptTime.getNano())
+                                        .build())
+                                .setDispatchTime(Timestamp.newBuilder()
+                                        .setSeconds(entry.lastAttemptTime.getEpochSecond())
+                                        .setNanos(entry.lastAttemptTime.getNano())
+                                        .build())
+                                .build());
+            }
+
+            // HTTP request details
             if (entry.httpUrl != null && !entry.httpUrl.isEmpty()) {
                 HttpRequest.Builder httpBuilder = HttpRequest.newBuilder()
                         .setUrl(entry.httpUrl);
@@ -538,6 +765,89 @@ public class CloudTasksEmulator extends AbstractEmulator {
                 case "DISABLED" -> Queue.State.DISABLED;
                 default -> Queue.State.STATE_UNSPECIFIED;
             };
+        }
+
+        private Duration parseDuration(String s) {
+            if (s == null || s.isEmpty() || "0s".equals(s)) {
+                return Duration.getDefaultInstance();
+            }
+            try {
+                // Parse "X.XXXs" format
+                String numericPart = s.replace("s", "");
+                if (numericPart.contains(".")) {
+                    String[] parts = numericPart.split("\\.");
+                    long seconds = Long.parseLong(parts[0]);
+                    int nanos = Integer.parseInt(parts[1].length() == 1
+                            ? parts[1] + "00000000"
+                            : parts[1].length() < 9
+                                ? parts[1] + "0".repeat(9 - parts[1].length())
+                                : parts[1].substring(0, 9));
+                    return Duration.newBuilder().setSeconds(seconds).setNanos(nanos).build();
+                } else {
+                    long seconds = Long.parseLong(numericPart);
+                    return Duration.newBuilder().setSeconds(seconds).build();
+                }
+            } catch (NumberFormatException e) {
+                // Return default empty duration
+                return Duration.getDefaultInstance();
+            }
+        }
+
+        private CloudTasksStore.QueueConfig protoToQueueConfig(Queue queueProto) {
+            CloudTasksStore.QueueConfig config = new CloudTasksStore.QueueConfig();
+
+            if (queueProto.hasRateLimits()) {
+                RateLimits rl = queueProto.getRateLimits();
+                config.maxDispatchesPerSecond = rl.getMaxDispatchesPerSecond();
+                config.maxConcurrentDispatches = rl.getMaxConcurrentDispatches();
+                config.maxBurstSize = rl.getMaxBurstSize();
+            }
+
+            if (queueProto.hasRetryConfig()) {
+                RetryConfig rc = queueProto.getRetryConfig();
+                config.maxAttempts = rc.getMaxAttempts();
+                config.maxDoublings = rc.getMaxDoublings();
+                if (rc.hasMinBackoff()) {
+                    config.minBackoff = durationToString(rc.getMinBackoff());
+                }
+                if (rc.hasMaxBackoff()) {
+                    config.maxBackoff = durationToString(rc.getMaxBackoff());
+                }
+                if (rc.hasMaxRetryDuration()) {
+                    config.maxRetryDuration = durationToString(rc.getMaxRetryDuration());
+                }
+            }
+
+            // HTTP target is not a proto field on Queue in v2 (only v2beta3).
+            // The REST API handles httpTarget parsing for queue-level defaults.
+
+            return config;
+        }
+
+        private String durationToString(Duration d) {
+            long totalNanos = d.getSeconds() * 1_000_000_000L + d.getNanos();
+            double seconds = totalNanos / 1_000_000_000.0;
+            if (seconds == (long) seconds) {
+                return (long) seconds + "s";
+            }
+            return seconds + "s";
+        }
+
+        private String getString(Map<String, Object> data, String key, String defaultValue) {
+            Object val = data.get(key);
+            return val != null ? String.valueOf(val) : defaultValue;
+        }
+
+        private int getInt(Map<String, Object> data, String key, int defaultValue) {
+            Object val = data.get(key);
+            if (val instanceof Number) return ((Number) val).intValue();
+            return defaultValue;
+        }
+
+        private double getDouble(Map<String, Object> data, String key, double defaultValue) {
+            Object val = data.get(key);
+            if (val instanceof Number) return ((Number) val).doubleValue();
+            return defaultValue;
         }
 
         // ── IAM Policy gRPC methods ────────────────────────────────────────────

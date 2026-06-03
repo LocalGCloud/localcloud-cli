@@ -10,7 +10,7 @@ class MonitoringAlertPolicyRepositoryTest {
 
     @Test
     void buildPolicyJson_containsRequiredFields() {
-        String json = MonitoringAlertPolicyRepository.buildPolicyJson("test-project", "pol001", "test-alert");
+        String json = MonitoringAlertPolicyRepository.buildPolicyJson("test-project", "pol001", "test-alert", "[]", "OR", true);
         assertTrue(json.contains("\"name\""));
         assertTrue(json.contains("projects/test-project/alertPolicies/pol001"));
         assertTrue(json.contains("\"displayName\""));
@@ -21,7 +21,7 @@ class MonitoringAlertPolicyRepositoryTest {
 
     @Test
     void buildPolicyJson_defaultDisplayName() {
-        String json = MonitoringAlertPolicyRepository.buildPolicyJson("p", "pol1", null);
+        String json = MonitoringAlertPolicyRepository.buildPolicyJson("p", "pol1", null, "[]", "OR", true);
         assertTrue(json.contains("localcloud-alert"));
     }
 
