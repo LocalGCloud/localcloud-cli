@@ -1,47 +1,228 @@
 #!/bin/bash
 # LocalCloud Build Script
-# Builds all components and creates the Docker image
+# Builds all components and creates the Docker image.
 #
-# Configurable emulator images (override at build time):
-#   SPANNER_EMULATOR_IMAGE  - Spanner emulator binary source (default: jaysen2apache/spanner-emulator-extended:latest)
-#   BIGQUERY_EMULATOR_IMAGE - BigQuery emulator source (default: jaysen2apache/bigquery-emulator-on-duckdb)
-#   LITTLE_BIGTABLE_VERSION - little_bigtable Go module version (default: v0.0.1)
-#   GCS_EMULATOR_IMAGE      - GCS emulator source (default: fsouza/fake-gcs-server:1.54.0)
-#   GCLOUD_SDK_IMAGE        - gcloud SDK for Firestore/PubSub/Bigtable (default: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators)
-#   DOCKER_CLI_IMAGE        - Docker CLI binary source (default: docker:27.1-cli)
-#   JDK_IMAGE               - JDK for jlink custom JRE (default: eclipse-temurin:25-jdk)
+# Default mode builds a local single-architecture image for development:
+#   ./build.sh
 #
-# Example: use custom Spanner image:
-#   SPANNER_EMULATOR_IMAGE=my-registry/spanner:v2 ./build.sh
+# Production mode builds and pushes multi-architecture dependency images first,
+# then builds and pushes the LocalCloud multi-architecture image:
+#   ./build.sh --prod
+#
+# Common overrides:
+#   LOCALCLOUD_IMAGE              LocalCloud image tag
+#   SPANNER_EMULATOR_IMAGE        Spanner dependency image tag
+#   BIGQUERY_EMULATOR_IMAGE       BigQuery dependency image tag
+#   LOCALCLOUD_DEPENDENCIES_DIR   Directory containing dependency repos
+#   PLATFORMS                     Production platforms (default: linux/amd64,linux/arm64)
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+BUILD_MODE="development"
+SKIP_TESTS=false
+CLEAN=false
+SKIP_DEPENDENCIES=false
+
+if [ -d "/src/AI/local_cloud_dependencies" ]; then
+    DEFAULT_DEPENDENCIES_DIR="/src/AI/local_cloud_dependencies"
+else
+    DEFAULT_DEPENDENCIES_DIR="$SCRIPT_DIR/../local_cloud_dependencies"
+fi
+
+DEPENDENCIES_DIR="${LOCALCLOUD_DEPENDENCIES_DIR:-$DEFAULT_DEPENDENCIES_DIR}"
+SPANNER_CONTEXT="${SPANNER_EMULATOR_CONTEXT:-}"
+BIGQUERY_CONTEXT="${BIGQUERY_EMULATOR_CONTEXT:-}"
+SPANNER_DOCKERFILE="${SPANNER_EMULATOR_DOCKERFILE:-}"
+BIGQUERY_DOCKERFILE="${BIGQUERY_EMULATOR_DOCKERFILE:-}"
+PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
+
+usage() {
+    cat <<'USAGE'
+Usage: ./build.sh [options]
+
+Options:
+  --prod, --production       Build and push multi-arch production images.
+  --skip-tests               Skip Java tests.
+  --skip-dependencies        In prod mode, do not build dependency images.
+  --clean                    Run Gradle clean before shadowJar.
+  --image IMAGE              LocalCloud image tag.
+  --platforms LIST           Buildx platforms for prod mode.
+  --dependencies-dir DIR     Directory containing dependency repos.
+  --spanner-context DIR      Spanner emulator Docker build context.
+  --bigquery-context DIR     BigQuery emulator Docker build context.
+  --help                     Show this help.
+
+Environment overrides:
+  LOCALCLOUD_IMAGE
+  SPANNER_EMULATOR_IMAGE
+  BIGQUERY_EMULATOR_IMAGE
+  LOCALCLOUD_DEPENDENCIES_DIR
+  SPANNER_EMULATOR_CONTEXT
+  BIGQUERY_EMULATOR_CONTEXT
+  SPANNER_EMULATOR_DOCKERFILE
+  BIGQUERY_EMULATOR_DOCKERFILE
+  PLATFORMS
+
+Examples:
+  ./build.sh --skip-tests
+  ./build.sh --prod
+  LOCALCLOUD_IMAGE=jaysen2apache/localcloud:latest ./build.sh --prod
+USAGE
+}
+
+require_value() {
+    if [ $# -lt 2 ]; then
+        echo "ERROR: Missing value for $1"
+        usage
+        exit 1
+    fi
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --prod|--production)
+            BUILD_MODE="production"
+            shift
+            ;;
+        --skip-tests)
+            SKIP_TESTS=true
+            shift
+            ;;
+        --skip-dependencies)
+            SKIP_DEPENDENCIES=true
+            shift
+            ;;
+        --clean)
+            CLEAN=true
+            shift
+            ;;
+        --image)
+            require_value "$@"
+            LOCALCLOUD_IMAGE="$2"
+            shift 2
+            ;;
+        --platforms)
+            require_value "$@"
+            PLATFORMS="$2"
+            shift 2
+            ;;
+        --dependencies-dir)
+            require_value "$@"
+            DEPENDENCIES_DIR="$2"
+            shift 2
+            ;;
+        --spanner-context)
+            require_value "$@"
+            SPANNER_CONTEXT="$2"
+            shift 2
+            ;;
+        --bigquery-context)
+            require_value "$@"
+            BIGQUERY_CONTEXT="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "ERROR: Unknown option: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+if [ -z "${LOCALCLOUD_IMAGE:-}" ]; then
+    if [ "$BUILD_MODE" = "production" ]; then
+        LOCALCLOUD_IMAGE="jaysen2apache/localcloud:latest"
+    else
+        LOCALCLOUD_IMAGE="localcloud/localcloud:latest"
+    fi
+fi
+
+SPANNER_EMULATOR_IMAGE="${SPANNER_EMULATOR_IMAGE:-jaysen2apache/spanner-emulator-extended:latest}"
+BIGQUERY_EMULATOR_IMAGE="${BIGQUERY_EMULATOR_IMAGE:-jaysen2apache/bigquery-emulator-on-duckdb:latest}"
+SPANNER_CONTEXT="${SPANNER_CONTEXT:-$DEPENDENCIES_DIR/cloud-spanner-emulator}"
+BIGQUERY_CONTEXT="${BIGQUERY_CONTEXT:-$DEPENDENCIES_DIR/bigquery-emulator-on-duckdb}"
+SPANNER_DOCKERFILE="${SPANNER_DOCKERFILE:-$SPANNER_CONTEXT/build/docker/Dockerfile.ubuntu}"
+BIGQUERY_DOCKERFILE="${BIGQUERY_DOCKERFILE:-$BIGQUERY_CONTEXT/Dockerfile}"
+
 echo "============================================"
-echo "  LocalCloud Build"
+echo "  LocalCloud Build ($BUILD_MODE)"
 echo "============================================"
 echo ""
 
-# Pre-check: Docker daemon
 if ! docker info >/dev/null 2>&1; then
     echo "ERROR: Docker daemon is not running."
     echo "  Start Docker Desktop or Rancher Desktop and try again."
     exit 1
 fi
 
-# 1. Build Java server
-echo "[1/4] Building Java server..."
+ensure_buildx() {
+    if ! docker buildx version >/dev/null 2>&1; then
+        echo "ERROR: Docker Buildx is required for --prod."
+        echo "  Install a Docker version with Buildx support."
+        exit 1
+    fi
+
+    if ! docker buildx inspect >/dev/null 2>&1; then
+        docker buildx create --name localcloud-builder --use >/dev/null
+    fi
+
+    docker buildx inspect --bootstrap >/dev/null
+}
+
+build_dependency_image() {
+    local name="$1"
+    local image="$2"
+    local context="$3"
+    local dockerfile="$4"
+
+    if [ ! -d "$context" ]; then
+        echo "ERROR: $name dependency context not found: $context"
+        echo "  Set LOCALCLOUD_DEPENDENCIES_DIR or ${name}_EMULATOR_CONTEXT."
+        exit 1
+    fi
+
+    if [ ! -f "$dockerfile" ]; then
+        echo "ERROR: $name dependency Dockerfile not found: $dockerfile"
+        exit 1
+    fi
+
+    echo "Building $name dependency image for $PLATFORMS..."
+    docker buildx build \
+        --progress=plain \
+        --platform "$PLATFORMS" \
+        --provenance=false \
+        --sbom=false \
+        --push \
+        -f "$dockerfile" \
+        -t "$image" \
+        "$context"
+}
+
+if [ "$BUILD_MODE" = "production" ]; then
+    ensure_buildx
+fi
+
+echo "[1/5] Building Java server..."
 cd localcloud-server
-if ! ./gradlew shadowJar --quiet; then
+GRADLE_TASKS=()
+if [ "$CLEAN" = true ]; then
+    GRADLE_TASKS+=(clean)
+fi
+GRADLE_TASKS+=(shadowJar)
+if ! ./gradlew "${GRADLE_TASKS[@]}" --quiet; then
     echo "ERROR: Java server build failed."
     exit 1
 fi
 cd ..
 echo "  Done: localcloud-server/build/libs/localcloud-server-*-all.jar"
 
-# 2. Build console frontend
-echo "[2/4] Building console frontend..."
+echo "[2/5] Building console frontend..."
 cd localcloud-console
 npm install --silent 2>/dev/null
 if ! npm run build; then
@@ -51,9 +232,8 @@ fi
 cd ..
 echo "  Done: localcloud-console/dist/"
 
-# 3. Run tests (optional, skip with --skip-tests)
-if [ "$1" != "--skip-tests" ]; then
-    echo "[3/4] Running tests..."
+if [ "$SKIP_TESTS" = false ]; then
+    echo "[3/5] Running tests..."
     cd localcloud-server
     if ! ./gradlew test --quiet 2>/dev/null; then
         echo "ERROR: Java server tests failed."
@@ -62,26 +242,45 @@ if [ "$1" != "--skip-tests" ]; then
     cd ..
     echo "  Done: all tests pass"
 else
-    echo "[3/4] Skipping tests (--skip-tests)"
+    echo "[3/5] Skipping tests (--skip-tests)"
 fi
 
-# 4. Build Docker image
-echo "[4/4] Building Docker image..."
+if [ "$BUILD_MODE" = "production" ]; then
+    echo "[4/5] Preparing production multi-arch dependencies..."
+
+    if [ "$SKIP_DEPENDENCIES" = false ]; then
+        build_dependency_image "SPANNER" "$SPANNER_EMULATOR_IMAGE" "$SPANNER_CONTEXT" "$SPANNER_DOCKERFILE"
+        build_dependency_image "BIGQUERY" "$BIGQUERY_EMULATOR_IMAGE" "$BIGQUERY_CONTEXT" "$BIGQUERY_DOCKERFILE"
+    else
+        echo "  Skipping dependency image builds (--skip-dependencies)"
+    fi
+else
+    echo "[4/5] Skipping dependency image builds (development mode)"
+fi
+
+echo "[5/5] Building Docker image..."
+
+# Pre-pull dependency images to avoid BuildKit attestation manifest issues.
+# Some OCI multi-arch images carry SBOM attestations with 'unknown/unknown'
+# platform that can break BuildKit platform resolution during docker build.
+# Pre-pulling ensures image content is in the local store before the build.
+echo "  Pre-pulling dependency images..."
+docker pull "$SPANNER_EMULATOR_IMAGE" 2>&1 || echo "    (pre-pull failed, will try during build)"
+docker pull "$BIGQUERY_EMULATOR_IMAGE" 2>&1 || echo "    (pre-pull failed, will try during build)"
+echo "  Done pre-pulling"
+
 docker volume create localcloud-data >/dev/null 2>&1 || true
 
-# Version metadata
 BUILD_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "dev")
 BUILD_DATE=$(date -u +%Y%m%d)
 
-# Build args array (handles spaces in BUILD_DATE correctly)
 DOCKER_BUILD_ARGS=(
     --build-arg "BUILD_HASH=$BUILD_HASH"
     --build-arg "BUILD_DATE=$BUILD_DATE"
+    --build-arg "SPANNER_EMULATOR_IMAGE=$SPANNER_EMULATOR_IMAGE"
+    --build-arg "BIGQUERY_EMULATOR_IMAGE=$BIGQUERY_EMULATOR_IMAGE"
 )
 
-# Configurable emulator images — Dockerfile defaults used when unset
-[ -n "$SPANNER_EMULATOR_IMAGE" ]  && DOCKER_BUILD_ARGS+=(--build-arg "SPANNER_EMULATOR_IMAGE=$SPANNER_EMULATOR_IMAGE")
-[ -n "$BIGQUERY_EMULATOR_IMAGE" ] && DOCKER_BUILD_ARGS+=(--build-arg "BIGQUERY_EMULATOR_IMAGE=$BIGQUERY_EMULATOR_IMAGE")
 [ -n "$GO_BASE_IMAGE" ]           && DOCKER_BUILD_ARGS+=(--build-arg "GO_BASE_IMAGE=$GO_BASE_IMAGE")
 [ -n "$LITTLE_BIGTABLE_VERSION" ] && DOCKER_BUILD_ARGS+=(--build-arg "LITTLE_BIGTABLE_VERSION=$LITTLE_BIGTABLE_VERSION")
 [ -n "$GCS_EMULATOR_IMAGE" ]      && DOCKER_BUILD_ARGS+=(--build-arg "GCS_EMULATOR_IMAGE=$GCS_EMULATOR_IMAGE")
@@ -89,19 +288,27 @@ DOCKER_BUILD_ARGS=(
 [ -n "$DOCKER_CLI_IMAGE" ]        && DOCKER_BUILD_ARGS+=(--build-arg "DOCKER_CLI_IMAGE=$DOCKER_CLI_IMAGE")
 [ -n "$JDK_IMAGE" ]               && DOCKER_BUILD_ARGS+=(--build-arg "JDK_IMAGE=$JDK_IMAGE")
 
-if ! docker build --progress=plain "${DOCKER_BUILD_ARGS[@]}" -t localcloud/localcloud:latest .; then
-    echo "ERROR: Docker image build failed."
-    echo "  Check that Docker daemon is running and has enough resources."
-    exit 1
+if [ "$BUILD_MODE" = "production" ]; then
+    DOCKER_BUILD_ARGS+=(--build-arg "BUILD_MODE=production")
+    docker buildx build \
+        --progress=plain \
+        --platform "$PLATFORMS" \
+        --push \
+        "${DOCKER_BUILD_ARGS[@]}" \
+        -t "$LOCALCLOUD_IMAGE" \
+        .
+    echo "  Done: pushed $LOCALCLOUD_IMAGE ($PLATFORMS)"
+else
+    docker build --progress=plain "${DOCKER_BUILD_ARGS[@]}" -t "$LOCALCLOUD_IMAGE" .
+    echo "  Done: $LOCALCLOUD_IMAGE"
 fi
-echo "  Done: localcloud/localcloud:latest"
 
-# Show image size
-IMAGE_SIZE=$(docker images localcloud/localcloud:latest --format "{{.Size}}" 2>/dev/null)
+IMAGE_SIZE=$(docker images "$LOCALCLOUD_IMAGE" --format "{{.Size}}" 2>/dev/null | head -1)
 echo ""
 echo "============================================"
-echo "  Build complete! (image: ${IMAGE_SIZE:-unknown})"
+echo "  Build complete! (image: ${IMAGE_SIZE:-pushed multi-arch manifest})"
 echo ""
+echo "  Image:   $LOCALCLOUD_IMAGE"
 echo "  Start:   ./start.sh"
 echo "  Health:  curl localhost:8080/health"
 echo "  Console: http://localhost:8080"
