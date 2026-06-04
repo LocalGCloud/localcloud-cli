@@ -21,7 +21,6 @@ public class CloudFunctionsRepository {
     private void createSchema() {
         try (Connection conn = dataSource.getConnection(); var stmt = conn.createStatement()) {
             String jsonType = conn.getMetaData().getURL().contains(":h2:") ? "TEXT" : "JSONB";
-            stmt.execute("ALTER TABLE cloud_functions ADD COLUMN IF NOT EXISTS trigger_event_type VARCHAR(256)");
             stmt.execute("""
                     CREATE TABLE IF NOT EXISTS cloud_functions (
                         project_id VARCHAR(255) NOT NULL,
@@ -39,6 +38,7 @@ public class CloudFunctionsRepository {
                         PRIMARY KEY (project_id, location_id, function_id)
                     )
                     """.formatted(jsonType, jsonType, jsonType));
+            stmt.execute("ALTER TABLE cloud_functions ADD COLUMN IF NOT EXISTS trigger_event_type VARCHAR(256)");
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to initialize Cloud Functions schema", e);
         }

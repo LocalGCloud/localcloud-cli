@@ -163,7 +163,7 @@ public class CloudTasksRestService {
         }
     }
 
-    @Post("/projects/{project}/locations/{location}/queues/{queue}:purge")
+    @Post("regex:^/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/queues/(?<queue>[^/]+):purge$")
     public HttpResponse purgeQueue(@Param String project, @Param String location, @Param String queue) {
         emulator.incrementRequestCount();
         try {
