@@ -610,6 +610,7 @@ export default function Workflows(props) {
     const selectWorkflow = async (wfId) => {
         setSelectedWorkflow(wfId);
         setSelectedExecution(null);
+        setStepEntries([]);
         setActiveTab('definition');
         try {
             const detail = await api.browse('workflows/' + wfId);
@@ -671,7 +672,7 @@ export default function Workflows(props) {
             if (selectedExecution() && (selectedExecution().execution_id === executionId || selectedExecution().name?.endsWith(executionId))) {
                 const updated = (Array.isArray(execs) ? execs : (execs.executions || [])).find(e =>
                     e.execution_id === executionId || e.name?.endsWith(executionId));
-                if (updated) setSelectedExecution(updated);
+                if (updated) selectExecution(updated);
             }
         } catch (err) {
             setError('Failed to cancel execution: ' + err.message);
@@ -679,6 +680,34 @@ export default function Workflows(props) {
     };
 
     // --- Execution Detail View ---
+    const [stepEntries, setStepEntries] = createSignal([]);
+    const [stepEntriesLoading, setStepEntriesLoading] = createSignal(false);
+
+    const fetchStepEntries = async (executionId) => {
+        setStepEntriesLoading(true);
+        try {
+            const sub = selectedWorkflow() + '/executions/' + executionId + '/stepEntries';
+            const data = await api.browse('workflows', sub);
+            setStepEntries(data.stepEntries || []);
+        } catch {
+            setStepEntries([]);
+        } finally {
+            setStepEntriesLoading(false);
+        }
+    };
+
+    const selectExecution = (exec) => {
+        setSelectedExecution(exec);
+        if (!exec) return;
+        const execId = exec.execution_id || exec.name?.split('/').pop();
+        if (execId) fetchStepEntries(execId);
+    };
+
+    const deselectExecution = () => {
+        setSelectedExecution(null);
+        setStepEntries([]);
+    };
+
     const renderExecutionDetail = () => {
         const exec = selectedExecution();
         if (!exec) return null;
@@ -686,8 +715,8 @@ export default function Workflows(props) {
         return (
             <div>
                 <Breadcrumb items={[
-                    { label: 'Workflows', onClick: () => { setSelectedWorkflow(null); setWorkflowDetail(null); setSelectedExecution(null); } },
-                    { label: selectedWorkflow(), onClick: () => setSelectedExecution(null) },
+                    { label: 'Workflows', onClick: () => { setSelectedWorkflow(null); setWorkflowDetail(null); deselectExecution(); } },
+                    { label: selectedWorkflow(), onClick: () => deselectExecution() },
                     { label: execId },
                 ]} />
 
@@ -752,6 +781,121 @@ export default function Workflows(props) {
                         <div class="alert alert-error" role="alert" style={{ 'font-family': 'var(--font-mono)', 'font-size': '12px', 'white-space': 'pre-wrap' }}>
                             {typeof exec.error === 'string' ? exec.error : JSON.stringify(exec.error, null, 2)}
                         </div>
+                    </div>
+                </Show>
+
+                {/* Step Timeline */}
+                <Show when={stepEntriesLoading()}>
+                    <div class="loading-state" style={{ padding: '20px' }}>
+                        <div class="loading-spinner" /> Loading step history…
+                    </div>
+                </Show>
+
+                <Show when={!stepEntriesLoading() && stepEntries().length > 0}>
+                    <div style={{ 'margin-top': '24px' }}>
+                        <h3 style={{ 'font-size': '13px', 'font-weight': '600', 'margin-bottom': '12px' }}>
+                            Step Timeline ({stepEntries().length} steps)
+                        </h3>
+                        <div style={{
+                            'padding-left': '16px',
+                            'border-left': '2px solid var(--border)',
+                            'margin-left': '8px',
+                        }}>
+                            <For each={stepEntries()}>
+                                {(entry, idx) => {
+                                    const stepColor = () => {
+                                        switch (entry.state) {
+                                            case 'SUCCEEDED': return 'var(--success)';
+                                            case 'FAILED': return 'var(--error)';
+                                            case 'ACTIVE': return 'var(--primary)';
+                                            default: return 'var(--text-tertiary)';
+                                        }
+                                    };
+                                    return (
+                                        <div style={{
+                                            position: 'relative',
+                                            'padding-bottom': idx() < stepEntries().length - 1 ? '16px' : '0',
+                                        }}>
+                                            <div style={{
+                                                position: 'absolute',
+                                                left: '-25px',
+                                                top: '2px',
+                                                width: '14px',
+                                                height: '14px',
+                                                'border-radius': '50%',
+                                                background: stepColor(),
+                                                border: '2px solid var(--bg)',
+                                                'z-index': 1,
+                                                transition: 'background 200ms ease',
+                                            }} />
+                                            <div style={{
+                                                background: 'var(--surface-variant, var(--bg-subtle))',
+                                                border: '1px solid var(--border-subtle, var(--border))',
+                                                'border-radius': 'var(--radius-sm)',
+                                                padding: '8px 12px',
+                                                'font-size': '12px',
+                                            }}>
+                                                <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', 'margin-bottom': '4px' }}>
+                                                    <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
+                                                        <span style={{
+                                                            'font-weight': '600',
+                                                            'font-family': 'var(--font-mono)',
+                                                            'font-size': '11px',
+                                                        }}>{entry.step_name}</span>
+                                                        <span style={{
+                                                            'font-size': '10px',
+                                                            color: 'var(--text-tertiary)',
+                                                            background: 'var(--bg-subtle)',
+                                                            padding: '1px 6px',
+                                                            'border-radius': '3px',
+                                                            'text-transform': 'uppercase',
+                                                            'letter-spacing': '0.04em',
+                                                        }}>{entry.step_type}</span>
+                                                    </div>
+                                                    <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
+                                                        <span style={{ color: stepColor(), 'font-size': '10px', 'font-weight': '600' }}>
+                                                            {entry.state}
+                                                        </span>
+                                                        <span style={{ color: 'var(--text-tertiary)', 'font-size': '10px' }}>
+                                                            {entry.duration_ms}ms
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <Show when={entry.entry_json}>
+                                                    <div style={{
+                                                        'font-size': '10px',
+                                                        color: 'var(--text-secondary)',
+                                                        'font-family': 'var(--font-mono)',
+                                                        'max-height': '60px',
+                                                        'overflow-y': 'auto',
+                                                        'white-space': 'pre-wrap',
+                                                        'margin-top': '4px',
+                                                        'border-top': '1px dashed var(--border-subtle, var(--border))',
+                                                        'padding-top': '4px',
+                                                    }}>
+                                                        {typeof entry.entry_json === 'string' ? entry.entry_json : JSON.stringify(entry.entry_json)}
+                                                    </div>
+                                                </Show>
+                                            </div>
+                                        </div>
+                                    );
+                                }}
+                            </For>
+                        </div>
+                    </div>
+                </Show>
+
+                <Show when={!stepEntriesLoading() && stepEntries().length === 0 && (exec.state === 'SUCCEEDED' || exec.state === 'FAILED' || exec.state === 'CANCELLED')}>
+                    <div style={{
+                        'margin-top': '24px',
+                        padding: '16px',
+                        'text-align': 'center',
+                        color: 'var(--text-secondary)',
+                        'font-size': '12px',
+                        border: '1px dashed var(--border)',
+                        'border-radius': 'var(--radius-sm)',
+                    }}>
+                        No step detail available. Enable execution history for detailed step tracking.
                     </div>
                 </Show>
             </div>
@@ -839,7 +983,7 @@ export default function Workflows(props) {
                                         <tbody>
                                             <For each={executions()}>
                                                 {(exec) => (
-                                                    <tr class="clickable-row" onClick={() => setSelectedExecution(exec)} onKeyDown={onActivate(() => setSelectedExecution(exec))} role="button" tabIndex="0">
+                                                    <tr class="clickable-row" onClick={() => selectExecution(exec)} onKeyDown={onActivate(() => selectExecution(exec))} role="button" tabIndex="0">
                                                         <td style={{ 'font-family': 'var(--font-mono)', 'font-size': '12px' }}>
                                                             {exec.execution_id || exec.name?.split('/').pop() || '—'}
                                                         </td>

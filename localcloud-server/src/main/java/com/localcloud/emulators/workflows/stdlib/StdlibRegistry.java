@@ -26,6 +26,9 @@ public class StdlibRegistry {
         TimeFunctions.register(this);
         UuidFunctions.register(this);
         RetryFunctions.register(this);
+        RandomFunctions.register(this);
+        ErrorFunctions.register(this);
+        DateFunctions.register(this);
     }
 
     public void register(String name, Function<List<Object>, Object> func) {

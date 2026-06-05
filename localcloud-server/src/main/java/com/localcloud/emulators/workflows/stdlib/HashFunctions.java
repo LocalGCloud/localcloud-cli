@@ -21,6 +21,10 @@ public class HashFunctions {
     public static void register(StdlibRegistry registry) {
         registry.register("hash.compute_checksum", HashFunctions::computeChecksum);
         registry.register("hash.compute_hmac", HashFunctions::computeHmac);
+
+        // crypto.* aliases
+        registry.register("crypto.compute_checksum", HashFunctions::computeChecksum);
+        registry.register("crypto.compute_hmac", HashFunctions::computeHmac);
     }
 
     private static Object computeChecksum(List<Object> args) {

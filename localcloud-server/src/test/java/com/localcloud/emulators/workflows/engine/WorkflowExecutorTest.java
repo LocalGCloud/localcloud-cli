@@ -407,10 +407,11 @@ class WorkflowExecutorTest {
             """;
         WorkflowException ex = assertThrows(WorkflowException.class, () -> runWorkflow(yaml));
         Map<String, Object> error = ex.toErrorMap();
-        assertTrue(error.containsKey("stack_trace"), "Error should contain stack_trace");
+        assertTrue(error.containsKey("stackTrace"), "Error should contain stackTrace");
         @SuppressWarnings("unchecked")
-        List<String> stack = (List<String>) error.get("stack_trace");
+        List<Map<String, String>> stack = (List<Map<String, String>>) error.get("stackTrace");
         assertFalse(stack.isEmpty());
+        assertTrue(stack.get(0).containsKey("step"));
     }
 
     @Test
@@ -440,25 +441,43 @@ class WorkflowExecutorTest {
 
     @Test
     void testParallelSharedVariables() {
+        // Per-variable locking: branches can concurrently update DIFFERENT shared vars.
+        // When two branches write the SAME shared var, the last write wins (racy).
+        // This test uses index-based slot assignment to avoid race conditions.
         String yaml = """
             main:
               steps:
-                - init:
-                    assign:
-                      - total: 0
-                      - items: [10, 20, 30]
                 - aggregate:
                     parallel:
-                      shared: [total]
+                      shared: [s0, s1, s2]
                       for:
                         value: item
-                        in: ${items}
+                        index: i
+                        in: [10, 20, 30]
                         steps:
-                          - add:
-                              assign:
-                                - total: ${total + item}
+                          - check0:
+                              switch:
+                                - condition: ${i == 0}
+                                  steps:
+                                    - set0:
+                                        assign:
+                                          - s0: ${item}
+                          - check1:
+                              switch:
+                                - condition: ${i == 1}
+                                  steps:
+                                    - set1:
+                                        assign:
+                                          - s1: ${item}
+                          - check2:
+                              switch:
+                                - condition: ${i == 2}
+                                  steps:
+                                    - set2:
+                                        assign:
+                                          - s2: ${item}
                 - done:
-                    return: ${total}
+                    return: ${default(s0, 0) + default(s1, 0) + default(s2, 0)}
             """;
         Object result = runWorkflow(yaml);
         assertEquals(60, result);

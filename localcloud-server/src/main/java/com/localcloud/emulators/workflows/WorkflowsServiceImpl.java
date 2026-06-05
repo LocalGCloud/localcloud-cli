@@ -139,12 +139,47 @@ public class WorkflowsServiceImpl {
 
     public Map<String, Object> updateWorkflow(String projectId, String locationId, String workflowId,
                                                String sourceContents) throws SQLException {
+        return updateWorkflow(projectId, locationId, workflowId, sourceContents, null, null, null, null);
+    }
+
+    public Map<String, Object> updateWorkflow(String projectId, String locationId, String workflowId,
+                                               String sourceContents, String labelsJson, String description,
+                                               String serviceAccount, List<String> updateMask) throws SQLException {
         if (sourceContents != null) {
             try { WorkflowParser.parse(sourceContents); }
             catch (Exception e) { throw new IllegalArgumentException("Invalid workflow YAML: " + e.getMessage()); }
         }
 
-        store.updateWorkflow(projectId, locationId, workflowId, sourceContents);
+        // Validate updateMask field paths
+        if (updateMask != null && !updateMask.isEmpty()) {
+            for (String path : updateMask) {
+                if ("*".equals(path)) {
+                    updateMask = List.of("*");
+                    break;
+                }
+                if (!isValidWorkflowFieldPath(path)) {
+                    throw new IllegalArgumentException("Invalid update_mask field path: " + path);
+                }
+            }
+        }
+
+        Map<String, Object> existing = store.getWorkflow(projectId, locationId, workflowId);
+        if (existing == null) throw new IllegalArgumentException("Workflow not found: " + workflowId);
+
+        // If no mask or wildcard, replace all supported fields
+        boolean replaceAll = updateMask == null || updateMask.isEmpty() || updateMask.contains("*");
+
+        String effectiveSourceContents = (replaceAll || (updateMask != null && updateMask.contains("source_contents")))
+                ? sourceContents : (String) existing.get("source_contents");
+        String effectiveLabels = (replaceAll || (updateMask != null && updateMask.contains("labels")))
+                ? labelsJson : writeJsonValue(jsonbToMap(existing.get("labels")));
+        String effectiveDescription = (replaceAll || (updateMask != null && updateMask.contains("description")))
+                ? description : (String) existing.get("description");
+        String effectiveServiceAccount = (replaceAll || (updateMask != null && updateMask.contains("service_account")))
+                ? serviceAccount : (String) existing.get("service_account");
+
+        store.updateWorkflow(projectId, locationId, workflowId, effectiveSourceContents, effectiveLabels,
+                effectiveDescription, effectiveServiceAccount);
         Map<String, Object> workflow = store.getWorkflow(projectId, locationId, workflowId);
 
         Map<String, Object> operation = new LinkedHashMap<>();
@@ -154,7 +189,19 @@ public class WorkflowsServiceImpl {
         return operation;
     }
 
+    private static final java.util.Set<String> VALID_WORKFLOW_FIELD_PATHS = java.util.Set.of(
+            "source_contents", "labels", "description", "service_account",
+            "call_log_level", "execution_history_level", "user_env_vars", "tags"
+    );
+
+    private boolean isValidWorkflowFieldPath(String path) {
+        return VALID_WORKFLOW_FIELD_PATHS.contains(path);
+    }
+
     public Map<String, Object> deleteWorkflow(String projectId, String locationId, String workflowId) throws SQLException {
+        Map<String, Object> existing = store.getWorkflow(projectId, locationId, workflowId);
+        if (existing == null) throw new IllegalArgumentException("Workflow not found: " + workflowId);
+
         store.deleteWorkflow(projectId, locationId, workflowId);
 
         Map<String, Object> operation = new LinkedHashMap<>();
@@ -163,8 +210,29 @@ public class WorkflowsServiceImpl {
         return operation;
     }
 
+    public Map<String, Object> undeleteWorkflow(String projectId, String locationId, String workflowId) throws SQLException {
+        store.undeleteWorkflow(projectId, locationId, workflowId);
+        Map<String, Object> workflow = store.getWorkflow(projectId, locationId, workflowId);
+        if (workflow == null) throw new IllegalArgumentException("Workflow not found after undelete: " + workflowId);
+        return formatWorkflow(workflow, projectId, locationId);
+    }
+
+    public int purgeDeletedWorkflows() throws SQLException {
+        return store.purgeDeletedWorkflows();
+    }
+
     public List<Map<String, Object>> listWorkflows(String projectId, String locationId, int pageSize) throws SQLException {
-        List<Map<String, Object>> workflows = store.listWorkflows(projectId, locationId, pageSize);
+        List<Map<String, Object>> workflows = store.listWorkflows(projectId, locationId, pageSize, null, null, null);
+        List<Map<String, Object>> formatted = new ArrayList<>();
+        for (Map<String, Object> w : workflows) {
+            formatted.add(formatWorkflow(w, projectId, locationId));
+        }
+        return formatted;
+    }
+
+    public List<Map<String, Object>> listWorkflows(String projectId, String locationId, int pageSize,
+                                                    String pageToken, String filter, String orderBy) throws SQLException {
+        List<Map<String, Object>> workflows = store.listWorkflows(projectId, locationId, pageSize, pageToken, filter, orderBy);
         List<Map<String, Object>> formatted = new ArrayList<>();
         for (Map<String, Object> w : workflows) {
             formatted.add(formatWorkflow(w, projectId, locationId));
@@ -175,10 +243,30 @@ public class WorkflowsServiceImpl {
     public List<Map<String, Object>> listWorkflowRevisions(String projectId, String locationId, String workflowId) throws SQLException {
         Map<String, Object> workflow = store.getWorkflow(projectId, locationId, workflowId);
         if (workflow == null) return Collections.emptyList();
-        // MVP: no separate revision storage — return current state as the only revision
-        Map<String, Object> revision = formatWorkflow(workflow, projectId, locationId);
-        revision.put("revisionId", String.valueOf(workflow.getOrDefault("revision_id", 1)));
-        return List.of(revision);
+
+        List<Map<String, Object>> revisions = store.listWorkflowRevisions(projectId, locationId, workflowId);
+        if (revisions.isEmpty()) {
+            // Fallback: return current state if no revision rows (backward compat)
+            Map<String, Object> current = formatWorkflow(workflow, projectId, locationId);
+            current.put("revisionId", String.valueOf(workflow.getOrDefault("revision_id", 1)));
+            return List.of(current);
+        }
+
+        List<Map<String, Object>> formatted = new ArrayList<>();
+        for (Map<String, Object> rev : revisions) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("name", "projects/" + projectId + "/locations/" + locationId + "/workflows/" + workflowId);
+            result.put("revisionId", String.valueOf(rev.get("revision_id")));
+            result.put("sourceContents", rev.get("source_contents"));
+            if (rev.get("labels") != null) result.put("labels", jsonbToMap(rev.get("labels")));
+            if (rev.get("description") != null && !((String) rev.get("description")).isEmpty())
+                result.put("description", rev.get("description"));
+            if (rev.get("service_account") != null && !((String) rev.get("service_account")).isEmpty())
+                result.put("serviceAccount", rev.get("service_account"));
+            if (rev.get("created_at") != null) result.put("updateTime", String.valueOf(rev.get("created_at")));
+            formatted.add(result);
+        }
+        return formatted;
     }
 
     // --- Execution Management ---
@@ -286,7 +374,13 @@ public class WorkflowsServiceImpl {
 
     public List<Map<String, Object>> listExecutions(String projectId, String locationId,
                                                      String workflowId, int pageSize) throws SQLException {
-        List<Map<String, Object>> executions = store.listExecutions(projectId, locationId, workflowId, pageSize);
+        return listExecutions(projectId, locationId, workflowId, pageSize, null, null);
+    }
+
+    public List<Map<String, Object>> listExecutions(String projectId, String locationId,
+                                                     String workflowId, int pageSize,
+                                                     String pageToken, String filter) throws SQLException {
+        List<Map<String, Object>> executions = store.listExecutions(projectId, locationId, workflowId, pageSize, pageToken, filter);
         List<Map<String, Object>> formatted = new ArrayList<>();
         for (Map<String, Object> e : executions) {
             formatted.add(formatExecution(e, projectId, locationId, workflowId));
@@ -523,6 +617,17 @@ public class WorkflowsServiceImpl {
             throw e;
         } catch (Exception e) {
             throw new IllegalArgumentException("Invalid " + fieldName + " JSON: " + e.getMessage());
+        }
+    }
+
+    private String writeJsonValue(Object value) {
+        if (value == null) return null;
+        if (value instanceof String s) return s; // Already JSON string
+        try {
+            return mapper.writeValueAsString(value);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            logger.warn("Failed to serialize value to JSON: {}", e.getMessage());
+            return "{}";
         }
     }
 }

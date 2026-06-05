@@ -31,6 +31,53 @@ public class HttpFunctions {
             Object method = config.get("method");
             return httpCall(method != null ? String.valueOf(method).toUpperCase(Locale.ROOT) : "GET", args);
         });
+
+        // http.default_retry: predicate for default retry on 5xx/429
+        registry.register("http.default_retry", args -> {
+            if (args.isEmpty()) return false;
+            Object error = args.get(0);
+            if (error instanceof Map<?, ?> map) {
+                Object code = map.get("code");
+                if (code instanceof Number n) {
+                    int value = n.intValue();
+                    return value == 429 || value >= 500;
+                }
+                if (code != null) {
+                    String text = String.valueOf(code);
+                    return "429".equals(text) || text.startsWith("5");
+                }
+            }
+            return false;
+        });
+
+        // http.default_retry_non_idempotent: predicate for non-idempotent retry (429, 502-504 only)
+        registry.register("http.default_retry_non_idempotent", args -> {
+            if (args.isEmpty()) return false;
+            Object error = args.get(0);
+            if (error instanceof Map<?, ?> map) {
+                Object code = map.get("code");
+                if (code instanceof Number n) {
+                    int value = n.intValue();
+                    return value == 429 || value == 502 || value == 503 || value == 504;
+                }
+                if (code != null) {
+                    String text = String.valueOf(code);
+                    return "429".equals(text) || "502".equals(text) || "503".equals(text) || "504".equals(text);
+                }
+            }
+            return false;
+        });
+
+        // http.append_header: merge headers maps
+        registry.register("http.append_header", args -> {
+            if (args.size() < 2) throw new RuntimeException("http.append_header requires (headers_map, new_headers)");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> base = new LinkedHashMap<>((Map<String, Object>) args.get(0));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> append = (Map<String, Object>) args.get(1);
+            append.forEach((k, v) -> base.put(k, v)); // new values override
+            return base;
+        });
     }
 
     @SuppressWarnings("unchecked")

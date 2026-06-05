@@ -267,6 +267,14 @@ public class BrowseService {
                             "error", true,
                             "message", "Invalid AlloyDB browse path"));
                 }
+                case "workflows" -> {
+                    if ("executions".equals(b) && "stepEntries".equals(d)) {
+                        yield browseWorkflowStepEntries(a, c, projectId);
+                    }
+                    yield mapper.writeValueAsString(Map.of(
+                            "error", true,
+                            "message", "Invalid workflows browse path"));
+                }
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unsupported 5-segment browse for service: " + service));
@@ -1880,6 +1888,41 @@ public class BrowseService {
         }
 
         return mapper.writeValueAsString(Map.of("error", true, "message", "Invalid Workflows browse path"));
+    }
+
+    private String browseWorkflowStepEntries(String workflowId, String executionId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        List<Map<String, Object>> entries = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                "SELECT step_entry_id, step_name, step_type, state, start_time, end_time, duration_ms, entry_json " +
+                "FROM workflow_step_entries " +
+                "WHERE project_id = ? AND workflow_id = ? AND execution_id = ? " +
+                "ORDER BY step_entry_id ASC LIMIT 200")) {
+            ps.setString(1, projectId);
+            ps.setString(2, workflowId);
+            ps.setString(3, executionId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> e = new LinkedHashMap<>();
+                    e.put("step_entry_id", rs.getLong("step_entry_id"));
+                    e.put("step_name", rs.getString("step_name"));
+                    e.put("step_type", rs.getString("step_type"));
+                    e.put("state", rs.getString("state"));
+                    if (rs.getTimestamp("start_time") != null)
+                        e.put("start_time", rs.getTimestamp("start_time").toString());
+                    if (rs.getTimestamp("end_time") != null)
+                        e.put("end_time", rs.getTimestamp("end_time").toString());
+                    e.put("duration_ms", rs.getLong("duration_ms"));
+                    Object jsonObj = rs.getObject("entry_json");
+                    if (jsonObj != null) e.put("entry_json", jsonObj);
+                    entries.add(e);
+                }
+            }
+        }
+        return mapper.writeValueAsString(Map.of("stepEntries", entries));
     }
 
     // ========== Cloud Scheduler (in-process, query PostgreSQL) ==========

@@ -101,8 +101,8 @@ public class ExpressionEvaluator {
      */
     public Object evaluateExpression(String expr) {
         if (expr == null || expr.isBlank()) return null;
-        if (expr.length() > 400) {
-            throw new ExpressionException("Expression exceeds maximum length of 400 characters");
+        if (expr.length() > 2048) {
+            throw new ExpressionException("Expression exceeds maximum length of 2048 characters");
         }
         List<Token> tokens = new ExpressionTokenizer(expr.trim()).tokenize();
         AstNode ast = new ExpressionParser(tokens).parse();

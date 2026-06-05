@@ -212,24 +212,46 @@ public class WorkflowsRestService {
                                      @Param String location,
                                      @Param String operation) {
         emulator.incrementRequestCount();
-        // Operation names are of form "create-{workflowId}" or "delete-{workflowId}"
-        // The provider polls this after create — return done with the workflow response
+        // Operation names are of form "create-{workflowId}", "update-{workflowId}", or "delete-{workflowId}"
+        // The provider polls this after create/update/delete — return done with the workflow response
         try {
             Map<String, Object> doneOp = new LinkedHashMap<>();
             doneOp.put("name", "projects/" + project + "/locations/" + location + "/operations/" + operation);
             doneOp.put("done", true);
-            doneOp.put("metadata", Map.of(
-                "@type", "type.googleapis.com/google.cloud.workflows.v1.OperationMetadata",
-                "createTime", java.time.Instant.now().toString(),
-                "target", "projects/" + project + "/locations/" + location + "/workflows/" + operation.replace("create-", "").replace("delete-", "")
-            ));
-            // Include the workflow in the response if it's a create operation
+
+            // Include proper metadata with createTime and target
+            Map<String, Object> metadata = new LinkedHashMap<>();
+            metadata.put("@type", "type.googleapis.com/google.cloud.workflows.v1.OperationMetadata");
+            metadata.put("createTime", java.time.Instant.now().toString());
+            metadata.put("apiVersion", "v1");
+
             if (operation.startsWith("create-")) {
                 String workflowId = operation.substring("create-".length());
+                metadata.put("target", "projects/" + project + "/locations/" + location + "/workflows/" + workflowId);
+                metadata.put("verb", "create");
+                doneOp.put("metadata", metadata);
                 Map<String, Object> workflow = service.getWorkflow(project, location, workflowId);
                 if (workflow != null) {
                     doneOp.put("response", workflow);
                 }
+            } else if (operation.startsWith("update-")) {
+                String workflowId = operation.substring("update-".length());
+                metadata.put("target", "projects/" + project + "/locations/" + location + "/workflows/" + workflowId);
+                metadata.put("verb", "update");
+                doneOp.put("metadata", metadata);
+                Map<String, Object> workflow = service.getWorkflow(project, location, workflowId);
+                if (workflow != null) {
+                    doneOp.put("response", workflow);
+                }
+            } else if (operation.startsWith("delete-")) {
+                String workflowId = operation.substring("delete-".length());
+                metadata.put("target", "projects/" + project + "/locations/" + location + "/workflows/" + workflowId);
+                metadata.put("verb", "delete");
+                doneOp.put("metadata", metadata);
+                doneOp.put("response", Map.of());
+            } else {
+                metadata.put("target", "projects/" + project + "/locations/" + location);
+                doneOp.put("metadata", metadata);
             }
             return jsonResponse(HttpStatus.OK, doneOp);
         } catch (Exception e) {
@@ -250,6 +272,22 @@ public class WorkflowsRestService {
             return errorResponse(404, e.getMessage());
         } catch (Exception e) {
             logger.error("Failed to delete workflow", e);
+            return errorResponse(500, e.getMessage());
+        }
+    }
+
+    @Post("/projects/{project}/locations/{location}/workflows/{workflow}:undelete")
+    public HttpResponse undeleteWorkflow(@Param String project,
+                                          @Param String location,
+                                          @Param String workflow) {
+        emulator.incrementRequestCount();
+        try {
+            Map<String, Object> result = service.undeleteWorkflow(project, location, workflow);
+            return jsonResponse(HttpStatus.OK, result);
+        } catch (IllegalArgumentException e) {
+            return errorResponse(404, e.getMessage());
+        } catch (Exception e) {
+            logger.error("Failed to undelete workflow", e);
             return errorResponse(500, e.getMessage());
         }
     }

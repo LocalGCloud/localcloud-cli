@@ -15,9 +15,10 @@ public class ExecutionContext {
     private volatile int callDepth = 0;
     private static final int MAX_CALL_DEPTH = 20;
     private final Deque<String> stepChain = new ArrayDeque<>();
+    private String currentRoutine = "main";
     private int stepCount = 0;
     private Map<String, Object> sharedVars;
-    private ReentrantLock sharedLock;
+    private java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock> sharedLocks;
     private volatile Thread executingThread;
     private volatile ExecutionContext parentContext;
 
@@ -48,6 +49,7 @@ public class ExecutionContext {
         this.callDepth = callDepth;
         this.stepChain.addAll(parentStepChain);
         this.parentContext = parent;
+        this.currentRoutine = parent.currentRoutine; // Propagate routine for correct error traces
     }
 
     /**
@@ -63,14 +65,14 @@ public class ExecutionContext {
 
     /**
      * Create a child context that shares specified variables with other children via a shared map.
-     * Reads and writes to shared variables are synchronized via the provided lock.
+     * Uses per-variable locking so independent shared variables don't block each other.
      */
     public ExecutionContext createChildContextWithShared(Map<String, Object> additionalVars,
                                                          Map<String, Object> sharedVars,
-                                                         ReentrantLock sharedLock) {
+                                                         java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock> sharedLocks) {
         ExecutionContext child = createChildContext(additionalVars);
         child.sharedVars = sharedVars;
-        child.sharedLock = sharedLock;
+        child.sharedLocks = sharedLocks;
         return child;
     }
 
@@ -78,8 +80,9 @@ public class ExecutionContext {
 
     public synchronized void setVariable(String name, Object value) {
         if (sharedVars != null && sharedVars.containsKey(name)) {
-            sharedLock.lock();
-            try { sharedVars.put(name, value); } finally { sharedLock.unlock(); }
+            java.util.concurrent.locks.ReentrantLock lock = getOrCreateSharedLock(name);
+            lock.lock();
+            try { sharedVars.put(name, value); } finally { lock.unlock(); }
             return;
         }
         scopeStack.peek().put(name, value);
@@ -87,8 +90,9 @@ public class ExecutionContext {
 
     public synchronized Object getVariable(String name) {
         if (sharedVars != null && sharedVars.containsKey(name)) {
-            sharedLock.lock();
-            try { return sharedVars.get(name); } finally { sharedLock.unlock(); }
+            java.util.concurrent.locks.ReentrantLock lock = getOrCreateSharedLock(name);
+            lock.lock();
+            try { return sharedVars.get(name); } finally { lock.unlock(); }
         }
         for (Map<String, Object> scope : scopeStack) {
             if (scope.containsKey(name)) return scope.get(name);
@@ -114,10 +118,18 @@ public class ExecutionContext {
             merged.putAll(scope);
         }
         if (sharedVars != null) {
-            sharedLock.lock();
-            try { merged.putAll(sharedVars); } finally { sharedLock.unlock(); }
+            // Snapshot shared vars with per-variable locking
+            for (String name : sharedVars.keySet()) {
+                java.util.concurrent.locks.ReentrantLock lock = getOrCreateSharedLock(name);
+                lock.lock();
+                try { merged.put(name, sharedVars.get(name)); } finally { lock.unlock(); }
+            }
         }
         return merged;
+    }
+
+    private java.util.concurrent.locks.ReentrantLock getOrCreateSharedLock(String name) {
+        return sharedLocks.computeIfAbsent(name, k -> new java.util.concurrent.locks.ReentrantLock());
     }
 
     // --- Scope management (for subworkflows) ---
@@ -179,6 +191,24 @@ public class ExecutionContext {
         entry.put("duration_ms", durationMs);
         entry.put("timestamp", System.currentTimeMillis());
         if (error != null) entry.put("error", error);
+        // Include snapshot of current variables for debugging (limited to top-level keys)
+        Map<String, Object> allVars = getAllVariables();
+        if (!allVars.isEmpty()) {
+            Map<String, Object> debug = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> var : allVars.entrySet()) {
+                Object value = var.getValue();
+                if (value instanceof String || value instanceof Number || value instanceof Boolean || value == null) {
+                    debug.put(var.getKey(), value);
+                } else if (value instanceof List<?> l) {
+                    debug.put(var.getKey(), "[List size=" + l.size() + "]");
+                } else if (value instanceof Map<?, ?> m) {
+                    debug.put(var.getKey(), "[Map size=" + m.size() + "]");
+                } else {
+                    debug.put(var.getKey(), String.valueOf(value));
+                }
+            }
+            entry.put("variables", debug);
+        }
         stepHistory.add(entry);
     }
 
@@ -199,4 +229,24 @@ public class ExecutionContext {
         Collections.reverse(result);
         return result;
     }
+
+    public synchronized List<Map<String, String>> getStructuredStepChain() {
+        List<String> reversed = new ArrayList<>(stepChain);
+        Collections.reverse(reversed);
+        // The routine for each step is inferred: steps in the main body use "main",
+        // but since we don't track per-step routine, we return the current chain
+        // with context from the call stack.
+        List<Map<String, String>> result = new ArrayList<>();
+        for (String step : reversed) {
+            Map<String, String> entry = new java.util.LinkedHashMap<>();
+            entry.put("step", step);
+            entry.put("routine", currentRoutine);
+            result.add(entry);
+        }
+        return result;
+    }
+
+    public void setCurrentRoutine(String routine) { this.currentRoutine = routine; }
+    public String getCurrentRoutine() { return currentRoutine; }
 }
+

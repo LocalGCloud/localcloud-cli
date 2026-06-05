@@ -267,7 +267,7 @@ class WorkflowsServiceImplTest {
 
         Map<String, Object> op = service.updateWorkflow(PROJECT, LOCATION, WF_ID, updatedYaml);
 
-        verify(store).updateWorkflow(PROJECT, LOCATION, WF_ID, updatedYaml);
+        verify(store).updateWorkflow(eq(PROJECT), eq(LOCATION), eq(WF_ID), eq(updatedYaml), isNull(), isNull(), isNull());
         assertTrue((Boolean) op.get("done"));
         String opName = (String) op.get("name");
         assertTrue(opName.contains("update-" + WF_ID));
@@ -286,7 +286,7 @@ class WorkflowsServiceImplTest {
 
         // null source means no update to source_contents — validation is skipped
         assertDoesNotThrow(() -> service.updateWorkflow(PROJECT, LOCATION, WF_ID, null));
-        verify(store).updateWorkflow(PROJECT, LOCATION, WF_ID, null);
+        verify(store).updateWorkflow(eq(PROJECT), eq(LOCATION), eq(WF_ID), isNull(), isNull(), isNull(), isNull());
     }
 
     @Test
@@ -324,7 +324,7 @@ class WorkflowsServiceImplTest {
 
     @Test
     void listWorkflows_emptyList_returnsEmpty() throws SQLException {
-        when(store.listWorkflows(PROJECT, LOCATION, 10)).thenReturn(Collections.emptyList());
+        when(store.listWorkflows(eq(PROJECT), eq(LOCATION), eq(10), isNull(), isNull(), isNull())).thenReturn(Collections.emptyList());
 
         List<Map<String, Object>> result = service.listWorkflows(PROJECT, LOCATION, 10);
         assertNotNull(result);
@@ -337,7 +337,7 @@ class WorkflowsServiceImplTest {
                 workflowRow("wf-1", 1),
                 workflowRow("wf-2", 3)
         );
-        when(store.listWorkflows(PROJECT, LOCATION, 100)).thenReturn(rows);
+        when(store.listWorkflows(eq(PROJECT), eq(LOCATION), eq(100), isNull(), isNull(), isNull())).thenReturn(rows);
 
         List<Map<String, Object>> result = service.listWorkflows(PROJECT, LOCATION, 100);
 
@@ -348,7 +348,7 @@ class WorkflowsServiceImplTest {
 
     @Test
     void listWorkflows_eachEntryHasRequiredFields() throws SQLException {
-        when(store.listWorkflows(PROJECT, LOCATION, 50)).thenReturn(List.of(workflowRow(WF_ID, 1)));
+        when(store.listWorkflows(eq(PROJECT), eq(LOCATION), eq(50), isNull(), isNull(), isNull())).thenReturn(List.of(workflowRow(WF_ID, 1)));
 
         List<Map<String, Object>> result = service.listWorkflows(PROJECT, LOCATION, 50);
 
@@ -524,7 +524,7 @@ class WorkflowsServiceImplTest {
 
     @Test
     void listExecutions_empty_returnsEmptyList() throws SQLException {
-        when(store.listExecutions(PROJECT, LOCATION, WF_ID, 10)).thenReturn(Collections.emptyList());
+        when(store.listExecutions(eq(PROJECT), eq(LOCATION), eq(WF_ID), eq(10), isNull(), isNull())).thenReturn(Collections.emptyList());
 
         List<Map<String, Object>> result = service.listExecutions(PROJECT, LOCATION, WF_ID, 10);
         assertNotNull(result);
@@ -537,7 +537,7 @@ class WorkflowsServiceImplTest {
                 executionRow("exec-a", "SUCCEEDED"),
                 executionRow("exec-b", "FAILED")
         );
-        when(store.listExecutions(PROJECT, LOCATION, WF_ID, 100)).thenReturn(rows);
+        when(store.listExecutions(eq(PROJECT), eq(LOCATION), eq(WF_ID), eq(100), isNull(), isNull())).thenReturn(rows);
 
         List<Map<String, Object>> result = service.listExecutions(PROJECT, LOCATION, WF_ID, 100);
 
@@ -548,7 +548,7 @@ class WorkflowsServiceImplTest {
 
     @Test
     void listExecutions_eachEntryHasNameAndState() throws SQLException {
-        when(store.listExecutions(PROJECT, LOCATION, WF_ID, 50))
+        when(store.listExecutions(eq(PROJECT), eq(LOCATION), eq(WF_ID), eq(50), isNull(), isNull()))
                 .thenReturn(List.of(executionRow("exec-c", "QUEUED")));
 
         List<Map<String, Object>> result = service.listExecutions(PROJECT, LOCATION, WF_ID, 50);

@@ -152,6 +152,154 @@ public class ConnectorRegistry {
         register("googleapis.container.v1.projects.locations.clusters.delete", "DELETE",
                 "http://localhost:8080/v1/projects/{project}/locations/{location}/clusters/{cluster}");
 
+        // ── Spanner (port 9010) ──────────────────────────────────────────
+        register("googleapis.spanner.v1.projects.instances.list", "GET",
+                "http://localhost:9010/v1/projects/{project}/instances");
+        register("googleapis.spanner.v1.projects.instances.get", "GET",
+                "http://localhost:9010/v1/projects/{project}/instances/{instance}");
+        register("googleapis.spanner.v1.projects.instances.create", "POST",
+                "http://localhost:9010/v1/projects/{project}/instances");
+        register("googleapis.spanner.v1.projects.instances.delete", "DELETE",
+                "http://localhost:9010/v1/projects/{project}/instances/{instance}");
+        register("googleapis.spanner.v1.projects.instances.databases.list", "GET",
+                "http://localhost:9010/v1/projects/{project}/instances/{instance}/databases");
+        register("googleapis.spanner.v1.projects.instances.databases.get", "GET",
+                "http://localhost:9010/v1/projects/{project}/instances/{instance}/databases/{database}");
+        register("googleapis.spanner.v1.projects.instances.databases.create", "POST",
+                "http://localhost:9010/v1/projects/{project}/instances/{instance}/databases");
+        register("googleapis.spanner.v1.projects.instances.databases.sessions.create", "POST",
+                "http://localhost:9010/v1/projects/{project}/instances/{instance}/databases/{database}/sessions");
+        register("googleapis.spanner.v1.projects.instances.databases.sessions.executeSql", "POST",
+                "http://localhost:9010/v1/projects/{project}/instances/{instance}/databases/{database}/sessions/{session}:executeSql");
+
+        // ── Bigtable (port 8087) ────────────────────────────────────────
+        register("googleapis.bigtableadmin.v2.projects.instances.list", "GET",
+                "http://localhost:8087/v2/projects/{project}/instances");
+        register("googleapis.bigtableadmin.v2.projects.instances.get", "GET",
+                "http://localhost:8087/v2/projects/{project}/instances/{instance}");
+        register("googleapis.bigtableadmin.v2.projects.instances.create", "POST",
+                "http://localhost:8087/v2/projects/{project}/instances");
+        register("googleapis.bigtableadmin.v2.projects.instances.tables.list", "GET",
+                "http://localhost:8087/v2/projects/{project}/instances/{instance}/tables");
+        register("googleapis.bigtableadmin.v2.projects.instances.tables.get", "GET",
+                "http://localhost:8087/v2/projects/{project}/instances/{instance}/tables/{table}");
+        register("googleapis.bigtableadmin.v2.projects.instances.tables.create", "POST",
+                "http://localhost:8087/v2/projects/{project}/instances/{instance}/tables");
+
+        // ── Cloud Scheduler (port 8080, gateway) ────────────────────────
+        register("googleapis.cloudscheduler.v1.projects.locations.jobs.list", "GET",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/jobs");
+        register("googleapis.cloudscheduler.v1.projects.locations.jobs.get", "GET",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/jobs/{job}");
+        register("googleapis.cloudscheduler.v1.projects.locations.jobs.create", "POST",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/jobs");
+        register("googleapis.cloudscheduler.v1.projects.locations.jobs.delete", "DELETE",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/jobs/{job}");
+        register("googleapis.cloudscheduler.v1.projects.locations.jobs.pause", "POST",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/jobs/{job}:pause");
+        register("googleapis.cloudscheduler.v1.projects.locations.jobs.resume", "POST",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/jobs/{job}:resume");
+        register("googleapis.cloudscheduler.v1.projects.locations.jobs.run", "POST",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/jobs/{job}:run");
+
+        // ── Cloud Functions (port 8080, gateway) ────────────────────────
+        register("googleapis.cloudfunctions.v2.projects.locations.functions.list", "GET",
+                "http://localhost:8080/v2/projects/{project}/locations/{location}/functions");
+        register("googleapis.cloudfunctions.v2.projects.locations.functions.get", "GET",
+                "http://localhost:8080/v2/projects/{project}/locations/{location}/functions/{function}");
+        register("googleapis.cloudfunctions.v2.projects.locations.functions.create", "POST",
+                "http://localhost:8080/v2/projects/{project}/locations/{location}/functions");
+        register("googleapis.cloudfunctions.v2.projects.locations.functions.delete", "DELETE",
+                "http://localhost:8080/v2/projects/{project}/locations/{location}/functions/{function}");
+        register("googleapis.cloudfunctions.v2.projects.locations.functions.call", "POST",
+                "http://localhost:8080/v2/projects/{project}/locations/{location}/functions/{function}:call");
+
+        // ── AlloyDB (port 8080, gateway) ────────────────────────────────
+        register("googleapis.alloydb.v1.projects.locations.clusters.list", "GET",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/clusters");
+        register("googleapis.alloydb.v1.projects.locations.clusters.get", "GET",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/clusters/{cluster}");
+        register("googleapis.alloydb.v1.projects.locations.clusters.create", "POST",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/clusters");
+        register("googleapis.alloydb.v1.projects.locations.clusters.delete", "DELETE",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/clusters/{cluster}");
+        register("googleapis.alloydb.v1.projects.locations.clusters.instances.list", "GET",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/clusters/{cluster}/instances");
+        register("googleapis.alloydb.v1.projects.locations.clusters.instances.get", "GET",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/clusters/{cluster}/instances/{instance}");
+
+        // ── Dataproc (port 8080, gateway) ───────────────────────────────
+        register("googleapis.dataproc.v1.projects.regions.clusters.list", "GET",
+                "http://localhost:8080/v1/projects/{project}/regions/{region}/clusters");
+        register("googleapis.dataproc.v1.projects.regions.clusters.get", "GET",
+                "http://localhost:8080/v1/projects/{project}/regions/{region}/clusters/{cluster}");
+        register("googleapis.dataproc.v1.projects.regions.clusters.create", "POST",
+                "http://localhost:8080/v1/projects/{project}/regions/{region}/clusters");
+        register("googleapis.dataproc.v1.projects.regions.clusters.delete", "DELETE",
+                "http://localhost:8080/v1/projects/{project}/regions/{region}/clusters/{cluster}");
+        register("googleapis.dataproc.v1.projects.regions.jobs.submit", "POST",
+                "http://localhost:8080/v1/projects/{project}/regions/{region}/jobs:submit");
+        register("googleapis.dataproc.v1.projects.regions.jobs.get", "GET",
+                "http://localhost:8080/v1/projects/{project}/regions/{region}/jobs/{job}");
+        register("googleapis.dataproc.v1.projects.regions.jobs.list", "GET",
+                "http://localhost:8080/v1/projects/{project}/regions/{region}/jobs");
+
+        // ── IAM (port 8080, gateway) ────────────────────────────────────
+        register("googleapis.iam.v1.projects.serviceAccounts.list", "GET",
+                "http://localhost:8080/v1/projects/{project}/serviceAccounts");
+        register("googleapis.iam.v1.projects.serviceAccounts.get", "GET",
+                "http://localhost:8080/v1/projects/{project}/serviceAccounts/{service_account}");
+        register("googleapis.iam.v1.projects.serviceAccounts.create", "POST",
+                "http://localhost:8080/v1/projects/{project}/serviceAccounts");
+        register("googleapis.iam.v1.projects.serviceAccounts.delete", "DELETE",
+                "http://localhost:8080/v1/projects/{project}/serviceAccounts/{service_account}");
+        register("googleapis.iam.v1.projects.serviceAccounts.keys.list", "GET",
+                "http://localhost:8080/v1/projects/{project}/serviceAccounts/{service_account}/keys");
+        register("googleapis.iam.v1.projects.serviceAccounts.keys.create", "POST",
+                "http://localhost:8080/v1/projects/{project}/serviceAccounts/{service_account}/keys");
+
+        // ── KMS (port 8088) ─────────────────────────────────────────────
+        register("googleapis.cloudkms.v1.projects.locations.keyRings.list", "GET",
+                "http://localhost:8088/v1/projects/{project}/locations/{location}/keyRings");
+        register("googleapis.cloudkms.v1.projects.locations.keyRings.get", "GET",
+                "http://localhost:8088/v1/projects/{project}/locations/{location}/keyRings/{key_ring}");
+        register("googleapis.cloudkms.v1.projects.locations.keyRings.create", "POST",
+                "http://localhost:8088/v1/projects/{project}/locations/{location}/keyRings");
+        register("googleapis.cloudkms.v1.projects.locations.keyRings.cryptoKeys.list", "GET",
+                "http://localhost:8088/v1/projects/{project}/locations/{location}/keyRings/{key_ring}/cryptoKeys");
+        register("googleapis.cloudkms.v1.projects.locations.keyRings.cryptoKeys.get", "GET",
+                "http://localhost:8088/v1/projects/{project}/locations/{location}/keyRings/{key_ring}/cryptoKeys/{crypto_key}");
+        register("googleapis.cloudkms.v1.projects.locations.keyRings.cryptoKeys.create", "POST",
+                "http://localhost:8088/v1/projects/{project}/locations/{location}/keyRings/{key_ring}/cryptoKeys");
+        register("googleapis.cloudkms.v1.projects.locations.keyRings.cryptoKeys.encrypt", "POST",
+                "http://localhost:8088/v1/projects/{project}/locations/{location}/keyRings/{key_ring}/cryptoKeys/{crypto_key}:encrypt");
+        register("googleapis.cloudkms.v1.projects.locations.keyRings.cryptoKeys.decrypt", "POST",
+                "http://localhost:8088/v1/projects/{project}/locations/{location}/keyRings/{key_ring}/cryptoKeys/{crypto_key}:decrypt");
+
+        // ── Vertex AI (port 8080, gateway) ──────────────────────────────
+        register("googleapis.aiplatform.v1.projects.locations.models.list", "GET",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/models");
+        register("googleapis.aiplatform.v1.projects.locations.models.get", "GET",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/models/{model}");
+        register("googleapis.aiplatform.v1.projects.locations.endpoints.predict", "POST",
+                "http://localhost:8080/v1/projects/{project}/locations/{location}/endpoints/{endpoint}:predict");
+
+        // ── Cloud SQL (port 8080, gateway) ──────────────────────────────
+        register("googleapis.sqladmin.v1.projects.instances.list", "GET",
+                "http://localhost:8080/v1/projects/{project}/instances");
+        register("googleapis.sqladmin.v1.projects.instances.get", "GET",
+                "http://localhost:8080/v1/projects/{project}/instances/{instance}");
+        register("googleapis.sqladmin.v1.projects.instances.create", "POST",
+                "http://localhost:8080/v1/projects/{project}/instances");
+        register("googleapis.sqladmin.v1.projects.instances.delete", "DELETE",
+                "http://localhost:8080/v1/projects/{project}/instances/{instance}");
+        register("googleapis.sqladmin.v1.projects.instances.databases.list", "GET",
+                "http://localhost:8080/v1/projects/{project}/instances/{instance}/databases");
+        register("googleapis.sqladmin.v1.projects.instances.databases.get", "GET",
+                "http://localhost:8080/v1/projects/{project}/instances/{instance}/databases/{database}");
+        register("googleapis.sqladmin.v1.projects.instances.databases.create", "POST",
+                "http://localhost:8080/v1/projects/{project}/instances/{instance}/databases");
+
         // Workflows management/execution connectors back into the local Workflows facade
         register("googleapis.workflows.v1.projects.locations.workflows.list", "GET",
                 "http://localhost:8080/v1/projects/{project}/locations/{location}/workflows");

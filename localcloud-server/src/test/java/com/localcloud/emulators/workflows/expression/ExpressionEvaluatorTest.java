@@ -340,7 +340,8 @@ class ExpressionEvaluatorTest {
 
     @Test
     void testExpressionTooLong() {
-        String longExpr = "x " + "+ 1 ".repeat(200); // > 400 chars
+        // New limit is 2048 chars
+        String longExpr = "x " + "+ 1 ".repeat(600); // > 2048 chars
         assertThrows(ExpressionException.class, () -> eval(longExpr));
     }
 

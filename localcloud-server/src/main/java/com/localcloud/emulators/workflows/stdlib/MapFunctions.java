@@ -44,6 +44,18 @@ public class MapFunctions {
             if (args.size() < 2) throw new RuntimeException("map.merge_nested requires 2 maps");
             return mergeNested((Map<String, Object>) args.get(0), (Map<String, Object>) args.get(1));
         });
+
+        registry.register("map.contains_key", args -> {
+            if (args.size() < 2) throw new RuntimeException("map.contains_key requires (map, key)");
+            Map<String, Object> map = (Map<String, Object>) args.get(0);
+            return map.containsKey(String.valueOf(args.get(1)));
+        });
+
+        registry.register("map.flatten", args -> {
+            if (args.isEmpty()) throw new RuntimeException("map.flatten requires a map");
+            String separator = args.size() >= 2 ? String.valueOf(args.get(1)) : ".";
+            return flatten((Map<String, Object>) args.get(0), separator);
+        });
     }
 
     @SuppressWarnings("unchecked")
@@ -60,5 +72,28 @@ public class MapFunctions {
             }
         }
         return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> flatten(Map<String, Object> input, String separator) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        flattenHelper("", input, separator, result);
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void flattenHelper(String prefix, Map<String, Object> input, String separator, Map<String, Object> result) {
+        for (Map.Entry<String, Object> entry : input.entrySet()) {
+            String key = prefix.isEmpty() ? entry.getKey() : prefix + separator + entry.getKey();
+            Object value = entry.getValue();
+            if (value instanceof Map<?, ?> nestedMap) {
+                flattenHelper(key, (Map<String, Object>) nestedMap, separator, result);
+            } else if (value instanceof List<?> list) {
+                // Preserve lists and other non-Map values under the flattened key
+                result.put(key, list);
+            } else {
+                result.put(key, value);
+            }
+        }
     }
 }

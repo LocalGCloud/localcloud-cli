@@ -34,6 +34,7 @@ public class ExecutionsGrpcServiceImpl extends ExecutionsGrpc.ExecutionsImplBase
                                 StreamObserver<Execution> responseObserver) {
         try {
             String parent = request.getParent(); // projects/{p}/locations/{l}/workflows/{w}
+            WorkflowsGrpcServiceImpl.validateExecutionParent(parent, "parent");
             String[] parts = parent.split("/");
             String projectId = parts[1];
             String locationId = parts[3];
@@ -109,13 +110,22 @@ public class ExecutionsGrpcServiceImpl extends ExecutionsGrpc.ExecutionsImplBase
             String projectId = parts[1];
             String locationId = parts[3];
             String workflowId = parts[5];
-            int pageSize = request.getPageSize() > 0 ? request.getPageSize() : 100;
+            int pageSize = request.getPageSize() > 0 ? Math.min(request.getPageSize(), 1000) : 100;
+            String pageToken = request.getPageToken().isEmpty() ? null : request.getPageToken();
+            String filter = request.getFilter().isEmpty() ? null : request.getFilter();
 
-            List<Map<String, Object>> executions = service.listExecutions(projectId, locationId, workflowId, pageSize);
+            List<Map<String, Object>> executions = service.listExecutions(projectId, locationId, workflowId,
+                    pageSize, pageToken, filter);
 
             ListExecutionsResponse.Builder responseBuilder = ListExecutionsResponse.newBuilder();
             for (Map<String, Object> exec : executions) {
                 responseBuilder.addExecutions(mapToExecutionProto(exec));
+            }
+
+            // Compute nextPageToken
+            if (executions.size() >= pageSize) {
+                int offset = pageToken != null ? Integer.parseInt(pageToken.replaceAll("[^0-9]", "")) : 0;
+                responseBuilder.setNextPageToken("cursor-" + (offset + pageSize));
             }
 
             responseObserver.onNext(responseBuilder.build());

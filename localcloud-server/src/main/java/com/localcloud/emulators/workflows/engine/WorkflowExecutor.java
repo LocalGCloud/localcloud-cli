@@ -51,7 +51,14 @@ public class WorkflowExecutor {
             throw new WorkflowException("NotFound", "Subworkflow not found: " + name);
         }
 
+        // Validate params against subworkflow parameter declarations (skip for main — its params come from execution args)
+        if (!"main".equals(name)) {
+            validateSubworkflowParams(name, sub.getParams(), params);
+        }
+
         boolean isMain = "main".equals(name);
+        String previousRoutine = context.getCurrentRoutine();
+        context.setCurrentRoutine(name);
         if (!isMain) {
             context.pushScope(params);
         } else if (params != null && !params.isEmpty()) {
@@ -69,6 +76,7 @@ public class WorkflowExecutor {
             if (!isMain) {
                 context.popScope();
             }
+            context.setCurrentRoutine(previousRoutine);
         }
     }
 
@@ -154,8 +162,8 @@ public class WorkflowExecutor {
                 default -> logger.warn("Unknown step type: {} in step {}", step.getType(), step.getName());
             }
         } catch (WorkflowException e) {
-            if (e.getWorkflowStackTrace() == null) {
-                e.setWorkflowStackTrace(context.getStepChain());
+            if (e.getStructuredStackTrace() == null) {
+                e.setStructuredStackTrace(context.getStructuredStepChain());
             }
             throw e;
         } finally {
@@ -323,10 +331,10 @@ public class WorkflowExecutor {
             : Collections.emptyList();
 
         Map<String, Object> sharedVars = null;
-        java.util.concurrent.locks.ReentrantLock sharedLock = null;
+        java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock> sharedLocks = null;
         if (!sharedVarNames.isEmpty()) {
             sharedVars = new java.util.concurrent.ConcurrentHashMap<>();
-            sharedLock = new java.util.concurrent.locks.ReentrantLock();
+            sharedLocks = new java.util.concurrent.ConcurrentHashMap<>();
             for (String name : sharedVarNames) {
                 Object val = context.getVariable(name);
                 if (val != null) sharedVars.put(name, val);
@@ -338,6 +346,7 @@ public class WorkflowExecutor {
         if (parallelConfig.containsKey("for")) {
             Map<String, Object> forConfig = (Map<String, Object>) parallelConfig.get("for");
             String valueVar = String.valueOf(forConfig.get("value"));
+            String indexVar = forConfig.containsKey("index") ? String.valueOf(forConfig.get("index")) : null;
             Object inObj = evaluateValue(forConfig.get("in"));
             List<?> items = inObj instanceof List<?> list ? list : List.of();
 
@@ -352,30 +361,30 @@ public class WorkflowExecutor {
                 Semaphore semaphore = new Semaphore(concurrencyLimit);
                 final List<WorkflowDefinition.StepDef> finalBodySteps = bodySteps;
 
-                final var finalSharedLock = sharedLock;
+                final var finalSharedVars = sharedVars;
+                final var finalSharedLocks = sharedLocks;
+                int idx = 0;
                 for (Object item : items) {
                     try { semaphore.acquire(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
-                    // Each parallel task gets its own child context (with shared vars if declared)
-                    ExecutionContext childCtx = sharedVars != null
-                        ? context.createChildContextWithShared(Map.of(valueVar, item), sharedVars, sharedLock)
-                        : context.createChildContext(Map.of(valueVar, item));
+                    // Build child context vars including loop value and optionally index
+                    Map<String, Object> childVars = new LinkedHashMap<>();
+                    childVars.put(valueVar, item);
+                    if (indexVar != null) childVars.put(indexVar, idx);
+                    // Each parallel task gets its own child context with per-variable shared locks
+                    ExecutionContext childCtx = finalSharedVars != null
+                        ? context.createChildContextWithShared(childVars, finalSharedVars, finalSharedLocks)
+                        : context.createChildContext(childVars);
                     WorkflowExecutor childExecutor = new WorkflowExecutor(definition, childCtx, stdlib);
                     futures.add(executor.submit(() -> {
                         ConnectorRegistry.setCurrentContext(childCtx);
                         try {
-                            if (finalSharedLock != null) {
-                                // Serialize execution of steps that access shared variables
-                                // to prevent read-modify-write races on shared state
-                                finalSharedLock.lock();
-                                try { childExecutor.executeSteps(finalBodySteps); } finally { finalSharedLock.unlock(); }
-                            } else {
-                                childExecutor.executeSteps(finalBodySteps);
-                            }
+                            childExecutor.executeSteps(finalBodySteps);
                         } finally {
                             ConnectorRegistry.clearCurrentContext();
                             semaphore.release();
                         }
                     }));
+                    idx++;
                 }
 
                 // Wait for all
@@ -404,26 +413,22 @@ public class WorkflowExecutor {
             try {
                 List<Future<?>> futures = new ArrayList<>();
 
-                final var finalSharedLock2 = sharedLock;
+                final var finalSharedVars2 = sharedVars;
+                final var finalSharedLocks2 = sharedLocks;
                 for (Object branch : branches) {
                     if (branch instanceof Map<?, ?> branchMap) {
                         Object stepsObj = ((Map<?, ?>) branchMap).values().iterator().next();
                         if (stepsObj instanceof Map<?, ?> branchBody && branchBody.containsKey("steps")) {
                             List<WorkflowDefinition.StepDef> branchSteps = parseInlineSteps((List<?>) branchBody.get("steps"));
-                            // Each branch gets its own child context (with shared vars if declared)
-                            ExecutionContext childCtx = sharedVars != null
-                                ? context.createChildContextWithShared(Map.of(), sharedVars, sharedLock)
+                            // Each branch gets its own child context with per-variable shared locks
+                            ExecutionContext childCtx = finalSharedVars2 != null
+                                ? context.createChildContextWithShared(Map.of(), finalSharedVars2, finalSharedLocks2)
                                 : context.createChildContext(Map.of());
                             WorkflowExecutor childExecutor = new WorkflowExecutor(definition, childCtx, stdlib);
                             futures.add(executor.submit(() -> {
                                 ConnectorRegistry.setCurrentContext(childCtx);
                                 try {
-                                    if (finalSharedLock2 != null) {
-                                        finalSharedLock2.lock();
-                                        try { childExecutor.executeSteps(branchSteps); } finally { finalSharedLock2.unlock(); }
-                                    } else {
-                                        childExecutor.executeSteps(branchSteps);
-                                    }
+                                    childExecutor.executeSteps(branchSteps);
                                 } finally {
                                     ConnectorRegistry.clearCurrentContext();
                                 }
@@ -574,6 +579,23 @@ public class WorkflowExecutor {
 
     private ExpressionEvaluator createEvaluator() {
         return new ExpressionEvaluator(context.getAllVariables(), stdlib.getAll());
+    }
+
+    private void validateSubworkflowParams(String name, List<String> declaredParams, Map<String, Object> providedArgs) {
+        if (declaredParams == null || declaredParams.isEmpty()) return;
+        if (providedArgs == null) providedArgs = Collections.emptyMap();
+        for (String param : declaredParams) {
+            if (!providedArgs.containsKey(param)) {
+                throw new WorkflowException("MissingArgument",
+                        "Subworkflow '" + name + "' requires parameter '" + param + "' but it was not provided");
+            }
+        }
+        // Warn about extra args that aren't declared params
+        for (String key : providedArgs.keySet()) {
+            if (!declaredParams.contains(key)) {
+                logger.warn("Subworkflow '{}' received unexpected argument '{}'", name, key);
+            }
+        }
     }
 
     private boolean isTruthy(Object val) {

@@ -27,6 +27,43 @@ public class WorkflowsGrpcServiceImpl extends WorkflowsGrpc.WorkflowsImplBase {
     private static final ObjectMapper mapper = new ObjectMapper();
     private final WorkflowsServiceImpl service;
 
+    private static final java.util.regex.Pattern WORKFLOW_NAME_PATTERN =
+            java.util.regex.Pattern.compile("^projects/[a-zA-Z0-9_.-]+/locations/[a-zA-Z0-9_.-]+/workflows/[a-zA-Z0-9_.-]+$");
+    private static final java.util.regex.Pattern PARENT_PATTERN =
+            java.util.regex.Pattern.compile("^projects/[a-zA-Z0-9_.-]+/locations/[a-zA-Z0-9_.-]+$");
+    private static final java.util.regex.Pattern EXECUTION_PARENT_PATTERN =
+            java.util.regex.Pattern.compile("^projects/[a-zA-Z0-9_.-]+/locations/[a-zA-Z0-9_.-]+/workflows/[a-zA-Z0-9_.-]+$");
+    private static final java.util.Set<String> VALID_ORDER_BY_FIELDS = java.util.Set.of(
+            "create_time", "createTime", "update_time", "updateTime", "name");
+
+    static void validateWorkflowName(String resourceName, String paramName) {
+        if (resourceName == null || !WORKFLOW_NAME_PATTERN.matcher(resourceName).matches()) {
+            throw new IllegalArgumentException(paramName + " must match pattern: projects/{project}/locations/{location}/workflows/{workflow}");
+        }
+    }
+
+    static void validateParent(String parent, String paramName) {
+        if (parent == null || !PARENT_PATTERN.matcher(parent).matches()) {
+            throw new IllegalArgumentException(paramName + " must match pattern: projects/{project}/locations/{location}");
+        }
+    }
+
+    static void validateExecutionParent(String parent, String paramName) {
+        if (parent == null || !EXECUTION_PARENT_PATTERN.matcher(parent).matches()) {
+            throw new IllegalArgumentException(paramName + " must match pattern: projects/{project}/locations/{location}/workflows/{workflow}");
+        }
+    }
+
+    static void validateOrderBy(String orderBy) {
+        if (orderBy != null && !orderBy.isBlank()) {
+            String field = orderBy.trim().split("\\s+")[0];
+            if (!VALID_ORDER_BY_FIELDS.contains(field)) {
+                throw new IllegalArgumentException("Invalid order_by field: " + field +
+                        ". Supported: " + VALID_ORDER_BY_FIELDS);
+            }
+        }
+    }
+
     public WorkflowsGrpcServiceImpl(WorkflowsServiceImpl service) {
         this.service = service;
     }
@@ -36,6 +73,7 @@ public class WorkflowsGrpcServiceImpl extends WorkflowsGrpc.WorkflowsImplBase {
                                StreamObserver<Operation> responseObserver) {
         try {
             String parent = request.getParent(); // projects/{p}/locations/{l}
+            validateParent(parent, "parent");
             String[] parts = parent.split("/");
             String projectId = parts[1];
             String locationId = parts[3];
@@ -85,6 +123,7 @@ public class WorkflowsGrpcServiceImpl extends WorkflowsGrpc.WorkflowsImplBase {
                             StreamObserver<Workflow> responseObserver) {
         try {
             String name = request.getName(); // projects/{p}/locations/{l}/workflows/{w}
+            validateWorkflowName(name, "name");
             String[] parts = name.split("/");
             String projectId = parts[1];
             String locationId = parts[3];
@@ -141,16 +180,28 @@ public class WorkflowsGrpcServiceImpl extends WorkflowsGrpc.WorkflowsImplBase {
                               StreamObserver<ListWorkflowsResponse> responseObserver) {
         try {
             String parent = request.getParent(); // projects/{p}/locations/{l}
+            validateParent(parent, "parent");
             String[] parts = parent.split("/");
             String projectId = parts[1];
             String locationId = parts[3];
-            int pageSize = request.getPageSize() > 0 ? request.getPageSize() : 100;
+            int pageSize = request.getPageSize() > 0 ? Math.min(request.getPageSize(), 1000) : 100;
+            String pageToken = request.getPageToken().isEmpty() ? null : request.getPageToken();
+            String filter = request.getFilter().isEmpty() ? null : request.getFilter();
+            String orderBy = request.getOrderBy().isEmpty() ? null : request.getOrderBy();
+            validateOrderBy(orderBy);
 
-            List<Map<String, Object>> workflows = service.listWorkflows(projectId, locationId, pageSize);
+            List<Map<String, Object>> workflows = service.listWorkflows(projectId, locationId, pageSize,
+                    pageToken, filter, orderBy);
 
             ListWorkflowsResponse.Builder responseBuilder = ListWorkflowsResponse.newBuilder();
             for (Map<String, Object> wf : workflows) {
                 responseBuilder.addWorkflows(mapToWorkflowProto(wf));
+            }
+
+            // Compute nextPageToken
+            if (workflows.size() >= pageSize) {
+                int offset = pageToken != null ? Integer.parseInt(pageToken.replaceAll("[^0-9]", "")) : 0;
+                responseBuilder.setNextPageToken("cursor-" + (offset + pageSize));
             }
 
             responseObserver.onNext(responseBuilder.build());
@@ -201,9 +252,19 @@ public class WorkflowsGrpcServiceImpl extends WorkflowsGrpc.WorkflowsImplBase {
             String workflowId = parts[5];
 
             String sourceContents = wfProto.getSourceContents();
+            String labelsJson = toJsonObjectString(wfProto.getLabelsMap());
+            String description = wfProto.getDescription();
+            String serviceAccount = wfProto.getServiceAccount();
+
+            // Parse updateMask from FieldMask
+            List<String> updateMask = request.hasUpdateMask()
+                    ? request.getUpdateMask().getPathsList()
+                    : null;
 
             Map<String, Object> result = service.updateWorkflow(projectId, locationId, workflowId,
-                    sourceContents.isEmpty() ? null : sourceContents);
+                    sourceContents.isEmpty() && (updateMask == null || !updateMask.contains("source_contents"))
+                            ? null : sourceContents,
+                    labelsJson, description, serviceAccount, updateMask);
 
             @SuppressWarnings("unchecked")
             Map<String, Object> wfData = (Map<String, Object>) result.get("response");

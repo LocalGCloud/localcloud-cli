@@ -26,6 +26,26 @@ public class WorkflowsEmulator extends AbstractEmulator {
     @Override protected void doStart() throws Exception {
         logger.info("Workflows emulator initialized");
 
+        // Recover orphaned executions from previous instance
+        try {
+            int recovered = store.sweepOrphanedExecutions();
+            if (recovered > 0) {
+                logger.info("Recovered {} orphaned executions (marked as FAILED after restart)", recovered);
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to sweep orphaned executions: {}", e.getMessage());
+        }
+
+        // Purge soft-deleted workflows older than 30 days
+        try {
+            int purged = store.purgeDeletedWorkflows();
+            if (purged > 0) {
+                logger.info("Purged {} soft-deleted workflows (older than 30 days)", purged);
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to purge deleted workflows: {}", e.getMessage());
+        }
+
         String workflowsDir = System.getenv("LOCALCLOUD_WORKFLOWS_DIR");
         if (workflowsDir != null && !workflowsDir.isBlank()) {
             Path dir = Path.of(workflowsDir);

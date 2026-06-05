@@ -102,5 +102,47 @@ public class TextFunctions {
             if (input instanceof byte[] bytes) return new String(bytes, StandardCharsets.UTF_8);
             return String.valueOf(input);
         });
+
+        registry.register("text.replace_first", args -> {
+            if (args.size() < 3) throw new RuntimeException("text.replace_first requires (string, regex, replacement)");
+            Pattern p = safeCompile(String.valueOf(args.get(1)));
+            try {
+                return p.matcher(String.valueOf(args.get(0))).replaceFirst(String.valueOf(args.get(2)));
+            } catch (Exception e) {
+                throw new RuntimeException("text.replace_first failed: " + e.getMessage());
+            }
+        });
+
+        registry.register("text.trim", args -> {
+            if (args.isEmpty()) throw new RuntimeException("text.trim requires a string");
+            return String.valueOf(args.get(0)).trim();
+        });
+
+        registry.register("text.starts_with", args -> {
+            if (args.size() < 2) throw new RuntimeException("text.starts_with requires (string, prefix)");
+            return String.valueOf(args.get(0)).startsWith(String.valueOf(args.get(1)));
+        });
+
+        registry.register("text.ends_with", args -> {
+            if (args.size() < 2) throw new RuntimeException("text.ends_with requires (string, suffix)");
+            return String.valueOf(args.get(0)).endsWith(String.valueOf(args.get(1)));
+        });
+
+        registry.register("text.contains", args -> {
+            if (args.size() < 2) throw new RuntimeException("text.contains requires (string, substring)");
+            return String.valueOf(args.get(0)).contains(String.valueOf(args.get(1)));
+        });
+
+        registry.register("text.format", args -> {
+            if (args.isEmpty()) throw new RuntimeException("text.format requires at least a format string");
+            String format = String.valueOf(args.get(0));
+            Object[] formatArgs = new Object[args.size() - 1];
+            for (int i = 1; i < args.size(); i++) formatArgs[i - 1] = args.get(i);
+            try {
+                return String.format(format, formatArgs);
+            } catch (java.util.IllegalFormatException e) {
+                throw new RuntimeException("text.format failed: " + e.getMessage());
+            }
+        });
     }
 }
