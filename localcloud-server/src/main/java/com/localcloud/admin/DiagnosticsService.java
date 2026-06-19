@@ -84,6 +84,55 @@ public class DiagnosticsService {
         }
     }
 
+    @Get("/compatibility")
+    public HttpResponse compatibility() {
+        try {
+            String json = mapper().writerWithDefaultPrettyPrinter()
+                    .writeValueAsString(CapabilityCatalog.compatibility(config));
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
+        } catch (Exception e) {
+            logger.error("Error generating compatibility registry", e);
+            return errorResponse(e);
+        }
+    }
+
+    @Get("/compatibility/schema")
+    public HttpResponse compatibilitySchema() {
+        try {
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, CapabilityCatalog.schemaJson());
+        } catch (Exception e) {
+            logger.error("Error reading compatibility schema", e);
+            return errorResponse(e);
+        }
+    }
+
+    @Get("/compatibility/evidence")
+    public HttpResponse compatibilityEvidence() {
+        try {
+            String json = mapper().writerWithDefaultPrettyPrinter()
+                    .writeValueAsString(CapabilityCatalog.evidence(config));
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON, json);
+        } catch (Exception e) {
+            logger.error("Error generating compatibility evidence", e);
+            return errorResponse(e);
+        }
+    }
+
+    @Get("/compatibility/warnings")
+    public HttpResponse compatibilityWarnings(ServiceRequestContext ctx) {
+        try {
+            QueryParams params = ctx.queryParams();
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("schema_version", CompatibilityRegistry.SCHEMA_VERSION);
+            response.put("warnings", CapabilityCatalog.warnings(config, params.get("service"), params.get("surface")));
+            return HttpResponse.of(HttpStatus.OK, MediaType.JSON,
+                    mapper().writerWithDefaultPrettyPrinter().writeValueAsString(response));
+        } catch (Exception e) {
+            logger.error("Error generating compatibility warnings", e);
+            return errorResponse(e);
+        }
+    }
+
     @Get("/diagnostics")
     public HttpResponse diagnostics(ServiceRequestContext ctx) {
         try {
@@ -108,6 +157,8 @@ public class DiagnosticsService {
                 writeJsonEntry(zip, "diagnostics.json", diagnosticsBundle(limit));
                 writeJsonEntry(zip, "coverage.json", CapabilityCatalog.coverage(config));
                 writeJsonEntry(zip, "capabilities.json", CapabilityCatalog.capabilities(config));
+                writeJsonEntry(zip, "compatibility.json", CapabilityCatalog.compatibility(config));
+                writeJsonEntry(zip, "compatibility-evidence.json", CapabilityCatalog.evidence(config));
                 writeJsonEntry(zip, "requests.json", Map.of("requests", requestSnapshot(limit)));
                 writeJsonEntry(zip, "services.json", Map.of("services", serviceConfigSnapshot()));
                 writeJsonEntry(zip, "faults.json", Map.of("faults", faultInjectionRegistry.list()));

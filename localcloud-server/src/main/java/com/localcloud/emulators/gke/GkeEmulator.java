@@ -2,6 +2,7 @@ package com.localcloud.emulators.gke;
 
 import com.google.container.v1.*;
 import com.google.protobuf.Timestamp;
+import com.localcloud.admin.UnsupportedOperationResponses;
 import com.localcloud.emulators.AbstractEmulator;
 import com.localcloud.persistence.PostgresDataSource;
 
@@ -285,6 +286,21 @@ public class GkeEmulator extends AbstractEmulator {
 
             responseObserver.onNext(config);
             responseObserver.onCompleted();
+        }
+
+        @Override
+        public void createNodePool(CreateNodePoolRequest request, StreamObserver<Operation> responseObserver) {
+            incrementRequestCount();
+            UnsupportedOperationResponses.grpc(responseObserver, "gke", "nodepools.create",
+                    "Use cluster metadata CRUD until host-runtime GKE support is enabled.");
+        }
+
+        @Override
+        public void setNodePoolAutoscaling(SetNodePoolAutoscalingRequest request,
+                                           StreamObserver<Operation> responseObserver) {
+            incrementRequestCount();
+            UnsupportedOperationResponses.grpc(responseObserver, "gke", "nodepools.autoscaling",
+                    "Use cluster metadata CRUD until host-runtime GKE support is enabled.");
         }
     }
 }

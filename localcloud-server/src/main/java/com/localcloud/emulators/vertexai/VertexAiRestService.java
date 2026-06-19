@@ -10,6 +10,7 @@ import com.linecorp.armeria.common.MediaType;
 import com.linecorp.armeria.server.annotation.Get;
 import com.linecorp.armeria.server.annotation.Param;
 import com.linecorp.armeria.server.annotation.Post;
+import com.localcloud.admin.UnsupportedOperationResponses;
 import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 
 import java.nio.charset.StandardCharsets;
@@ -56,6 +57,13 @@ public class VertexAiRestService {
         } catch (Exception e) {
             return error(HttpStatus.INTERNAL_SERVER_ERROR, e.getMessage());
         }
+    }
+
+    @Post("/projects/{project}/locations/{location}/batchPredictionJobs")
+    public HttpResponse createBatchPredictionJob(@Param String project, @Param String location, String body) {
+        emulator.incrementRequestCount();
+        return UnsupportedOperationResponses.rest("vertexai", "batchPredictionJobs.create", "rest",
+                "Use deterministic generateContent/embedContent stubs for local tests.");
     }
 
     @Post("/projects/{project}/locations/{location}/publishers/{publisher}/models/{model}:streamGenerateContent")

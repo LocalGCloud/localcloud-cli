@@ -1,0 +1,21 @@
+service_id: dataproc
+coverage_status: partial
+operations:
+  - id: clusters-jobs.lifecycle
+    operation: clusters CRUD and jobs submit/list/get
+    status: partial
+    notes: Metadata plus local spark-submit execution when Spark is available.
+terraform_resources:
+  status: supported
+  resources: [google_dataproc_cluster]
+  evidence: [manual:terraform-compat-2026-05-31]
+gcloud_paths:
+  - id: gcloud.dataproc
+    status: partial
+console_paths:
+  - id: data-browser
+    status: partial
+state: { source: PostgreSQL-backed facade, seed: planned, reset: planned, export: planned, snapshot: planned }
+limitations:
+  - Autoscaling and YARN/Kubernetes cluster mode are not complete.
+ci_recommendation: Requires Spark for job execution; otherwise use metadata-only tests.

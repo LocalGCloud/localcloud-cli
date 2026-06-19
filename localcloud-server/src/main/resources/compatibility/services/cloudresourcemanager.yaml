@@ -1,0 +1,22 @@
+service_id: cloudresourcemanager
+coverage_status: partial
+operations:
+  - id: projects.lifecycle
+    operation: projects.create/list/get/update/delete
+    status: supported
+    evidence: [manual:terraform-compat-2026-05-31, terraform:api-compat-script]
+terraform_resources:
+  status: supported
+  resources: [google_project]
+  evidence: [manual:terraform-compat-2026-05-31]
+gcloud_paths:
+  - id: gcloud.projects
+    status: partial
+console_paths:
+  - id: project-switcher
+    status: supported
+    evidence: [manual:service-status-2026-05-26]
+state: { source: PostgreSQL-backed facade, seed: planned, reset: available, export: planned, snapshot: planned }
+limitations:
+  - Organization/folder hierarchy is not modeled.
+ci_recommendation: Use for local project isolation and Terraform project tests.

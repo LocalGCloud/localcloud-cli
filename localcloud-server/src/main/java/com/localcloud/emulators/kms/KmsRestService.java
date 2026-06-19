@@ -12,6 +12,7 @@ import com.linecorp.armeria.server.annotation.Delete;
 import com.linecorp.armeria.server.annotation.Get;
 import com.linecorp.armeria.server.annotation.Param;
 import com.linecorp.armeria.server.annotation.Post;
+import com.localcloud.admin.UnsupportedOperationResponses;
 import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 
 import javax.crypto.Cipher;
@@ -119,6 +120,14 @@ public class KmsRestService {
         } catch (Exception e) {
             return exception(e, "create crypto key");
         }
+    }
+
+    @Post("/projects/{project}/locations/{location}/keyRings/{keyRing}/importJobs")
+    public HttpResponse createImportJob(@Param String project, @Param String location,
+                                        @Param String keyRing, String body) {
+        emulator.incrementRequestCount();
+        return UnsupportedOperationResponses.rest("kms", "importJobs.create", "rest",
+                "Use local key rings and crypto keys without import jobs.");
     }
 
     @Get("/projects/{project}/locations/{location}/keyRings/{keyRing}/cryptoKeys")

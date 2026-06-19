@@ -1,0 +1,36 @@
+evidence:
+  - id: manual:service-status-2026-05-26
+    type: manual
+    date: 2026-05-26
+    source: docs/SERVICE_STATUS.md
+    command: Review service status matrix against services.yaml and current docs.
+    expected: Service summaries match documented coverage and limitations.
+  - id: manual:terraform-compat-2026-05-31
+    type: manual
+    date: 2026-05-31
+    source: terraform/COMPATIBILITY.md
+    command: Review verified Terraform resource list.
+    expected: Listed resources have documented E2E apply evidence.
+  - id: manual:sql-warnings-2026-04-20
+    type: manual
+    date: 2026-04-20
+    source: openspec/changes/sql-compatibility-warnings/tasks.md
+    command: Review confirmed unsupported SQL warning map.
+    expected: BigQuery and Spanner warning keywords are known unsupported paths.
+  - id: unit:CapabilityCatalogTest
+    type: unit_test
+    source: localcloud-server/src/test/java/com/localcloud/admin/CapabilityCatalogTest.java
+  - id: unit:DiagnosticsServiceTest
+    type: unit_test
+    source: localcloud-server/src/test/java/com/localcloud/admin/DiagnosticsServiceTest.java
+  - id: console:build
+    type: console_build
+    source: localcloud-console/build.js
+    command: cd localcloud-console && npm run build
+    expected: Console bundle builds with compatibility warning fallback and API warning shape.
+  - id: terraform:api-compat-script
+    type: terraform_test
+    source: terraform/test-api-compat.sh
+  - id: terraform:e2e-script
+    type: terraform_test
+    source: terraform/examples/terraform-test.sh

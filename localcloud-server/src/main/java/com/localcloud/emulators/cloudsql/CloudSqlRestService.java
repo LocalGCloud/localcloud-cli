@@ -13,6 +13,7 @@ import com.linecorp.armeria.server.annotation.Param;
 import com.linecorp.armeria.server.annotation.Post;
 import com.linecorp.armeria.server.annotation.Patch;
 import com.linecorp.armeria.server.annotation.Put;
+import com.localcloud.admin.UnsupportedOperationResponses;
 import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 
 import java.util.Map;
@@ -117,6 +118,13 @@ public class CloudSqlRestService {
         } catch (Exception e) {
             return exception(e, "get instance");
         }
+    }
+
+    @Post("/projects/{project}/instances/{instance}/backupRuns")
+    public HttpResponse insertBackupRun(@Param String project, @Param String instance, String body) {
+        emulator.incrementRequestCount();
+        return UnsupportedOperationResponses.rest("cloudsql", "backupRuns.insert", "rest",
+                "Use metadata CRUD and PostgreSQL data-plane tests; backups are not emulated.");
     }
 
     @Delete("/projects/{project}/instances/{instance}")

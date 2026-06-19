@@ -1,0 +1,21 @@
+service_id: alloydb
+coverage_status: partial
+operations:
+  - id: cluster-instance.lifecycle
+    operation: clusters/instances.create/list/get/delete
+    status: partial
+    notes: Metadata and PostgreSQL-compatible connection info exist.
+terraform_resources:
+  status: supported
+  resources: [google_alloydb_cluster, google_alloydb_instance]
+  evidence: [manual:terraform-compat-2026-05-31]
+gcloud_paths:
+  - id: gcloud.alloydb
+    status: partial
+console_paths:
+  - id: data-browser
+    status: partial
+state: { source: PostgreSQL-backed facade, seed: planned, reset: planned, export: planned, snapshot: planned }
+limitations:
+  - Backup/restore, PSC, and cross-region replication are not complete.
+ci_recommendation: Use for metadata and local PostgreSQL connection workflows.

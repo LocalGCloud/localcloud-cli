@@ -1,0 +1,54 @@
+service_id: bigquery
+coverage_status: partial
+operations:
+  - id: datasets.lifecycle
+    operation: datasets.create/list/delete
+    status: supported
+    evidence: [manual:service-status-2026-05-26, terraform:api-compat-script]
+  - id: tables.lifecycle
+    operation: tables.create/list/delete
+    status: supported
+    evidence: [manual:service-status-2026-05-26, terraform:api-compat-script]
+  - id: sql.query
+    operation: insert rows and query SQL
+    status: partial
+    notes: DuckDB-backed SQL differs from BigQuery in edge cases.
+terraform_resources:
+  status: partial
+  resources: [google_bigquery_dataset, google_bigquery_table]
+  evidence: [manual:terraform-compat-2026-05-31]
+gcloud_paths:
+  - id: bq
+    status: partial
+console_paths:
+  - id: sql-editor
+    status: partial
+  - id: data-browser
+    status: partial
+state:
+  source: external emulator
+  seed: available
+  reset: available
+  export: available
+  snapshot: planned
+limitations:
+  - SQL is DuckDB-backed, so BigQuery dialect parity is partial.
+  - Scripting, BQML, GEOGRAPHY, and partitioning execution are limited.
+warnings:
+  - { id: bq-net-ip-from-string, surface: sql, keyword: NET.IP_FROM_STRING, severity: warning, message: NET functions are not available in the BigQuery emulator., evidence: [manual:sql-warnings-2026-04-20] }
+  - { id: bq-net-ip-to-string, surface: sql, keyword: NET.IP_TO_STRING, severity: warning, message: NET functions are not available in the BigQuery emulator., evidence: [manual:sql-warnings-2026-04-20] }
+  - { id: bq-net-safe-ip-from-string, surface: sql, keyword: NET.SAFE_IP_FROM_STRING, severity: warning, message: NET functions are not available in the BigQuery emulator., evidence: [manual:sql-warnings-2026-04-20] }
+  - { id: bq-net-host, surface: sql, keyword: NET.HOST, severity: warning, message: NET functions are not available in the BigQuery emulator., evidence: [manual:sql-warnings-2026-04-20] }
+  - { id: bq-net-reg-domain, surface: sql, keyword: NET.REG_DOMAIN, severity: warning, message: NET functions are not available in the BigQuery emulator., evidence: [manual:sql-warnings-2026-04-20] }
+  - { id: bq-net-public-suffix, surface: sql, keyword: NET.PUBLIC_SUFFIX, severity: warning, message: NET functions are not available in the BigQuery emulator., evidence: [manual:sql-warnings-2026-04-20] }
+  - { id: bq-ml-predict, surface: sql, keyword: ML.PREDICT, severity: warning, message: ML functions are not available in the emulator., evidence: [manual:sql-warnings-2026-04-20] }
+  - { id: bq-ml-evaluate, surface: sql, keyword: ML.EVALUATE, severity: warning, message: ML functions are not available in the emulator., evidence: [manual:sql-warnings-2026-04-20] }
+  - { id: bq-ml-training-info, surface: sql, keyword: ML.TRAINING_INFO, severity: warning, message: ML functions are not available in the emulator., evidence: [manual:sql-warnings-2026-04-20] }
+  - { id: bq-ml-feature-info, surface: sql, keyword: ML.FEATURE_INFO, severity: warning, message: ML functions are not available in the emulator., evidence: [manual:sql-warnings-2026-04-20] }
+  - { id: bq-session-user, surface: sql, keyword: SESSION_USER, severity: warning, message: SESSION_USER is not available in the emulator context., evidence: [manual:sql-warnings-2026-04-20] }
+  - { id: bq-error, surface: sql, keyword: ERROR, severity: warning, message: BigQuery ERROR() function is not supported by DuckDB., evidence: [manual:sql-warnings-2026-04-20] }
+  - { id: bq-bignumeric, surface: sql, keyword: BIGNUMERIC, severity: warning, message: Use NUMERIC or FLOAT64 instead., evidence: [manual:sql-warnings-2026-04-20] }
+  - { id: bq-time-travel, surface: sql, keyword: FOR SYSTEM_TIME AS OF, severity: warning, message: Time travel is not supported in the emulator., evidence: [manual:sql-warnings-2026-04-20] }
+  - { id: bq-assert-rows, surface: sql, keyword: ASSERT_ROWS_MODIFIED, severity: warning, message: ASSERT_ROWS_MODIFIED is not supported by the emulator., evidence: [manual:sql-warnings-2026-04-20] }
+  - { id: bq-tablesample, surface: sql, keyword: TABLESAMPLE, severity: warning, message: TABLESAMPLE is not supported., workaround: Use LIMIT with ORDER BY RANDOM() instead., evidence: [manual:sql-warnings-2026-04-20] }
+ci_recommendation: Use for local and CI smoke tests that stay within listed supported operations; add a coverage assertion for this service.

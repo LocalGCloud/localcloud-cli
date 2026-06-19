@@ -79,6 +79,8 @@ class DiagnosticsServiceTest {
         assertTrue(names.contains("diagnostics.json"));
         assertTrue(names.contains("coverage.json"));
         assertTrue(names.contains("capabilities.json"));
+        assertTrue(names.contains("compatibility.json"));
+        assertTrue(names.contains("compatibility-evidence.json"));
         assertTrue(names.contains("requests.json"));
         assertTrue(names.contains("services.json"));
         assertTrue(names.contains("faults.json"));

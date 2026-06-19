@@ -1,0 +1,51 @@
+service_id: spanner
+coverage_status: early-partial
+operations:
+  - id: admin.lifecycle
+    operation: instances/databases
+    status: supported
+    evidence: [manual:service-status-2026-05-26, terraform:api-compat-script]
+  - id: ddl-dml
+    operation: DDL and DML
+    status: partial
+    notes: Metadata behavior still needs compatibility hardening.
+terraform_resources:
+  status: supported
+  resources: [google_spanner_instance, google_spanner_database]
+  evidence: [manual:terraform-compat-2026-05-31, terraform:e2e-script]
+gcloud_paths:
+  - id: gcloud.spanner
+    status: partial
+console_paths:
+  - id: data-browser
+    status: partial
+state:
+  source: external emulator
+  seed: available
+  reset: available
+  export: available
+  snapshot: planned
+limitations:
+  - REST/gRPC metadata parity remains partial.
+  - Partitioned DML and change streams are not supported.
+warnings:
+  - id: spanner-pending-commit-timestamp
+    surface: sql
+    keyword: PENDING_COMMIT_TIMESTAMP
+    severity: warning
+    message: Use CURRENT_TIMESTAMP instead.
+    evidence: [manual:sql-warnings-2026-04-20]
+  - id: spanner-merge
+    surface: sql
+    keyword: MERGE
+    severity: warning
+    message: MERGE is not supported by the Spanner emulator.
+    workaround: Use separate INSERT, UPDATE, or DELETE statements.
+    evidence: [manual:sql-warnings-2026-04-20]
+  - id: spanner-tablesample
+    surface: sql
+    keyword: TABLESAMPLE
+    severity: warning
+    message: TABLESAMPLE is not supported by the Spanner emulator.
+    evidence: [manual:sql-warnings-2026-04-20]
+ci_recommendation: Use only for targeted local workflows until SDK and provisioning tests are added.

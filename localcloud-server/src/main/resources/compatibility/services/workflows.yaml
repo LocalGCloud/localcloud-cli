@@ -1,0 +1,25 @@
+service_id: workflows
+coverage_status: partial
+operations:
+  - id: workflows.management
+    operation: workflow deploy/list/get/delete
+    status: partial
+    notes: Local facade and seed paths exist.
+  - id: workflows.executions
+    operation: executions
+    status: partial
+    notes: Execution engine exists but connector/runtime parity needs expansion.
+terraform_resources:
+  status: supported
+  resources: [google_workflows_workflow]
+  evidence: [manual:terraform-compat-2026-05-31]
+gcloud_paths:
+  - id: gcloud.workflows
+    status: partial
+console_paths:
+  - id: workflows-page
+    status: partial
+state: { source: PostgreSQL-backed facade, seed: available, reset: available, export: planned, snapshot: planned }
+limitations:
+  - In-flight execution checkpointing is not durable across restart.
+ci_recommendation: Use for local orchestration tests that stay within connector support.

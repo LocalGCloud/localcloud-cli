@@ -27,6 +27,7 @@ import com.linecorp.armeria.server.annotation.Param;
 import com.localcloud.config.LocalCloudConfig;
 import com.localcloud.config.ServiceRegistry;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
+import com.localcloud.emulators.iam.IAMRoleRegistry;
 import com.localcloud.persistence.PostgresDataSource;
 
 import com.google.iam.v1.Binding;
@@ -312,7 +313,12 @@ public class BrowseService {
                 case "cloudfunctions" -> browseCloudFunctions(resourceType, resourceId, projectId);
                 case "alloydb" -> browseAlloyDB(resourceType, resourceId, projectId);
                 case "dataproc" -> browseDataproc(resourceType, resourceId, projectId);
-                case "cloudiam" -> browseCloudIAM(resourceType, resourceId, projectId);
+                case "cloudiam" -> {
+                    if ("metadata".equals(resourceType)) {
+                        yield browseCloudIAMMetadata();
+                    }
+                    yield browseCloudIAM(resourceType, resourceId, projectId);
+                }
                 case "kms" -> browseKms(resourceType, resourceId, projectId);
                 case "cloudsql" -> browseCloudSql(resourceType, resourceId, projectId);
                 default -> mapper.writeValueAsString(Map.of(
@@ -2465,6 +2471,85 @@ public class BrowseService {
             }
         }
         return mapper.writeValueAsString(Map.of("policies", policies));
+    }
+
+    // ========== Cloud IAM metadata (role catalog + resource types) ==========
+
+    private String browseCloudIAMMetadata() throws Exception {
+        Map<String, Object> result = new LinkedHashMap<>();
+
+        // Resource types that can have IAM policies — auto-generated from the service registry
+        List<Map<String, Object>> resourceTypes = new ArrayList<>();
+        addResourceType(resourceTypes, "storage", "Cloud Storage",
+                "Storage buckets and objects — object storage for any amount of data",
+                "storage/{bucket-name}");
+        addResourceType(resourceTypes, "pubsub", "Pub/Sub",
+                "Pub/Sub topics and subscriptions — global messaging and event ingestion",
+                "pubsub/{topic-or-sub-name}");
+        addResourceType(resourceTypes, "secretmanager", "Secret Manager",
+                "Secrets and secret versions — store API keys, passwords, and certificates",
+                "secretmanager/{secret-name}");
+        addResourceType(resourceTypes, "cloudtasks", "Cloud Tasks",
+                "Task queues — manage distributed task execution and webhooks",
+                "cloudtasks/{queue-name}");
+        addResourceType(resourceTypes, "cloudscheduler", "Cloud Scheduler",
+                "Cron jobs — scheduled job execution with HTTP, Pub/Sub, or App Engine targets",
+                "cloudscheduler/{job-name}");
+        addResourceType(resourceTypes, "cloudfunctions", "Cloud Functions",
+                "Cloud Functions (2nd gen) — serverless compute functions",
+                "cloudfunctions/{function-name}");
+        addResourceType(resourceTypes, "compute", "Compute Engine",
+                "Virtual machine instances — scalable, high-performance VMs",
+                "compute/{instance-name}");
+        addResourceType(resourceTypes, "cloudrun", "Cloud Run",
+                "Cloud Run services — managed containerized applications",
+                "cloudrun/{service-name}");
+        addResourceType(resourceTypes, "bigquery", "BigQuery",
+                "BigQuery datasets and tables — serverless data warehouse for analytics",
+                "bigquery/{dataset-or-table}");
+        addResourceType(resourceTypes, "spanner", "Cloud Spanner",
+                "Spanner instances and databases — fully managed relational database",
+                "spanner/{instance-or-database}");
+        addResourceType(resourceTypes, "bigtable", "Cloud Bigtable",
+                "Bigtable instances and tables — scalable NoSQL for analytical workloads",
+                "bigtable/{instance-or-table}");
+        addResourceType(resourceTypes, "monitoring", "Cloud Monitoring",
+                "Monitoring workspaces — metrics, uptime checks, dashboards, and alerts",
+                "monitoring/{resource}");
+        addResourceType(resourceTypes, "logging", "Cloud Logging",
+                "Log buckets and sinks — real-time log management and analysis",
+                "logging/{resource}");
+        addResourceType(resourceTypes, "project", "Project",
+                "Project-level IAM policy — applies to all resources in the project",
+                "project/{project-id}");
+        result.put("resourceTypes", resourceTypes);
+
+        // Roles with full metadata for the role picker
+        List<Map<String, Object>> roles = new ArrayList<>();
+        for (var role : IAMRoleRegistry.getAllRoles()) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("id", role.id());
+            r.put("title", role.title());
+            r.put("category", role.category());
+            r.put("description", role.description());
+            r.put("permissions", role.permissions());
+            r.put("stage", role.stage());
+            roles.add(r);
+        }
+        result.put("roles", roles);
+        result.put("categories", IAMRoleRegistry.getCategories());
+
+        return mapper.writeValueAsString(result);
+    }
+
+    private void addResourceType(List<Map<String, Object>> list, String id, String label,
+                                  String description, String resourcePattern) {
+        Map<String, Object> rt = new LinkedHashMap<>();
+        rt.put("id", id);
+        rt.put("label", label);
+        rt.put("description", description);
+        rt.put("resourcePattern", resourcePattern);
+        list.add(rt);
     }
 
     // ========== Cloud KMS (in-process, query PostgreSQL) ==========

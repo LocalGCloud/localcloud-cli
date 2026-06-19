@@ -7,6 +7,7 @@ import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
 import com.linecorp.armeria.server.annotation.*;
+import com.localcloud.admin.UnsupportedOperationResponses;
 import com.localcloud.docker.ContainerManager;
 import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 
@@ -200,6 +201,13 @@ public class ComputeRestService {
         } catch (Exception e) {
             return errorResponse(HttpStatus.INTERNAL_SERVER_ERROR, e.getMessage());
         }
+    }
+
+    @Post("/projects/{project}/zones/{zone}/disks")
+    public HttpResponse insertDisk(@Param String project, @Param String zone, String body) {
+        emulator.incrementRequestCount();
+        return UnsupportedOperationResponses.rest("compute", "disks.insert", "rest",
+                "Use instance metadata workflows; persistent disks are not emulated yet.");
     }
 
     // --- JSON helpers ---

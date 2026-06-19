@@ -5,6 +5,7 @@ import com.google.longrunning.Operation;
 import com.google.protobuf.Any;
 import com.google.protobuf.Timestamp;
 import com.localcloud.admin.CredentialBroker;
+import com.localcloud.admin.UnsupportedOperationResponses;
 import com.localcloud.docker.ContainerManager;
 import com.localcloud.emulators.AbstractEmulator;
 import com.localcloud.persistence.PostgresDataSource;
@@ -26,6 +27,7 @@ public class CloudRunEmulator extends AbstractEmulator {
     private final CloudRunStore store;
     private final ServicesServiceImpl servicesService;
     private final RevisionsServiceImpl revisionsService;
+    private final JobsServiceImpl jobsService;
     private final AtomicInteger nextPort = new AtomicInteger(10000);
 
     public CloudRunEmulator(PostgresDataSource dataSource, ContainerManager containerManager) {
@@ -40,6 +42,7 @@ public class CloudRunEmulator extends AbstractEmulator {
         this.store = new CloudRunStore(dataSource);
         this.servicesService = new ServicesServiceImpl();
         this.revisionsService = new RevisionsServiceImpl();
+        this.jobsService = new JobsServiceImpl();
     }
 
     @Override
@@ -75,6 +78,7 @@ public class CloudRunEmulator extends AbstractEmulator {
 
     public ServicesServiceImpl getServicesService() { return servicesService; }
     public RevisionsServiceImpl getRevisionsService() { return revisionsService; }
+    public JobsServiceImpl getJobsService() { return jobsService; }
 
     // --- Parse resource name helpers ---
 
@@ -445,6 +449,23 @@ public class CloudRunEmulator extends AbstractEmulator {
             } catch (Exception e) {
                 responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
             }
+        }
+    }
+
+    public class JobsServiceImpl extends JobsGrpc.JobsImplBase {
+
+        @Override
+        public void createJob(CreateJobRequest request, StreamObserver<Operation> responseObserver) {
+            incrementRequestCount();
+            UnsupportedOperationResponses.grpc(responseObserver, "cloudrun", "jobs.create",
+                    "Use Cloud Run service metadata workflows until host-runtime support is enabled.");
+        }
+
+        @Override
+        public void runJob(RunJobRequest request, StreamObserver<Operation> responseObserver) {
+            incrementRequestCount();
+            UnsupportedOperationResponses.grpc(responseObserver, "cloudrun", "jobs.run",
+                    "Use Cloud Run service metadata workflows until host-runtime support is enabled.");
         }
     }
 }

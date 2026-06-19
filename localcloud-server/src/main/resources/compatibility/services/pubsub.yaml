@@ -1,0 +1,39 @@
+service_id: pubsub
+coverage_status: partial
+operations:
+  - id: topics.lifecycle
+    operation: topics.create/list/delete
+    status: supported
+    evidence: [manual:service-status-2026-05-26, terraform:api-compat-script]
+  - id: subscriptions.lifecycle
+    operation: subscriptions.create/list/delete
+    status: supported
+    evidence: [manual:service-status-2026-05-26, terraform:api-compat-script]
+  - id: message.workflow
+    operation: publish/pull/ack
+    status: supported
+    evidence: [manual:service-status-2026-05-26]
+  - id: advanced-delivery
+    operation: schemas, snapshots, seek, dead-letter policy
+    status: partial
+    notes: Needs explicit parity and CI verification.
+terraform_resources:
+  status: supported
+  resources: [google_pubsub_topic, google_pubsub_subscription]
+  evidence: [manual:terraform-compat-2026-05-31, terraform:e2e-script]
+gcloud_paths:
+  - id: gcloud.pubsub
+    status: partial
+console_paths:
+  - id: data-browser
+    status: partial
+state:
+  source: external emulator
+  seed: available
+  reset: available
+  export: available
+  snapshot: planned
+limitations:
+  - Advanced delivery controls need parity tests.
+  - Schema and snapshot workflows are not complete.
+ci_recommendation: Use for local and CI smoke tests that stay within listed supported operations; add a coverage assertion for this service.

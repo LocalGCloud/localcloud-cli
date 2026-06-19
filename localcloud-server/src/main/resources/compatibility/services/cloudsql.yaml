@@ -1,0 +1,34 @@
+service_id: cloudsql
+coverage_status: early-partial
+operations:
+  - id: sql-admin.lifecycle
+    operation: instances/databases/users
+    status: partial
+    notes: Local REST facade and PostgreSQL data plane exist.
+  - id: mysql-managed-runtime
+    operation: MySQL data plane, replicas, backups, PSC
+    status: unsupported
+terraform_resources:
+  status: supported
+  resources: [google_sql_database_instance, google_sql_database, google_sql_user]
+  evidence: [manual:terraform-compat-2026-05-31]
+gcloud_paths:
+  - id: gcloud.sql
+    status: partial
+console_paths:
+  - id: data-browser
+    status: partial
+state: { source: PostgreSQL-backed facade, seed: planned, reset: planned, export: planned, snapshot: planned }
+limitations:
+  - MySQL data plane, read replicas, PSC, and backup/restore are not complete.
+unsupported_operations:
+  - id: cloudsql-backup-runs
+    operation: backupRuns.insert
+    surface: rest
+    path_pattern: /sql/v1beta4/projects/{project}/instances/{instance}/backupRuns
+    http_status: 501
+    reason: unsupported_operation
+    workaround: Use metadata CRUD and PostgreSQL data-plane tests.
+warnings:
+  - { id: cloudsql-console-backup-actions, surface: console, keyword: Backup, severity: warning, message: Cloud SQL backup, replica, PSC, and MySQL data-plane flows are not supported by LocalCloud., workaround: Use PostgreSQL-oriented instance, database, and user workflows., evidence: [console:build] }
+ci_recommendation: Use for PostgreSQL-oriented local Cloud SQL workflows.

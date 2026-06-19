@@ -1,0 +1,25 @@
+service_id: cloudtasks
+coverage_status: partial
+operations:
+  - id: queues.lifecycle
+    operation: queues.create/list/delete
+    status: partial
+    notes: Facade-backed queue lifecycle exists.
+  - id: tasks.lifecycle
+    operation: tasks.create/list/delete
+    status: partial
+    notes: Dispatch and scheduling parity remain limited.
+terraform_resources:
+  status: supported
+  resources: [google_cloud_tasks_queue]
+  evidence: [manual:terraform-compat-2026-05-31]
+gcloud_paths:
+  - id: gcloud.tasks
+    status: partial
+console_paths:
+  - id: data-browser
+    status: partial
+state: { source: PostgreSQL-backed facade, seed: available, reset: available, export: available, snapshot: planned }
+limitations:
+  - App Engine tasks and OAuth token generation are not complete.
+ci_recommendation: Use for local and CI smoke tests that stay within listed supported operations; add a coverage assertion for this service.

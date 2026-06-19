@@ -1,0 +1,38 @@
+service_id: gcs
+coverage_status: partial
+operations:
+  - id: buckets.lifecycle
+    operation: buckets.create/list/delete
+    status: supported
+    evidence: [manual:service-status-2026-05-26, terraform:api-compat-script]
+    notes: Core bucket lifecycle through the local HTTP emulator.
+  - id: objects.lifecycle
+    operation: objects.upload/download/list/delete
+    status: supported
+    evidence: [manual:service-status-2026-05-26, terraform:api-compat-script]
+    notes: Core object lifecycle through the local HTTP emulator.
+  - id: advanced-control-plane
+    operation: iam, lifecycle policies, notifications
+    status: unsupported
+    notes: Advanced control-plane behavior is not emulated.
+terraform_resources:
+  status: supported
+  resources: [google_storage_bucket, google_storage_bucket_object]
+  evidence: [manual:terraform-compat-2026-05-31, terraform:e2e-script]
+gcloud_paths:
+  - id: gcloud.storage
+    status: partial
+    notes: Endpoint override exists; command breadth is not fully verified.
+console_paths:
+  - id: data-browser
+    status: partial
+state:
+  source: filesystem-backed external emulator
+  seed: available
+  reset: available
+  export: available
+  snapshot: planned
+limitations:
+  - No cloud IAM enforcement.
+  - No native project-level bucket isolation in fake-gcs-server without LocalCloud metadata.
+ci_recommendation: Use for local and CI smoke tests that stay within listed supported operations; add a coverage assertion for this service.

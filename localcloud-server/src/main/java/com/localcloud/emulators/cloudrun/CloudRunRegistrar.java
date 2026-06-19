@@ -25,7 +25,9 @@ public class CloudRunRegistrar implements ServiceRegistrar {
         emulator.start();
         grpc.addService(emulator.getServicesService());
         grpc.addService(emulator.getRevisionsService());
-        ctx.gateway().registerGrpcEmulator(emulator, emulator.getServicesService(), emulator.getRevisionsService());
+        grpc.addService(emulator.getJobsService());
+        ctx.gateway().registerGrpcEmulator(emulator,
+                emulator.getServicesService(), emulator.getRevisionsService(), emulator.getJobsService());
         logger.info("Cloud Run facade registered");
     }
 }

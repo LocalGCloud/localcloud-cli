@@ -1,0 +1,21 @@
+service_id: monitoring
+coverage_status: partial
+operations:
+  - id: metrics.time-series
+    operation: create/list time series and descriptors
+    status: partial
+    notes: Local metric storage exists; query parity is limited.
+terraform_resources:
+  status: supported
+  resources: [google_monitoring_alert_policy]
+  evidence: [manual:terraform-compat-2026-05-31]
+gcloud_paths:
+  - id: gcloud.monitoring
+    status: partial
+console_paths:
+  - id: usage
+    status: partial
+state: { source: PostgreSQL-backed facade, seed: planned, reset: available, export: planned, snapshot: planned }
+limitations:
+  - Alerting, uptime checks, and dashboards are partial.
+ci_recommendation: Use for local metric write/list smoke tests.

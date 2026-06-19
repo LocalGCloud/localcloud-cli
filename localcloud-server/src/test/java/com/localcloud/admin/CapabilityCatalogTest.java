@@ -77,6 +77,14 @@ class CapabilityCatalogTest {
     }
 
     @Test
+    void compatibilityWarningsExposeSqlMetadata() {
+        List<Map<String, Object>> warnings = CapabilityCatalog.warnings(config, "bigquery", "sql");
+
+        assertFalse(warnings.isEmpty());
+        assertTrue(warnings.stream().anyMatch(row -> "TABLESAMPLE".equals(row.get("keyword"))));
+    }
+
+    @Test
     void unknownServiceCoverageReturnsNull() {
         assertNull(CapabilityCatalog.serviceCoverage(config, "not-a-service"));
     }

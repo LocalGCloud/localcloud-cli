@@ -2624,6 +2624,10 @@ public class QueryService {
      */
     private String enrichErrorMessage(String service, String rawError) {
         if (rawError == null) return "Unknown error";
+        String registryMessage = registryWarningMessage(service, rawError);
+        if (registryMessage != null) {
+            return registryMessage + " Detail: " + rawError;
+        }
 
         if ("bigquery".equals(service)) {
             // DuckDB: "Catalog Error: Scalar Function with name X does not exist"
@@ -2757,6 +2761,32 @@ public class QueryService {
         }
 
         return rawError;
+    }
+
+    private String registryWarningMessage(String service, String rawError) {
+        try {
+            String upper = rawError.toUpperCase();
+            for (Map<String, Object> warning : CapabilityCatalog.warnings(config, service, "sql")) {
+                String keyword = String.valueOf(warning.get("keyword"));
+                if (keyword != null && !keyword.isBlank() && upper.contains(keyword.toUpperCase())) {
+                    List<String> parts = new ArrayList<>();
+                    Object message = warning.get("message");
+                    Object workaround = warning.get("workaround");
+                    if (message != null) {
+                        parts.add(String.valueOf(message));
+                    }
+                    if (workaround != null) {
+                        parts.add(String.valueOf(workaround));
+                    }
+                    if (!parts.isEmpty()) {
+                        return String.join(" ", parts);
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // Preserve existing hardcoded enrichment fallbacks if registry metadata is unavailable.
+        }
+        return null;
     }
 
     private static long longValueOrDefault(Object value, long defaultValue) {

@@ -1,0 +1,20 @@
+service_id: serviceusage
+coverage_status: partial
+operations:
+  - id: services.enablement
+    operation: services.enable/disable/list
+    status: partial
+    notes: Local service toggles are available; quota billing semantics are not complete.
+terraform_resources:
+  status: unverified
+  resources: []
+gcloud_paths:
+  - id: gcloud.services
+    status: partial
+console_paths:
+  - id: settings-services
+    status: partial
+state: { source: PostgreSQL-backed facade, seed: planned, reset: planned, export: planned, snapshot: planned }
+limitations:
+  - Quotas and service entitlement behavior are stubs.
+ci_recommendation: Use for local service toggle tests only.

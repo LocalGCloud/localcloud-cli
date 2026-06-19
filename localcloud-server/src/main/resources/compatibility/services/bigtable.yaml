@@ -1,0 +1,31 @@
+service_id: bigtable
+coverage_status: early-partial
+operations:
+  - id: admin.lifecycle
+    operation: instances/tables/families
+    status: partial
+    notes: External emulator and local browse/query paths exist.
+  - id: rows.data
+    operation: row mutations and reads
+    status: partial
+    notes: Persistence and SDK/browser state alignment need verification.
+terraform_resources:
+  status: supported
+  resources: [google_bigtable_instance, google_bigtable_table]
+  evidence: [manual:terraform-compat-2026-05-31]
+gcloud_paths:
+  - id: gcloud.bigtable
+    status: unsupported
+    notes: Upstream emulator is gRPC data-plane only for current LocalCloud use.
+console_paths:
+  - id: data-browser
+    status: partial
+state:
+  source: external emulator
+  seed: available
+  reset: available
+  export: planned
+  snapshot: planned
+limitations:
+  - Persistence and browse/mutate/export alignment need hardening.
+ci_recommendation: Use only for targeted local workflows until SDK and provisioning tests are added.
