@@ -1920,6 +1920,7 @@ export default function ServiceExplorer(props) {
     const [mode, setMode] = createSignal(props.activeView?.() || 'explorer');
     const [refreshTrigger, setRefreshTrigger] = createSignal(0);
     const [resetTrigger, setResetTrigger] = createSignal(0);
+    const [coverage, setCoverage] = createSignal(null);
     let lastSyncedView = props.activeView?.();
 
     createEffect(() => {
@@ -1943,6 +1944,13 @@ export default function ServiceExplorer(props) {
 
     const activeService = () => props.selectedService?.() || 'gcs';
     const meta = () => SERVICE_META[activeService()] || { label: activeService(), description: '' };
+
+    createEffect(() => {
+        const service = activeService();
+        api.coverage(service)
+            .then(setCoverage)
+            .catch(() => setCoverage(null));
+    });
 
     const handleRefresh = () => setRefreshTrigger(prev => prev + 1);
 
@@ -1970,6 +1978,12 @@ export default function ServiceExplorer(props) {
                         <Show when={meta().tag}><span class="badge badge-coming-up">{meta().tag}</span></Show>
                     </div>
                     <p class="se-service-desc">{meta().description}</p>
+                    <Show when={coverage()?.coverage_status && coverage().coverage_status !== 'supported'}>
+                        <div style="margin-top:8px;display:flex;gap:8px;align-items:flex-start;background:var(--warning-soft);border:1px solid var(--warning);color:var(--text);border-radius:var(--radius-sm);padding:8px 10px;font-size:12px;line-height:1.4">
+                            <strong style="color:var(--warning);text-transform:uppercase">{coverage().coverage_status}</strong>
+                            <span>{coverage().ci_recommendation || 'Review compatibility details before relying on this service in CI.'}</span>
+                        </div>
+                    </Show>
                 </div>
             </div>
 

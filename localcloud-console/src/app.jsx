@@ -12,6 +12,7 @@ import Onboarding from './components/Onboarding.jsx';
 import GetStarted from './pages/GetStarted.jsx';
 import ComboBox from './components/ComboBox.jsx';
 import { GCP_REGIONS, getZonesForRegion } from './data/gcpLocations.js';
+import { setCompatibilityWarnings, loadCachedCompatibilityWarnings } from './data/compatibility.js';
 
 const ICON_PATHS = {
     dashboard: 'M4 13h6a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1zm-1 7h6a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1zm10 0h6a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1zM13 4v4a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1z',
@@ -184,6 +185,16 @@ function App() {
     const [collapsedGroups, setCollapsedGroups] = createSignal({});
     let healthFailCount = 0;
     let imageUpdateCheckStarted = false;
+
+    loadCachedCompatibilityWarnings();
+    Promise.all([
+        api.compatibilityWarnings(null, 'sql'),
+        api.compatibilityWarnings(null, 'console'),
+    ])
+        .then(responses => {
+            responses.forEach(data => setCompatibilityWarnings(data?.warnings || []));
+        })
+        .catch(err => console.warn('Failed to load compatibility warnings:', err.message));
 
     const urlProject = parseProject();
     const storedProject = (() => {

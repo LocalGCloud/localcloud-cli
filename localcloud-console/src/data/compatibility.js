@@ -1,79 +1,71 @@
-/**
- * SQL compatibility data for LocalCloud emulators.
- * Maps CONFIRMED unsupported features to warning messages and alternatives.
- * Only includes features verified to NOT work — many BigQuery functions
- * are supported via SQLGlot translation to DuckDB.
- *
- * Tested working (NOT listed here): APPROX_COUNT_DISTINCT, SAFE_DIVIDE,
- * SAFE_CAST, GENERATE_UUID, QUALIFY, PIVOT, UNNEST, STRUCT, ARRAY,
- * ST_GEOGPOINT, window functions, CTEs, REGEXP, JSON functions.
- */
+import { FALLBACK_WARNINGS, REGISTRY_VERSION } from './compatibilityFallback.js';
 
-export const COMPATIBILITY = {
-  bigquery: {
-    functions: {
-      'NET.IP_FROM_STRING': 'NET functions are not available in the BigQuery emulator',
-      'NET.IP_TO_STRING': 'NET functions are not available in the BigQuery emulator',
-      'NET.SAFE_IP_FROM_STRING': 'NET functions are not available in the BigQuery emulator',
-      'NET.HOST': 'NET functions are not available in the BigQuery emulator',
-      'NET.REG_DOMAIN': 'NET functions are not available in the BigQuery emulator',
-      'NET.PUBLIC_SUFFIX': 'NET functions are not available in the BigQuery emulator',
-      'ML.PREDICT': 'ML functions are not available in the emulator',
-      'ML.EVALUATE': 'ML functions are not available in the emulator',
-      'ML.TRAINING_INFO': 'ML functions are not available in the emulator',
-      'ML.FEATURE_INFO': 'ML functions are not available in the emulator',
-      'SESSION_USER': 'Not available in the emulator context',
-      'ERROR': 'BigQuery ERROR() function is not supported by DuckDB',
-    },
-    types: {
-      'BIGNUMERIC': 'Use NUMERIC or FLOAT64 instead',
-    },
-    clauses: {
-      'FOR SYSTEM_TIME AS OF': 'Time travel is not supported in the emulator',
-      'ASSERT_ROWS_MODIFIED': 'Not supported by the emulator',
-      'TABLESAMPLE': 'Not supported — use LIMIT with ORDER BY RANDOM() instead',
-    },
-  },
+let warningRows = FALLBACK_WARNINGS;
 
-  spanner: {
-    functions: {
-      'PENDING_COMMIT_TIMESTAMP': 'Use CURRENT_TIMESTAMP instead',
-      'ML.PREDICT': 'ML functions are not available in the Spanner emulator',
-    },
-    types: {},
-    clauses: {
-      'MERGE': 'Not supported by Spanner emulator — use separate INSERT/UPDATE/DELETE',
-      'TABLESAMPLE': 'Not supported by the Spanner emulator',
-    },
-  },
+export function setCompatibilityWarnings(rows) {
+  if (Array.isArray(rows) && rows.length > 0) {
+    const merged = new Map();
+    for (const row of warningRows) {
+      const key = `${row.service_id}:${row.surface}:${row.keyword || row.operation || row.id || row.message}`;
+      merged.set(key, row);
+    }
+    for (const row of rows) {
+      const key = `${row.service_id}:${row.surface}:${row.keyword || row.operation || row.id || row.message}`;
+      merged.set(key, row);
+    }
+    warningRows = Array.from(merged.values());
+    try {
+      localStorage.setItem('localcloud.compatibilityWarnings', JSON.stringify({
+        registry_version: REGISTRY_VERSION,
+        warnings: warningRows,
+      }));
+    } catch {}
+  }
+}
 
-  // PostgreSQL — no compatibility warnings (queries run against real PostgreSQL)
-  postgresql: {
-    functions: {},
-    types: {},
-    clauses: {},
-  },
-};
+export function loadCachedCompatibilityWarnings() {
+  try {
+    const raw = localStorage.getItem('localcloud.compatibilityWarnings');
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (parsed?.registry_version === REGISTRY_VERSION && Array.isArray(parsed.warnings)) {
+      warningRows = parsed.warnings;
+    }
+  } catch {}
+}
 
 /**
  * Get all unsupported keywords for a dialect as a flat list.
  */
 export function getUnsupportedKeywords(dialect) {
-  const data = COMPATIBILITY[dialect];
-  if (!data) return [];
-  return [
-    ...Object.keys(data.functions || {}),
-    ...Object.keys(data.types || {}),
-    ...Object.keys(data.clauses || {}),
-  ];
+  const serviceId = dialect === 'googlesql' || dialect === 'spanner' ? 'spanner' : dialect;
+  return warningRows
+    .filter(row => row.service_id === serviceId && row.surface === 'sql')
+    .map(row => row.keyword);
 }
 
 /**
  * Get the warning message for a specific keyword in a dialect.
  */
 export function getWarningMessage(dialect, keyword) {
-  const data = COMPATIBILITY[dialect];
-  if (!data) return null;
+  const serviceId = dialect === 'googlesql' || dialect === 'spanner' ? 'spanner' : dialect;
   const upper = keyword.toUpperCase();
-  return data.functions?.[upper] || data.types?.[upper] || data.clauses?.[upper] || null;
+  const row = warningRows.find(item =>
+    item.service_id === serviceId &&
+    item.surface === 'sql' &&
+    item.keyword?.toUpperCase() === upper);
+  if (!row) return null;
+  return [row.message, row.workaround].filter(Boolean).join(' ');
+}
+
+export function getActionWarning(serviceId, surface, actionText) {
+  if (!serviceId) return null;
+  const text = (actionText || '').toLowerCase();
+  const row = warningRows.find(item => {
+    if (item.service_id !== serviceId || item.surface !== surface) return false;
+    const needle = String(item.operation || item.keyword || item.id || '').toLowerCase();
+    return !needle || text.includes(needle);
+  });
+  if (!row) return null;
+  return [row.message, row.workaround].filter(Boolean).join(' ');
 }

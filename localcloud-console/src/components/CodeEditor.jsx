@@ -22,7 +22,7 @@ import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { syntaxHighlighting, indentOnInput, bracketMatching, foldGutter, foldKeymap, HighlightStyle } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { linter, lintGutter } from '@codemirror/lint';
-import { getUnsupportedKeywords, getWarningMessage } from '../data/compatibility.js';
+import { getUnsupportedKeywords, getWarningMessage, loadCachedCompatibilityWarnings } from '../data/compatibility.js';
 
 // ─── SQL Dialect Map ───────────────────────────────────────────────────
 // GoogleSQL (Spanner) uses backticks for identifiers, not double quotes
@@ -250,6 +250,7 @@ export default function CodeEditor(props) {
     }
 
     onMount(() => {
+        loadCachedCompatibilityWarnings();
         const extensions = [
             // Appearance
             // Appearance

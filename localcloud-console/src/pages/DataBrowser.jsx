@@ -14,6 +14,7 @@ import { EditorState } from '@codemirror/state';
 import { json as jsonLang } from '@codemirror/lang-json';
 import { sql as sqlLang, PostgreSQL } from '@codemirror/lang-sql';
 import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
+import { getActionWarning } from '../data/compatibility.js';
 
 const TABS = [
     { id: 'gcs', label: 'Cloud Storage' },
@@ -1949,6 +1950,148 @@ function CloudIAMView(props) {
     const d = () => props.data();
     const [viewMode, setViewMode] = createSignal('resources'); // 'resources' | 'principals'
 
+    // ── Metadata for create form ────────────────────────────────────────
+    const [iamMeta, setIamMeta] = createSignal(null);
+    const [metaError, setMetaError] = createSignal(null);
+    const [showCreateForm, setShowCreateForm] = createSignal(false);
+    const [createError, setCreateError] = createSignal(null);
+    const [createSubmitting, setCreateSubmitting] = createSignal(false);
+
+    // Form state
+    const [selResourceType, setSelResourceType] = createSignal('');
+    const [resourceId, setResourceId] = createSignal('');
+    const [memberInput, setMemberInput] = createSignal('');
+    const [memberType, setMemberType] = createSignal('user'); // user, serviceAccount, group, domain
+    // bindings: [{ role: 'roles/...', members: ['...'] }]
+    const [bindings, setBindings] = createSignal([]);
+    // current role being composed (before adding to bindings)
+    const [selectedRole, setSelectedRole] = createSignal('');
+
+    onMount(async () => {
+        try {
+            const meta = await api.iamMetadata();
+            setIamMeta(meta);
+        } catch (e) {
+            setMetaError(e.message || 'Failed to load IAM metadata');
+        }
+    });
+
+    const resourceTypes = () => iamMeta()?.resourceTypes || [];
+    const allRoles = () => iamMeta()?.roles || [];
+    const roleCategories = () => iamMeta()?.categories || [];
+
+    // Find role metadata by id
+    const findRole = (roleId) => allRoles().find(r => r.id === roleId);
+
+    // Filtered roles for search
+    const roleFilter = () => {
+        const q = selectedRole().toLowerCase().trim();
+        const exact = allRoles().find(r => r.id.toLowerCase() === q);
+        if (exact) return allRoles(); // show all when exact match selected
+        return allRoles().filter(r =>
+            !q || r.id.toLowerCase().includes(q) || r.title.toLowerCase().includes(q) ||
+            r.description.toLowerCase().includes(q)
+        );
+    };
+
+    // Group filtered roles by category
+    const groupedRoles = createMemo(() => {
+        const groups = new Map();
+        for (const cat of roleCategories()) groups.set(cat, []);
+        groups.set('Other', []);
+        for (const r of roleFilter()) {
+            const cat = roleCategories().includes(r.category) ? r.category : 'Other';
+            groups.get(cat).push(r);
+        }
+        // Remove empty groups
+        const result = [];
+        for (const [cat, roles] of groups) {
+            if (roles.length > 0) result.push({ category: cat, roles });
+        }
+        return result;
+    });
+
+    const selectedRoleMeta = () => findRole(selectedRole());
+
+    // Add current role+members to bindings
+    const addBinding = () => {
+        const role = selectedRole();
+        const member = buildMember();
+        if (!role || !member) return;
+        // Check if this role already has a binding — merge members
+        const existing = bindings().find(b => b.role === role);
+        if (existing) {
+            if (!existing.members.includes(member)) {
+                setBindings(bindings().map(b =>
+                    b.role === role ? { ...b, members: [...b.members, member] } : b
+                ));
+            }
+        } else {
+            setBindings([...bindings(), { role, members: [member] }]);
+        }
+        setMemberInput('');
+    };
+
+    const removeBinding = (role) => {
+        setBindings(bindings().filter(b => b.role !== role));
+    };
+
+    const buildMember = () => {
+        const val = memberInput().trim();
+        if (!val) return '';
+        // If user typed a full prefix already, use as-is
+        if (val.includes(':')) return val;
+        return `${memberType()}:${val}`;
+    };
+
+    const resourceFull = () => {
+        const rt = selResourceType();
+        const rid = resourceId().trim();
+        if (!rt && !rid) return '';
+        if (!rt) return rid;
+        if (!rid) return rt;
+        return `${rt}/${rid}`;
+    };
+
+    const handleCreate = async () => {
+        const resource = resourceFull();
+        if (!resource) { setCreateError('Please select a resource type and enter a resource ID'); return; }
+        if (bindings().length === 0) { setCreateError('Please add at least one role binding'); return; }
+        setCreateError(null);
+        setCreateSubmitting(true);
+        try {
+            // Submit each binding as a separate policy call,
+            // or combine into one policy if the backend supports it.
+            // For simplicity, submit each binding one at a time.
+            for (const b of bindings()) {
+                for (const m of b.members) {
+                    await api.mutate('cloudiam', 'policies', { resource, role: b.role, members: m });
+                }
+            }
+            // Reset form and reload data
+            resetForm();
+            setShowCreateForm(false);
+            // Trigger parent DataBrowser to reload via custom event
+            window.dispatchEvent(new CustomEvent('localcloud:refresh-data'));
+        } catch (e) {
+            setCreateError(e.message || 'Failed to create policy');
+        } finally {
+            setCreateSubmitting(false);
+        }
+    };
+
+    const resetForm = () => {
+        setSelResourceType('');
+        setResourceId('');
+        setMemberInput('');
+        setMemberType('user');
+        setBindings([]);
+        setSelectedRole('');
+        setCreateError(null);
+    };
+
+    // ── Existing data views ──────────────────────────────────────────────
+
     // Transform resource-oriented policies into principal-oriented map
     const principals = createMemo(() => {
         const map = new Map();
@@ -1969,14 +2112,21 @@ function CloudIAMView(props) {
     });
 
     const roleColor = (role) => {
-        if (role?.includes('admin')) return 'badge-unhealthy';
+        if (role?.includes('admin') || role?.includes('Admin')) return 'badge-unhealthy';
         if (role?.includes('editor')) return 'badge-warning';
-        if (role?.includes('viewer')) return 'badge-info';
+        if (role?.includes('viewer') || role?.includes('Viewer')) return 'badge-info';
+        if (role?.includes('owner')) return 'badge-unhealthy';
         return 'badge-neutral';
+    };
+
+    const roleTitle = (roleId) => {
+        const meta = findRole(roleId);
+        return meta ? meta.title : roleId;
     };
 
     return (
         <div>
+            {/* ── Header with view toggle + create button ──────────────── */}
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
                 <div style="display:flex;gap:8px;align-items:center">
                     <button
@@ -1989,23 +2139,248 @@ function CloudIAMView(props) {
                     >By Principal</button>
                 </div>
                 <Show when={props.onAdd}>
-                    <button onClick={() => props.onAdd('Create Policy', [
-                        { name: 'resource', type: 'text' },
-                        { name: 'role', type: 'text' },
-                        { name: 'members', type: 'text' },
-                    ], async (formData) => {
-                        await api.mutate('cloudiam', 'policies', formData);
-                    })} class="btn btn-primary" style={{ 'font-size': '13px', height: '34px' }}>
-                        + Create Policy
+                    <button onClick={() => { setShowCreateForm(!showCreateForm()); resetForm(); }}
+                        class="btn btn-primary" style={{ 'font-size': '13px', height: '34px' }}>
+                        {showCreateForm() ? 'Cancel' : '+ Grant Access'}
                     </button>
                 </Show>
             </div>
-            <Show when={d() && d().policies && d().policies.length > 0} fallback={
-                <div class="empty-state">
-                    <div class="empty-state-icon">{'\u2205'}</div>
-                    <div class="empty-state-title">No policies found</div>
-                    <div class="empty-state-text">Create an IAM policy to see it here. All testIamPermissions calls return ALLOW.</div>
+
+            {/* ── Create Policy Form ──────────────────────────────────── */}
+            <Show when={showCreateForm()}>
+                <div style="border:2px solid var(--primary);border-radius:12px;padding:24px;margin-bottom:20px;background:var(--surface)">
+                    <h3 style="margin:0 0 4px 0;font-size:16px;display:flex;align-items:center;gap:8px">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true">
+                            <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
+                        </svg>
+                        Grant Access to Resource
+                    </h3>
+                    <p style="margin:'0 0 20px 0';font-size:13px;color:var(--text-secondary)">
+                        Add principals (members) with specific roles on a resource. IAM policies are stored but <strong>not enforced</strong> in localcloud — all testIamPermissions calls return ALLOW.
+                    </p>
+
+                    {/* Error banner */}
+                    <Show when={createError()}>
+                        <div style="padding:'8px 12px';background:'#fce8e6';border:'1px solid #ea4335';border-radius:'6px';color:'#c5221f';font-size:'13px';margin-bottom:'16px'" role="alert">{createError()}</div>
+                    </Show>
+
+                    <div style="display:flex;flex-direction:column;gap:16px">
+                        {/* ── Resource section ────────────────────────── */}
+                        <div>
+                            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:6px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px">Resource</label>
+                            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                                <div style="flex:1;min-width:200px">
+                                    <ComboBox
+                                        value={selResourceType()}
+                                        onChange={setSelResourceType}
+                                        options={resourceTypes().map(rt => rt.id)}
+                                        placeholder="Select service…"
+                                    />
+                                </div>
+                                <span style="color:var(--text-tertiary);font-size:14px">/</span>
+                                <input
+                                    type="text"
+                                    class="create-dialog-input create-dialog-input-mono"
+                                    style="flex:2;min-width:150px"
+                                    value={resourceId()}
+                                    onInput={e => setResourceId(e.currentTarget.value)}
+                                    placeholder={
+                                        (() => {
+                                            const rt = resourceTypes().find(r => r.id === selResourceType());
+                                            return rt ? `e.g. ${rt.resourcePattern.split('/').pop()}` : 'Resource ID (e.g. my-bucket)';
+                                        })()
+                                    }
+                                />
+                            </div>
+                            <Show when={selResourceType()}>
+                                {(() => {
+                                    const rt = resourceTypes().find(r => r.id === selResourceType());
+                                    return rt ? (
+                                        <div style="margin-top:6px;font-size:11px;color:var(--text-tertiary);display:flex;align-items:flex-start;gap:4px">
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="var(--text-tertiary)" style="flex-shrink:0;margin-top:1px" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                                            <span>{rt.description}</span>
+                                        </div>
+                                    ) : null;
+                                })()}
+                            </Show>
+                        </div>
+
+                        {/* ── Role & Member section ───────────────────── */}
+                        <div>
+                            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:6px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px">Add Role Binding</label>
+                            <div style="border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--surface-variant)">
+                                {/* Role picker */}
+                                <div style="margin-bottom:12px">
+                                    <label style="display:block;font-size:11px;font-weight:600;margin-bottom:4px;color:var(--text-secondary)">Role</label>
+                                    <div style="position:relative">
+                                        <input
+                                            type="text"
+                                            class="create-dialog-input create-dialog-input-mono"
+                                            style="width:100%;box-sizing:border-box"
+                                            value={selectedRole()}
+                                            onInput={e => setSelectedRole(e.currentTarget.value)}
+                                            placeholder="Search roles by name or description…"
+                                            autocomplete="off"
+                                        />
+                                        {/* Role dropdown */}
+                                        <Show when={selectedRole() && !selectedRoleMeta()}>
+                                            <div style="position:absolute;top:100%;left:0;right:0;z-index:20;max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,0.12)">
+                                                <For each={groupedRoles()}>
+                                                    {({ category, roles }) => (
+                                                        <div>
+                                                            <div style="padding:'4px 12px';font-size:'10px';font-weight:600;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.5px;background:var(--surface-variant)">{category}</div>
+                                                            <For each={roles}>
+                                                                {(role) => (
+                                                                    <div
+                                                                        onClick={() => setSelectedRole(role.id)}
+                                                                        style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid var(--border)', transition: 'background 0.1s', ':hover': 'background: var(--primary-softer)' }}
+                                                                        class="hover:bg"
+                                                                    >
+                                                                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
+                                                                            <span style={{ 'font-weight': 600, 'font-size': '12px' }}>{role.title}</span>
+                                                                            <span style={{ 'font-size': '10px', color: 'var(--text-tertiary)', 'font-family': 'var(--font-mono)' }}>{role.id}</span>
+                                                                            <Show when={role.stage !== 'GA'}>
+                                                                                <span class="badge badge-warning" style="font-size:9px;padding:0 4px">{role.stage}</span>
+                                                                            </Show>
+                                                                        </div>
+                                                                        <div style="font-size:11px;color:var(--text-secondary);line-height:1.4">{role.description}</div>
+                                                                    </div>
+                                                                )}
+                                                            </For>
+                                                        </div>
+                                                    )}
+                                                </For>
+                                            </div>
+                                        </Show>
+                                    </div>
+                                    {/* Selected role info */}
+                                    <Show when={selectedRoleMeta()}>
+                                        <div style="margin-top:8px;padding:10px 12px;background:var(--primary-softer);border:1px solid var(--primary-soft);border-radius:6px">
+                                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                                                <span style={{ 'font-weight': 600, 'font-size': '12px' }}>{selectedRoleMeta().title}</span>
+                                                <span class={`badge ${roleColor(selectedRole())}`} style="font-size:10px">{selectedRoleMeta().stage}</span>
+                                                <button onClick={() => setSelectedRole('')} style="margin-left:auto;background:none;border:none;color:var(--text-tertiary);cursor:pointer;font-size:16px;line-height:1;padding:0" title="Clear role">&times;</button>
+                                            </div>
+                                            <div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">{selectedRoleMeta().description}</div>
+                                            <div style="font-size:10px;color:var(--text-tertiary);margin-bottom:4px;font-weight:600">
+                                                {selectedRoleMeta().permissions.length} permission{selectedRoleMeta().permissions.length !== 1 ? 's' : ''}:
+                                            </div>
+                                            <div style="display:flex;flex-wrap:wrap;gap:3px">
+                                                <For each={selectedRoleMeta().permissions}>
+                                                    {(perm) => (
+                                                        <code style="font-size:10px;padding:1px 6px;background:var(--surface);border:1px solid var(--border);border-radius:3px;font-family:var(--font-mono)">{perm}</code>
+                                                    )}
+                                                </For>
+                                            </div>
+                                        </div>
+                                    </Show>
+                                </div>
+
+                                {/* Member input */}
+                                <div style="margin-bottom:12px">
+                                    <label style="display:block;font-size:11px;font-weight:600;margin-bottom:4px;color:var(--text-secondary)">Member (Principal)</label>
+                                    <div style="display:flex;gap:6px;align-items:center">
+                                        <select
+                                            value={memberType()}
+                                            onChange={e => setMemberType(e.target.value)}
+                                            style={{ padding: '6px 8px', border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--surface)', color: 'var(--text)', fontSize: '12px', 'font-family': 'var(--font-mono)' }}
+                                        >
+                                            <option value="user">user:</option>
+                                            <option value="serviceAccount">serviceAccount:</option>
+                                            <option value="group">group:</option>
+                                            <option value="domain">domain:</option>
+                                        </select>
+                                        <input
+                                            type="text"
+                                            class="create-dialog-input create-dialog-input-mono"
+                                            style="flex:1"
+                                            value={memberInput()}
+                                            onInput={e => setMemberInput(e.currentTarget.value)}
+                                            placeholder={
+                                                memberType() === 'user' ? 'alice@example.com' :
+                                                memberType() === 'serviceAccount' ? 'my-sa@project.iam.gserviceaccount.com' :
+                                                memberType() === 'group' ? 'eng@example.com' :
+                                                'example.com'
+                                            }
+                                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addBinding(); } }}
+                                        />
+                                    </div>
+                                    <div style="margin-top:4px;font-size:10px;color:var(--text-tertiary)">
+                                        Preview: <code style="font-family:var(--font-mono)">{buildMember() || '(enter a value)'}</code>
+                                    </div>
+                                </div>
+
+                                <button
+                                    onClick={addBinding}
+                                    disabled={!selectedRoleMeta() || !memberInput().trim()}
+                                    class="btn btn-secondary"
+                                    style={{ 'font-size': '12px', height: '30px', opacity: (!selectedRoleMeta() || !memberInput().trim()) ? 0.5 : 1 }}
+                                >
+                                    + Add to Policy
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* ── Bindings Preview ────────────────────────── */}
+                        <Show when={bindings().length > 0}>
+                            <div>
+                                <label style="display:block;font-size:12px;font-weight:600;margin-bottom:6px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px">Policy Preview</label>
+                                <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+                                    <div style="padding:8px 14px;background:var(--surface-variant);border-bottom:1px solid var(--border);font-size:11px;color:var(--text-secondary)">
+                                        Resource: <code style="font-family:var(--font-mono);font-weight:600;color:var(--text)">{resourceFull() || '(not set)'}</code>
+                                    </div>
+                                    <div style="padding:8px 14px;display:flex;flex-direction:column;gap:6px">
+                                        <For each={bindings()}>
+                                            {(binding, idx) => (
+                                                <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:idx() < bindings().length - 1 ? '1px solid var(--border)' : 'none'}">
+                                                    <div style="flex:1">
+                                                        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                                                            <span class={`badge ${roleColor(binding.role)}`} style="font-size:11px">{roleTitle(binding.role)}</span>
+                                                            <code style="font-size:10px;color:var(--text-tertiary);font-family:var(--font-mono)">{binding.role}</code>
+                                                        </div>
+                                                        <div style="display:flex;flex-wrap:wrap;gap:3px">
+                                                            <For each={binding.members}>
+                                                                {(m) => (
+                                                                    <span style="font-size:11px;padding:1px 8px;background:var(--surface);border:1px solid var(--border);border-radius:12px;font-family:var(--font-mono);color:var(--text-secondary)">{m}</span>
+                                                                )}
+                                                            </For>
+                                                        </div>
+                                                    </div>
+                                                    <button onClick={() => removeBinding(binding.role)}
+                                                        style="background:none;border:none;color:var(--text-tertiary);cursor:pointer;font-size:16px;padding:0 4px;line-height:1"
+                                                        title="Remove binding">&times;</button>
+                                                </div>
+                                            )}
+                                        </For>
+                                    </div>
+                                </div>
+                            </div>
+                        </Show>
+
+                        {/* ── Submit ──────────────────────────────────── */}
+                        <div style="display:flex;justify-content:flex-end;gap:8px;padding-top:8px">
+                            <button onClick={() => { setShowCreateForm(false); resetForm(); }}
+                                class="create-dialog-btn-cancel">Cancel</button>
+                            <button onClick={handleCreate}
+                                disabled={createSubmitting() || bindings().length === 0 || !resourceFull()}
+                                class="create-dialog-btn-submit"
+                                style={{ background: 'var(--primary)', color: '#fff', opacity: (createSubmitting() || bindings().length === 0 || !resourceFull()) ? 0.5 : 1 }}>
+                                {createSubmitting() ? 'Creating…' : `Grant Access (${bindings().length} role${bindings().length !== 1 ? 's' : ''})`}
+                            </button>
+                        </div>
+                    </div>
                 </div>
+            </Show>
+
+            {/* ── Policies List ──────────────────────────────────────── */}
+            <Show when={d() && d().policies && d().policies.length > 0} fallback={
+                <Show when={!showCreateForm()}>
+                    <div class="empty-state">
+                        <div class="empty-state-icon">{'\u2205'}</div>
+                        <div class="empty-state-title">No policies found</div>
+                        <div class="empty-state-text">Grant access to a resource to get started. IAM policies are stored but not enforced — all testIamPermissions calls return ALLOW.</div>
+                    </div>
+                </Show>
             }>
                 {/* Resource-oriented view */}
                 <Show when={viewMode() === 'resources'}>
@@ -2015,7 +2390,7 @@ function CloudIAMView(props) {
                                 <tr>
                                     <th>Resource</th>
                                     <th>Bindings</th>
-                                    <th>Actions</th>
+                                    <th style="width:80px">Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -2025,7 +2400,7 @@ function CloudIAMView(props) {
                                             <td>
                                                 <div style="display:flex;flex-direction:column;gap:2px">
                                                     <span style={{ 'font-weight': 500 }}>{policy.resourceId}</span>
-                                                    <span class="badge badge-neutral" style={{ 'align-self': 'flex-start' }}>{policy.resourceType}</span>
+                                                    <span class="badge badge-neutral" style={{ 'align-self': 'flex-start', 'font-size': '10px' }}>{policy.resourceType}</span>
                                                 </div>
                                             </td>
                                             <td>
@@ -2033,7 +2408,7 @@ function CloudIAMView(props) {
                                                     <For each={policy.bindings || []}>
                                                         {(binding) => (
                                                             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                                                                <span class={`badge ${roleColor(binding.role)}`}>{binding.role}</span>
+                                                                <span class={`badge ${roleColor(binding.role)}`} style={{ 'font-size': '10px' }} title={roleTitle(binding.role)}>{roleTitle(binding.role)}</span>
                                                                 <span style={{ 'font-size': '11px', color: 'var(--text-secondary)' }}>
                                                                     {(binding.members || []).join(', ')}
                                                                 </span>
@@ -2044,7 +2419,7 @@ function CloudIAMView(props) {
                                             </td>
                                             <td>
                                                 <Show when={props.onDelete}>
-                                                    <button onClick={() => props.onDelete('Delete policy for "' + policy.resourceId + '"?', async () => {
+                                                    <button onClick={() => props.onDelete('Delete policy for "' + policy.resourceId + '"? This removes all role bindings on this resource.', async () => {
                                                         await api.mutate('cloudiam', 'policies/delete', { resource: policy.resourceType + ':' + policy.resourceId });
                                                     })} class="btn btn-danger" style={{ height: '26px', 'font-size': '11px', padding: '0 8px' }} title="Delete">Del</button>
                                                 </Show>
@@ -2071,7 +2446,7 @@ function CloudIAMView(props) {
                                         <For each={bindings}>
                                             {(b) => (
                                                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:4px 0">
-                                                    <span class={`badge ${roleColor(b.role)}`}>{b.role}</span>
+                                                    <span class={`badge ${roleColor(b.role)}`} style={{ 'font-size': '10px' }} title={roleTitle(b.role)}>{roleTitle(b.role)}</span>
                                                     <span style={{ 'font-size': '12px', color: 'var(--text-secondary)' }}>on</span>
                                                     <span style={{ 'font-size': '12px', 'font-weight': 500 }}>{b.resourceType}:{b.resourceId}</span>
                                                 </div>
@@ -5269,6 +5644,9 @@ function CrudModal(props) {
                         <Show when={props.error}>
                             <div class="create-dialog-error" role="alert">{props.error}</div>
                         </Show>
+                        <Show when={props.warning}>
+                            <div class="alert alert-warning" role="alert" style="font-size:12px;margin-bottom:12px">{props.warning}</div>
+                        </Show>
                         <For each={props.fields || []}>
                             {(field) => {
                                 const fieldId = `crud-field-${String(field.name).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
@@ -5333,6 +5711,9 @@ function DeleteConfirmation(props) {
                         <p class="create-dialog-context">{props.message || 'Are you sure you want to delete this item?'}</p>
                     </div>
                     <div class="create-dialog-body" style="padding-top:12px">
+                        <Show when={props.warning}>
+                            <div class="alert alert-warning" role="alert" style="font-size:12px;margin-bottom:12px">{props.warning}</div>
+                        </Show>
                         <p style="font-size:13px;color:var(--text-secondary);line-height:1.5;margin:0">This action cannot be undone. All associated data will be permanently removed.</p>
                     </div>
                     <div class="create-dialog-footer">
@@ -5373,9 +5754,11 @@ export default function DataBrowser(props) {
     const [crudMode, setCrudMode] = createSignal('add');
     const [crudCallback, setCrudCallback] = createSignal(null);
     const [crudError, setCrudError] = createSignal(null);
+    const [crudWarning, setCrudWarning] = createSignal(null);
     const [crudSubmitting, setCrudSubmitting] = createSignal(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = createSignal(false);
     const [deleteMessage, setDeleteMessage] = createSignal('');
+    const [deleteWarning, setDeleteWarning] = createSignal(null);
     const [deleteCallback, setDeleteCallback] = createSignal(null);
 
     // Tab sync is handled by the parent (app.jsx) via props.selectedService.
@@ -5442,6 +5825,7 @@ export default function DataBrowser(props) {
         setCrudMode('add');
         setCrudCallback(() => callback);
         setCrudError(null);
+        setCrudWarning(getActionWarning(selectedTab(), 'console', title));
         setCrudSubmitting(false);
         setShowCrudModal(true);
     };
@@ -5452,12 +5836,14 @@ export default function DataBrowser(props) {
         setCrudMode('edit');
         setCrudCallback(() => callback);
         setCrudError(null);
+        setCrudWarning(getActionWarning(selectedTab(), 'console', title));
         setCrudSubmitting(false);
         setShowCrudModal(true);
     };
 
     const handleDelete = (message, callback) => {
         setDeleteMessage(message);
+        setDeleteWarning(getActionWarning(selectedTab(), 'console', message));
         setDeleteCallback(() => callback);
         setShowDeleteConfirm(true);
     };
@@ -5490,6 +5876,16 @@ export default function DataBrowser(props) {
             setError('Delete failed: ' + (err.message || 'Unknown error'));
         }
     };
+
+    // Event-based refresh: CloudIAMView dispatches localcloud:refresh-data after create
+    onMount(() => {
+        const handler = () => {
+            const tab = selectedTab();
+            if (FETCH_SERVICES.has(tab)) fetchData(tab);
+        };
+        window.addEventListener('localcloud:refresh-data', handler);
+        onCleanup(() => window.removeEventListener('localcloud:refresh-data', handler));
+    });
 
     // Fetch data when tab or project changes
     // props.activeProject is a signal accessor — call it to track reactively
@@ -5584,6 +5980,7 @@ export default function DataBrowser(props) {
                 fields={crudFields()}
                 mode={crudMode()}
                 error={crudError()}
+                warning={crudWarning()}
                 submitting={crudSubmitting()}
             />
             <DeleteConfirmation
@@ -5591,6 +5988,7 @@ export default function DataBrowser(props) {
                 onClose={() => setShowDeleteConfirm(false)}
                 onConfirm={handleDeleteConfirm}
                 message={deleteMessage()}
+                warning={deleteWarning()}
             />
         </div>
     );

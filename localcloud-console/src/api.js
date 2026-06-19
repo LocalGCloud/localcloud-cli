@@ -106,6 +106,14 @@ export const api = {
     health: () => get('/health'),
     services: () => get('/services'),
     requests: () => get('/requests'),
+    coverage: (service) => get(service ? `/coverage/${encodeURIComponent(service)}` : '/coverage'),
+    compatibility: () => get('/compatibility'),
+    compatibilityWarnings: (service, surface) => {
+        const params = [];
+        if (service) params.push(`service=${encodeURIComponent(service)}`);
+        if (surface) params.push(`surface=${encodeURIComponent(surface)}`);
+        return get(`/compatibility/warnings${params.length ? '?' + params.join('&') : ''}`);
+    },
     env: () => get(appendProject('/env?format=json')),
     terraformEnv: () => {
         const url = appendProject('/env?format=terraform');
@@ -169,6 +177,8 @@ export const api = {
     gcsFileContent: (bucket, object) => get(appendProject(`/browse/gcs/object-content?bucket=${encodeURIComponent(bucket)}&object=${encodeURIComponent(object)}`)),
     // GCS file schema detection
     gcsFileSchema: (bucket, object) => get(appendProject(`/gcs/file-schema?bucket=${encodeURIComponent(bucket)}&object=${encodeURIComponent(object)}`)),
+    // IAM metadata (roles + resource types for policy creation UI)
+    iamMetadata: () => get(appendProject('/browse/cloudiam/metadata')),
     // Secret Manager stats
     secretManagerStats: () => get(appendProject('/browse/secretmanager/stats')),
     // Secret Manager versions
