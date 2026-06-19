@@ -167,3 +167,37 @@ Or use the test script:
 | Dataproc | Requires Spark at `SPARK_HOME` for job submission |
 | Cloud Run/GKE/Compute | DNS/TLS prerequisite not yet configured |
 | All facades | No billing/quotas — resources are unlimited |
+
+<!-- compatibility:generated:start -->
+> Generated from `localcloud-server/src/main/resources/compatibility/services/*.yaml`.
+
+| Service | Coverage | Terraform Resources | Key Limitations |
+|---|---|---|---|
+| `alloydb` | partial | `google_alloydb_cluster`, `google_alloydb_instance` | Backup/restore, PSC, and cross-region replication are not complete. |
+| `bigquery` | partial | `google_bigquery_dataset`, `google_bigquery_table` | SQL is DuckDB-backed, so BigQuery dialect parity is partial.<br>Scripting, BQML, GEOGRAPHY, and partitioning execution are limited. |
+| `bigtable` | early-partial | `google_bigtable_instance`, `google_bigtable_table` | Persistence and browse/mutate/export alignment need hardening. |
+| `cloudbilling` | partial | - | Real billing, budget enforcement, and cost export are not implemented. |
+| `cloudfunctions` | partial | `google_cloudfunctions2_function` | Build and container execution are metadata-only; use Functions Framework locally. |
+| `cloudiam` | partial | - | Role validation, conditions, and deny policies are not complete. |
+| `cloudresourcemanager` | partial | `google_project` | Organization/folder hierarchy is not modeled. |
+| `cloudrun` | early-partial | `google_cloud_run_v2_service` | Container execution and routing require host runtime architecture. |
+| `cloudscheduler` | partial | `google_cloud_scheduler_job` | Timezone rules beyond cron-utils support are not fully verified. |
+| `cloudsql` | early-partial | `google_sql_database_instance`, `google_sql_database`, `google_sql_user` | MySQL data plane, read replicas, PSC, and backup/restore are not complete. |
+| `cloudtasks` | partial | `google_cloud_tasks_queue` | App Engine tasks and OAuth token generation are not complete. |
+| `compute` | early-partial | `google_compute_instance` | Disks, snapshots, templates, and networking are not yet emulated. |
+| `dataproc` | partial | `google_dataproc_cluster` | Autoscaling and YARN/Kubernetes cluster mode are not complete. |
+| `firestore` | early-partial | - | Seed and browser parity is not fully hardened.<br>Index/query behavior is unverified. |
+| `gcs` | partial | `google_storage_bucket`, `google_storage_bucket_object` | No cloud IAM enforcement.<br>No native project-level bucket isolation in fake-gcs-server without LocalCloud metadata. |
+| `gke` | early-partial | `google_container_cluster` | Kubernetes runtime parity depends on host runtime/k3d integration. |
+| `kms` | early-partial | `google_kms_key_ring`, `google_kms_crypto_key` | HSM, EKM, import jobs, and Cloud HSM level enforcement are not implemented. |
+| `logging` | partial | `google_logging_project_sink` | Metrics, exclusions, audit logs, and production sink behavior are limited. |
+| `memorystore` | partial | `google_redis_instance` | Pub/Sub, Lua, streams, and MULTI/EXEC are not supported. |
+| `monitoring` | partial | `google_monitoring_alert_policy` | Alerting, uptime checks, and dashboards are partial. |
+| `pubsub` | partial | `google_pubsub_topic`, `google_pubsub_subscription` | Advanced delivery controls need parity tests.<br>Schema and snapshot workflows are not complete. |
+| `secretmanager` | partial | `google_secret_manager_secret`, `google_secret_manager_secret_version` | Rotation, CMEK, and per-secret IAM are not complete. |
+| `serviceusage` | partial | - | Quotas and service entitlement behavior are stubs. |
+| `spanner` | early-partial | `google_spanner_instance`, `google_spanner_database` | REST/gRPC metadata parity remains partial.<br>Partitioned DML and change streams are not supported. |
+| `vertexai` | early-partial | `google_vertex_ai_*` | Broader Vertex AI training, prediction, and model management are out of current scope. |
+| `workflows` | partial | `google_workflows_workflow` | In-flight execution checkpointing is not durable across restart. |
+
+<!-- compatibility:generated:end -->

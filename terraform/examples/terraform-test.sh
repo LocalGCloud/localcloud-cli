@@ -241,6 +241,18 @@ echo -e "  ${RED}Fail:${NC}           $FAIL"
 echo -e "  ${YELLOW}Not Supported:${NC}  $NOT_SUPPORTED"
 echo ""
 
+mkdir -p "$PROJECT_ROOT/build/compatibility"
+cat > "$PROJECT_ROOT/build/compatibility/terraform-e2e.json" << EOF
+{
+  "evidence_id": "terraform:e2e-script",
+  "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "pass": $PASS,
+  "fail": $FAIL,
+  "not_supported": $NOT_SUPPORTED,
+  "resource_count": $RESOURCE_COUNT
+}
+EOF
+
 # ─── Step 8: Show outputs ─────────────────────────────────────────────
 log_info "Terraform outputs:"
 terraform output -no-color 2>/dev/null | head -60 || true

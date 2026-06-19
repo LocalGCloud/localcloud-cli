@@ -21,6 +21,7 @@ PROJECT="local-project"
 
 PASS=0
 FAIL=0
+RESULTS=()
 
 test_api() {
     local desc="$1"
@@ -43,9 +44,11 @@ test_api() {
     if [ "$actual_code" = "$expect_code" ]; then
         echo "  PASS  $desc (HTTP $actual_code)"
         PASS=$((PASS + 1))
+        RESULTS+=("{\"description\":\"$desc\",\"status\":\"pass\",\"expected_http\":$expect_code,\"actual_http\":$actual_code}")
     else
         echo "  FAIL  $desc (expected $expect_code, got $actual_code)"
         FAIL=$((FAIL + 1))
+        RESULTS+=("{\"description\":\"$desc\",\"status\":\"fail\",\"expected_http\":$expect_code,\"actual_http\":$actual_code}")
     fi
 }
 
@@ -158,6 +161,23 @@ echo ""
 echo "============================================"
 echo "  Results: $PASS passed, $FAIL failed"
 echo "============================================"
+
+mkdir -p build/compatibility
+{
+    echo "{"
+    echo "  \"evidence_id\": \"terraform:api-compat-script\","
+    echo "  \"generated_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
+    echo "  \"pass\": $PASS,"
+    echo "  \"fail\": $FAIL,"
+    echo "  \"results\": ["
+    for i in "${!RESULTS[@]}"; do
+        comma=","
+        [ "$i" -eq "$((${#RESULTS[@]} - 1))" ] && comma=""
+        echo "    ${RESULTS[$i]}$comma"
+    done
+    echo "  ]"
+    echo "}"
+} > build/compatibility/terraform-api-compat.json
 
 if [ $FAIL -gt 0 ]; then
     exit 1
