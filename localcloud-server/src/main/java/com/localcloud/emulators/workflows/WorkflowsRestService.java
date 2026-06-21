@@ -276,7 +276,7 @@ public class WorkflowsRestService {
         }
     }
 
-    @Post("/projects/{project}/locations/{location}/workflows/{workflow}:undelete")
+    @Post("regex:^/projects/(?<project>[^/]+)/locations/(?<location>[^/]+)/workflows/(?<workflow>[^/]+):undelete$")
     public HttpResponse undeleteWorkflow(@Param String project,
                                           @Param String location,
                                           @Param String workflow) {
