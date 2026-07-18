@@ -1,5 +1,6 @@
 import { createSignal, createEffect, onCleanup, Show, For, createMemo } from 'solid-js';
 import { api } from '../api.js';
+import { createUrlBackedTab } from '../utils/urlTabs.js';
 import DataBrowser from './DataBrowser.jsx';
 import CodeEditor, { toCodeMirrorSchema } from '../components/CodeEditor.jsx';
 import Workflows from './Workflows.jsx';
@@ -8,6 +9,7 @@ import { TriggerTestPanel, JobOutputPanel, SchedulerHistoryPanel, ConnectionInfo
 import { IconDatabase, IconTable, IconColumn, IconChevron } from '../components/TreeIcons.jsx';
 import { formatNumber, formatTime, onActivate } from '../utils/a11y.js';
 import { formatSize } from '../utils/format.js';
+import { SAMPLE_CODE, CLI_COMMANDS } from './settings-data.js';
 import { SERVICE_META, SQL_SERVICES, SQL_RESULT_PAGE_SIZE, SERVICE_SCHEMAS } from '../data/services.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
@@ -1920,7 +1922,6 @@ export default function ServiceExplorer(props) {
     const [mode, setMode] = createSignal(props.activeView?.() || 'explorer');
     const [refreshTrigger, setRefreshTrigger] = createSignal(0);
     const [resetTrigger, setResetTrigger] = createSignal(0);
-    const [coverage, setCoverage] = createSignal(null);
     let lastSyncedView = props.activeView?.();
 
     createEffect(() => {
@@ -1932,7 +1933,7 @@ export default function ServiceExplorer(props) {
     });
 
     const switchPrimaryMode = (nextMode) => {
-        if (!['explorer', 'editor', 'db-history', 'db-stats', 'settings'].includes(nextMode)) return;
+        if (!['explorer', 'editor', 'db-history', 'db-stats', 'settings', 'guide'].includes(nextMode)) return;
         lastSyncedView = nextMode;
         props.onViewChange?.(nextMode);
         setMode(nextMode);
@@ -1944,13 +1945,6 @@ export default function ServiceExplorer(props) {
 
     const activeService = () => props.selectedService?.() || 'gcs';
     const meta = () => SERVICE_META[activeService()] || { label: activeService(), description: '' };
-
-    createEffect(() => {
-        const service = activeService();
-        api.coverage(service)
-            .then(setCoverage)
-            .catch(() => setCoverage(null));
-    });
 
     const handleRefresh = () => setRefreshTrigger(prev => prev + 1);
 
@@ -1978,12 +1972,7 @@ export default function ServiceExplorer(props) {
                         <Show when={meta().tag}><span class="badge badge-coming-up">{meta().tag}</span></Show>
                     </div>
                     <p class="se-service-desc">{meta().description}</p>
-                    <Show when={coverage()?.coverage_status && coverage().coverage_status !== 'supported'}>
-                        <div style="margin-top:8px;display:flex;gap:8px;align-items:flex-start;background:var(--warning-soft);border:1px solid var(--warning);color:var(--text);border-radius:var(--radius-sm);padding:8px 10px;font-size:12px;line-height:1.4">
-                            <strong style="color:var(--warning);text-transform:uppercase">{coverage().coverage_status}</strong>
-                            <span>{coverage().ci_recommendation || 'Review compatibility details before relying on this service in CI.'}</span>
-                        </div>
-                    </Show>
+
                 </div>
             </div>
 
@@ -2002,7 +1991,7 @@ export default function ServiceExplorer(props) {
                             class={`se-mode-tab ${mode() === 'editor' ? 'active' : ''}`}
                             onClick={() => switchPrimaryMode('editor')}
                         >
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                 <path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/>
                             </svg>
                             SQL Editor
@@ -2012,7 +2001,7 @@ export default function ServiceExplorer(props) {
                             class={`se-mode-tab ${mode() === 'explorer' ? 'active' : ''}`}
                             onClick={() => switchPrimaryMode('explorer')}
                         >
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                 <path d="M20 6H12L10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/>
                             </svg>
                             Data Explorer
@@ -2022,7 +2011,7 @@ export default function ServiceExplorer(props) {
                                 class={`se-mode-tab ${mode() === 'stats' ? 'active' : ''}`}
                                 onClick={() => setMode('stats')}
                             >
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                     <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
                                 </svg>
                                 Stats
@@ -2033,7 +2022,7 @@ export default function ServiceExplorer(props) {
                                 class={`se-mode-tab ${mode() === 'trigger' ? 'active' : ''}`}
                                 onClick={() => setMode('trigger')}
                             >
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                     <path d="M13 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8z"/>
                                 </svg>
                                 Trigger Test
@@ -2044,7 +2033,7 @@ export default function ServiceExplorer(props) {
                                 class={`se-mode-tab ${mode() === 'jobs' ? 'active' : ''}`}
                                 onClick={() => setMode('jobs')}
                             >
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                     <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
                                 </svg>
                                 Job Output
@@ -2055,7 +2044,7 @@ export default function ServiceExplorer(props) {
                                 class={`se-mode-tab ${mode() === 'history' ? 'active' : ''}`}
                                 onClick={() => setMode('history')}
                             >
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                     <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>
                                 </svg>
                                 Job History
@@ -2066,7 +2055,7 @@ export default function ServiceExplorer(props) {
                                 class={`se-mode-tab ${mode() === 'connection' ? 'active' : ''}`}
                                 onClick={() => setMode('connection')}
                             >
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                     <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
                                 </svg>
                                 Connection
@@ -2077,7 +2066,7 @@ export default function ServiceExplorer(props) {
                                 class={`se-mode-tab ${mode() === 'db-history' ? 'active' : ''}`}
                                 onClick={() => switchPrimaryMode('db-history')}
                             >
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                     <path d="M13 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S6.67 9 7.5 9 9 9.67 9 10.5 8.33 12 7.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 10.5 5s2.5.67 2.5 1.5S11.33 8 10.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S14.67 5 15.5 5s2.5.67 2.5 1.5S16.33 8 15.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S17.67 9 18.5 9s2.5.67 2.5 1.5-.67 1.5-1.5 1.5z"/>
                                 </svg>
                                 History
@@ -2086,7 +2075,7 @@ export default function ServiceExplorer(props) {
                                 class={`se-mode-tab ${mode() === 'db-stats' ? 'active' : ''}`}
                                 onClick={() => switchPrimaryMode('db-stats')}
                             >
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                     <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
                                 </svg>
                                 Stats
@@ -2096,7 +2085,7 @@ export default function ServiceExplorer(props) {
                             class={`se-mode-tab ${mode() === 'settings' ? 'active' : ''}`}
                             onClick={showSettings}
                         >
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                 <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
                             </svg>
                             Settings
@@ -2105,7 +2094,7 @@ export default function ServiceExplorer(props) {
                             class={`se-mode-tab ${mode() === 'sync' ? 'active' : ''}`}
                             onClick={() => setMode('sync')}
                         >
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                 <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
                             </svg>
                             Remote Sync
@@ -2122,10 +2111,14 @@ export default function ServiceExplorer(props) {
                                 "line-height": "1"
                             }}>BETA</span>
                         </button>
-                    </div>
-                    <div class="se-mode-actions">
-                        <button class="btn btn-secondary" onClick={handleRefresh} style={{ height: "30px", "font-size": "11px", padding: "0 12px" }}>
-                            Refresh
+                        <button
+                            class={`se-mode-tab ${mode() === 'guide' ? 'active' : ''}`}
+                            onClick={() => setMode('guide')}
+                        >
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                                <path d="M19 2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4l3 3 3-3h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-5 12h-4v-2h4v2zm0-4h-4V8h4v2z"/>
+                            </svg>
+                            User Guide
                         </button>
                     </div>
                 </div>
@@ -2198,6 +2191,204 @@ export default function ServiceExplorer(props) {
                         />
                     </div>
                 </Show>
+
+                <Show when={mode() === 'guide'}>
+                    <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '24px', "overflow-y": 'auto' }}>
+                        <ServiceUserGuide serviceId={activeService()} projectId={props.activeProject} serviceLabel={meta().label} />
+                    </div>
+                </Show>
+            </Show>
+        </div>
+    );
+}
+
+// ─── Service User Guide Component ────────────────────────────────────
+function ServiceUserGuide(props) {
+    const config = () => SERVICE_CONFIG[props.serviceId] || {};
+    const sampleCode = () => SAMPLE_CODE[props.serviceId];
+    const cliCommands = () => CLI_COMMANDS[props.serviceId];
+    const [copiedVar, setCopiedVar] = createSignal(false);
+    const [copiedSdk, setCopiedSdk] = createSignal(false);
+    const [copiedCli, setCopiedCli] = createSignal(false);
+    const [activeSdk, setActiveSdk] = createUrlBackedTab('sdk', ['python', 'nodejs', 'go', 'java', 'gcloud'], 'python', { history: 'replace' });
+    const projectId = () => typeof props.projectId === 'function' ? props.projectId() : props.projectId || 'local-project';
+
+    const envVar = () => config().envVar || '';
+    const envValue = () => config().envValue || '';
+
+    const handleCopyEnv = async () => {
+        const cmd = `export ${envVar()}="${envValue()}"`;
+        try {
+            await navigator.clipboard.writeText(cmd);
+            setCopiedVar(true);
+            setTimeout(() => setCopiedVar(false), 2000);
+        } catch {}
+    };
+
+    const sdkTabs = () => {
+        if (!sampleCode()) return [];
+        const keys = Object.keys(sampleCode());
+        return keys.map(k => ({ id: k, label: k === 'nodejs' ? 'Node.js' : k === 'gcloud' ? 'gcloud CLI' : k.charAt(0).toUpperCase() + k.slice(1) }));
+    };
+
+    return (
+        <div style={{ "max-width": "780px" }}>
+            <h2 style={{ "font-size": "18px", "font-weight": "600", "margin-bottom": "4px" }}>User Guide</h2>
+            <p style={{ "font-size": "13px", color: "var(--text-secondary)", "margin-bottom": "24px" }}>
+                Configure your environment and use the SDK or CLI to connect to this service.
+            </p>
+
+            {/* Environment Variables */}
+            <Show when={envVar()}>
+                <div style={{ "margin-bottom": "28px" }}>
+                    <h3 style={{ "font-size": "14px", "font-weight": "500", "margin-bottom": "10px" }}>Environment Variable</h3>
+                    <p style={{ "font-size": "13px", color: "var(--text-secondary)", "margin-bottom": "10px", "line-height": "1.5" }}>
+                        Set this environment variable to route {props.serviceLabel} SDK calls to LocalCloud:
+                    </p>
+                    <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
+                        <code style={{
+                            flex: "1",
+                            padding: "10px 14px",
+                            "border-radius": "8px",
+                            background: "var(--surface-variant)",
+                            "font-family": "var(--font-mono)",
+                            "font-size": "13px",
+                            border: "1px solid var(--border)",
+                            color: "var(--text)",
+                        }}>
+                            export {envVar()}="{envValue()}"
+                        </code>
+                        <button
+                            class="btn btn-secondary"
+                            onClick={handleCopyEnv}
+                            style={{ height: "38px", "font-size": "12px", padding: "0 14px", "flex-shrink": "0" }}
+                        >
+                            {copiedVar() ? 'Copied!' : 'Copy'}
+                        </button>
+                    </div>
+                    <p style={{ "font-size": "11px", color: "var(--text-tertiary)", "margin-top": "8px" }}>
+                        Or auto-configure all services: <code style={{ "font-size": "11px" }}>eval "$(curl -s http://localhost:8080/env?format=shell)"</code>
+                    </p>
+                </div>
+            </Show>
+
+            {/* SDK Setup */}
+            <Show when={sampleCode()}>
+                <div style={{ "margin-bottom": "28px" }}>
+                    <h3 style={{ "font-size": "14px", "font-weight": "500", "margin-bottom": "10px" }}>SDK Setup</h3>
+                    <p style={{ "font-size": "13px", color: "var(--text-secondary)", "margin-bottom": "12px", "line-height": "1.5" }}>
+                        Initialise the Google Cloud SDK for this service — no code changes needed.
+                        The SDKs detect the emulator host from the environment variable.
+                    </p>
+
+                    {/* SDK language tabs */}
+                    <div style={{ display: "flex", gap: "4px", "margin-bottom": "10px" }}>
+                        <For each={sdkTabs()}>
+                            {(tab) => (
+                                <button
+                                    classList={{ "env-sample-tab": true, "active": activeSdk() === tab.id }}
+                                    onClick={() => setActiveSdk(tab.id)}
+                                    style={{ "font-size": "11px", padding: "4px 10px" }}
+                                >
+                                    {tab.label}
+                                </button>
+                            )}
+                        </For>
+                    </div>
+
+                    <div style={{ position: "relative" }}>
+                        <button
+                            class="code-block-copy-btn"
+                            onClick={async () => {
+                                const code = sampleCode()?.[activeSdk()] || '';
+                                try { await navigator.clipboard.writeText(code); setCopiedSdk(true); setTimeout(() => setCopiedSdk(false), 2000); } catch {}
+                            }}
+                            title="Copy to clipboard"
+                            aria-label="Copy SDK code"
+                        >
+                            <Show when={copiedSdk()} fallback={
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                            }>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                            </Show>
+                        </button>
+                        <div style={{
+                            padding: "14px 16px",
+                            "border-radius": "8px",
+                            background: "var(--surface-variant)",
+                            border: "1px solid var(--border)",
+                            "font-family": "var(--font-mono)",
+                            "font-size": "12px",
+                            "line-height": "1.6",
+                            overflow: "auto",
+                            "max-height": "400px",
+                            "white-space": "pre",
+                            "tab-size": "2",
+                            color: "var(--text)",
+                        }}>
+                            {sampleCode()?.[activeSdk()] || 'No sample available for this language.'}
+                        </div>
+                    </div>
+                </div>
+            </Show>
+
+            {/* CLI Commands */}
+            <Show when={cliCommands()}>
+                <div style={{ "margin-bottom": "28px" }}>
+                    <h3 style={{ "font-size": "14px", "font-weight": "500", "margin-bottom": "10px" }}>CLI Quick Reference</h3>
+                    <p style={{ "font-size": "13px", color: "var(--text-secondary)", "margin-bottom": "12px", "line-height": "1.5" }}>
+                        Common CLI commands for {cliCommands().label}:
+                    </p>
+                    <div style={{ position: "relative" }}>
+                        <button
+                            class="code-block-copy-btn"
+                            onClick={async () => {
+                                const code = cliCommands()?.commands || '';
+                                try { await navigator.clipboard.writeText(code); setCopiedCli(true); setTimeout(() => setCopiedCli(false), 2000); } catch {}
+                            }}
+                            title="Copy to clipboard"
+                            aria-label="Copy CLI commands"
+                        >
+                            <Show when={copiedCli()} fallback={
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                            }>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                            </Show>
+                        </button>
+                        <div style={{
+                            padding: "14px 16px",
+                            "border-radius": "8px",
+                            background: "var(--surface-variant)",
+                            border: "1px solid var(--border)",
+                            "font-family": "var(--font-mono)",
+                            "font-size": "12px",
+                            "line-height": "1.6",
+                            overflow: "auto",
+                            "max-height": "400px",
+                            "white-space": "pre",
+                            "tab-size": "2",
+                            color: "var(--text)",
+                        }}>
+                            {cliCommands().commands}
+                        </div>
+                    </div>
+                </div>
+            </Show>
+
+            {/* No env var / no sample — show generic help */}
+            <Show when={!envVar() && !sampleCode() && !cliCommands()}>
+                <div style={{
+                    padding: "32px",
+                    "text-align": "center",
+                    color: "var(--text-secondary)",
+                    "font-size": "13px",
+                    background: "var(--surface-variant)",
+                    "border-radius": "12px",
+                    border: "1px solid var(--border)",
+                }}>
+                    <p>No specific guide available for this service yet.</p>
+                    <p style={{ "margin-top": "8px", "font-size": "12px" }}>Visit <strong>Setup & SDKs</strong> for general configuration help.</p>
+                </div>
             </Show>
         </div>
     );

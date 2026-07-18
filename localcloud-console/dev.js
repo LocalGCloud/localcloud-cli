@@ -52,7 +52,7 @@ const API_PREFIXES = [
     '/health', '/services', '/requests', '/env', '/reset', '/browse', '/mutate',
     '/projects', '/routing', '/credentials', '/query', '/schema', '/gcs',
     '/usage', '/query-history', '/workflow-env', '/workflow', '/sync',
-    '/export', '/reseed',
+    '/export', '/reseed', '/coverage', '/compatibility',
 ];
 
 const server = createServer((req, res) => {

@@ -1,5 +1,5 @@
 service_id: cloudsql
-coverage_status: early-partial
+coverage_status: partial
 operations:
   - id: sql-admin.lifecycle
     operation: instances/databases/users
@@ -20,7 +20,8 @@ console_paths:
     status: partial
 state: { source: PostgreSQL-backed facade, seed: planned, reset: planned, export: planned, snapshot: planned }
 limitations:
-  - MySQL data plane, read replicas, PSC, and backup/restore are not complete.
+  - '[prod_only] Read replicas (cross-region replication) and PSC (Private Service Connect).'
+  - MySQL data plane and backup/restore are not complete.
 unsupported_operations:
   - id: cloudsql-backup-runs
     operation: backupRuns.insert

@@ -1,10 +1,15 @@
 service_id: dataproc
 coverage_status: partial
 operations:
-  - id: clusters-jobs.lifecycle
-    operation: clusters CRUD and jobs submit/list/get
+  - id: clusters.crud
+    operation: clusters.create/list/get/delete
+    status: supported
+    evidence: [manual:terraform-compat-2026-05-31, terraform:e2e-script]
+    notes: Cluster CRUD works end-to-end via REST facade with synchronous LRO.
+  - id: jobs.execution
+    operation: jobs submit/list/get
     status: partial
-    notes: Metadata plus local spark-submit execution when Spark is available.
+    notes: Requires Spark at SPARK_HOME for job submission; otherwise metadata-only.
 terraform_resources:
   status: supported
   resources: [google_dataproc_cluster]

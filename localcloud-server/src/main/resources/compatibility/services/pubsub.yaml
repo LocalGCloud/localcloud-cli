@@ -15,8 +15,9 @@ operations:
     evidence: [manual:service-status-2026-05-26]
   - id: advanced-delivery
     operation: schemas, snapshots, seek, dead-letter policy
-    status: partial
-    notes: Needs explicit parity and CI verification.
+    status: supported
+    evidence: [manual:pubsub-advanced-2026-06-22, terraform:api-compat-script]
+    notes: Verified on the external Pub/Sub emulator endpoint; gateway/Terraform REST facade remains core CRUD only for advanced-delivery routes.
 terraform_resources:
   status: supported
   resources: [google_pubsub_topic, google_pubsub_subscription]
@@ -34,6 +35,6 @@ state:
   export: available
   snapshot: planned
 limitations:
-  - Advanced delivery controls need parity tests.
-  - Schema and snapshot workflows are not complete.
-ci_recommendation: Use for local and CI smoke tests that stay within listed supported operations; add a coverage assertion for this service.
+  - External emulator supports schemas, snapshots, seek, and dead-letter policy; gateway/Terraform REST facade exposes core topic/subscription routes only.
+  - gcloud and console paths remain partial/unverified for advanced Pub/Sub workflows.
+ci_recommendation: Use for local and CI smoke tests across core publish/pull plus advanced-delivery smoke checks on PUBSUB_EMULATOR_HOST; keep Terraform tests within core topic/subscription CRUD unless gateway advanced routes are added.

@@ -1,5 +1,5 @@
 service_id: gke
-coverage_status: early-partial
+coverage_status: partial
 operations:
   - id: clusters.lifecycle
     operation: clusters CRUD
@@ -7,7 +7,8 @@ operations:
     notes: Local facade exists for cluster metadata and k3d-oriented workflows.
   - id: nodepools.runtime
     operation: node pools, autoscaling, upgrades
-    status: unsupported
+    status: prod_only
+    notes: Production cluster management; local k3d provides the runtime cluster.
 terraform_resources:
   status: planned
   resources: [google_container_cluster]
@@ -20,6 +21,7 @@ console_paths:
 state: { source: PostgreSQL-backed facade, seed: planned, reset: available, export: planned, snapshot: planned }
 limitations:
   - Kubernetes runtime parity depends on host runtime/k3d integration.
+  - '[prod_only] Node pools, autoscaling, and upgrades (GCP-managed cluster autoscaler, regional instance groups).'
 unsupported_operations:
   - id: gke-nodepools-autoscaling
     operation: nodepools.autoscaling

@@ -26,11 +26,8 @@ This creates the minified `dist/` files that the Armeria gateway serves.
 ### 2. Start LocalCloud
 
 ```bash
-# Using Docker Compose (recommended)
-docker compose up -d
-
-# Or using the CLI
-localcloud start
+#refer to the script that starts docker container with all the required parameters
+./start.sh
 ```
 
 Wait for the health check to pass.

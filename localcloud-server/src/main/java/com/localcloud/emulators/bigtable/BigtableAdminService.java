@@ -252,6 +252,103 @@ public class BigtableAdminService {
         }
     }
 
+    // --- Row-level data operations ---
+
+    /**
+     * Read rows from a table. Optional query params: limit (default 100, max 1000).
+     * Returns an array of row objects with "rowKey" and "cells" fields.
+     */
+    @Get("/projects/{project}/instances/{instance}/tables/{table}/rows")
+    public HttpResponse readRows(@Param String project, @Param String instance,
+                                  @Param String table, @Param @Default("100") int limit) {
+        emulator.incrementRequestCount();
+        if (limit <= 0) limit = 100;
+        limit = Math.min(limit, 1000);
+        try {
+            ObjectNode out = mapper.createObjectNode();
+            ArrayNode rows = out.putArray("rows");
+            try (BigtableGrpcClient client = new BigtableGrpcClient(emulatorPort)) {
+                for (Map<String, Object> row : client.readRows(project, instance, table, limit)) {
+                    ObjectNode rowNode = mapper.createObjectNode();
+                    rowNode.put("rowKey", String.valueOf(row.get("rowKey")));
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> cells = (Map<String, Object>) row.get("cells");
+                    if (cells != null) {
+                        ObjectNode cellsNode = rowNode.putObject("cells");
+                        for (Map.Entry<String, Object> entry : cells.entrySet()) {
+                            cellsNode.put(entry.getKey(), decodeCellValue(entry.getValue()));
+                        }
+                    }
+                    rows.add(rowNode);
+                }
+            }
+            return json(HttpStatus.OK, out);
+        } catch (Exception e) {
+            return exception(e, "read rows");
+        }
+    }
+
+    /**
+     * Decode a Bigtable cell value (byte array) to a UTF-8 string for JSON output.
+     */
+    private String decodeCellValue(Object value) {
+        if (value instanceof byte[] bytes) {
+            return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        }
+        return String.valueOf(value);
+    }
+
+    /**
+     * Write cells to a row. Body: { "rowKey": "...", "cells": { "cf1:col1": "value1" } }
+     * The target table must already exist (created via instance/table admin endpoints).
+     */
+    @Post("/projects/{project}/instances/{instance}/tables/{table}/rows")
+    public HttpResponse mutateRow(@Param String project, @Param String instance,
+                                   @Param String table, String body) {
+        emulator.incrementRequestCount();
+        try {
+            JsonNode root = readTree(body);
+            String rowKey = required(root, "rowKey");
+            Map<String, Object> cells = new LinkedHashMap<>();
+            if (root.has("cells") && root.get("cells").isObject()) {
+                root.get("cells").fields().forEachRemaining(e ->
+                    cells.put(e.getKey(), e.getValue().asText()));
+            }
+            if (cells.isEmpty()) {
+                throw new IllegalArgumentException("Missing required field: cells");
+            }
+            try (BigtableGrpcClient client = new BigtableGrpcClient(emulatorPort)) {
+                client.mutateRow(project, instance, table, rowKey, cells);
+            }
+            ObjectNode out = mapper.createObjectNode();
+            out.put("status", "written");
+            out.put("rowKey", rowKey);
+            return json(HttpStatus.OK, out);
+        } catch (Exception e) {
+            return exception(e, "mutate row");
+        }
+    }
+
+    /**
+     * Delete a single row by key.
+     */
+    @Delete("/projects/{project}/instances/{instance}/tables/{table}/rows/{rowKey}")
+    public HttpResponse deleteRow(@Param String project, @Param String instance,
+                                   @Param String table, @Param String rowKey) {
+        emulator.incrementRequestCount();
+        try {
+            try (BigtableGrpcClient client = new BigtableGrpcClient(emulatorPort)) {
+                client.deleteRow(project, instance, table, rowKey);
+            }
+            ObjectNode out = mapper.createObjectNode();
+            out.put("status", "deleted");
+            out.put("rowKey", rowKey);
+            return json(HttpStatus.OK, out);
+        } catch (Exception e) {
+            return exception(e, "delete row");
+        }
+    }
+
     private ObjectNode instanceJson(Map<String, Object> row) {
         ObjectNode out = mapper.createObjectNode();
         String project = String.valueOf(row.get("project_id"));

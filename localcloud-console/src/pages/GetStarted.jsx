@@ -1,5 +1,6 @@
 import { createSignal, Show, For } from 'solid-js';
 import { GCP_REGIONS, getZonesForRegion } from '../data/gcpLocations.js';
+import { createUrlBackedTab } from '../utils/urlTabs.js';
 
 const SDK_SNIPPETS = [
     {
@@ -118,7 +119,7 @@ resource "google_secret_manager_secret" "example" {
 
 export default function GetStarted(props) {
     const [copiedEval, setCopiedEval] = createSignal(false);
-    const [activeSdkTab, setActiveSdkTab] = createSignal('Python');
+    const [activeSdkTab, setActiveSdkTab] = createUrlBackedTab('sdk', SDK_SNIPPETS.map(s => s.lang), 'Python', { history: 'replace' });
     const [copiedSdk, setCopiedSdk] = createSignal(false);
 
     const healthData = () => props.healthData?.();

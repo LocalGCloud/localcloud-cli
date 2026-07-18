@@ -1,13 +1,17 @@
 service_id: cloudrun
-coverage_status: early-partial
+coverage_status: partial
 operations:
   - id: services-revisions
     operation: services/revisions
     status: partial
     notes: Local facade exists for service metadata.
-  - id: jobs-domains
-    operation: jobs, custom domains, production routing
+  - id: jobs-execution
+    operation: jobs
     status: unsupported
+  - id: custom-domains-routing
+    operation: custom domains, production routing
+    status: prod_only
+    notes: Production-only DNS and load-balancing features.
 terraform_resources:
   status: planned
   resources: [google_cloud_run_v2_service]
@@ -20,6 +24,7 @@ console_paths:
 state: { source: PostgreSQL-backed facade, seed: planned, reset: available, export: planned, snapshot: planned }
 limitations:
   - Container execution and routing require host runtime architecture.
+  - '[prod_only] Custom domains and production routing (Google Front End load balancers, managed TLS).'
 unsupported_operations:
   - id: cloudrun-jobs-create
     operation: jobs.create

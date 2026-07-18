@@ -4,7 +4,7 @@
 
 The plan targets **full parity with Google's official Pub/Sub emulator** — meaning every RPC the emulator implements must be implemented, so that `gcloud pubsub`, Terraform, and all gRPC client SDKs (Python, Java, Node.js, Go) work **without code changes**.
 
-The only exceptions are features the official emulator **also doesn't implement** (SchemaService, IAM).
+The original exception list treated SchemaService as an official-emulator gap. As of the 2026-06-22 compatibility probe, the external Pub/Sub emulator supports SchemaService; the LocalCloud gateway facade still lacks schema routes.
 
 ---
 
@@ -158,11 +158,11 @@ These 10 RPCs are the **minimum** for Python, Java, Node.js, and Go SDKs to work
 | 24 | `DeleteSnapshot` | Subscriber | DELETE snapshot |
 | 25 | `Seek` | Subscriber | Reset subscription to snapshot or time |
 
-### 2.4 NOT implemented (matching official emulator gaps)
+### 2.4 NOT implemented in the gateway facade or still production-only
 
-| Feature | Official emulator | Our facade |
-|---------|-----------------|------------|
-| SchemaService (`CreateSchema`, etc.) | `UNIMPLEMENTED` | `UNIMPLEMENTED` |
+| Feature | External emulator | Gateway facade |
+|---------|-------------------|----------------|
+| SchemaService (`CreateSchema`, etc.) | Supported (verified 2026-06-22) | Not implemented |
 | IAM (`SetIamPolicy`, `TestIamPermissions`) | Stubbed | Stubbed |
 | Exactly-once delivery | Not supported | Not supported (at-least-once) |
 | BigQuery subscriptions | Not supported | Not supported |
@@ -306,10 +306,10 @@ These provide:
 | Dead letter | ✅ | ❌ | ✅ |
 | Retry policy | ✅ | ❌ | ✅ |
 | **Persistence** | **❌ in-memory** | **✅ PostgreSQL** | **✅ PostgreSQL** |
-| SchemaService | ❌ UNIMPLEMENTED | ❌ UNIMPLEMENTED | ❌ UNIMPLEMENTED |
+| SchemaService | ✅ verified 2026-06-22 | ❌ UNIMPLEMENTED | ❌ gateway route not implemented |
 | BigQuery/Storage subs | ❌ | ❌ | ❌ |
 
-The only feature gap vs. the official emulator after Phase 5 is SchemaService (which the official emulator also doesn't implement) and BigQuery/Storage subscriptions (niche features).
+The remaining gateway facade gaps vs. the external emulator include SchemaService route coverage plus BigQuery/Storage subscriptions.
 
 ---
 

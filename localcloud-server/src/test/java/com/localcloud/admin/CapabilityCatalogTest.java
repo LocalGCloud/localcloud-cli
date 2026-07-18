@@ -64,7 +64,7 @@ class CapabilityCatalogTest {
 
         assertNotNull(gcs);
         assertEquals("gcs", gcs.get("service_id"));
-        assertEquals("partial", gcs.get("coverage_status"));
+        assertEquals("supported", gcs.get("coverage_status"));
 
         @SuppressWarnings("unchecked")
         Map<String, Object> terraform = (Map<String, Object>) gcs.get("terraform_resources");

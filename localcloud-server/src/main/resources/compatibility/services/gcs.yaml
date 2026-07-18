@@ -1,5 +1,5 @@
 service_id: gcs
-coverage_status: partial
+coverage_status: supported
 operations:
   - id: buckets.lifecycle
     operation: buckets.create/list/delete
@@ -13,8 +13,8 @@ operations:
     notes: Core object lifecycle through the local HTTP emulator.
   - id: advanced-control-plane
     operation: iam, lifecycle policies, notifications
-    status: unsupported
-    notes: Advanced control-plane behavior is not emulated.
+    status: prod_only
+    notes: Production-only control-plane behavior; not applicable to local development.
 terraform_resources:
   status: supported
   resources: [google_storage_bucket, google_storage_bucket_object]
@@ -33,6 +33,5 @@ state:
   export: available
   snapshot: planned
 limitations:
-  - No cloud IAM enforcement.
-  - No native project-level bucket isolation in fake-gcs-server without LocalCloud metadata.
+  - '[prod_only] IAM, lifecycle policies, and notifications not emulated in LocalCloud.'
 ci_recommendation: Use for local and CI smoke tests that stay within listed supported operations; add a coverage assertion for this service.

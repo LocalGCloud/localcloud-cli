@@ -27,6 +27,7 @@ import com.localcloud.admin.CredentialBroker;
 import com.localcloud.admin.ExportService;
 import com.localcloud.admin.FaultInjectionService;
 import com.localcloud.admin.MutateService;
+import com.localcloud.admin.McpService;
 import com.localcloud.admin.ProjectService;
 import com.localcloud.admin.GraphQLGateway;
 import com.localcloud.admin.QueryHistoryRepository;
@@ -342,7 +343,10 @@ public class LocalCloudApplication {
         sb.annotatedService("/", exportService);
         sb.annotatedService("/", queryService);
         sb.annotatedService("/", new SnapshotService(config, exportService, seedService));
-        sb.annotatedService("/", new FaultInjectionService(faultInjectionRegistry));
+        var faultInjectionService = new FaultInjectionService(faultInjectionRegistry);
+        sb.annotatedService("/", faultInjectionService);
+        sb.annotatedService("/", new McpService(config, browseService, diagnosticsService, seedService,
+                exportService, queryService, faultInjectionService));
         sb.annotatedService("/computeMetadata/v1", new MetadataServerService(config));
 
         // Infrastructure services (Compute, Cloud Run, GKE) require Docker socket

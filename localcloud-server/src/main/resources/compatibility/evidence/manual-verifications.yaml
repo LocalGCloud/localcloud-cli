@@ -11,6 +11,12 @@ evidence:
     source: terraform/COMPATIBILITY.md
     command: Review verified Terraform resource list.
     expected: Listed resources have documented E2E apply evidence.
+  - id: manual:pubsub-advanced-2026-06-22
+    type: manual
+    date: 2026-06-22
+    source: terraform/test-api-compat.sh
+    command: Create schema, attach schemaSettings to a topic, verify invalid publish is rejected, create/list/delete snapshots, seek a subscription to a snapshot, and forward an undeliverable message to a dead-letter topic after maxDeliveryAttempts.
+    expected: External Pub/Sub emulator endpoint supports schemas, schema validation, snapshots, seek, and dead-letter policy; gateway REST facade remains a separate core CRUD surface.
   - id: manual:sql-warnings-2026-04-20
     type: manual
     date: 2026-04-20
@@ -34,3 +40,34 @@ evidence:
   - id: terraform:e2e-script
     type: terraform_test
     source: terraform/examples/terraform-test.sh
+
+  - id: code:embedding-fix
+    type: manual
+    date: 2026-06-22
+    source: localcloud-server/src/main/java/com/localcloud/emulators/bigtable/BigtableEmulator.java
+    command: Verify BigtableEmulator gRPC service extends UnimplementedBigtableServer concrete type rather than embedding the interface.
+    expected: New proto methods (PingAndWarm, ExecuteQuery, etc.) safely return codes.Unimplemented instead of panicking at runtime.
+  - id: manual:cbt-smoke-test
+    type: manual
+    date: 2026-06-22
+    source: localcloud-server/src/test/java/com/localcloud/emulators/bigtable
+    command: Run cbt CLI with BIGTABLE_EMULATOR_HOST env var. Test instance CRUD (create/list/get/delete), table CRUD, and row read/write operations.
+    expected: All cbt CLI commands succeed against the emulator.
+  - id: manual:sdk-e2e
+    type: manual
+    date: 2026-06-22
+    source: localcloud-server/src/test/java/com/localcloud/emulators/bigtable
+    command: Run Bigtable Java SDK client against the emulator endpoint. Exercise ReadRows, MutateRow, MutateRows, CheckAndMutateRow, ReadModifyWriteRow, SampleRowKeys.
+    expected: All SDK data-plane methods complete without errors against the emulator.
+  - id: test:unit-instance-crud
+    type: unit_test
+    source: localcloud-server/src/test/java/com/localcloud/emulators/bigtable/BigtableAdminServiceTest.java
+  - id: test:unit-instance-persistence
+    type: unit_test
+    source: localcloud-server/src/test/java/com/localcloud/emulators/bigtable/BigtableRepositoryTest.java
+  - id: test:unit-inmem
+    type: unit_test
+    source: localcloud-server/src/test/java/com/localcloud/emulators/bigtable/BigtableRepositoryTest.java
+  - id: test:unit-rest-endpoints
+    type: unit_test
+    source: localcloud-server/src/test/java/com/localcloud/emulators/bigtable/BigtableAdminServiceTest.java

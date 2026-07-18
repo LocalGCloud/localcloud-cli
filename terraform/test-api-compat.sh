@@ -52,6 +52,60 @@ test_api() {
     fi
 }
 
+test_check() {
+    local desc="$1"
+    local ok="$2"
+    local expected="${3:-true}"
+    local actual="${4:-$ok}"
+
+    if [ "$ok" = "true" ]; then
+        echo "  PASS  $desc"
+        PASS=$((PASS + 1))
+        RESULTS+=("{\"description\":\"$desc\",\"status\":\"pass\",\"expected\":\"$expected\",\"actual\":\"$actual\"}")
+    else
+        echo "  FAIL  $desc (expected $expected, got $actual)"
+        FAIL=$((FAIL + 1))
+        RESULTS+=("{\"description\":\"$desc\",\"status\":\"fail\",\"expected\":\"$expected\",\"actual\":\"$actual\"}")
+    fi
+}
+
+api_call() {
+    local method="$1"
+    local url="$2"
+    local data="${3:-}"
+    local out="${TMPDIR:-/tmp}/localcloud-api-compat-response-$$.json"
+
+    if [ "$method" = "GET" ]; then
+        API_STATUS=$(curl -s -o "$out" -w "%{http_code}" "$url")
+    elif [ "$method" = "DELETE" ]; then
+        API_STATUS=$(curl -s -o "$out" -w "%{http_code}" -X DELETE "$url")
+    elif [ "$method" = "PUT" ]; then
+        API_STATUS=$(curl -s -o "$out" -w "%{http_code}" -X PUT -H "Content-Type: application/json" -d "$data" "$url")
+    else
+        API_STATUS=$(curl -s -o "$out" -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "$data" "$url")
+    fi
+    API_BODY=$(cat "$out")
+    rm -f "$out"
+}
+
+json_get() {
+    local expr="$1"
+    JSON="$API_BODY" EXPR="$expr" python3 - <<'PY'
+import json, os
+try:
+    data = json.loads(os.environ.get("JSON", "") or "{}")
+    value = eval(os.environ["EXPR"], {"__builtins__": {}, "len": len}, {"data": data})
+    if value is None:
+        print("")
+    elif isinstance(value, bool):
+        print("true" if value else "false")
+    else:
+        print(value)
+except Exception:
+    print("")
+PY
+}
+
 echo "============================================"
 echo "  Terraform API Compatibility Test"
 echo "============================================"
@@ -88,6 +142,82 @@ test_api "Create subscription" PUT "$PUBSUB/v1/projects/$PROJECT/subscriptions/t
 test_api "Get subscription" GET "$PUBSUB/v1/projects/$PROJECT/subscriptions/tf-compat-sub"
 test_api "Delete subscription" DELETE "$PUBSUB/v1/projects/$PROJECT/subscriptions/tf-compat-sub"
 test_api "Delete topic" DELETE "$PUBSUB/v1/projects/$PROJECT/topics/tf-compat-topic"
+
+echo "--- Pub/Sub advanced delivery ---"
+ADV_SUFFIX="$(date +%s)-$$"
+SCHEMA_ID="tf-compat-schema-$ADV_SUFFIX"
+SCHEMA_TOPIC="tf-compat-schema-topic-$ADV_SUFFIX"
+SEEK_TOPIC="tf-compat-seek-topic-$ADV_SUFFIX"
+SEEK_SUB="tf-compat-seek-sub-$ADV_SUFFIX"
+SNAPSHOT_ID="tf-compat-snapshot-$ADV_SUFFIX"
+DLQ_TOPIC="tf-compat-dlq-topic-$ADV_SUFFIX"
+DLQ_SUB="tf-compat-dlq-sub-$ADV_SUFFIX"
+DLQ_MAIN_TOPIC="tf-compat-dlq-main-$ADV_SUFFIX"
+DLQ_MAIN_SUB="tf-compat-dlq-main-sub-$ADV_SUFFIX"
+AVRO_DEF='{"type":"record","name":"CompatMessage","fields":[{"name":"id","type":"string"}]}'
+SCHEMA_BODY="{\"type\":\"AVRO\",\"definition\":\"$(printf '%s' "$AVRO_DEF" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1])')\"}"
+VALID_SCHEMA_DATA="$(printf '{"id":"ok"}' | base64 | tr -d '\n')"
+INVALID_SCHEMA_DATA="$(printf '{"id":123}' | base64 | tr -d '\n')"
+SEEK_DATA="$(printf 'seek-payload' | base64 | tr -d '\n')"
+DLQ_DATA="$(printf 'dlq-payload' | base64 | tr -d '\n')"
+
+test_api "Create Pub/Sub schema" POST "$PUBSUB/v1/projects/$PROJECT/schemas?schemaId=$SCHEMA_ID" "$SCHEMA_BODY"
+test_api "Get Pub/Sub schema" GET "$PUBSUB/v1/projects/$PROJECT/schemas/$SCHEMA_ID"
+test_api "Create schema-bound topic" PUT "$PUBSUB/v1/projects/$PROJECT/topics/$SCHEMA_TOPIC" "{\"schemaSettings\":{\"schema\":\"projects/$PROJECT/schemas/$SCHEMA_ID\",\"encoding\":\"JSON\"}}"
+test_api "Publish schema-valid message" POST "$PUBSUB/v1/projects/$PROJECT/topics/$SCHEMA_TOPIC:publish" "{\"messages\":[{\"data\":\"$VALID_SCHEMA_DATA\"}]}"
+test_api "Reject schema-invalid message" POST "$PUBSUB/v1/projects/$PROJECT/topics/$SCHEMA_TOPIC:publish" "{\"messages\":[{\"data\":\"$INVALID_SCHEMA_DATA\"}]}" "400"
+
+test_api "Create seek topic" PUT "$PUBSUB/v1/projects/$PROJECT/topics/$SEEK_TOPIC" '{}'
+test_api "Create seek subscription" PUT "$PUBSUB/v1/projects/$PROJECT/subscriptions/$SEEK_SUB" "{\"topic\":\"projects/$PROJECT/topics/$SEEK_TOPIC\"}"
+test_api "Publish seek message" POST "$PUBSUB/v1/projects/$PROJECT/topics/$SEEK_TOPIC:publish" "{\"messages\":[{\"data\":\"$SEEK_DATA\"}]}"
+api_call POST "$PUBSUB/v1/projects/$PROJECT/subscriptions/$SEEK_SUB:pull" '{"maxMessages":1,"returnImmediately":true}'
+SEEK_ACK_ID="$(json_get 'data.get("receivedMessages", [{}])[0].get("ackId", "")')"
+SEEK_MESSAGE_ID="$(json_get 'data.get("receivedMessages", [{}])[0].get("message", {}).get("messageId", "")')"
+test_check "Pull seek source message" "$([ "$API_STATUS" = "200" ] && [ -n "$SEEK_ACK_ID" ] && echo true || echo false)" "HTTP 200 with ackId" "HTTP $API_STATUS"
+test_api "Create Pub/Sub snapshot" PUT "$PUBSUB/v1/projects/$PROJECT/snapshots/$SNAPSHOT_ID" "{\"subscription\":\"projects/$PROJECT/subscriptions/$SEEK_SUB\"}"
+test_api "Acknowledge seek source message" POST "$PUBSUB/v1/projects/$PROJECT/subscriptions/$SEEK_SUB:acknowledge" "{\"ackIds\":[\"$SEEK_ACK_ID\"]}"
+api_call POST "$PUBSUB/v1/projects/$PROJECT/subscriptions/$SEEK_SUB:pull" '{"maxMessages":1,"returnImmediately":true}'
+SEEK_EMPTY_AFTER_ACK="$(json_get 'len(data.get("receivedMessages", [])) == 0')"
+test_check "Acked message is not immediately pullable" "$([ "$API_STATUS" = "200" ] && [ "$SEEK_EMPTY_AFTER_ACK" = "true" ] && echo true || echo false)" "empty pull after ack" "HTTP $API_STATUS"
+test_api "Seek subscription to snapshot" POST "$PUBSUB/v1/projects/$PROJECT/subscriptions/$SEEK_SUB:seek" "{\"snapshot\":\"projects/$PROJECT/snapshots/$SNAPSHOT_ID\"}"
+api_call POST "$PUBSUB/v1/projects/$PROJECT/subscriptions/$SEEK_SUB:pull" '{"maxMessages":1,"returnImmediately":true}'
+SEEK_REPLAYED_ID="$(json_get 'data.get("receivedMessages", [{}])[0].get("message", {}).get("messageId", "")')"
+test_check "Seek replays snapshotted message" "$([ "$API_STATUS" = "200" ] && [ "$SEEK_REPLAYED_ID" = "$SEEK_MESSAGE_ID" ] && [ -n "$SEEK_REPLAYED_ID" ] && echo true || echo false)" "same messageId after seek" "HTTP $API_STATUS"
+
+test_api "Create DLQ topic" PUT "$PUBSUB/v1/projects/$PROJECT/topics/$DLQ_TOPIC" '{}'
+test_api "Create DLQ subscription" PUT "$PUBSUB/v1/projects/$PROJECT/subscriptions/$DLQ_SUB" "{\"topic\":\"projects/$PROJECT/topics/$DLQ_TOPIC\"}"
+test_api "Create DLQ main topic" PUT "$PUBSUB/v1/projects/$PROJECT/topics/$DLQ_MAIN_TOPIC" '{}'
+test_api "Create subscription with dead-letter policy" PUT "$PUBSUB/v1/projects/$PROJECT/subscriptions/$DLQ_MAIN_SUB" "{\"topic\":\"projects/$PROJECT/topics/$DLQ_MAIN_TOPIC\",\"deadLetterPolicy\":{\"deadLetterTopic\":\"projects/$PROJECT/topics/$DLQ_TOPIC\",\"maxDeliveryAttempts\":5}}"
+test_api "Publish DLQ source message" POST "$PUBSUB/v1/projects/$PROJECT/topics/$DLQ_MAIN_TOPIC:publish" "{\"messages\":[{\"data\":\"$DLQ_DATA\"}]}"
+DLQ_ATTEMPTS_OK=true
+for attempt in 1 2 3 4 5; do
+    api_call POST "$PUBSUB/v1/projects/$PROJECT/subscriptions/$DLQ_MAIN_SUB:pull" '{"maxMessages":1,"returnImmediately":true}'
+    DLQ_ACK_ID="$(json_get 'data.get("receivedMessages", [{}])[0].get("ackId", "")')"
+    if [ "$API_STATUS" != "200" ] || [ -z "$DLQ_ACK_ID" ]; then
+        DLQ_ATTEMPTS_OK=false
+        break
+    fi
+    test_api "Expire DLQ delivery attempt $attempt" POST "$PUBSUB/v1/projects/$PROJECT/subscriptions/$DLQ_MAIN_SUB:modifyAckDeadline" "{\"ackIds\":[\"$DLQ_ACK_ID\"],\"ackDeadlineSeconds\":0}"
+done
+test_check "Redelivered DLQ source message through max attempts" "$DLQ_ATTEMPTS_OK" "five pullable attempts" "$DLQ_ATTEMPTS_OK"
+api_call POST "$PUBSUB/v1/projects/$PROJECT/subscriptions/$DLQ_MAIN_SUB:pull" '{"maxMessages":1,"returnImmediately":true}'
+DLQ_MAIN_EMPTY="$(json_get 'len(data.get("receivedMessages", [])) == 0')"
+test_check "Message leaves source subscription after max attempts" "$([ "$API_STATUS" = "200" ] && [ "$DLQ_MAIN_EMPTY" = "true" ] && echo true || echo false)" "empty source pull after DLQ forwarding" "HTTP $API_STATUS"
+api_call POST "$PUBSUB/v1/projects/$PROJECT/subscriptions/$DLQ_SUB:pull" '{"maxMessages":1,"returnImmediately":true}'
+DLQ_FORWARDED="$(json_get 'len(data.get("receivedMessages", [])) == 1')"
+DLQ_SOURCE_ATTR="$(json_get 'data.get("receivedMessages", [{}])[0].get("message", {}).get("attributes", {}).get("CloudPubSubDeadLetterSourceSubscription", "")')"
+test_check "Dead-letter policy forwards message to DLQ topic" "$([ "$API_STATUS" = "200" ] && [ "$DLQ_FORWARDED" = "true" ] && [ "$DLQ_SOURCE_ATTR" = "$DLQ_MAIN_SUB" ] && echo true || echo false)" "DLQ pull with source attribute" "HTTP $API_STATUS"
+
+test_api "Delete schema-bound topic" DELETE "$PUBSUB/v1/projects/$PROJECT/topics/$SCHEMA_TOPIC"
+test_api "Delete Pub/Sub schema" DELETE "$PUBSUB/v1/projects/$PROJECT/schemas/$SCHEMA_ID"
+test_api "Delete Pub/Sub snapshot" DELETE "$PUBSUB/v1/projects/$PROJECT/snapshots/$SNAPSHOT_ID"
+test_api "Delete seek subscription" DELETE "$PUBSUB/v1/projects/$PROJECT/subscriptions/$SEEK_SUB"
+test_api "Delete seek topic" DELETE "$PUBSUB/v1/projects/$PROJECT/topics/$SEEK_TOPIC"
+test_api "Delete DLQ main subscription" DELETE "$PUBSUB/v1/projects/$PROJECT/subscriptions/$DLQ_MAIN_SUB"
+test_api "Delete DLQ subscription" DELETE "$PUBSUB/v1/projects/$PROJECT/subscriptions/$DLQ_SUB"
+test_api "Delete DLQ main topic" DELETE "$PUBSUB/v1/projects/$PROJECT/topics/$DLQ_MAIN_TOPIC"
+test_api "Delete DLQ topic" DELETE "$PUBSUB/v1/projects/$PROJECT/topics/$DLQ_TOPIC"
+echo ""
 echo ""
 
 # ─── Phase 1: BigQuery ────────────────────────────────────────────

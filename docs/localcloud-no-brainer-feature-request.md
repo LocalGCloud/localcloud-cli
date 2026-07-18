@@ -118,7 +118,7 @@ A CI job should be able to start LocalCloud, wait until it is ready, provision r
 | GKE lifecycle parity | Support cluster CRUD, kubeconfig generation, basic node pool modeling, and predictable k3d integration. |
 | Bigtable persistence parity | Make Bigtable SDK data durable and visible through browse, seed, mutate, export, and reset. |
 | Firestore seed/browser parity | Ensure seeded documents, SDK writes, query results, and console browsing are consistent. |
-| Pub/Sub advanced developer features | Add or clarify schema validation, filters, ordering, snapshots/seek behavior, DLQ, and retry semantics. |
+| Pub/Sub advanced developer features | Clarify filters, ordering, gateway snapshot/seek/schema routes, DLQ, and retry semantics across emulator, Terraform, and console surfaces. |
 | BigQuery compatibility hardening | Convert known silent SQL mismatches into correct behavior or explicit compatibility warnings. |
 | Spanner compatibility hardening | Expand DDL/DML, metadata, and restart persistence coverage for common app and Terraform flows. |
 | Memorystore protocol coverage | Add commonly used Redis commands and persistence/reset semantics needed by app tests. |

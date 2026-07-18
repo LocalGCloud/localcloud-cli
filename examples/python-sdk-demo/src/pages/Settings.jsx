@@ -124,7 +124,7 @@ export function Settings(props) {
         <div class="export-options">
           <div class="export-format">
             <h4>Shell Format</h4>
-            <p>Copy and paste into your terminal with: <code>eval $(localcloud env --format=shell)</code></p>
+            <p>Copy and paste into your terminal with: <code>eval "$(curl -s http://localhost:8080/env?format=shell)"</code></p>
             <button
               class="btn btn-secondary"
               onclick={() => handleExportEnv('shell')}
@@ -175,49 +175,48 @@ export function Settings(props) {
               <tr>
                 <td>Cloud Storage</td>
                 <td><code>STORAGE_EMULATOR_HOST</code></td>
-                <td><code>http://localhost:8080</code></td>
+                <td><code>http://localhost:4443</code></td>
               </tr>
               <tr>
                 <td>Pub/Sub</td>
                 <td><code>PUBSUB_EMULATOR_HOST</code></td>
-                <td><code>localhost:9020</code></td>
+                <td><code>localhost:8085</code></td>
               </tr>
               <tr>
                 <td>Firestore</td>
                 <td><code>FIRESTORE_EMULATOR_HOST</code></td>
-                <td><code>localhost:9010</code></td>
+                <td><code>localhost:8086</code></td>
               </tr>
               <tr>
                 <td>BigQuery</td>
                 <td><code>BIGQUERY_EMULATOR_HOST</code></td>
-                <td><code>localhost:8080</code></td>
+                <td><code>http://localhost:9050</code></td>
               </tr>
               <tr>
                 <td>Secret Manager</td>
-                <td><code>GOOGLE_CLOUD_UNIVERSE_DOMAIN</code></td>
+                <td><code>SECRET_MANAGER_EMULATOR_HOST</code></td>
                 <td><code>localhost:8080</code></td>
               </tr>
               <tr>
                 <td>Cloud Tasks</td>
-                <td><code>CLOUDTASKS_EMULATOR_HOST</code></td>
+                <td><code>CLOUD_TASKS_EMULATOR_HOST</code></td>
                 <td><code>localhost:8080</code></td>
               </tr>
               <tr>
                 <td>Spanner</td>
                 <td><code>SPANNER_EMULATOR_HOST</code></td>
-                <td><code>localhost:9030</code></td>
+                <td><code>localhost:9010</code></td>
               </tr>
               <tr>
                 <td>Bigtable</td>
                 <td><code>BIGTABLE_EMULATOR_HOST</code></td>
-                <td><code>localhost:9040</code></td>
+                <td><code>localhost:8087</code></td>
               </tr>
               <tr>
                 <td>All Services</td>
                 <td><code>GOOGLE_CLOUD_PROJECT</code></td>
                 <td><code>local-project</code></td>
               </tr>
-            </tbody>
           </table>
         </div>
 
@@ -229,8 +228,7 @@ export function Settings(props) {
 from google.cloud import storage
 
 # Set environment variable
-os.environ['STORAGE_EMULATOR_HOST'] = 'http://localhost:8080'
-
+os.environ['STORAGE_EMULATOR_HOST'] = 'http://localhost:4443'
 # Use standard Google Cloud SDK
 client = storage.Client()
 bucket = client.bucket('my-bucket')
@@ -246,8 +244,7 @@ bucket = client.bucket('my-bucket')
 {`const {Storage} = require('@google-cloud/storage');
 
 // Set environment variable
-process.env.STORAGE_EMULATOR_HOST = 'http://localhost:8080';
-
+process.env.STORAGE_EMULATOR_HOST = 'http://localhost:4443';
 const storage = new Storage({projectId: 'local-project'});
 const bucket = storage.bucket('my-bucket');
 // Your code here...`}

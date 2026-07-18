@@ -44,7 +44,7 @@ public class TelemetryService {
 
     private static final Logger logger = LoggerFactory.getLogger(TelemetryService.class);
 
-    private static final String DEFAULT_POSTHOG_URL = "https://us.i.posthog.com/capture";
+    private static final String DEFAULT_POSTHOG_URL = "https://us.i.posthog.com/i/v0/e/";
     private static final String VERSION = "1.0.0";
     private static final int MAX_QUEUE_SIZE = 168; // 7 days of hourly heartbeats
 
@@ -70,22 +70,40 @@ public class TelemetryService {
                             ProcessHealthChecker healthChecker,
                             ProjectService projectService,
                             PostgresDataSource dataSource) {
+        this(config, usageMetrics, healthChecker, projectService, dataSource,
+                createHttpClient(),
+                new ObjectMapper(),
+                createScheduler(),
+                generateDistinctId(),
+                env("LOCALCLOUD_EVENT_API_KEY", ""),
+                env("LOCALCLOUD_POSTHOG_URL", DEFAULT_POSTHOG_URL),
+                Instant.now());
+    }
+
+    TelemetryService(LocalCloudConfig config,
+                     UsageMetricsRepository usageMetrics,
+                     ProcessHealthChecker healthChecker,
+                     ProjectService projectService,
+                     PostgresDataSource dataSource,
+                     HttpClient httpClient,
+                     ObjectMapper mapper,
+                     ScheduledExecutorService scheduler,
+                     String distinctId,
+                     String posthogApiKey,
+                     String posthogUrl,
+                     Instant startTime) {
         this.config = config;
         this.usageMetrics = usageMetrics;
         this.healthChecker = healthChecker;
         this.projectService = projectService;
         this.dataSource = dataSource;
-        this.httpClient = createHttpClient();
-        this.mapper = new ObjectMapper();
-        this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "telemetry");
-            t.setDaemon(true);
-            return t;
-        });
-        this.distinctId = generateDistinctId();
-        this.posthogApiKey = env("LOCALCLOUD_EVENT_API_KEY", "");
-        this.posthogUrl = env("LOCALCLOUD_POSTHOG_URL", DEFAULT_POSTHOG_URL);
-        this.startTime = Instant.now();
+        this.httpClient = httpClient;
+        this.mapper = mapper;
+        this.scheduler = scheduler;
+        this.distinctId = distinctId;
+        this.posthogApiKey = posthogApiKey;
+        this.posthogUrl = posthogUrl;
+        this.startTime = startTime;
         this.errorsLastHour = new AtomicInteger(0);
     }
 
@@ -134,11 +152,12 @@ public class TelemetryService {
             props.put("credential_source", config.getGcpCredentialSource());
 
             String json = buildEventJson("server_started", props);
-            boolean sent = trySend(json);
-            if (sent) {
+            SendResult result = trySendDetailed(json);
+            if (result.success()) {
                 logger.info("Telemetry startup event sent");
             } else {
                 enqueueEvent(json);
+                enqueueDeliveryFailure("server_started", "server_started", result);
                 logger.debug("Telemetry startup event queued (will retry)");
             }
         });
@@ -163,8 +182,10 @@ public class TelemetryService {
             props.put("os_arch", System.getProperty("os.arch"));
 
             String json = buildEventJson("service_error", props);
-            if (!trySend(json)) {
+            SendResult result = trySendDetailed(json);
+            if (!result.success()) {
                 enqueueEvent(json);
+                enqueueDeliveryFailure("service_error", "service_error", result);
             }
         });
     }
@@ -176,7 +197,7 @@ public class TelemetryService {
 
     // ─── Heartbeat Cycle ────────────────────────────────────────────────
 
-    private void heartbeatCycle() {
+    void heartbeatCycle() {
         try {
             // 1. Drain queued events (oldest first, stop on first failure)
             if (!drainQueue()) {
@@ -188,14 +209,17 @@ public class TelemetryService {
 
             // 2. Send new heartbeat
             String json = buildEventJson("heartbeat", collectStats());
-            if (trySend(json)) {
+            SendResult result = trySendDetailed(json);
+            if (result.success()) {
                 errorsLastHour.set(0);
                 logger.debug("Telemetry heartbeat sent");
             } else {
                 enqueueEvent(json);
+                enqueueDeliveryFailure("heartbeat", "heartbeat", result);
                 logger.debug("Telemetry heartbeat queued (will retry next hour)");
             }
         } catch (Exception e) {
+            tryReportInternalError("heartbeat_cycle", e);
             logger.debug("Telemetry heartbeat cycle failed: {}", e.getMessage());
         }
     }
@@ -266,11 +290,12 @@ public class TelemetryService {
 
     // ─── Event Building & Sending ───────────────────────────────────────
 
-    private String buildEventJson(String eventName, Map<String, Object> properties) {
+    String buildEventJson(String eventName, Map<String, Object> properties) {
         try {
             // PostHog expects distinct_id and token inside properties (canonical SDK format)
             properties.put("distinct_id", distinctId);
             properties.put("token", posthogApiKey);
+            properties.put("$process_person_profile", false);
             properties.put("$lib", "localcloud-java");
             properties.put("$lib_version", VERSION);
 
@@ -287,9 +312,13 @@ public class TelemetryService {
     }
 
     /**
-     * Attempt to send a JSON event to PostHog. Returns true on success (HTTP 200).
+     * Attempt to send a JSON event to PostHog. Returns true on any successful HTTP 2xx response.
      */
-    private boolean trySend(String json) {
+    boolean trySend(String json) {
+        return trySendDetailed(json).success();
+    }
+
+    private SendResult trySendDetailed(String json) {
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(posthogUrl))
@@ -299,16 +328,58 @@ public class TelemetryService {
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            return response.statusCode() == 200;
+            int statusCode = response.statusCode();
+            return new SendResult(statusCode >= 200 && statusCode < 300, statusCode, null, null);
         } catch (Exception e) {
-            return false;
+            return new SendResult(false, -1, e.getClass().getSimpleName(), safeMessage(e));
         }
+    }
+
+    private void enqueueDeliveryFailure(String operation, String failedEventName, SendResult result) {
+        if ("telemetry_delivery_error".equals(failedEventName)) {
+            return;
+        }
+
+        Map<String, Object> props = new LinkedHashMap<>();
+        props.put("operation", operation);
+        props.put("failed_event", failedEventName);
+        props.put("version", VERSION);
+        props.put("os_arch", System.getProperty("os.arch"));
+        props.put("status_code", result.statusCode());
+        if (result.errorType() != null) {
+            props.put("error_type", result.errorType());
+        }
+        if (result.errorMessage() != null) {
+            props.put("error_message", result.errorMessage());
+        }
+        enqueueEvent(buildEventJson("telemetry_delivery_error", props));
+    }
+
+    private void tryReportInternalError(String operation, Exception error) {
+        if (!isEnabled() || posthogApiKey.isEmpty()) return;
+
+        Map<String, Object> props = new LinkedHashMap<>();
+        props.put("operation", operation);
+        props.put("version", VERSION);
+        props.put("os_arch", System.getProperty("os.arch"));
+        props.put("error_type", error.getClass().getSimpleName());
+        props.put("error_message", safeMessage(error));
+        trySend(buildEventJson("telemetry_internal_error", props));
+    }
+
+    private static String safeMessage(Exception error) {
+        String message = error.getMessage();
+        if (message == null || message.isBlank()) {
+            return "";
+        }
+        return message.length() <= 300 ? message : message.substring(0, 300);
     }
 
     // ─── Stats Collection ───────────────────────────────────────────────
 
     private Map<String, Object> collectStats() {
         Map<String, Object> props = new LinkedHashMap<>();
+        List<String> statsErrors = new ArrayList<>();
 
         // Version & environment
         props.put("version", VERSION);
@@ -365,6 +436,7 @@ public class TelemetryService {
             previousCounts = currentCounts;
         } catch (Exception e) {
             props.put("requests_total", -1);
+            statsErrors.add("request_counts:" + e.getClass().getSimpleName() + ":" + safeMessage(e));
         }
 
         // Projects
@@ -372,6 +444,7 @@ public class TelemetryService {
             props.put("projects_count", projectService.listProjects().size());
         } catch (Exception e) {
             props.put("projects_count", -1);
+            statsErrors.add("projects:" + e.getClass().getSimpleName() + ":" + safeMessage(e));
         }
 
         // Credential source
@@ -388,6 +461,12 @@ public class TelemetryService {
             props.put("queue_depth", rs.getInt(1));
         } catch (Exception e) {
             props.put("queue_depth", -1);
+            statsErrors.add("queue_depth:" + e.getClass().getSimpleName() + ":" + safeMessage(e));
+        }
+
+        props.put("telemetry_stats_errors_count", statsErrors.size());
+        if (!statsErrors.isEmpty()) {
+            props.put("telemetry_stats_errors", statsErrors);
         }
 
         return props;
@@ -447,6 +526,14 @@ public class TelemetryService {
         }
     }
 
+    private static ScheduledExecutorService createScheduler() {
+        return Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "telemetry");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
     private boolean isEnabled() {
         String val = System.getenv("LOCALCLOUD_TELEMETRY");
         return val == null || !val.equalsIgnoreCase("false");
@@ -462,7 +549,7 @@ public class TelemetryService {
      * Combines hostname + machine-id (if available) + MAC address for better uniqueness.
      * The result is a one-way SHA-256 hash — cannot be reversed.
      */
-    private String generateDistinctId() {
+    private static String generateDistinctId() {
         try {
             StringBuilder seed = new StringBuilder();
 
@@ -497,4 +584,6 @@ public class TelemetryService {
             return "lc_unknown";
         }
     }
+
+    private record SendResult(boolean success, int statusCode, String errorType, String errorMessage) {}
 }

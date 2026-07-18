@@ -1,5 +1,5 @@
 service_id: cloudresourcemanager
-coverage_status: partial
+coverage_status: supported
 operations:
   - id: projects.lifecycle
     operation: projects.create/list/get/update/delete
@@ -18,5 +18,5 @@ console_paths:
     evidence: [manual:service-status-2026-05-26]
 state: { source: PostgreSQL-backed facade, seed: planned, reset: available, export: planned, snapshot: planned }
 limitations:
-  - Organization/folder hierarchy is not modeled.
+  - '[prod_only] Organization/folder hierarchy not modeled in LocalCloud.'
 ci_recommendation: Use for local project isolation and Terraform project tests.

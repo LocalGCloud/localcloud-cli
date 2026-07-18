@@ -17,7 +17,7 @@ import static org.mockito.Mockito.when;
  * <p>Each call to {@link #create(String)} returns an isolated database with the
  * schema tables needed by facade emulators pre-initialized.
  */
-public final class TestDataSource {
+public final class TestDataSource implements AutoCloseable {
 
     private final String jdbcUrl;
     private final PostgresDataSource mockDataSource;
@@ -597,6 +597,50 @@ public final class TestDataSource {
                 "    PRIMARY KEY (project_id, location_id, cluster_id, instance_id)," +
                 "    FOREIGN KEY (project_id, location_id, cluster_id)" +
                 "        REFERENCES alloydb_clusters(project_id, location_id, cluster_id) ON DELETE CASCADE" +
+                ")"
+            );
+
+            // Cloud Run: revisions
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS cloudrun_revisions (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location VARCHAR(255) NOT NULL," +
+                "    service_id VARCHAR(255) NOT NULL," +
+                "    revision_id VARCHAR(255) NOT NULL," +
+                "    container_image VARCHAR(512) NOT NULL," +
+                "    container_id VARCHAR(255)," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location, service_id, revision_id)" +
+                ")"
+            );
+
+            // GKE: clusters
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS gke_clusters (" +
+                "    project_id VARCHAR(255) NOT NULL," +
+                "    location VARCHAR(255) NOT NULL," +
+                "    cluster_id VARCHAR(255) NOT NULL," +
+                "    status VARCHAR(64) DEFAULT 'RUNNING'," +
+                "    k3d_cluster_name VARCHAR(255)," +
+                "    endpoint VARCHAR(255)," +
+                "    cluster_version VARCHAR(64)," +
+                "    node_count INT DEFAULT 1," +
+                "    kubeconfig TEXT," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (project_id, location, cluster_id)" +
+                ")"
+            );
+
+            // Cloud Billing: budgets
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS billing_budgets (" +
+                "    billing_account VARCHAR(255) NOT NULL," +
+                "    budget_id VARCHAR(255) NOT NULL," +
+                "    display_name VARCHAR(255)," +
+                "    amount_json TEXT DEFAULT '{}'," +
+                "    threshold_rules_json TEXT DEFAULT '[]'," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    PRIMARY KEY (billing_account, budget_id)" +
                 ")"
             );
 

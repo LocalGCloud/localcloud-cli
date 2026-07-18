@@ -76,6 +76,15 @@ blob = bucket.blob("hello.txt")
 blob.upload_from_string("Hello, LocalCloud!")
 ```
 
+## LLM Integration Guides
+
+For automated or model-assisted integration of LocalCloud into other projects (like adding LocalCloud test setups to existing codebases or CI pipelines), see the [Integration Guides](integration/README.md).
+
+These guides are specifically designed for LLMs and autonomous agents:
+- **[MCP Integration](docs/MCP_INTEGRATION.md):** Describes LocalCloud's `/mcp` endpoint, stdio bridge, resources, tools, prompts, and safety flags for agents.
+- **[Common Guide](integration/COMMON_GUIDE.md):** Defines the container runtime contracts, permitted change directories, and environment variables.
+- **[Service-specific Guides](integration/services/):** Under `integration/services/`, you'll find detailed, machine-readable connection approaches, environment variables, limitations, and exact validation/admin browse endpoints for all 26 services.
+
 ## Building from Source
 
 ### Prerequisites

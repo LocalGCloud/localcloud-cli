@@ -143,6 +143,10 @@ if [ -z "${LOCALCLOUD_IMAGE:-}" ]; then
     fi
 fi
 
+#force to use local
+SPANNER_EMULATOR_IMAGE=spanner-emulator-build:latest
+BIGQUERY_EMULATOR_IMAGE=bigquery-emulator-on-duckdb:latest
+
 SPANNER_EMULATOR_IMAGE="${SPANNER_EMULATOR_IMAGE:-jaysen2apache/spanner-emulator-extended:latest}"
 BIGQUERY_EMULATOR_IMAGE="${BIGQUERY_EMULATOR_IMAGE:-jaysen2apache/bigquery-emulator-on-duckdb:latest}"
 SPANNER_CONTEXT="${SPANNER_CONTEXT:-$DEPENDENCIES_DIR/cloud-spanner-emulator}"
@@ -264,10 +268,19 @@ echo "[5/5] Building Docker image..."
 # Some OCI multi-arch images carry SBOM attestations with 'unknown/unknown'
 # platform that can break BuildKit platform resolution during docker build.
 # Pre-pulling ensures image content is in the local store before the build.
-echo "  Pre-pulling dependency images..."
-docker pull "$SPANNER_EMULATOR_IMAGE" 2>&1 || echo "    (pre-pull failed, will try during build)"
-docker pull "$BIGQUERY_EMULATOR_IMAGE" 2>&1 || echo "    (pre-pull failed, will try during build)"
-echo "  Done pre-pulling"
+#
+# Skip pulling if the image already exists locally — supports both previously
+# pulled remote images and locally-built images (e.g. from `docker build -t`).
+echo "  Resolving dependency images..."
+for img in "$SPANNER_EMULATOR_IMAGE" "$BIGQUERY_EMULATOR_IMAGE"; do
+    if docker image inspect "$img" >/dev/null 2>&1; then
+        echo "    $img (found locally, skipping pull)"
+    else
+        echo "    Pulling $img..."
+        docker pull "$img" 2>&1 || echo "    WARNING: pull failed — image must be available locally or build will fail"
+    fi
+done
+echo "  Done resolving dependency images"
 
 docker volume create localcloud-data >/dev/null 2>&1 || true
 

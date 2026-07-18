@@ -1,5 +1,6 @@
 import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
 import { api } from '../api.js';
+import { createUrlBackedTab } from '../utils/urlTabs.js';
 import { formatDateTime, onActivate } from '../utils/a11y.js';
 
 // --- Helpers ---
@@ -579,7 +580,7 @@ export default function Workflows(props) {
     const [workflowDetail, setWorkflowDetail] = createSignal(null);
     const [executions, setExecutions] = createSignal([]);
     const [selectedExecution, setSelectedExecution] = createSignal(null);
-    const [activeTab, setActiveTab] = createSignal('definition');
+    const [activeTab, setActiveTab] = createUrlBackedTab('wftab', ['definition', 'executions'], 'definition', { history: 'replace' });
     const [showCreateExec, setShowCreateExec] = createSignal(false);
     const [execArgument, setExecArgument] = createSignal('{}');
     const [creating, setCreating] = createSignal(false);

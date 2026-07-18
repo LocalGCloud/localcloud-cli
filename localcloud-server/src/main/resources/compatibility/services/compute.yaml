@@ -1,5 +1,5 @@
 service_id: compute
-coverage_status: early-partial
+coverage_status: partial
 operations:
   - id: instances.lifecycle
     operation: instances.create/get/list/start/stop/delete
@@ -19,7 +19,8 @@ console_paths:
     status: partial
 state: { source: PostgreSQL-backed facade, seed: planned, reset: available, export: planned, snapshot: planned }
 limitations:
-  - Disks, snapshots, templates, and networking are not yet emulated.
+  - '[prod_only] Persistent disks and live migration (hypervisor-level storage/VM management).'
+  - Snapshots, instance templates, and VPC networking are not yet emulated.
 unsupported_operations:
   - id: compute-disks-insert
     operation: disks.insert

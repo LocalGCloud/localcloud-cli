@@ -121,7 +121,7 @@ export function Services(props) {
           <code>export STORAGE_EMULATOR_HOST=http://localhost:8080</code>
         </pre>
         <p class="info-text">
-          Or run <code>localcloud env --format=shell</code> to export all variables at once.
+          Or run <code>eval "$(curl -s http://localhost:8080/env?format=shell)"</code> to export all variables at once.
         </p>
       </div>
     </div>

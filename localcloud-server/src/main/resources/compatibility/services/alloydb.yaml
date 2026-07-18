@@ -3,8 +3,9 @@ coverage_status: partial
 operations:
   - id: cluster-instance.lifecycle
     operation: clusters/instances.create/list/get/delete
-    status: partial
-    notes: Metadata and PostgreSQL-compatible connection info exist.
+    status: supported
+    evidence: [manual:terraform-compat-2026-05-31, terraform:e2e-script]
+    notes: Cluster and instance CRUD works end-to-end via REST facade; PostgreSQL wire protocol available.
 terraform_resources:
   status: supported
   resources: [google_alloydb_cluster, google_alloydb_instance]
@@ -17,5 +18,6 @@ console_paths:
     status: partial
 state: { source: PostgreSQL-backed facade, seed: planned, reset: planned, export: planned, snapshot: planned }
 limitations:
-  - Backup/restore, PSC, and cross-region replication are not complete.
+  - '[prod_only] PSC (Private Service Connect) and cross-region replication.'
+  - Backup/restore is not complete.
 ci_recommendation: Use for metadata and local PostgreSQL connection workflows.

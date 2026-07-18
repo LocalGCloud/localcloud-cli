@@ -293,7 +293,7 @@ public class BrowseService {
         }
     }
 
-    private HttpResponse browseService(String service, String resourceType, String resourceId, String projectId) {
+    HttpResponse browseService(String service, String resourceType, String resourceId, String projectId) {
         try {
             usageMetrics.incrementCount(projectId, service, 1);
             String json = switch (service) {
@@ -321,6 +321,12 @@ public class BrowseService {
                 }
                 case "kms" -> browseKms(resourceType, resourceId, projectId);
                 case "cloudsql" -> browseCloudSql(resourceType, resourceId, projectId);
+                case "cloudrun" -> browseCloudRun(resourceType, resourceId, projectId);
+                case "compute" -> browseCompute(resourceType, resourceId, projectId);
+                case "gke" -> browseGke(resourceType, resourceId, projectId);
+                case "serviceusage" -> browseServiceUsage(resourceType, resourceId, projectId);
+                case "cloudbilling" -> browseCloudBilling(resourceType, resourceId, projectId);
+                case "cloudresourcemanager" -> browseCloudResourceManager(resourceType, resourceId, projectId);
                 default -> mapper.writeValueAsString(Map.of(
                         "error", true,
                         "message", "Unknown service: " + service));
@@ -2930,6 +2936,298 @@ public class BrowseService {
             if (!last.isEmpty()) parts.add(last);
         }
         return parts;
+    }
+
+    // ========== Cloud Run (in-process, query PostgreSQL) ==========
+
+    String browseCloudRunAsString(String resourceType, String resourceId, String projectId) throws Exception {
+        return browseCloudRun(resourceType, resourceId, projectId);
+    }
+
+    private String browseCloudRun(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        if (resourceType == null) {
+            // List all services across locations
+            List<Map<String, Object>> services = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT project_id, location, service_id, container_image, container_port, host_port, uri, " +
+                     "created_at, updated_at FROM cloudrun_services WHERE project_id = ? ORDER BY location, service_id")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> s = new LinkedHashMap<>();
+                        s.put("name", "projects/" + rs.getString("project_id") + "/locations/"
+                                + rs.getString("location") + "/services/" + rs.getString("service_id"));
+                        s.put("serviceId", rs.getString("service_id"));
+                        s.put("location", rs.getString("location"));
+                        s.put("containerImage", rs.getString("container_image"));
+                        s.put("containerPort", rs.getInt("container_port"));
+                        Integer hostPort = (Integer) rs.getObject("host_port");
+                        s.put("hostPort", hostPort);
+                        s.put("uri", rs.getString("uri"));
+                        if (rs.getTimestamp("created_at") != null)
+                            s.put("createdAt", rs.getTimestamp("created_at").toString());
+                        if (rs.getTimestamp("updated_at") != null)
+                            s.put("updatedAt", rs.getTimestamp("updated_at").toString());
+                        services.add(s);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("services", services));
+        }
+        if ("revisions".equals(resourceType)) {
+            List<Map<String, Object>> revisions = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT project_id, location, service_id, revision_id, container_image, created_at " +
+                     "FROM cloudrun_revisions WHERE project_id = ? ORDER BY created_at DESC LIMIT 100")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> r = new LinkedHashMap<>();
+                        r.put("name", "projects/" + rs.getString("project_id") + "/locations/"
+                                + rs.getString("location") + "/services/" + rs.getString("service_id")
+                                + "/revisions/" + rs.getString("revision_id"));
+                        r.put("serviceId", rs.getString("service_id"));
+                        r.put("location", rs.getString("location"));
+                        r.put("revisionId", rs.getString("revision_id"));
+                        r.put("containerImage", rs.getString("container_image"));
+                        if (rs.getTimestamp("created_at") != null)
+                            r.put("createdAt", rs.getTimestamp("created_at").toString());
+                        revisions.add(r);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("revisions", revisions));
+        }
+        return mapper.writeValueAsString(Map.of("error", true,
+                "message", "Invalid Cloud Run browse path. Use: /browse/cloudrun or /browse/cloudrun/revisions"));
+    }
+
+    // ========== Compute Engine (in-process, query PostgreSQL) ==========
+
+    String browseComputeAsString(String resourceType, String resourceId, String projectId) throws Exception {
+        return browseCompute(resourceType, resourceId, projectId);
+    }
+
+    private String browseCompute(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        if (resourceType == null) {
+            // List all instances across zones
+            List<Map<String, Object>> instances = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT project_id, zone, instance_name, machine_type, status, container_image, " +
+                     "network_ip, created_at FROM compute_instances WHERE project_id = ? " +
+                     "ORDER BY zone, instance_name")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> i = new LinkedHashMap<>();
+                        i.put("name", "projects/" + rs.getString("project_id") + "/zones/"
+                                + rs.getString("zone") + "/instances/" + rs.getString("instance_name"));
+                        i.put("instanceName", rs.getString("instance_name"));
+                        i.put("zone", rs.getString("zone"));
+                        i.put("machineType", rs.getString("machine_type"));
+                        i.put("status", rs.getString("status"));
+                        i.put("containerImage", rs.getString("container_image"));
+                        i.put("networkIp", rs.getString("network_ip"));
+                        if (rs.getTimestamp("created_at") != null)
+                            i.put("createdAt", rs.getTimestamp("created_at").toString());
+                        instances.add(i);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("instances", instances));
+        }
+        return mapper.writeValueAsString(Map.of("error", true,
+                "message", "Invalid Compute browse path. Use: /browse/compute"));
+    }
+
+    // ========== GKE (in-process, query PostgreSQL) ==========
+
+    String browseGkeAsString(String resourceType, String resourceId, String projectId) throws Exception {
+        return browseGke(resourceType, resourceId, projectId);
+    }
+
+    private String browseGke(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        if (resourceType == null) {
+            // List all clusters across locations
+            List<Map<String, Object>> clusters = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT project_id, location, cluster_id, status, k3d_cluster_name, endpoint, " +
+                     "cluster_version, node_count, created_at FROM gke_clusters WHERE project_id = ? " +
+                     "ORDER BY location, cluster_id")) {
+                ps.setString(1, projectId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> c = new LinkedHashMap<>();
+                        c.put("name", "projects/" + rs.getString("project_id") + "/locations/"
+                                + rs.getString("location") + "/clusters/" + rs.getString("cluster_id"));
+                        c.put("clusterId", rs.getString("cluster_id"));
+                        c.put("location", rs.getString("location"));
+                        c.put("status", rs.getString("status"));
+                        c.put("k3dClusterName", rs.getString("k3d_cluster_name"));
+                        c.put("endpoint", rs.getString("endpoint"));
+                        c.put("clusterVersion", rs.getString("cluster_version"));
+                        c.put("nodeCount", rs.getInt("node_count"));
+                        if (rs.getTimestamp("created_at") != null)
+                            c.put("createdAt", rs.getTimestamp("created_at").toString());
+                        clusters.add(c);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("clusters", clusters));
+        }
+        return mapper.writeValueAsString(Map.of("error", true,
+                "message", "Invalid GKE browse path. Use: /browse/gke"));
+    }
+
+    // ========== Service Usage (introspect from registry) ==========
+
+    String browseServiceUsageAsString(String resourceType, String resourceId, String projectId) throws Exception {
+        return browseServiceUsage(resourceType, resourceId, projectId);
+    }
+
+    private String browseServiceUsage(String resourceType, String resourceId, String projectId) throws Exception {
+        // Service Usage state is in-memory; reflect what is enabled via the
+        // service registry. Each service is reported as ENABLED for the active project.
+        List<Map<String, Object>> services = new ArrayList<>();
+        for (Map.Entry<String, ServiceDefinition> entry : registry.getAllServices().entrySet()) {
+            ServiceDefinition def = entry.getValue();
+            String apiName = def.gcloudApiName();
+            if (apiName == null || apiName.isBlank()) continue;
+            Map<String, Object> s = new LinkedHashMap<>();
+            s.put("name", "projects/" + projectId + "/services/" + apiName + ".googleapis.com");
+            s.put("serviceId", apiName);
+            s.put("state", config.isServiceEnabled(entry.getKey()) ? "ENABLED" : "DISABLED");
+            services.add(s);
+        }
+        return mapper.writeValueAsString(Map.of("services", services));
+    }
+
+    // ========== Cloud Billing (in-process, query PostgreSQL budgets) ==========
+
+    String browseCloudBillingAsString(String resourceType, String resourceId, String projectId) throws Exception {
+        return browseCloudBilling(resourceType, resourceId, projectId);
+    }
+
+    private String browseCloudBilling(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        if (resourceType == null) {
+            // List billing accounts (single fake account) + linked projects
+            Map<String, Object> account = new LinkedHashMap<>();
+            account.put("name", "billingAccounts/000000-AAAAAA-BBBBBB");
+            account.put("open", true);
+            // Linked projects come from the projects table
+            List<String> linkedProjects = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT project_id FROM projects ORDER BY project_id")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        linkedProjects.add(rs.getString("project_id"));
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of(
+                    "billingAccounts", List.of(account),
+                    "linkedProjects", linkedProjects));
+        }
+        if ("budgets".equals(resourceType)) {
+            List<Map<String, Object>> budgets = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT billing_account, budget_id, display_name, amount_json, threshold_rules_json, " +
+                     "created_at FROM billing_budgets ORDER BY created_at DESC LIMIT 100")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> b = new LinkedHashMap<>();
+                        b.put("name", rs.getString("billing_account") + "/budgets/" + rs.getString("budget_id"));
+                        b.put("billingAccount", rs.getString("billing_account"));
+                        b.put("budgetId", rs.getString("budget_id"));
+                        b.put("displayName", rs.getString("display_name"));
+                        b.put("amount", rs.getString("amount_json"));
+                        b.put("thresholdRules", rs.getString("threshold_rules_json"));
+                        if (rs.getTimestamp("created_at") != null)
+                            b.put("createdAt", rs.getTimestamp("created_at").toString());
+                        budgets.add(b);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("budgets", budgets));
+        }
+        return mapper.writeValueAsString(Map.of("error", true,
+                "message", "Invalid Cloud Billing browse path. Use: /browse/cloudbilling or /browse/cloudbilling/budgets"));
+    }
+
+    // ========== Cloud Resource Manager (delegate to projects table) ==========
+
+    String browseCloudResourceManagerAsString(String resourceType, String resourceId, String projectId) throws Exception {
+        return browseCloudResourceManager(resourceType, resourceId, projectId);
+    }
+
+    private String browseCloudResourceManager(String resourceType, String resourceId, String projectId) throws Exception {
+        if (!config.isPersistenceEnabled()) {
+            return mapper.writeValueAsString(Map.of("message", "Persistence disabled"));
+        }
+        if (resourceType == null) {
+            // Same shape as ProjectsApiService /projects
+            List<Map<String, Object>> projects = new ArrayList<>();
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT project_id, display_name, labels, state, created_at FROM projects ORDER BY created_at")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> p = new LinkedHashMap<>();
+                        p.put("projectId", rs.getString("project_id"));
+                        p.put("name", "projects/" + rs.getString("project_id"));
+                        p.put("displayName", rs.getString("display_name"));
+                        p.put("labels", rs.getString("labels"));
+                        p.put("state", rs.getString("state"));
+                        if (rs.getTimestamp("created_at") != null)
+                            p.put("createdAt", rs.getTimestamp("created_at").toString());
+                        projects.add(p);
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("projects", projects));
+        }
+        if ("projects".equals(resourceType) && resourceId != null) {
+            // Single project lookup
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                     "SELECT project_id, display_name, labels, state, created_at FROM projects WHERE project_id = ?")) {
+                ps.setString(1, resourceId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        Map<String, Object> p = new LinkedHashMap<>();
+                        p.put("projectId", rs.getString("project_id"));
+                        p.put("name", "projects/" + rs.getString("project_id"));
+                        p.put("displayName", rs.getString("display_name"));
+                        p.put("labels", rs.getString("labels"));
+                        p.put("state", rs.getString("state"));
+                        if (rs.getTimestamp("created_at") != null)
+                            p.put("createdAt", rs.getTimestamp("created_at").toString());
+                        return mapper.writeValueAsString(Map.of("project", p));
+                    }
+                }
+            }
+            return mapper.writeValueAsString(Map.of("error", true, "message", "Project not found: " + resourceId));
+        }
+        return mapper.writeValueAsString(Map.of("error", true,
+                "message", "Invalid Cloud Resource Manager browse path. Use: /browse/cloudresourcemanager or /browse/cloudresourcemanager/projects/{projectId}"));
     }
 
 }

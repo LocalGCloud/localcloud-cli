@@ -1,25 +1,94 @@
 service_id: bigtable
-coverage_status: early-partial
+coverage_status: supported
 operations:
   - id: admin.lifecycle
     operation: instances/tables/families
-    status: partial
-    notes: External emulator and local browse/query paths exist.
+    status: supported
+    evidence: [manual:terraform-compat-2026-05-31, terraform:e2e-script, test:unit-instance-crud]
+    notes: Instance and table CRUD works end-to-end via gRPC + REST facade. Instances now persist across emulator restarts via SQLite.
   - id: rows.data
     operation: row mutations and reads
-    status: partial
-    notes: Persistence and SDK/browser state alignment need verification.
+    status: supported
+    evidence: [test:unit-inmem, manual:sdk-e2e]
+    notes: |
+      All core data-plane methods implemented: ReadRows, MutateRow, MutateRows,
+      CheckAndMutateRow, ReadModifyWriteRow, SampleRowKeys.
+      Row-level REST endpoints added for browser console: GET/POST/DELETE rows.
+      Filters: chain, interleave, condition, sink, regex (row/column/value),
+      column range, value range, timestamp range, cells-per-column/row limit,
+      row sample, strip value, apply label.
+      Persistence: rows stored in SQLite rows_t table.
+  - id: cli.cbt
+    operation: cbt CLI compatibility
+    status: supported
+    evidence: [manual:cbt-smoke-test]
+    notes: |
+      The `cbt` CLI works with BIGTABLE_EMULATOR_HOST env var.
+      Instance CRUD (create/list/get/delete instance) now supported via gRPC.
+      Table and row operations work as expected.
+  - id: browser.console
+    operation: localcloud console data browser
+    status: supported
+    evidence: [test:unit-rest-endpoints]
+    notes: |
+      REST endpoints for instance/table/row CRUD exposed via BigtableAdminService:
+      - GET  /.../tables/{table}/rows — browse rows
+      - POST /.../tables/{table}/rows — write cells
+      - DELETE /.../tables/{table}/rows/{rowKey} — delete row
+      SDK and console share the same SQLite-backed emulator state.
+  - id: persistence
+    operation: data survives emulator restart
+    status: supported
+    evidence: [test:unit-instance-persistence]
+    notes: |
+      All state persisted to SQLite:
+      - instances_t — instance metadata (Create/Get/List/Update/Delete)
+      - tables_t — table definitions and column families
+      - rows_t — row keys and cell data
+      - materialized_views_t — CMV registrations
+      Instance metadata was previously in-memory only; now survives restarts.
+  - id: materialized-views
+    operation: materialized views (CMVs)
+    status: supported
+    evidence: [test:unit-instance-crud]
+    notes: |
+      Create, Get, List, Update, Delete materialized views implemented.
+      Write-time sync: mutations to source table automatically propagate to CMV shadow tables.
+      Delete cascade: dropping a source table cleans up dependent CMVs and shadow tables.
+      CMV SQL parser supports FROM, SPLIT key remapping, AppendSourceKey, ORDER BY.
+  - id: snapshots-backups
+    operation: snapshots and backups
+    status: unsupported
+    notes: |
+      All 10 snapshot/backup RPCs return codes.Unimplemented:
+      SnapshotTable, GetSnapshot, ListSnapshots, DeleteSnapshot,
+      CreateBackup, GetBackup, UpdateBackup, DeleteBackup, ListBackups, RestoreTable.
+      Also: CreateTableFromSnapshot, UndeleteTable.
+  - id: iam
+    operation: IAM policy management
+    status: unsupported
+    notes: GetIamPolicy, SetIamPolicy, TestIamPermissions return codes.Unimplemented.
+  - id: safety.forward-compat
+    operation: new proto methods return Unimplemented (no panics)
+    status: supported
+    evidence: [code:embedding-fix]
+    notes: |
+      Switched from embedding interface types to UnimplementedXxxServer concrete types.
+      New proto methods (PingAndWarm, ExecuteQuery, OpenTable, etc.) safely return
+      codes.Unimplemented instead of panicking at runtime.
 terraform_resources:
   status: supported
   resources: [google_bigtable_instance, google_bigtable_table]
   evidence: [manual:terraform-compat-2026-05-31]
 gcloud_paths:
   - id: gcloud.bigtable
-    status: unsupported
-    notes: Upstream emulator is gRPC data-plane only for current LocalCloud use.
+    status: partial
+    notes: |
+      Limited gcloud support. The `cbt` CLI tool is the recommended interface.
+      `gcloud bigtable instances list` now works via implemented instance CRUD gRPC.
 console_paths:
   - id: data-browser
-    status: partial
+    status: supported
 state:
   source: external emulator
   seed: available
@@ -27,5 +96,8 @@ state:
   export: planned
   snapshot: planned
 limitations:
-  - Persistence and browse/mutate/export alignment need hardening.
-ci_recommendation: Use only for targeted local workflows until SDK and provisioning tests are added.
+  - '[prod_only] Single-node emulator by design; clusters, multi-region, replication require Google infrastructure.'
+  - GoogleSQL queries (ExecuteQuery/PrepareQuery) not supported — data-plane uses HBase-style API only.
+  - Change streams, app profiles, and logical views are not implemented in the emulator.
+  - Session protocol (OpenTable/OpenAuthorizedView/OpenMaterializedView) not implemented — not needed for correctness.
+ci_recommendation: Suitable for local development workflows. Use with `cbt` CLI or localcloud console for full CRUD operations.

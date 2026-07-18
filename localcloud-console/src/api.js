@@ -50,6 +50,9 @@ async function handleResponse(r) {
     }
     if (!isJson) {
         const text = await r.text();
+        if (ct.includes('text/html') || text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+            throw new Error(`Endpoint not available (${r.status}) — received HTML instead of JSON. The server may be running an older version or the route is not registered.`);
+        }
         throw new Error(`Expected JSON but got ${ct || 'unknown'}: ${text.substring(0, 200)}`);
     }
     return r.json();

@@ -7,7 +7,8 @@ operations:
     notes: Redis/Valkey-compatible data path is available.
   - id: admin-api
     operation: Cloud Redis admin API
-    status: unsupported
+    status: prod_only
+    notes: Cloud Redis Admin API is production control-plane; local Redis/Valkey data path is fully functional.
 terraform_resources:
   status: supported
   resources: [google_redis_instance]

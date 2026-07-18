@@ -28,7 +28,7 @@ final class CompatibilityRegistry {
     static final String SCHEMA_VERSION = "2026-06-06";
     private static final String RESOURCE_ROOT = "compatibility";
     private static final Set<String> STATUSES = Set.of(
-            "supported", "partial", "unsupported", "unverified", "planned", "early-partial");
+            "supported", "partial", "unsupported", "unverified", "planned", "prod_only");
     private static final Set<String> EVIDENCE_TYPES = Set.of(
             "unit_test", "integration_test", "terraform_test", "console_build", "manual", "upstream_doc");
 
@@ -231,6 +231,21 @@ final class CompatibilityRegistry {
             evidence = List.copyOf(evidence == null ? List.of() : evidence);
         }
 
+
+        /**
+         * Computes the effective coverage status, upgrading to "supported" when
+         * every unsupported operation is classified as prod_only (production-only
+         * features that cannot be emulated locally).
+         */
+        String effectiveCoverageStatus() {
+            if (operations.isEmpty()) return coverageStatus;
+            boolean hasRealGaps = operations.stream().anyMatch(op ->
+                !"supported".equals(op.status()) && !"prod_only".equals(op.status()));
+            if (!hasRealGaps) {
+                return "supported";
+            }
+            return coverageStatus;
+        }
         CompatibilityService withServiceId(String fallback) {
             if (serviceId != null && !serviceId.isBlank()) {
                 return this;
@@ -252,7 +267,7 @@ final class CompatibilityRegistry {
                 out.put("gcloud_endpoint_env_var", def.gcloudEnvVar());
                 out.put("terraform_endpoint_env_var", def.terraformEnvVar());
             }
-            out.put("coverage_status", coverageStatus);
+            out.put("coverage_status", effectiveCoverageStatus());
             out.put("operations", operations.stream().map(CompatibilityOperation::toMap).toList());
             out.put("terraform_resources", terraformResources.toMap());
             out.put("gcloud_paths", gcloudPaths.stream().map(CompatibilityPath::toMap).toList());

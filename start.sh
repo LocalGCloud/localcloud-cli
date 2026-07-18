@@ -12,51 +12,50 @@ fi
 # Remove stopped container with same name
 docker rm localcloud >/dev/null 2>&1 || true
 
-# Data directory: use LOCALCLOUD_DATA_DIR env var for host-accessible bind mount,
-# otherwise fall back to Docker named volume (not accessible on macOS host).
-LOCALCLOUD_DATA_DIR="${LOCALCLOUD_DATA_DIR:-}"
+# Data directory: bind mount to host filesystem (override with LOCALCLOUD_DATA_DIR)
+LOCALCLOUD_DATA_DIR="${LOCALCLOUD_DATA_DIR:-$HOME/.localcloud/data}"
+mkdir -p "$LOCALCLOUD_DATA_DIR"
+VOLUME_ARG="$LOCALCLOUD_DATA_DIR:/var/lib/localcloud"
+echo "Data: $LOCALCLOUD_DATA_DIR"
 
-if [ -n "$LOCALCLOUD_DATA_DIR" ]; then
-    mkdir -p "$LOCALCLOUD_DATA_DIR"
-    VOLUME_ARG="$LOCALCLOUD_DATA_DIR:/var/lib/localcloud"
-    echo "Data: $LOCALCLOUD_DATA_DIR (bind mount)"
-else
-    docker volume create localcloud-data >/dev/null 2>&1 || true
-    VOLUME_ARG="localcloud-data:/var/lib/localcloud"
-    echo "Data: localcloud-data (Docker volume)"
-fi
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
+# ── Ports ─────────────────────────────────────────────────
+# Core (always needed):
+#   8080  — Gateway (admin API + web console)
+#
+# Default services (GCS, Spanner, BigQuery):
+#   4443  — Cloud Storage (REST)
+#   9010  — Spanner (gRPC)
+#   9020  — Spanner (REST API)
+#   9050  — BigQuery (REST)
+#   9060  — BigQuery (gRPC)
+#
+# Optional services (uncomment to enable):
+#   -p 8085:8085 \   # Pub/Sub (gRPC)
+#   -p 8086:8086 \   # Firestore (gRPC)
+#   -p 8087:8087 \   # Bigtable (gRPC)
+#   -p 6379:6379 \   # Memorystore / Redis
+#
+# Caddy reverse proxy + cloud.localhost DNS (uncomment to enable):
+#   -p 8053:53/udp \  # DNS for *.cloud.localhost
+#   -p 80:80 \        # HTTP → HTTPS redirect
+#   -p 443:443 \      # HTTPS (TLS)
+#
+# GKE (needs docker.sock; set LOCALCLOUD_EXTRA_ARGS too):
+#   -p 16443:6443 \   # Kubernetes API
+#
+# Set LOCALCLOUD_EXTRA_ARGS for additional docker run flags.
 docker run -d --name localcloud \
-  -p 127.0.0.1:8053:53/udp \
-  -p 127.0.0.1:80:80 \
-  -p 127.0.0.1:443:443 \
-  -p 127.0.0.1:8080:8080 \
-  -p 127.0.0.1:4443:4443 \
-  -p 127.0.0.1:8085:8085 \
-  -p 127.0.0.1:8086:8086 \
-  -p 127.0.0.1:8087:8087 \
-  -p 127.0.0.1:9010:9010 \
-  -p 127.0.0.1:9020:9020 \
-  -p 127.0.0.1:9050:9050 \
-  -p 127.0.0.1:9060:9060 \
-  -p 127.0.0.1:6379:6379 \
-  -p 127.0.0.1:16443:6443 \
-  -m 4g \
+  -p 8080:8080 \
+  -p 4443:4443 \
+  -p 9010:9010 \
+  -p 9020:9020 \
+  -p 9050:9050 \
+  -p 9060:9060 \
   -v "$VOLUME_ARG" \
-  -v "${LOCALCLOUD_SEED_FILE:-$SCRIPT_DIR/seed.yaml}:/etc/localcloud/seed.yaml:ro" \
-  -v "$SCRIPT_DIR/services.yaml:/etc/localcloud/services.yaml:ro" \
-  -v "$SCRIPT_DIR/docker/conf/security/certs:/etc/caddy/certs:ro" \
-  -v "$SCRIPT_DIR/docker/conf/network/Caddyfile:/etc/caddy/Caddyfile:ro" \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -e LOCALCLOUD_PROJECT="${LOCALCLOUD_PROJECT:-local-project}" \
-  -e LOCALCLOUD_TERRAFORM_MODE="${LOCALCLOUD_TERRAFORM_MODE:-false}" \
-  -e LOCALCLOUD_SERVICES="${LOCALCLOUD_SERVICES:-gcs,pubsub,firestore,bigquery,secretmanager,cloudtasks,spanner,bigtable,logging,monitoring,memorystore,workflows,cloudscheduler,cloudfunctions,alloydb,dataproc,cloudiam,cloudresourcemanager,cloudbilling,cloudsql,serviceusage}" \
-  -e LOCALCLOUD_DATA_DIR="/var/lib/localcloud" \
-  -e LOCALCLOUD_GCP_CREDENTIAL_SOURCE="${LOCALCLOUD_GCP_CREDENTIAL_SOURCE:-none}" \
+  ${LOCALCLOUD_EXTRA_ARGS:-} \
   localcloud/localcloud:latest
 
 echo "LocalCloud running at http://localhost:8080"
 echo "Health: curl http://localhost:8080/health"
-echo "cloud.localhost: add -p 80:80 to enable no-port-number URL"
+echo ""
+echo "For more services, uncomment port lines in start.sh or set LOCALCLOUD_EXTRA_ARGS."

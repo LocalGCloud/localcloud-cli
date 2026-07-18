@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard.jsx';
 import Logs from './pages/Logs.jsx';
 import ServiceExplorer from './pages/ServiceExplorer.jsx';
 import Settings from './pages/Settings.jsx';
+import UserGuide from './pages/UserGuide.jsx';
 import Usage from './pages/Usage.jsx';
 import { trapFocus } from './utils/a11y.js';
 import { normalizeLocalSchema, normalizeRemoteBrowse } from './components/SchemaExplorer.jsx';
@@ -21,6 +22,7 @@ const ICON_PATHS = {
     data: 'M20 6H12L10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z',
     usage: 'M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z',
     settings: 'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z',
+    book: 'M21 5c-1.11-.35-2.33-.5-3.5-.5-1.95 0-4.05.4-5.5 1.5-1.45-1.1-3.55-1.5-5.5-1.5S2.45 4.9 1 6v14.65c0 .25.25.5.5.5.1 0 .15-.05.25-.05C3.1 20.45 5.05 20 6.5 20c1.95 0 4.05.4 5.5 1.5 1.35-.85 3.8-1.5 5.5-1.5 1.65 0 3.35.3 4.75 1.05.1.05.15.05.25.05.25 0 .5-.25.5-.5V6c-.6-.45-1.25-.75-2-1zm0 13.5c-1.1-.35-2.3-.5-3.5-.5-1.7 0-4.15.65-5.5 1.5V8c1.35-.85 3.8-1.5 5.5-1.5 1.2 0 2.4.15 3.5.5v11.5z',
     docs: 'M5 3h11a3 3 0 0 1 3 3v15H8a3 3 0 0 1-3-3V3zm3 14h9V6a1 1 0 0 0-1-1H7v13a1 1 0 0 0 1 1v-2zm1-9h6v2H9V8zm0 4h6v2H9v-2z',
     chevron: 'M8.59 16.59 13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z',
     home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8h5z',
@@ -43,7 +45,7 @@ const NAV_ITEMS = [
     { id: 'getstarted', label: 'Get Started', icon: 'spark' },
     { id: 'logs', label: 'Logs', icon: 'logs' },
     { id: 'usage', label: 'Cost Analysis', icon: 'usage' },
-    { id: 'settings', label: 'Setup & SDKs', icon: 'docs' },
+    { id: 'userguide', label: 'Setup & SDKs', icon: 'book' },
 ];
 
 const SERVICE_GROUPS = [
@@ -106,7 +108,7 @@ function parseBuildDate(health) {
     return Number.isFinite(parsed) ? parsed : null;
 }
 
-const STANDALONE_PAGES = ['dashboard', 'getstarted', 'logs', 'usage', 'settings'];
+const STANDALONE_PAGES = ['dashboard', 'getstarted', 'logs', 'usage', 'settings', 'userguide'];
 const SERVICE_PAGES = ['explorer', 'editor', 'db-history', 'db-stats'];
 
 function parseProject() {
@@ -134,10 +136,18 @@ function buildPath(page, service, subpath) {
     return '/' + segments.join('/');
 }
 
-function buildUrl(page, service, subpath, projectId) {
-    let url = buildPath(page, service, subpath);
-    if (projectId) url += '?project=' + encodeURIComponent(projectId);
-    return url;
+function buildUrl(page, service, subpath, projectId, options = {}) {
+    const urlPath = buildPath(page, service, subpath);
+    const params = options.preserveSearch ? new URLSearchParams(window.location.search) : new URLSearchParams();
+    if (projectId) params.set('project', projectId);
+    else params.delete('project');
+    const query = params.toString();
+    return query ? `${urlPath}?${query}` : urlPath;
+}
+
+function currentPathMatches(page, service, subpath) {
+    const current = window.location.pathname.replace(/\/+$/, '') || '/';
+    return current === buildPath(page, service, subpath);
 }
 
 function navigateWithProject(page, service, subpath, projectId) {
@@ -172,8 +182,6 @@ function App() {
     const [globalSearchIndex, setGlobalSearchIndex] = createSignal([]);
     const [updateDismissed, setUpdateDismissed] = createSignal(false);
     const [imageUpdateInfo, setImageUpdateInfo] = createSignal(null);
-    const [settingsMenuOpen, setSettingsMenuOpen] = createSignal(false);
-    const [shortcutsOpen, setShortcutsOpen] = createSignal(false);
     const [onboardingVisible, setOnboardingVisible] = createSignal((() => {
         try { return localStorage.getItem('localcloud-onboarding-complete') !== 'true'; } catch { return true; }
     })());
@@ -216,7 +224,7 @@ function App() {
             const page = currentPage();
             const svc = selectedService();
             const sp = subpath();
-            const url = buildUrl(page, svc, sp, projectId);
+            const url = buildUrl(page, svc, sp, projectId, { preserveSearch: true });
             if (window.location.pathname + window.location.search !== url) {
                 history.pushState(null, '', url);
             }
@@ -293,7 +301,7 @@ function App() {
         const svc = selectedService();
         const sp = subpath();
         const project = activeProject();
-        const url = buildUrl(page, svc, sp, project);
+        const url = buildUrl(page, svc, sp, project, { preserveSearch: currentPathMatches(page, svc, sp) });
         if (window.location.pathname + window.location.search !== url) {
             history.replaceState(null, '', url);
         }
@@ -333,12 +341,7 @@ function App() {
         if (projectDropdownOpen() && !e.target.closest('.aura-project-wrap')) {
             setProjectDropdownOpen(false);
         }
-        if (settingsMenuOpen() && !e.target.closest('.aura-settings-wrap')) {
-            setSettingsMenuOpen(false);
-        }
     };
-    window.addEventListener('click', onGlobalClick);
-    onCleanup(() => window.removeEventListener('click', onGlobalClick));
 
     // Fetch routing + credentials once on load (they rarely change)
     const fetchRoutingAndCreds = async () => {
@@ -383,7 +386,6 @@ function App() {
             navigateWithProject(page, null, null, activeProject());
         });
         setSearchOpen(false);
-        setSettingsMenuOpen(false);
         setMobileSidebarOpen(false);
     };
 
@@ -405,7 +407,6 @@ function App() {
             setCollapsedGroups(prev => ({ ...prev, [svc.group]: false }));
         }
         setSearchOpen(false);
-        setSettingsMenuOpen(false);
         setMobileSidebarOpen(false);
     };
 
@@ -532,6 +533,8 @@ function App() {
                 return <Usage activeProject={activeProject} />;
             case 'settings':
                 return <Settings darkMode={darkMode} toggleDarkMode={toggleDarkMode} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} routingData={routingData} credentialData={credentialData} healthData={healthData} onRoutingChanged={fetchRoutingAndCreds} />;
+            case 'userguide':
+                return <UserGuide healthData={healthData} activeProject={activeProject} />;
             default:
                 return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={activeProject} />;
         }
@@ -602,25 +605,12 @@ function App() {
                     </button>
                 </div>
                 <div class="topbar-right">
-                    <button class="aura-top-icon" onClick={() => setShortcutsOpen(true)} title="Keyboard shortcuts" aria-label="Keyboard shortcuts">
-                        <span style={{ "font-weight": "800", "font-size": "16px" }}>?</span>
+                    <button class="aura-top-icon" onClick={() => navigateTo('userguide')} title="User Guide" aria-label="Open user guide">
+                        <Icon name="book" size={22} />
                     </button>
-                    <button class="aura-top-icon" onClick={() => navigateTo('settings')} title="Documentation" aria-label="Open documentation">
-                        <Icon name="docs" size={22} />
+                    <button class="aura-top-icon" onClick={() => navigateTo('settings')} title="Settings" aria-label="Open settings">
+                        <Icon name="settings" size={22} />
                     </button>
-                    <div class="aura-settings-wrap">
-                        <button class="aura-top-icon" onClick={() => setSettingsMenuOpen(!settingsMenuOpen())} title="Settings" aria-label="Open settings menu" aria-expanded={settingsMenuOpen()}>
-                            <Icon name="settings" size={22} />
-                        </button>
-                        <Show when={settingsMenuOpen()}>
-                            <div class="project-dropdown aura-settings-menu">
-                                <div class="project-dropdown-label">Settings</div>
-                                <button class="project-dropdown-item" onClick={() => navigateTo('logs')}><span>Logs</span></button>
-                                <button class="project-dropdown-item" onClick={() => navigateTo('usage')}><span>Cost Analysis</span></button>
-                                <button class="project-dropdown-item" onClick={toggleDarkMode}><span>{darkMode() ? 'Light Mode' : 'Dark Mode'}</span></button>
-                            </div>
-                        </Show>
-                    </div>
                     <button class="aura-user-btn" title="Guest · Sign in coming soon" aria-label="User menu">
                         <Icon name="user" size={22} />
                     </button>
@@ -737,44 +727,6 @@ function App() {
                 </div>
             </Show>
 
-            <Show when={shortcutsOpen()}>
-                <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" onClick={(e) => { if (e.target === e.currentTarget) setShortcutsOpen(false); }}>
-                    <div class="create-dialog" ref={el => { if (el) requestAnimationFrame(() => trapFocus(el, () => setShortcutsOpen(false))); }}
-                        style={{ width: "420px", padding: "0" }} onClick={(e) => e.stopPropagation()}>
-                        <div class="create-dialog-accent" style="background:var(--primary)" />
-                        <div class="create-dialog-header">
-                            <h2 class="create-dialog-title">Keyboard Shortcuts</h2>
-                        </div>
-                        <div class="create-dialog-body" style={{ "padding-bottom": "20px" }}>
-                            <div style={{ display: "flex", "flex-direction": "column", gap: "12px" }}>
-                                {[
-                                    { keys: navigator.platform?.includes('Mac') ? '⌘K' : 'Ctrl+K', desc: 'Command palette — search services, tables, logs' },
-                                    { keys: '⌘Enter', desc: 'Run current SQL query' },
-                                    { keys: 'Esc', desc: 'Close command palette / modals' },
-                                ].map(s => (
-                                    <div style={{ display: "flex", "align-items": "center", gap: "12px" }}>
-                                        <kbd style={{
-                                            "min-width": "64px",
-                                            display: "inline-flex",
-                                            "align-items": "center",
-                                            "justify-content": "center",
-                                            padding: "3px 8px",
-                                            "font-family": "var(--font-mono)",
-                                            "font-size": "12px",
-                                            "font-weight": "700",
-                                            "border-radius": "6px",
-                                            border: "1px solid var(--border)",
-                                            background: "var(--surface-variant)",
-                                            color: "var(--text)",
-                                        }}>{s.keys}</kbd>
-                                        <span style={{ "font-size": "13px", color: "var(--text-secondary)" }}>{s.desc}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </Show>
 
             <Show when={showNewProjectDialog()}>
                 <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="new-project-title" onClick={(e) => { if (e.target === e.currentTarget) { setShowNewProjectDialog(false); setProjectError(null); } }}>

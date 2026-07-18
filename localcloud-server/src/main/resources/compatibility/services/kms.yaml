@@ -1,5 +1,5 @@
 service_id: kms
-coverage_status: early-partial
+coverage_status: partial
 operations:
   - id: keys.lifecycle
     operation: key rings, crypto keys, versions
@@ -21,7 +21,8 @@ console_paths:
     status: partial
 state: { source: PostgreSQL-backed facade, seed: planned, reset: planned, export: planned, snapshot: planned }
 limitations:
-  - HSM, EKM, import jobs, and Cloud HSM level enforcement are not implemented.
+  - '[prod_only] HSM (physical FIPS 140-2 Level 3 hardware) and EKM (external key manager providers).'
+  - Import jobs and Cloud HSM level enforcement are not implemented.
 unsupported_operations:
   - id: kms-import-jobs
     operation: importJobs.create

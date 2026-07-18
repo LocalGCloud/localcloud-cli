@@ -4,20 +4,18 @@
 #
 # QUICK START
 # -----------
-#   mkdir -p ~/.localcloud/data
 #   docker run -d --name localcloud \
-#     -p 8080:8080 -p 4443:4443 -p 8085:8085 -p 8086:8086 \
-#     -p 8087:8087 -p 9010:9010 -p 9020:9020 -p 9050:9050 -p 9060:9060 \
-#     -p 6379:6379 \
-#     -m 4g \
+#     -p 8080:8080 -p 4443:4443 \
+#     -p 9010:9010 -p 9020:9020 \
+#     -p 9050:9050 -p 9060:9060 \
 #     -v ~/.localcloud/data:/var/lib/localcloud \
 #     localcloud/localcloud:latest
 #
 #   Console: http://localhost:8080
 #   Health:  curl http://localhost:8080/health
 #
-#   Caddy reverse proxy (enabled by default, add -p 80:80 for cloud.localhost):
-#     docker run -d --name localcloud ... -p 80:80 ...
+#   For additional services, add ports (see PORTS section below).
+#   For cloud.localhost DNS + TLS proxy, add -p 80:80 -p 443:443 -p 8053:53/udp.
 #
 # PORTS
 # -----
@@ -43,7 +41,13 @@
 #                             Example: "gcs,pubsub,bigquery,secretmanager"
 #   LOCALCLOUD_SEED_FILE      Path to seed YAML inside the container
 #                             (default: /etc/localcloud/seed.yaml, baked into image)
-#   JAVA_OPTS                 JVM flags (default: -Xmx512m -Xms128m -XX:+UseZGC)
+#   LOCALCLOUD_DATA_DIR       Data directory inside the container
+#                             (default: "/var/lib/localcloud")
+#   LOCALCLOUD_TERRAFORM_MODE Skip seed to avoid conflicts with Terraform-managed
+#                             resources (default: "false")
+#   LOCALCLOUD_GCP_CREDENTIAL_SOURCE  GCP credential source for hybrid local+cloud
+#                             routing. "none" (default), "adc", or "sa-key"
+#   JAVA_OPTS                 JVM flags (default: -Xmx512m -Xms128m -XX:+UseSerialGC)
 #
 #   Individual service flags (all default to true except GKE, Compute, Cloud Run,
 #   Vertex AI, Cloud KMS, and Cloud SQL):
@@ -64,19 +68,22 @@
 #
 # DATA PERSISTENCE
 # ----------------
-#   Option A — Docker named volume (default, not accessible from host on macOS):
-#     -v localcloud-data:/var/lib/localcloud
-#
-#   Option B — Bind mount (data accessible on host filesystem):
+#   Bind mount (recommended — data accessible on host filesystem):
 #     mkdir -p ~/.localcloud/data
 #     -v ~/.localcloud/data:/var/lib/localcloud
+#
+#   Docker named volume (not accessible from host on macOS):
+#     -v localcloud-data:/var/lib/localcloud
 #
 #     The data directory will contain:
 #       pgdata/          PostgreSQL database files
 #       gcs-data/        Cloud Storage blobs
 #       spanner-data/    Spanner persistence
 #       bigquery-data/   BigQuery DuckDB files
-#       logs/            Service logs (on container filesystem, not bind mount)
+#
+#     Service logs are written to /var/log/localcloud inside the container.
+#     They are intentionally excluded from the persistent data mount and are
+#     discarded when the container is replaced during a version upgrade.
 #
 #     First run auto-creates subdirectories and sets ownership.
 #     Use bind mount when you need to inspect, backup, or share data.
@@ -102,17 +109,16 @@
 #   # Run only storage and messaging services:
 #   docker run -d --name localcloud \
 #     -p 8080:8080 -p 4443:4443 -p 8085:8085 -p 6379:6379 \
-#     -m 4g \
 #     -e LOCALCLOUD_SERVICES="gcs,pubsub,memorystore" \
 #     -v ~/.localcloud/data:/var/lib/localcloud \
 #     localcloud/localcloud:latest
 #
-#   # Using Docker named volume (data not accessible from host on macOS):
+#   # Full stack with all default services:
 #   docker run -d --name localcloud \
 #     -p 8080:8080 -p 4443:4443 -p 8085:8085 -p 8086:8086 \
-#     -p 8087:8087 -p 9010:9010 -p 9020:9020 -p 9050:9050 -p 9060:9060 \
-#     -m 4g \
-#     -v localcloud-data:/var/lib/localcloud \
+#     -p 8087:8087 -p 9010:9010 -p 9020:9020 -p 9050:9050 \
+#     -p 9060:9060 -p 6379:6379 \
+#     -v ~/.localcloud/data:/var/lib/localcloud \
 #     localcloud/localcloud:latest
 #
 # SEED DATA
@@ -314,6 +320,8 @@ COPY docker/conf/supervisord.conf /etc/supervisor/conf.d/localcloud.conf
 COPY docker/conf/network/Caddyfile /etc/caddy/Caddyfile
 COPY docker/conf/security/server-cert.pem /etc/caddy/server-cert.pem
 COPY docker/conf/security/server-key.pem /etc/caddy/server-key.pem
+RUN mkdir -p /etc/caddy/certs
+COPY docker/conf/security/certs/googleapis.pem docker/conf/security/certs/googleapis.key /etc/caddy/certs/
 COPY docker/conf/network/dnsmasq.conf /etc/dnsmasq.conf
 COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY docker/wait-for-pg.sh /usr/local/bin/wait-for-pg.sh
@@ -343,6 +351,9 @@ ENV LOCALCLOUD_VERSION_FILE=/opt/localcloud/VERSION
 # 8. Runtime Environment
 ENV JAVA_OPTS="-Xmx512m -Xms128m -XX:+UseSerialGC -Xss256k -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/./urandom" \
     LOCALCLOUD_PROJECT="local-project" \
+    LOCALCLOUD_DATA_DIR="/var/lib/localcloud" \
+    LOCALCLOUD_TERRAFORM_MODE="false" \
+    LOCALCLOUD_GCP_CREDENTIAL_SOURCE="none" \
     LOCALCLOUD_ENABLE_GCS="true" \
     LOCALCLOUD_ENABLE_PUBSUB="true" \
     LOCALCLOUD_ENABLE_FIRESTORE="true" \

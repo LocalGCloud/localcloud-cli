@@ -1,5 +1,5 @@
 service_id: vertexai
-coverage_status: early-partial
+coverage_status: partial
 operations:
   - id: genai.stub
     operation: generateContent, streamGenerateContent, embedContent, countTokens
@@ -19,7 +19,8 @@ console_paths:
     status: partial
 state: { source: PostgreSQL-backed facade, seed: planned, reset: planned, export: planned, snapshot: planned }
 limitations:
-  - Broader Vertex AI training, prediction, and model management are out of current scope.
+  - '[prod_only] Model training and tuning (requires TPU/GPU clusters).'
+  - Prediction endpoints and model management are out of current scope.
 unsupported_operations:
   - id: vertexai-batch-prediction
     operation: batchPredictionJobs.create

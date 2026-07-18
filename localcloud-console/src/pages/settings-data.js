@@ -5,17 +5,32 @@
 
 // --- Service metadata: maps env var name to service info ---
 export const SERVICE_META = {
-    STORAGE_EMULATOR_HOST:          { id: 'gcs',           displayName: 'Cloud Storage',    hasGcloud: true },
-    PUBSUB_EMULATOR_HOST:           { id: 'pubsub',        displayName: 'Pub/Sub',          hasGcloud: true },
-    FIRESTORE_EMULATOR_HOST:        { id: 'firestore',     displayName: 'Firestore',        hasGcloud: true },
-    BIGTABLE_EMULATOR_HOST:         { id: 'bigtable',      displayName: 'Bigtable',         hasGcloud: false },
-    SPANNER_EMULATOR_HOST:          { id: 'spanner',       displayName: 'Spanner',          hasGcloud: true },
-    BIGQUERY_EMULATOR_HOST:         { id: 'bigquery',      displayName: 'BigQuery',         hasGcloud: true },
-    SECRET_MANAGER_EMULATOR_HOST:   { id: 'secretmanager', displayName: 'Secret Manager',   hasGcloud: true },
-    CLOUD_TASKS_EMULATOR_HOST:      { id: 'cloudtasks',    displayName: 'Cloud Tasks',      hasGcloud: false },
-    CLOUD_LOGGING_EMULATOR_HOST:    { id: 'logging',       displayName: 'Cloud Logging',    hasGcloud: false },
-    CLOUD_MONITORING_EMULATOR_HOST: { id: 'monitoring',    displayName: 'Cloud Monitoring', hasGcloud: false },
-    REDIS_HOST:                     { id: 'memorystore',   displayName: 'Memorystore (Redis)', hasGcloud: false },
+    STORAGE_EMULATOR_HOST:           { id: 'gcs',            displayName: 'Cloud Storage',      hasGcloud: true },
+    PUBSUB_EMULATOR_HOST:            { id: 'pubsub',         displayName: 'Pub/Sub',            hasGcloud: true },
+    FIRESTORE_EMULATOR_HOST:         { id: 'firestore',      displayName: 'Firestore',          hasGcloud: true },
+    BIGTABLE_EMULATOR_HOST:          { id: 'bigtable',       displayName: 'Bigtable',           hasGcloud: true },
+    SPANNER_EMULATOR_HOST:           { id: 'spanner',        displayName: 'Spanner',            hasGcloud: true },
+    BIGQUERY_EMULATOR_HOST:          { id: 'bigquery',       displayName: 'BigQuery',           hasGcloud: true },
+    SECRET_MANAGER_EMULATOR_HOST:    { id: 'secretmanager',  displayName: 'Secret Manager',     hasGcloud: true },
+    CLOUD_TASKS_EMULATOR_HOST:       { id: 'cloudtasks',     displayName: 'Cloud Tasks',        hasGcloud: true },
+    CLOUD_LOGGING_EMULATOR_HOST:     { id: 'logging',        displayName: 'Cloud Logging',      hasGcloud: true },
+    CLOUD_MONITORING_EMULATOR_HOST:  { id: 'monitoring',     displayName: 'Cloud Monitoring',   hasGcloud: true },
+    CLOUD_SCHEDULER_EMULATOR_HOST:   { id: 'cloudscheduler', displayName: 'Cloud Scheduler',    hasGcloud: true },
+    CLOUD_FUNCTIONS_EMULATOR_HOST:   { id: 'cloudfunctions', displayName: 'Cloud Functions',    hasGcloud: true },
+    WORKFLOWS_EMULATOR_HOST:         { id: 'workflows',      displayName: 'Cloud Workflows',    hasGcloud: true },
+    ALLOYDB_EMULATOR_HOST:           { id: 'alloydb',        displayName: 'AlloyDB',            hasGcloud: true },
+    DATAPROC_EMULATOR_HOST:          { id: 'dataproc',       displayName: 'Dataproc',           hasGcloud: true },
+    IAM_EMULATOR_HOST:               { id: 'cloudiam',       displayName: 'Cloud IAM',          hasGcloud: true },
+    GKE_EMULATOR_HOST:               { id: 'gke',            displayName: 'GKE',                hasGcloud: true },
+    COMPUTE_EMULATOR_HOST:           { id: 'compute',        displayName: 'Compute Engine',     hasGcloud: true },
+    CLOUD_RUN_EMULATOR_HOST:         { id: 'cloudrun',       displayName: 'Cloud Run',          hasGcloud: true },
+    AIPLATFORM_EMULATOR_HOST:        { id: 'vertexai',       displayName: 'Vertex AI',          hasGcloud: true },
+    CLOUD_KMS_EMULATOR_HOST:         { id: 'kms',            displayName: 'Cloud KMS',          hasGcloud: true },
+    CLOUD_SQL_EMULATOR_HOST:         { id: 'cloudsql',       displayName: 'Cloud SQL',          hasGcloud: true },
+    REDIS_HOST:                      { id: 'memorystore',    displayName: 'Memorystore (Redis)', hasGcloud: false },
+    CLOUD_RESOURCE_MANAGER_EMULATOR_HOST: { id: 'cloudresourcemanager', displayName: 'Cloud Resource Manager', hasGcloud: true },
+    SERVICE_USAGE_EMULATOR_HOST:      { id: 'serviceusage',  displayName: 'Service Usage',      hasGcloud: true },
+    CLOUD_BILLING_EMULATOR_HOST:      { id: 'cloudbilling',  displayName: 'Cloud Billing',      hasGcloud: true },
 };
 
 // Display order for SDK services
@@ -23,9 +38,14 @@ export const SDK_ORDER = [
     'STORAGE_EMULATOR_HOST', 'PUBSUB_EMULATOR_HOST', 'FIRESTORE_EMULATOR_HOST',
     'BIGTABLE_EMULATOR_HOST', 'SPANNER_EMULATOR_HOST', 'BIGQUERY_EMULATOR_HOST',
     'SECRET_MANAGER_EMULATOR_HOST', 'CLOUD_TASKS_EMULATOR_HOST',
-    'CLOUD_LOGGING_EMULATOR_HOST', 'CLOUD_MONITORING_EMULATOR_HOST', 'REDIS_HOST',
+    'CLOUD_LOGGING_EMULATOR_HOST', 'CLOUD_MONITORING_EMULATOR_HOST',
+    'CLOUD_SCHEDULER_EMULATOR_HOST', 'CLOUD_FUNCTIONS_EMULATOR_HOST',
+    'WORKFLOWS_EMULATOR_HOST', 'ALLOYDB_EMULATOR_HOST', 'DATAPROC_EMULATOR_HOST',
+    'IAM_EMULATOR_HOST', 'GKE_EMULATOR_HOST', 'COMPUTE_EMULATOR_HOST',
+    'CLOUD_RUN_EMULATOR_HOST', 'AIPLATFORM_EMULATOR_HOST', 'CLOUD_KMS_EMULATOR_HOST',
+    'CLOUD_SQL_EMULATOR_HOST', 'REDIS_HOST',
+    'CLOUD_RESOURCE_MANAGER_EMULATOR_HOST', 'SERVICE_USAGE_EMULATOR_HOST', 'CLOUD_BILLING_EMULATOR_HOST',
 ];
-
 // --- Sample code snippets per service ---
 export const SAMPLE_CODE = {
     gcs: {
@@ -298,6 +318,477 @@ jedis.set("greeting", "hello");
 String value = jedis.get("greeting");
 System.out.println("Value: " + value);`,
     },
+    logging: {
+        python: `from google.cloud import logging_v2
+
+client = logging_v2.LoggingServiceV2Client()
+parent = f"projects/local-project"
+
+# Write a log entry
+entry = {"log_name": f"{parent}/logs/my-log", "text_payload": "Hello"}
+client.write_log_entries(entries=[entry],
+    log_name=f"{parent}/logs/my-log")
+
+# List log entries
+for entry in client.list_log_entries(resource_names=[parent]):
+    print(entry.text_payload)`,
+        nodejs: `const {LoggingV2Client} = require('@google-cloud/logging');
+const client = new LoggingV2Client();
+const parent = 'projects/local-project';
+
+const [operation] = await client.writeLogEntries({
+    entries: [{logName: parent + '/logs/my-log', textPayload: 'Hello'}],
+    logName: parent + '/logs/my-log'
+});`,
+        go: `import logging "cloud.google.com/go/logging/apiv2"
+
+client, _ := logging.NewClient(ctx)
+entry := &loggingpb.LogEntry{
+    LogName: "projects/local-project/logs/my-log",
+    TextPayload: "Hello",
+}
+client.WriteLogEntries(ctx, &loggingpb.WriteLogEntriesRequest{
+    Entries: []*loggingpb.LogEntry{entry},
+})`,
+        java: `import com.google.cloud.logging.*;
+
+Logging logging = LoggingOptions.getDefaultInstance().getService();
+LogEntry entry = LogEntry.newBuilder(StringPayload.of("Hello"))
+    .setLogName("my-log").build();
+logging.write(Collections.singleton(entry));`,
+        gcloud: `# Write a log entry
+gcloud logging write my-log "Hello from LocalCloud"
+
+# Read log entries
+gcloud logging read "logName=projects/local-project/logs/my-log" --limit 10
+
+# List logs
+gcloud logging logs list`,
+    },
+    monitoring: {
+        python: `from google.cloud import monitoring_v3
+
+client = monitoring_v3.MetricServiceClient()
+project_name = f"projects/local-project"
+
+# Create a time series
+series = monitoring_v3.TimeSeries()
+series.metric.type = "custom.googleapis.com/my_metric"
+series.resource.type = "global"
+point = series.points.add()
+point.value.double_value = 3.14
+client.create_time_series(name=project_name, time_series=[series])
+
+# List time series
+for ts in client.list_time_series(name=project_name,
+    filter='metric.type="custom.googleapis.com/my_metric"'):
+    print(ts.metric.type)`,
+        nodejs: `const {MetricServiceClient} = require('@google-cloud/monitoring');
+const client = new MetricServiceClient();
+const name = 'projects/local-project';
+
+await client.createTimeSeries({
+    name,
+    timeSeries: [{
+        metric: {type: 'custom.googleapis.com/my_metric'},
+        resource: {type: 'global', labels: {project_id: 'local-project'}},
+        points: [{interval: {endTime: {seconds: Date.now()/1000}}, value: {doubleValue: 3.14}}]
+    }]
+});`,
+        go: `import monitoring "cloud.google.com/go/monitoring/apiv3/v2"
+
+client, _ := monitoring.NewMetricClient(ctx)
+req := &monitoringpb.CreateTimeSeriesRequest{
+    Name: "projects/local-project",
+    TimeSeries: []*monitoringpb.TimeSeries{{
+        Metric: &metricpb.Metric{Type: "custom.googleapis.com/my_metric"},
+        Resource: &monitoredrespb.MonitoredResource{Type: "global"},
+    }},
+}`,
+        java: `import com.google.cloud.monitoring.v3.*;
+
+MetricServiceClient client = MetricServiceClient.create();
+TimeSeries series = TimeSeries.newBuilder()
+    .setMetric(Metric.newBuilder().setType("custom.googleapis.com/my_metric"))
+    .setResource(MonitoredResource.newBuilder().setType("global")).build();`,
+        gcloud: `# Create a custom metric descriptor
+gcloud monitoring metrics-descriptors create \\
+  --type=custom.googleapis.com/my_metric \\
+  --metric-kind=GAUGE --value-type=DOUBLE
+
+# List metric descriptors
+gcloud monitoring metrics-descriptors list
+
+# Read time series
+gcloud monitoring time-series list \\
+  --filter='metric.type="custom.googleapis.com/my_metric"'`,
+    },
+    cloudscheduler: {
+        python: `from google.cloud import scheduler_v1
+
+client = scheduler_v1.CloudSchedulerClient()
+parent = f"projects/local-project/locations/us-central1"
+
+# Create a job
+job = scheduler_v1.Job(
+    name=f"{parent}/jobs/my-job",
+    schedule="*/5 * * * *",
+    time_zone="UTC",
+    http_target=scheduler_v1.HttpTarget(
+        uri="http://localhost:8080/handler", http_method="POST"))
+client.create_job(parent=parent, job=job)
+
+# List jobs
+for j in client.list_jobs(parent=parent):
+    print(j.name)`,
+        nodejs: `const {CloudSchedulerClient} = require('@google-cloud/scheduler');
+const client = new CloudSchedulerClient();
+const parent = 'projects/local-project/locations/us-central1';
+
+const [job] = await client.createJob({
+    parent,
+    job: {
+        name: parent + '/jobs/my-job',
+        schedule: '*/5 * * * *',
+        timeZone: 'UTC',
+        httpTarget: {uri: 'http://localhost:8080/handler', httpMethod: 'POST'}
+    }
+});
+console.log(\`Created: \${job.name}\`);`,
+        go: `import scheduler "cloud.google.com/go/scheduler/apiv1"
+
+client, _ := scheduler.NewCloudSchedulerClient(ctx)
+job, _ := client.CreateJob(ctx, &schedulerpb.CreateJobRequest{
+    Parent: "projects/local-project/locations/us-central1",
+    Job: &schedulerpb.Job{
+        Name:     "projects/local-project/locations/us-central1/jobs/my-job",
+        Schedule: "*/5 * * * *",
+        TimeZone: "UTC",
+    },
+})`,
+        java: `import com.google.cloud.scheduler.v1.*;
+
+CloudSchedulerClient client = CloudSchedulerClient.create();
+Job job = client.createJob(
+    "projects/local-project/locations/us-central1",
+    Job.newBuilder()
+        .setName("projects/local-project/locations/us-central1/jobs/my-job")
+        .setSchedule("*/5 * * * *").setTimeZone("UTC").build());`,
+        gcloud: `# Create a cron job
+gcloud scheduler jobs create http my-job \\
+  --schedule="*/5 * * * *" --uri="http://localhost:8080/handler" \\
+  --location=us-central1
+
+# List jobs
+gcloud scheduler jobs list --location=us-central1
+
+# Pause / resume a job
+gcloud scheduler jobs pause my-job --location=us-central1
+gcloud scheduler jobs resume my-job --location=us-central1
+
+# Run a job immediately
+gcloud scheduler jobs run my-job --location=us-central1`,
+    },
+    cloudfunctions: {
+        python: `from google.cloud import functions_v2
+
+client = functions_v2.FunctionServiceClient()
+parent = f"projects/local-project/locations/us-central1"
+
+# Create a function (metadata only)
+function = functions_v2.Function(
+    name=f"{parent}/functions/my-function",
+    build_config=functions_v2.BuildConfig(
+        runtime="python310", entry_point="handler"),
+    service_config=functions_v2.ServiceConfig(
+        available_memory="256M"))
+client.create_function(parent=parent, function=function, function_id="my-function")
+
+# List functions
+for f in client.list_functions(parent=parent):
+    print(f.name)`,
+        nodejs: `const {FunctionServiceClient} = require('@google-cloud/functions').v2;
+const client = new FunctionServiceClient();
+const parent = 'projects/local-project/locations/us-central1';
+
+const [operation] = await client.createFunction({
+    parent, functionId: 'my-function',
+    function: {
+        buildConfig: {runtime: 'python310', entryPoint: 'handler'},
+        serviceConfig: {availableMemory: '256M'}
+    }
+});
+console.log(\`Created: my-function\`);`,
+        go: `import functions "cloud.google.com/go/functions/apiv2"
+
+client, _ := functions.NewFunctionClient(ctx)
+op, _ := client.CreateFunction(ctx, &functionspb.CreateFunctionRequest{
+    Parent:     "projects/local-project/locations/us-central1",
+    FunctionId: "my-function",
+    Function: &functionspb.Function{
+        BuildConfig:   &functionspb.BuildConfig{Runtime: "python310", EntryPoint: "handler"},
+        ServiceConfig: &functionspb.ServiceConfig{AvailableMemory: "256M"},
+    },
+})`,
+        java: `import com.google.cloud.functions.v2.*;
+
+FunctionServiceClient client = FunctionServiceClient.create();
+client.createFunctionAsync(
+    "projects/local-project/locations/us-central1",
+    Function.newBuilder()
+        .setBuildConfig(BuildConfig.newBuilder().setRuntime("python310").setEntryPoint("handler"))
+        .setServiceConfig(ServiceConfig.newBuilder().setAvailableMemory("256M")).build(),
+    "my-function");`,
+        gcloud: `# Create a function (metadata only)
+gcloud functions deploy my-function \\
+  --gen2 --runtime=python310 --entry-point=handler \\
+  --trigger-http --region=us-central1
+
+# List functions
+gcloud functions list
+
+# Describe a function
+gcloud functions describe my-function --region=us-central1
+
+# Delete a function
+gcloud functions delete my-function --region=us-central1`,
+    },
+    workflows: {
+        python: `from google.cloud import workflows_v1
+
+client = workflows_v1.WorkflowsClient()
+parent = f"projects/local-project/locations/us-central1"
+
+# Create a workflow
+workflow = workflows_v1.Workflow(
+    name=f"{parent}/workflows/my-workflow",
+    source_contents='''main:\\n  steps:\\n    - returnStep:\\n        return: "Hello"''')
+client.create_workflow(parent=parent, workflow=workflow,
+    workflow_id="my-workflow")
+
+# List workflows
+for w in client.list_workflows(parent=parent):
+    print(w.name)`,
+        nodejs: `const {WorkflowsClient} = require('@google-cloud/workflows');
+const client = new WorkflowsClient();
+const parent = 'projects/local-project/locations/us-central1';
+
+const [operation] = await client.createWorkflow({
+    parent, workflowId: 'my-workflow',
+    workflow: {sourceContents: 'main:\\n  steps:\\n    - returnStep:\\n        return: "Hello"'}
+});`,
+        go: `import workflows "cloud.google.com/go/workflows/apiv1"
+
+client, _ := workflows.NewClient(ctx)
+op, _ := client.CreateWorkflow(ctx, &workflowspb.CreateWorkflowRequest{
+    Parent:     "projects/local-project/locations/us-central1",
+    WorkflowId: "my-workflow",
+    Workflow:   &workflowspb.Workflow{SourceContents: "main:\\n  steps:\\n    - returnStep:\\n        return: \\"Hello\\""},
+})`,
+        java: `import com.google.cloud.workflows.v1.*;
+
+WorkflowsClient client = WorkflowsClient.create();
+client.createWorkflowAsync(
+    "projects/local-project/locations/us-central1",
+    Workflow.newBuilder().setSourceContents("main:\\n  steps:\\n    - returnStep:\\n        return: \\"Hello\\"").build(),
+    "my-workflow");`,
+        gcloud: `# Create a workflow
+gcloud workflows deploy my-workflow \\
+  --source=workflow.yaml --location=us-central1
+
+# List workflows
+gcloud workflows list --location=us-central1
+
+# Execute a workflow
+gcloud workflows run my-workflow --location=us-central1
+
+# Describe a workflow
+gcloud workflows describe my-workflow --location=us-central1`,
+    },
+    alloydb: {
+        python: `from google.cloud import alloydb_v1
+
+client = alloydb_v1.AlloyDBAdminClient()
+parent = f"projects/local-project/locations/us-central1"
+
+# Create a cluster
+cluster = alloydb_v1.Cluster(
+    network="projects/local-project/global/networks/default")
+client.create_cluster(parent=parent, cluster=cluster,
+    cluster_id="my-cluster")
+
+# List clusters
+for c in client.list_clusters(parent=parent):
+    print(c.name)`,
+        nodejs: `const {AlloyDBAdminClient} = require('@google-cloud/alloydb').v1;
+const client = new AlloyDBAdminClient();
+const parent = 'projects/local-project/locations/us-central1';
+
+const [operation] = await client.createCluster({
+    parent, clusterId: 'my-cluster',
+    cluster: {network: 'projects/local-project/global/networks/default'}
+});`,
+        go: `import alloydb "cloud.google.com/go/alloydb/apiv1"
+
+client, _ := alloydb.NewAlloyDBAdminClient(ctx)
+op, _ := client.CreateCluster(ctx, &alloydbpb.CreateClusterRequest{
+    Parent:    "projects/local-project/locations/us-central1",
+    ClusterId: "my-cluster",
+    Cluster:   &alloydbpb.Cluster{Network: "projects/local-project/global/networks/default"},
+})`,
+        java: `import com.google.cloud.alloydb.v1.*;
+
+AlloyDBAdminClient client = AlloyDBAdminClient.create();
+client.createClusterAsync(
+    "projects/local-project/locations/us-central1",
+    Cluster.newBuilder().setNetwork("projects/local-project/global/networks/default").build(),
+    "my-cluster");`,
+        gcloud: `# Create a cluster
+gcloud alloydb clusters create my-cluster \\
+  --region=us-central1 --password=admin123
+
+# List clusters
+gcloud alloydb clusters list --region=us-central1
+
+# Create an instance
+gcloud alloydb instances create my-instance \\
+  --cluster=my-cluster --region=us-central1 \\
+  --instance-type=PRIMARY --cpu-count=2
+
+# Connect via PostgreSQL
+psql -h localhost -p 5432 -U postgres -d postgres`,
+    },
+    dataproc: {
+        python: `from google.cloud import dataproc_v1
+
+client = dataproc_v1.ClusterControllerClient()
+project_id = "local-project"
+region = "us-central1"
+
+# Create a cluster (metadata only)
+cluster = dataproc_v1.Cluster(
+    project_id=project_id,
+    cluster_name="my-cluster",
+    config=dataproc_v1.ClusterConfig(
+        master_config=dataproc_v1.InstanceGroupConfig(
+            num_instances=1, machine_type_uri="n1-standard-2"),
+        worker_config=dataproc_v1.InstanceGroupConfig(
+            num_instances=2, machine_type_uri="n1-standard-2")))
+client.create_cluster(project_id=project_id, region=region,
+    cluster=cluster)
+
+# List clusters
+for c in client.list_clusters(project_id=project_id, region=region):
+    print(c.cluster_name)`,
+        nodejs: `const {ClusterControllerClient} = require('@google-cloud/dataproc').v1;
+const client = new ClusterControllerClient();
+
+const [operation] = await client.createCluster({
+    projectId: 'local-project', region: 'us-central1',
+    cluster: {
+        clusterName: 'my-cluster',
+        config: {
+            masterConfig: {numInstances: 1, machineTypeUri: 'n1-standard-2'},
+            workerConfig: {numInstances: 2, machineTypeUri: 'n1-standard-2'}
+        }
+    }
+});`,
+        go: `import dataproc "cloud.google.com/go/dataproc/v2/apiv1"
+
+client, _ := dataproc.NewClusterControllerClient(ctx)
+op, _ := client.CreateCluster(ctx, &dataprocpb.CreateClusterRequest{
+    ProjectId: "local-project",
+    Region:    "us-central1",
+    Cluster: &dataprocpb.Cluster{
+        ClusterName: "my-cluster",
+        Config: &dataprocpb.ClusterConfig{
+            MasterConfig: &dataprocpb.InstanceGroupConfig{NumInstances: 1, MachineTypeUri: "n1-standard-2"},
+            WorkerConfig: &dataprocpb.InstanceGroupConfig{NumInstances: 2, MachineTypeUri: "n1-standard-2"},
+        },
+    },
+})`,
+        java: `import com.google.cloud.dataproc.v1.*;
+
+ClusterControllerClient client = ClusterControllerClient.create();
+client.createClusterAsync(
+    "local-project", "us-central1",
+    Cluster.newBuilder()
+        .setClusterName("my-cluster")
+        .setConfig(ClusterConfig.newBuilder()
+            .setMasterConfig(InstanceGroupConfig.newBuilder().setNumInstances(1).setMachineTypeUri("n1-standard-2"))
+            .setWorkerConfig(InstanceGroupConfig.newBuilder().setNumInstances(2).setMachineTypeUri("n1-standard-2"))).build());`,
+        gcloud: `# Create a cluster
+gcloud dataproc clusters create my-cluster \\
+  --region=us-central1 --single-node
+
+# List clusters
+gcloud dataproc clusters list --region=us-central1
+
+# Submit a Spark job
+gcloud dataproc jobs submit spark \\
+  --cluster=my-cluster --region=us-central1 \\
+  --class=org.example.MyJob --jars=gs://my-bucket/job.jar
+
+# Submit a PySpark job
+gcloud dataproc jobs submit pyspark \\
+  --cluster=my-cluster --region=us-central1 \\
+  job.py`,
+    },
+    cloudiam: {
+        python: `from google.cloud import iam_admin_v1
+from google.iam.v1 import iam_policy_pb2
+
+client = iam_admin_v1.IAMClient()
+
+# Create a service account
+client.create_service_account(
+    name="projects/local-project",
+    account_id="my-sa",
+    service_account={"display_name": "My Service Account"})
+
+# List service accounts
+for sa in client.list_service_accounts(name="projects/local-project"):
+    print(sa.email)`,
+        nodejs: `const {IAMClient} = require('@google-cloud/iam').v1;
+const client = new IAMClient();
+
+const [serviceAccount] = await client.createServiceAccount({
+    name: 'projects/local-project',
+    accountId: 'my-sa',
+    serviceAccount: {displayName: 'My Service Account'}
+});
+console.log(\`Created: \${serviceAccount.email}\`);`,
+        go: `import iam "cloud.google.com/go/iam/admin/apiv1"
+
+client, _ := iam.NewIamClient(ctx)
+sa, _ := client.CreateServiceAccount(ctx, &adminpb.CreateServiceAccountRequest{
+    Name:      "projects/local-project",
+    AccountId: "my-sa",
+    ServiceAccount: &adminpb.ServiceAccount{DisplayName: "My Service Account"},
+})`,
+        java: `import com.google.cloud.iam.admin.v1.*;
+
+IAMClient client = IAMClient.create();
+ServiceAccount sa = client.createServiceAccount(
+    "projects/local-project", "my-sa",
+    ServiceAccount.newBuilder().setDisplayName("My Service Account").build());
+System.out.println("Created: " + sa.getEmail());`,
+        gcloud: `# Create a service account
+gcloud iam service-accounts create my-sa \\
+  --display-name="My Service Account"
+
+# List service accounts
+gcloud iam service-accounts list
+
+# Get IAM policy
+gcloud iam service-accounts get-iam-policy \\
+  my-sa@local-project.iam.gserviceaccount.com
+
+# Grant a role
+gcloud projects add-iam-policy-binding local-project \\
+  --member="serviceAccount:my-sa@local-project.iam.gserviceaccount.com" \\
+  --role="roles/storage.objectViewer"`,
+    },
 };
 
 // --- CLI commands per service ---
@@ -330,6 +821,20 @@ gcloud pubsub topics publish test-topic --message="Hello"
 # Pull messages
 gcloud pubsub subscriptions pull test-sub --auto-ack`,
     },
+    firestore: {
+        label: 'Firestore',
+        commands: `# Create a composite index
+gcloud firestore indexes composite create \\
+  --collection-group=users --field-config=field=name,order=ascending
+
+# List indexes
+gcloud firestore indexes composite list
+
+# Export all documents
+gcloud firestore export gs://test-bucket/firestore-export
+
+curl "http://localhost:8086/v1/projects/local-project/databases/(default)/documents/users"`,
+    },
     spanner: {
         label: 'Spanner',
         commands: `# Create an instance
@@ -343,6 +848,25 @@ gcloud spanner databases create test-db \\
 # Run a SQL query
 gcloud spanner databases execute-sql test-db \\
   --instance=test-instance --sql="SELECT 1"`,
+    },
+    bigtable: {
+        label: 'Bigtable',
+        commands: `# Set env var for cbt CLI
+export BIGTABLE_EMULATOR_HOST=localhost:8087
+
+# List instances
+cbt listinstances
+
+# Create a table
+cbt createtable test-table
+
+# Create a column family
+cbt createfamily test-table cf1
+
+# Write a row
+cbt set test-table row1 cf1:col1=value1
+
+cbt read test-table`,
     },
     bigquery: {
         label: 'BigQuery',
@@ -380,8 +904,211 @@ gcloud secrets versions disable 1 --secret=my-secret
 # Destroy a version
 gcloud secrets versions destroy 1 --secret=my-secret`,
     },
-};
+    cloudtasks: {
+        label: 'Cloud Tasks',
+        commands: `# Create a queue
+gcloud tasks queues create my-queue \\
+  --location=us-central1
 
+# List queues
+gcloud tasks queues list --location=us-central1
+
+# Create an HTTP task
+gcloud tasks create-http-task \\
+  --queue=my-queue --location=us-central1 \\
+  --url=http://localhost:8080/tasks/handler \\
+  --body-content="{\\"message\\":\\"hello\\"}"
+
+# List tasks in a queue
+gcloud tasks list --queue=my-queue --location=us-central1
+
+# Delete a task
+gcloud tasks delete <TASK_ID> \\
+  --queue=my-queue --location=us-central1
+
+# Pause / resume a queue
+gcloud tasks queues pause my-queue --location=us-central1
+gcloud tasks queues resume my-queue --location=us-central1`,
+    },
+    memorystore: {
+        label: 'Memorystore (Redis)',
+        commands: `# Connect to Redis
+redis-cli -h localhost -p 6379
+
+# Set and get keys
+SET greeting "hello world"
+GET greeting
+
+# Work with data structures
+LPUSH tasks "task1" "task2"
+LRANGE tasks 0 -1
+HSET user:1 name "Alice" age 30
+HGETALL user:1
+
+# Key management
+KEYS *
+EXPIRE mykey 3600
+TTL mykey
+DEL mykey`,
+    },
+    logging: {
+        label: 'Cloud Logging',
+        commands: `# Write a log entry
+gcloud logging write my-log "Hello from LocalCloud"
+
+# Read log entries
+gcloud logging read "logName=projects/local-project/logs/my-log" \\
+  --limit=10 --freshness=1d
+
+# List logs
+gcloud logging logs list
+
+# Write structured JSON log
+gcloud logging write my-log '{"severity":"INFO","message":"test"}'
+
+# Delete a log
+gcloud logging logs delete my-log`,
+    },
+    monitoring: {
+        label: 'Cloud Monitoring',
+        commands: `# Create a custom metric descriptor
+gcloud monitoring metrics-descriptors create \\
+  --type=custom.googleapis.com/my_metric \\
+  --metric-kind=GAUGE --value-type=DOUBLE \\
+  --description="My custom metric"
+
+# List metric descriptors
+gcloud monitoring metrics-descriptors list --limit=10
+
+# Read time series
+gcloud monitoring time-series list \\
+  --filter='metric.type="custom.googleapis.com/my_metric"'`,
+    },
+    cloudscheduler: {
+        label: 'Cloud Scheduler',
+        commands: `# Create an HTTP cron job
+gcloud scheduler jobs create http my-job \\
+  --schedule="*/5 * * * *" \\
+  --uri="http://localhost:8080/handler" \\
+  --http-method=POST --location=us-central1
+
+# List jobs
+gcloud scheduler jobs list --location=us-central1
+
+# Pause / resume a job
+gcloud scheduler jobs pause my-job --location=us-central1
+gcloud scheduler jobs resume my-job --location=us-central1
+
+# Run a job immediately
+gcloud scheduler jobs run my-job --location=us-central1
+
+# Delete a job
+gcloud scheduler jobs delete my-job --location=us-central1`,
+    },
+    cloudfunctions: {
+        label: 'Cloud Functions (2nd Gen)',
+        commands: `# Deploy a function (metadata only)
+gcloud functions deploy my-function \\
+  --gen2 --runtime=python310 --entry-point=handler \\
+  --trigger-http --region=us-central1
+
+# List functions
+gcloud functions list
+
+# Describe a function
+gcloud functions describe my-function --region=us-central1
+
+# Get IAM policy
+gcloud functions get-iam-policy my-function --region=us-central1
+
+# Delete a function
+gcloud functions delete my-function --region=us-central1`,
+    },
+    workflows: {
+        label: 'Cloud Workflows',
+        commands: `# Deploy a workflow
+gcloud workflows deploy my-workflow \\
+  --source=workflow.yaml --location=us-central1
+
+# List workflows
+gcloud workflows list --location=us-central1
+
+# Execute a workflow
+gcloud workflows run my-workflow --location=us-central1
+
+# Describe a workflow
+gcloud workflows describe my-workflow --location=us-central1
+
+# List executions
+gcloud workflows executions list my-workflow --location=us-central1
+
+# Delete a workflow
+gcloud workflows delete my-workflow --location=us-central1`,
+    },
+    alloydb: {
+        label: 'AlloyDB',
+        commands: `# Create a cluster
+gcloud alloydb clusters create my-cluster \\
+  --region=us-central1 --password=admin123
+
+# Create an instance
+gcloud alloydb instances create my-instance \\
+  --cluster=my-cluster --region=us-central1 \\
+  --instance-type=PRIMARY --cpu-count=2
+
+# List clusters
+gcloud alloydb clusters list --region=us-central1
+
+# List instances
+gcloud alloydb instances list --cluster=my-cluster \\
+  --region=us-central1
+
+# Connect via PostgreSQL
+psql -h localhost -p 5432 -U postgres -d postgres`,
+    },
+    dataproc: {
+        label: 'Dataproc',
+        commands: `# Create a cluster (metadata only)
+gcloud dataproc clusters create my-cluster \\
+  --region=us-central1 --single-node
+
+# List clusters
+gcloud dataproc clusters list --region=us-central1
+
+# Submit a Spark job
+gcloud dataproc jobs submit spark \\
+  --cluster=my-cluster --region=us-central1 \\
+  --class=org.example.MyJob --jars=gs://my-bucket/job.jar
+
+# Submit a PySpark job
+gcloud dataproc jobs submit pyspark \\
+  --cluster=my-cluster --region=us-central1 job.py
+
+# Delete a cluster
+gcloud dataproc clusters delete my-cluster --region=us-central1`,
+    },
+    cloudiam: {
+        label: 'Cloud IAM',
+        commands: `# Create a service account
+gcloud iam service-accounts create my-sa \\
+  --display-name="My Service Account"
+
+# List service accounts
+gcloud iam service-accounts list
+
+# Grant a role
+gcloud projects add-iam-policy-binding local-project \\
+  --member="serviceAccount:my-sa@local-project.iam.gserviceaccount.com" \\
+  --role="roles/storage.objectViewer"
+
+# Get IAM policy
+gcloud projects get-iam-policy local-project
+
+# Delete a service account
+gcloud iam service-accounts delete \\
+  my-sa@local-project.iam.gserviceaccount.com`,
+    },
+};
 // Common port mappings for docker run command
 export const DOCKER_RUN_PORTS = '-p 8080:8080 -p 4443:4443 -p 8085:8085 -p 8086:8086 -p 8087:8087 -p 9010:9010 -p 9020:9020 -p 9050:9050 -p 6379:6379';
 
