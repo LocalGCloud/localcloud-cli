@@ -26,7 +26,7 @@ class FirestoreSyncAdapterTest {
     @BeforeEach
     void setUp() {
         mapper = new ObjectMapper();
-        adapter = new FirestoreSyncAdapter("localhost", 8086, mapper);
+        adapter = new FirestoreSyncAdapter("localhost", 24083, mapper);
     }
 
     // -----------------------------------------------------------------------

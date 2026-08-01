@@ -13,7 +13,7 @@ public class WorkflowsEmulator extends AbstractEmulator {
     private WorkflowFileWatcher fileWatcher;
 
     public WorkflowsEmulator(PostgresDataSource dataSource) {
-        super("workflows", "Cloud Workflows", 8080, "grpc", "WORKFLOWS_EMULATOR_HOST");
+        super("workflows", "Cloud Workflows", 24080, "grpc", "WORKFLOWS_EMULATOR_HOST");
         this.store = new WorkflowsStore(dataSource);
         this.workflowsService = new WorkflowsServiceImpl(store);
         this.executionsService = new ExecutionsServiceImpl(store);

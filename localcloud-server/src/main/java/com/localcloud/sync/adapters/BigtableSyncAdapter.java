@@ -20,7 +20,7 @@ import java.util.*;
  * Sync adapter for Google Cloud Bigtable.
  *
  * <p>Pulls data from a real GCP Bigtable instance into the local Bigtable
- * emulator (port 8087). This lets developers work with filtered production
+ * emulator (port 24084). This lets developers work with filtered production
  * data locally for development and testing.
  *
  * <p>GCP REST API docs:

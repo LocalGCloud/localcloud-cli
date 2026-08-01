@@ -128,8 +128,12 @@ client.Collection("users").Doc("alice").Set(ctx, map[string]interface{}{
 Firestore db = FirestoreOptions.getDefaultInstance().getService();
 db.collection("users").document("alice")
   .set(Map.of("name", "Alice", "age", 30)).get();`,
-        gcloud: `# Firestore is managed via SDK or REST API
-curl http://localhost:8086/v1/projects/local-project/databases`,
+        gcloud: `# Create a Firestore document
+gcloud firestore documents create --project=local-project \\
+  --collection-id=users --document-id=alice \\
+  --field-string=name:Alice --field-integer=age:30
+# List collections
+gcloud firestore collections list --project=local-project`,
     },
     bigtable: {
         python: `from google.cloud import bigtable
@@ -298,22 +302,22 @@ Queue queue = client.createQueue(
     },
     memorystore: {
         python: `import redis
-r = redis.Redis(host="localhost", port=6379)
+r = redis.Redis(host="localhost", port=24089)
 r.set("greeting", "hello")
 value = r.get("greeting")
 print(f"Value: {value.decode()}")`,
         nodejs: `const Redis = require('ioredis');
-const redis = new Redis(6379, 'localhost');
+const redis = new Redis(24089, 'localhost');
 await redis.set('greeting', 'hello');
 const value = await redis.get('greeting');
 console.log(\`Value: \${value}\`);`,
         go: `import "github.com/redis/go-redis/v9"
-rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+rdb := redis.NewClient(&redis.Options{Addr: "localhost:24089"})
 rdb.Set(ctx, "greeting", "hello", 0)
 val, _ := rdb.Get(ctx, "greeting").Result()
 fmt.Println("Value:", val)`,
         java: `import redis.clients.jedis.Jedis;
-Jedis jedis = new Jedis("localhost", 6379);
+Jedis jedis = new Jedis("localhost", 24089);
 jedis.set("greeting", "hello");
 String value = jedis.get("greeting");
 System.out.println("Value: " + value);`,
@@ -435,7 +439,7 @@ job = scheduler_v1.Job(
     schedule="*/5 * * * *",
     time_zone="UTC",
     http_target=scheduler_v1.HttpTarget(
-        uri="http://localhost:8080/handler", http_method="POST"))
+        uri="http://localhost:24080/handler", http_method="POST"))
 client.create_job(parent=parent, job=job)
 
 # List jobs
@@ -451,7 +455,7 @@ const [job] = await client.createJob({
         name: parent + '/jobs/my-job',
         schedule: '*/5 * * * *',
         timeZone: 'UTC',
-        httpTarget: {uri: 'http://localhost:8080/handler', httpMethod: 'POST'}
+        httpTarget: {uri: 'http://localhost:24080/handler', httpMethod: 'POST'}
     }
 });
 console.log(\`Created: \${job.name}\`);`,
@@ -476,7 +480,7 @@ Job job = client.createJob(
         .setSchedule("*/5 * * * *").setTimeZone("UTC").build());`,
         gcloud: `# Create a cron job
 gcloud scheduler jobs create http my-job \\
-  --schedule="*/5 * * * *" --uri="http://localhost:8080/handler" \\
+  --schedule="*/5 * * * *" --uri="http://localhost:24080/handler" \\
   --location=us-central1
 
 # List jobs
@@ -656,7 +660,7 @@ gcloud alloydb instances create my-instance \\
   --instance-type=PRIMARY --cpu-count=2
 
 # Connect via PostgreSQL
-psql -h localhost -p 5432 -U postgres -d postgres`,
+psql -h localhost -p 24090 -U postgres -d postgres`,
     },
     dataproc: {
         python: `from google.cloud import dataproc_v1
@@ -833,7 +837,7 @@ gcloud firestore indexes composite list
 # Export all documents
 gcloud firestore export gs://test-bucket/firestore-export
 
-curl "http://localhost:8086/v1/projects/local-project/databases/(default)/documents/users"`,
+curl "http://localhost:24083/v1/projects/local-project/databases/(default)/documents/users"`,
     },
     spanner: {
         label: 'Spanner',
@@ -852,7 +856,7 @@ gcloud spanner databases execute-sql test-db \\
     bigtable: {
         label: 'Bigtable',
         commands: `# Set env var for cbt CLI
-export BIGTABLE_EMULATOR_HOST=localhost:8087
+export BIGTABLE_EMULATOR_HOST=localhost:24084
 
 # List instances
 cbt listinstances
@@ -916,7 +920,7 @@ gcloud tasks queues list --location=us-central1
 # Create an HTTP task
 gcloud tasks create-http-task \\
   --queue=my-queue --location=us-central1 \\
-  --url=http://localhost:8080/tasks/handler \\
+  --url=http://localhost:24080/tasks/handler \\
   --body-content="{\\"message\\":\\"hello\\"}"
 
 # List tasks in a queue
@@ -933,7 +937,7 @@ gcloud tasks queues resume my-queue --location=us-central1`,
     memorystore: {
         label: 'Memorystore (Redis)',
         commands: `# Connect to Redis
-redis-cli -h localhost -p 6379
+redis-cli -h localhost -p 24089
 
 # Set and get keys
 SET greeting "hello world"
@@ -989,7 +993,7 @@ gcloud monitoring time-series list \\
         commands: `# Create an HTTP cron job
 gcloud scheduler jobs create http my-job \\
   --schedule="*/5 * * * *" \\
-  --uri="http://localhost:8080/handler" \\
+  --uri="http://localhost:24080/handler" \\
   --http-method=POST --location=us-central1
 
 # List jobs
@@ -1064,13 +1068,13 @@ gcloud alloydb instances list --cluster=my-cluster \\
   --region=us-central1
 
 # Connect via PostgreSQL
-psql -h localhost -p 5432 -U postgres -d postgres`,
+psql -h localhost -p 24090 -U postgres -d postgres`,
     },
     dataproc: {
         label: 'Dataproc',
-        commands: `# Create a cluster (metadata only)
+        commands: `# Create a cluster with runtime image
 gcloud dataproc clusters create my-cluster \\
-  --region=us-central1 --single-node
+  --region=us-central1 --single-node --image-version=2.3.34-debian12
 
 # List clusters
 gcloud dataproc clusters list --region=us-central1
@@ -1110,7 +1114,7 @@ gcloud iam service-accounts delete \\
     },
 };
 // Common port mappings for docker run command
-export const DOCKER_RUN_PORTS = '-p 8080:8080 -p 4443:4443 -p 8085:8085 -p 8086:8086 -p 8087:8087 -p 9010:9010 -p 9020:9020 -p 9050:9050 -p 6379:6379';
+export const DOCKER_RUN_PORTS = '-p 127.0.0.1:24080:24080 -p 127.0.0.1:24081:24081 -p 127.0.0.1:24082:24082 -p 127.0.0.1:24083:24083 -p 127.0.0.1:24084:24084 -p 127.0.0.1:24085:24085 -p 127.0.0.1:24086:24086 -p 127.0.0.1:24087:24087 -p 127.0.0.1:24088:24088 -p 127.0.0.1:24089:24089 -p 127.0.0.1:24090:24090 -p 127.0.0.1:24091:24091 -p 127.0.0.1:24092:24092';
 
 // --- Database DDL examples per emulator ---
 export const DATABASE_EXAMPLES = {

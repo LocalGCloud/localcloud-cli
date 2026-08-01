@@ -34,7 +34,7 @@ operations:
   - id: storage-api
     operation: gRPC Storage Read/Write API (AVRO + Arrow)
     status: partial
-    notes: gRPC endpoint on port 9060. ReadRows with streaming support.
+    notes: gRPC endpoint on port 24088. ReadRows with streaming support.
   - id: information-schema
     operation: INFORMATION_SCHEMA views
     status: partial

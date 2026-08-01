@@ -1,4 +1,4 @@
-import { createSignal, For } from 'solid-js';
+import { createSignal, For, Show } from 'solid-js';
 
 const OPS = {
     STRING: ['=', '!=', 'LIKE', 'IN'],
@@ -16,6 +16,18 @@ export function SyncFilterBuilder(props) {
     // props: schema, onChange, initialFilters
     const [filters, setFilters] = createSignal(props.initialFilters || []);
 
+    const betweenParts = (value) => {
+        const parts = String(value ?? '').split(/\s+AND\s+/i);
+        return [parts.shift() || '', parts.join(' AND ')];
+    };
+
+    const updateBetween = (index, part, value) => {
+        const [start, end] = betweenParts(filters()[index]?.value);
+        update(index, 'value', part === 'start'
+            ? `${value} AND ${end}`
+            : `${start} AND ${value}`);
+    };
+
     const addFilter = () => {
         const schema = props.schema || [];
         if (!schema.length) return;
@@ -29,12 +41,16 @@ export function SyncFilterBuilder(props) {
         const updated = filters().map((f, idx) => {
             if (idx !== i) return f;
             const nf = { ...f, [field]: val };
+            if (field === 'operator' && f.operator !== val) nf.value = '';
             if (field === 'column') {
                 const col = props.schema?.find(c => c.name === val);
                 if (col) {
                     nf.columnType = col.type;
                     const ops = OPS[col.type] || OPS.STRING;
-                    if (!ops.includes(nf.operator)) nf.operator = ops[0];
+                    if (!ops.includes(nf.operator)) {
+                        nf.operator = ops[0];
+                        nf.value = '';
+                    }
                 }
             }
             return nf;
@@ -72,12 +88,50 @@ export function SyncFilterBuilder(props) {
                                     {(op) => <option value={op}>{op}</option>}
                                 </For>
                             </select>
-	                            <input id={`filter-val-${i()}`} name={`filter-value-${i()}`}
-	                                   aria-label={`Value for ${f.column}`}
-                                       autocomplete="off"
-	                                   class="form-input" type="text" value={f.value}
-                                   onInput={e => update(i(), 'value', e.target.value)}
-                                   placeholder="value" style="flex: 1" />
+                            <Show when={f.operator === 'BETWEEN'} fallback={
+                                <div style="flex: 1; min-width: 0">
+                                    <input id={`filter-val-${i()}`} name={`filter-value-${i()}`}
+                                           aria-label={`${f.operator === 'IN' ? 'Comma-separated values' : 'Value'} for ${f.column}`}
+                                           aria-describedby={f.operator === 'IN' ? `filter-guide-${i()}` : undefined}
+                                           autocomplete="off"
+                                           class="form-input" type="text" value={f.value}
+                                           onInput={e => update(i(), 'value', e.target.value)}
+                                           placeholder={f.operator === 'IN' ? 'value1, value2, value3' : 'value'}
+                                           style="width: 100%" />
+                                    <Show when={f.operator === 'IN'}>
+                                        <div id={`filter-guide-${i()}`} style="font-size: 11px; color: var(--text-tertiary); margin-top: 3px">
+                                            Separate values with commas.
+                                        </div>
+                                    </Show>
+                                </div>
+                            }>
+                                <div style="flex: 1; min-width: 0">
+                                    <div style="display: flex; align-items: center; gap: 6px">
+                                        <input id={`filter-start-${i()}`} name={`filter-start-${i()}`}
+                                               aria-label={`Start value for ${f.column}`}
+                                               aria-describedby={`filter-guide-${i()}`}
+                                               autocomplete="off"
+                                               class="form-input"
+                                               type={f.columnType === 'DATE' ? 'date' : 'datetime-local'}
+                                               value={betweenParts(f.value)[0]}
+                                               onInput={e => updateBetween(i(), 'start', e.target.value)}
+                                               style="min-width: 0; flex: 1" />
+                                        <span style="font-size: 12px; color: var(--text-secondary)">and</span>
+                                        <input id={`filter-end-${i()}`} name={`filter-end-${i()}`}
+                                               aria-label={`End value for ${f.column}`}
+                                               aria-describedby={`filter-guide-${i()}`}
+                                               autocomplete="off"
+                                               class="form-input"
+                                               type={f.columnType === 'DATE' ? 'date' : 'datetime-local'}
+                                               value={betweenParts(f.value)[1]}
+                                               onInput={e => updateBetween(i(), 'end', e.target.value)}
+                                               style="min-width: 0; flex: 1" />
+                                    </div>
+                                    <div id={`filter-guide-${i()}`} style="font-size: 11px; color: var(--text-tertiary); margin-top: 3px">
+                                        Enter the inclusive start and end of the range.
+                                    </div>
+                                </div>
+                            </Show>
                             <button class="btn btn-icon" onClick={() => remove(i())}
                                     aria-label={`Remove filter for ${f.column}`}
                                     title="Remove filter"
@@ -87,6 +141,8 @@ export function SyncFilterBuilder(props) {
                 }}
             </For>
             <button class="btn btn-secondary" onClick={addFilter}
+                    disabled={(props.schema || []).length === 0}
+                    title={(props.schema || []).length === 0 ? 'No filterable columns are available' : undefined}
                     style="align-self: flex-start; font-size: 13px">+ Add filter</button>
         </div>
     );

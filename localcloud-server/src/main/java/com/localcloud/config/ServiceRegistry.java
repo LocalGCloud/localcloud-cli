@@ -34,10 +34,13 @@ public class ServiceRegistry {
 
     private final int gatewayPort;
     private final Map<String, ServiceDefinition> services;
+    private final Map<String, InfrastructureDefinition> infrastructure;
 
-    private ServiceRegistry(int gatewayPort, Map<String, ServiceDefinition> services) {
+    private ServiceRegistry(int gatewayPort, Map<String, ServiceDefinition> services,
+            Map<String, InfrastructureDefinition> infrastructure) {
         this.gatewayPort = gatewayPort;
         this.services = Collections.unmodifiableMap(services);
+        this.infrastructure = Collections.unmodifiableMap(infrastructure);
     }
 
     // ---- Records ----
@@ -54,7 +57,7 @@ public class ServiceRegistry {
      * @param type           "external" (supervisord) or "facade" (in-process)
      * @param defaultEnabled whether the service is on by default
      * @param gcloudApiName  gcloud API name for CLOUDSDK_API_ENDPOINT_OVERRIDES (e.g. "storage", "secretmanager")
-     * @param gcloudPort     optional port override for gcloud REST endpoint (e.g. Spanner REST on 9020)
+     * @param gcloudPort     optional port override for gcloud REST endpoint (e.g. Spanner REST on 24086)
      * @param additionalPorts optional map of extra named ports
      * @param healthCheck    optional health check definition (external only)
      * @param terraformEnvVar Terraform Google provider env var name (e.g. "GOOGLE_STORAGE_CUSTOM_ENDPOINT")
@@ -71,7 +74,7 @@ public class ServiceRegistry {
     ) {
         /**
          * Build the full environment variable value for a given host.
-         * Example: "http://" + "localhost" + ":" + 4443 -> "http://localhost:4443"
+         * Example: "http://" + "localhost" + ":" + 24081 -> "http://localhost:24081"
          */
         public String envValue(String host) {
             return envValuePrefix + host + ":" + port;
@@ -117,6 +120,9 @@ public class ServiceRegistry {
      */
     public record HealthCheckDef(String type, String path, Integer port) {}
 
+    /** Infrastructure listener that is not an addressable cloud service. */
+    public record InfrastructureDefinition(String id, String displayName, int port, String protocol) {}
+
     // ---- Loading ----
 
     /**
@@ -161,8 +167,28 @@ public class ServiceRegistry {
                 defs.put(serviceId, parseServiceDef(serviceId, svcMap, gatewayPort));
             }
 
-            logger.info("Loaded {} service definitions from services.yaml", defs.size());
-            return new ServiceRegistry(gatewayPort, defs);
+            Map<String, InfrastructureDefinition> infrastructure = new LinkedHashMap<>();
+            Object infrastructureValue = root.get("infrastructure");
+            if (infrastructureValue instanceof Map<?, ?> infrastructureSection) {
+                for (Map.Entry<?, ?> entry : infrastructureSection.entrySet()) {
+                    String id = String.valueOf(entry.getKey());
+                    if (!(entry.getValue() instanceof Map<?, ?> values)) {
+                        throw new IllegalStateException("Invalid infrastructure definition: " + id);
+                    }
+                    Object portValue = values.get("port");
+                    if (!(portValue instanceof Number port)) {
+                        throw new IllegalStateException("Infrastructure listener requires a numeric port: " + id);
+                    }
+                    Object displayName = values.containsKey("displayName") ? values.get("displayName") : id;
+                    Object protocol = values.containsKey("protocol") ? values.get("protocol") : "tcp";
+                    infrastructure.put(id, new InfrastructureDefinition(
+                            id, String.valueOf(displayName), port.intValue(), String.valueOf(protocol)));
+                }
+            }
+
+            logger.info("Loaded {} service and {} infrastructure definitions from services.yaml",
+                    defs.size(), infrastructure.size());
+            return new ServiceRegistry(gatewayPort, defs, infrastructure);
 
         } catch (IOException e) {
             throw new RuntimeException("Failed to load services.yaml", e);
@@ -278,6 +304,11 @@ public class ServiceRegistry {
      */
     public Map<String, ServiceDefinition> getAllServices() {
         return services;
+    }
+
+    /** Return infrastructure listeners without mixing them into cloud services. */
+    public Map<String, InfrastructureDefinition> getInfrastructure() {
+        return infrastructure;
     }
 
     /**

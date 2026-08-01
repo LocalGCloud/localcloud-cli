@@ -37,7 +37,8 @@ public class LocalCloudConfig {
     private ConcurrentHashMap<String, String> configSourceMap;
     private String apiKey;
     private String licenseServerUrl;
-
+    private String dataprocRegistry;
+    private List<Path> runtimeWorkspaceRoots;
     private static final Logger logger = LoggerFactory.getLogger(LocalCloudConfig.class);
 
     private LocalCloudConfig() {
@@ -51,7 +52,7 @@ public class LocalCloudConfig {
 
         config.projectId = env("LOCALCLOUD_PROJECT", "local-project");
         config.dataDir = Path.of(env("LOCALCLOUD_DATA_DIR", "/var/lib/localcloud"));
-        config.gatewayPort = intEnv("LOCALCLOUD_PORT", 8080);
+        config.gatewayPort = 24080;
         config.iamMode = env("LOCALCLOUD_IAM_MODE", "permissive");
         config.iamPolicyFile = env("LOCALCLOUD_IAM_POLICY_FILE", "");
         config.iamLogWarnings = Boolean.parseBoolean(env("LOCALCLOUD_IAM_LOG_WARNINGS", "true"));
@@ -73,12 +74,19 @@ public class LocalCloudConfig {
         config.gcpCredentialSaKeyPath = env("LOCALCLOUD_GCP_SA_KEY_PATH", "/credentials/sa-key.json");
 
         config.postgresHost = env("LOCALCLOUD_PG_HOST", "localhost");
-        config.postgresPort = intEnv("LOCALCLOUD_PG_PORT", 5432);
+        config.postgresPort = 24090;
         config.postgresDatabase = env("LOCALCLOUD_PG_DATABASE", "localcloud");
         config.postgresUser = env("LOCALCLOUD_PG_USER", "localcloud");
         config.postgresPassword = env("LOCALCLOUD_PG_PASSWORD", "localcloud");
         config.apiKey = env("LOCALCLOUD_API_KEY", "");
         config.licenseServerUrl = env("LOCALCLOUD_LICENSE_SERVER", "none");
+        config.dataprocRegistry = env("LOCALCLOUD_DATAPROC_REGISTRY", "docker.io/jaysen2apache/dataproc");
+        config.runtimeWorkspaceRoots = Arrays.stream(env("LOCALCLOUD_RUNTIME_WORKSPACES",
+                        config.dataDir.resolve("workspaces").toString()).split(","))
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .map(Path::of)
+                .toList();
 
         // Initialize enabled services map and track config source
         config.enabledServicesMap = new ConcurrentHashMap<>();
@@ -217,6 +225,8 @@ public class LocalCloudConfig {
 
     public String getApiKey() { return apiKey; }
     public String getLicenseServerUrl() { return licenseServerUrl; }
+    public String getDataprocRegistry() { return dataprocRegistry; }
+    public List<Path> getRuntimeWorkspaceRoots() { return runtimeWorkspaceRoots; }
 
     /**
      * Check if a service is dynamically enabled (supports runtime toggling).

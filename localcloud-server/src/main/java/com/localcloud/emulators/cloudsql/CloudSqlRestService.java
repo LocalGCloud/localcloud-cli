@@ -356,8 +356,8 @@ public class CloudSqlRestService {
         out.putNull("failoverReplica");
         out.putNull("masterInstanceName");
         ObjectNode local = out.putObject("localcloud");
-        local.put("postgresEndpoint", "localhost:5432");
-        local.put("mysqlEndpoint", "localhost:3306");
+        local.put("postgresEndpoint", "localhost:24090");
+        local.put("mysqlEndpoint", "localhost:24091");
         local.put("mysqlCompatibility", databaseVersion.startsWith("MYSQL") ? "requires-openhalo" : "not-applicable");
         local.put("dataPlaneStatus", databaseVersion.startsWith("MYSQL") ? "CONTROL_PLANE_ONLY_UNTIL_OPENHALO" : "CONTROL_PLANE_READY");
         return out;

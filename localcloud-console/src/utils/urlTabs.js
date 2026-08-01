@@ -21,6 +21,18 @@ export function readUrlTab(paramName, allowedValues, fallback) {
     return normalizeUrlTab(params.get(paramName), allowedValues, fallback);
 }
 
+export function commitUrl(target, { history = 'replace', compareHash = true } = {}) {
+    if (!canUseUrl()) return false;
+    const nextUrl = new URL(target, window.location.href);
+    const nextComparable = nextUrl.pathname + nextUrl.search + (compareHash ? nextUrl.hash : '');
+    const currentComparable = window.location.pathname + window.location.search + (compareHash ? window.location.hash : '');
+    if (nextComparable === currentComparable) return false;
+    const nextRelative = nextUrl.pathname + nextUrl.search + nextUrl.hash;
+    const method = history === 'push' ? 'pushState' : 'replaceState';
+    window.history[method](null, '', nextRelative);
+    return true;
+}
+
 export function writeUrlTab(paramName, value, fallback, options = {}) {
     if (!canUseUrl()) return;
     const next = normalizeUrlTab(value, options.allowedValues || [], fallback);
@@ -31,11 +43,9 @@ export function writeUrlTab(paramName, value, fallback, options = {}) {
         url.searchParams.set(paramName, next);
     }
     const target = url.pathname + url.search + url.hash;
-    const current = window.location.pathname + window.location.search + window.location.hash;
-    if (target !== current) {
-        const mode = options.history === 'replace' ? 'replaceState' : 'pushState';
-        window.history[mode](null, '', target);
-    }
+    commitUrl(target, {
+        history: options.history === 'replace' ? 'replace' : 'push',
+    });
 }
 
 export function createUrlBackedTab(paramName, allowedValues, fallback, options = {}) {

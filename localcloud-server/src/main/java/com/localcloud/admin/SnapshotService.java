@@ -99,7 +99,8 @@ public class SnapshotService {
             }
 
             Set<String> services = parseServices(body.get("services"));
-            String yaml = exportService.exportYaml(services);
+            String project = body.get("project") instanceof String rawProject ? rawProject : null;
+            String yaml = exportService.exportYaml(services, project);
             Files.createDirectories(snapshotDir);
             Files.writeString(path, yaml, StandardCharsets.UTF_8);
 

@@ -59,7 +59,7 @@ public class CloudTasksEmulator extends AbstractEmulator {
     private final IAMPolicyGrpcHelper iamHelper;
 
     public CloudTasksEmulator(PostgresDataSource dataSource) {
-        super("cloudtasks", "Cloud Tasks", 8080, "grpc", "CLOUD_TASKS_EMULATOR_HOST");
+        super("cloudtasks", "Cloud Tasks", 24080, "grpc", "CLOUD_TASKS_EMULATOR_HOST");
         this.store = new CloudTasksStore(dataSource);
         this.dispatcher = new TaskDispatcher(store);
         this.iamHelper = new IAMPolicyGrpcHelper(new IAMRepository(dataSource));

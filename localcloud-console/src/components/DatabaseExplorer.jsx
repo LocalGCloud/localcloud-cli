@@ -1,17 +1,11 @@
-import { createEffect, createMemo, createSignal, For, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, Show, onCleanup, untrack } from 'solid-js';
 import { api } from '../api.js';
 import CsvImportWizard from './CsvImportWizard.jsx';
 import DataBreadcrumb from './DataBreadcrumb.jsx';
+import { onActivate } from '../utils/a11y.js';
 import { generateMockRow } from '../utils/mockGenerator.js';
 
-const QUERY_HISTORY_SERVICES = new Set(['spanner', 'bigquery', 'alloydb', 'cloudsql', 'bigtable', 'memorystore']);
 
-const INFO_SCHEMA_VIEWS = {
-    bigquery: ['tables', 'columns', 'schemata', 'views', 'routines', 'partitions', 'table_storage'],
-    spanner: ['tables', 'columns', 'table_statistics'],
-    alloydb: ['tables', 'columns', 'schemata', 'views', 'routines'],
-    cloudsql: ['tables', 'columns', 'schemata', 'views', 'routines'],
-};
 
 function idFromName(name) {
     if (!name) return '';
@@ -235,28 +229,6 @@ const adapters = {
         deleteTable(path) {
             return api.mutate('spanner', 'ddl', { instance: path[0].id, database: path[1].id, statements: [`DROP TABLE ${path[2].id}`] });
         },
-        async stats(path) {
-            if (path.length >= 2) return api.spannerStats(path[0].id, path[1].id);
-            return null;
-        },
-        infoSchema: {
-            views: ['tables', 'columns'],
-            async load(viewType, path) {
-                const viewMap = {
-                    tables: "SELECT t.table_catalog, t.table_schema, t.table_name, t.table_type FROM information_schema.tables t WHERE t.table_schema = '' ORDER BY t.table_name",
-                    columns: "SELECT c.table_name, c.column_name, c.spanner_type, c.is_nullable FROM information_schema.columns c WHERE c.table_schema = '' ORDER BY c.table_name, c.ordinal_position",
-                };
-                const sql = viewMap[viewType] || viewMap.tables;
-                const instanceId = path?.[0]?.id || '';
-                const databaseId = path?.[1]?.id || '';
-                const result = await api.query('spanner', sql, { instance: instanceId, database: databaseId });
-                return { columns: result.columns || [], rows: (result.rows || []).map(row => {
-                    const obj = {};
-                    result.columns.forEach((col, i) => obj[col] = row[i]);
-                    return obj;
-                })};
-            },
-        },
     },
     bigquery: {
         serviceName: 'BigQuery',
@@ -298,12 +270,6 @@ const adapters = {
             return api.mutateSub('bigquery', 'rows', 'delete', { dataset: path[0].id, table: path[1].id, whereClause: `${key} = '${String(rowValue(row, key)).replace(/'/g, "''")}'` });
         },
         deleteTable(path) { return api.mutateSub('bigquery', 'tables', 'delete', { datasetId: path[0].id, tableId: path[1].id }); },
-        infoSchema: {
-            views: INFO_SCHEMA_VIEWS.bigquery,
-            async load(viewType) {
-                return api.bigqueryInfoSchema(viewType);
-            },
-        },
     },
     alloydb: {
         serviceName: 'AlloyDB',
@@ -351,26 +317,6 @@ const adapters = {
             return api.mutateSub('alloydb', 'rows', 'delete', { clusterId: path[0].id, database: path[2].id, table: path[3].id, keyColumn: key, keyValue: rowValue(row, key) });
         },
         deleteTable(path) { return api.mutateSub('alloydb', 'tables', 'delete', { clusterId: path[0].id, database: path[2].id, table: path[3].id }); },
-        infoSchema: {
-            views: INFO_SCHEMA_VIEWS.alloydb,
-            async load(viewType, path) {
-                const viewMap = {
-                    tables: "SELECT table_catalog, table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
-                    columns: "SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position",
-                    schemata: "SELECT catalog_name, schema_name, schema_owner FROM information_schema.schemata ORDER BY schema_name",
-                    views: "SELECT table_catalog, table_schema, table_name, view_definition FROM information_schema.views WHERE table_schema = 'public' ORDER BY table_name",
-                    routines: "SELECT routine_name, routine_type, data_type FROM information_schema.routines WHERE routine_schema = 'public' ORDER BY routine_name",
-                };
-                const sql = viewMap[viewType] || viewMap.tables;
-                const database = path?.[2]?.id || null;
-                const result = await api.query('alloydb', sql, database ? { database } : {});
-                return { columns: result.columns || [], rows: (result.rows || []).map(row => {
-                    const obj = {};
-                    result.columns.forEach((col, i) => obj[col] = row[i]);
-                    return obj;
-                })};
-            },
-        },
     },
     bigtable: {
         serviceName: 'Bigtable',
@@ -491,7 +437,7 @@ const adapters = {
             // Query actual data from the physical database
             const tableName = path[2].id; // instance.database.tableName
             try {
-                const result = await api.query('cloudsql', `SELECT * FROM ${tableName} LIMIT 200`);
+                const result = await api.query('cloudsql', `SELECT * FROM ${quoteIdent(tableName)} LIMIT 200`);
                 const columns = (result.columns || []).map(c => ({ name: c, type: 'STRING' }));
                 return { columns, rows: result.rows || [], keyColumns: columns.slice(0, 1).map(c => c.name) };
             } catch (e) {
@@ -499,46 +445,20 @@ const adapters = {
             }
         },
         tableActions: {},
-        infoSchema: {
-            views: INFO_SCHEMA_VIEWS.cloudsql,
-            async load(viewType, path) {
-                // Build instance.database reference from the current path for proper physical DB resolution
-                const instanceId = path?.[0]?.id || '';
-                const databaseId = path?.[1]?.id || '';
-                const dbRef = instanceId && databaseId ? `${instanceId}.${databaseId}.` : '';
-                const viewMap = {
-                    tables: `SELECT table_catalog, table_schema, table_name, table_type FROM ${dbRef}information_schema.tables WHERE table_schema = 'public' ORDER BY table_name`,
-                    columns: `SELECT table_name, column_name, data_type, is_nullable FROM ${dbRef}information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position`,
-                    schemata: `SELECT catalog_name, schema_name, schema_owner FROM ${dbRef}information_schema.schemata ORDER BY schema_name`,
-                    views: `SELECT table_catalog, table_schema, table_name, view_definition FROM ${dbRef}information_schema.views WHERE table_schema = 'public' ORDER BY table_name`,
-                    routines: `SELECT routine_name, routine_type, data_type FROM ${dbRef}information_schema.routines WHERE routine_schema = 'public' ORDER BY routine_name`,
-                };
-                const sql = viewMap[viewType] || viewMap.tables;
-                const result = await api.query('cloudsql', sql);
-                return { columns: result.columns || [], rows: (result.rows || []).map(row => {
-                    const obj = {};
-                    result.columns.forEach((col, i) => obj[col] = row[i]);
-                    return obj;
-                })};
-            },
-        },
     },
 };
 
-function canShowHistory(serviceId) {
-    return QUERY_HISTORY_SERVICES.has(serviceId);
-}
 
 export default function DatabaseExplorer(props) {
     const adapter = () => adapters[props.serviceId];
     const [path, setPath] = createSignal([]);
+    let navSeq = 0;
+    onCleanup(() => {
+        navSeq++;
+    });
     const [children, setChildren] = createSignal([]);
     const [table, setTable] = createSignal(null);
     const [loading, setLoading] = createSignal(false);
-    const [activeTab, setActiveTab] = createSignal('browse');
-    const [history, setHistory] = createSignal([]);
-    const [stats, setStats] = createSignal(null);
-    const [operations, setOperations] = createSignal([]);
     const [showCsvImport, setShowCsvImport] = createSignal(false);
     const [ddlText, setDdlText] = createSignal(null);
     const [ddlCopied, setDdlCopied] = createSignal(false);
@@ -551,22 +471,88 @@ export default function DatabaseExplorer(props) {
     const isTableLevel = createMemo(() => {
         const a = adapter();
         if (!a) return false;
-        return path().length === a.levels.length || (props.serviceId === 'firestore' && path().length === 1) || (props.serviceId === 'memorystore' && path().length === 1);
+        return path().length === a.levels.length;
     });
     const currentNodes = createMemo(() => path().length === 0 ? rootNodes() : children());
 
     const syncSubpath = (nextPath) => props.onSubpathChange?.(nextPath.map(n => n.id));
+    const subpathValue = () => {
+        const value = typeof props.subpath === 'function' ? props.subpath() : props.subpath;
+        return Array.isArray(value) ? value.map(String) : [];
+    };
+
+    const samePath = (nodes, ids) => (
+        nodes.length === ids.length && nodes.every((node, index) => node.id === ids[index])
+    );
+
+    const restoreSubpath = async (ids, force = false) => {
+        if (!force && samePath(path(), ids)) return;
+        const a = adapter();
+        const my = ++navSeq;
+        setPath([]);
+        setChildren([]);
+        setTable(null);
+        setTableError(null);
+        setAddMenuOpen(false);
+        if (!a || ids.length === 0) {
+            setLoading(false);
+            return;
+        }
+
+        setLoading(true);
+        try {
+            const next = [];
+            let available = rootNodes();
+            for (let index = 0; index < ids.length; index++) {
+                const node = available.find(candidate => candidate.id === ids[index]);
+                if (!node || next.length >= a.levels.length) {
+                    if (my === navSeq) setLoading(false);
+                    return;
+                }
+                next.push(node);
+                if (index < ids.length - 1) {
+                    available = await a.children(next);
+                    if (my !== navSeq) return;
+                }
+            }
+
+            if (next.length === a.levels.length) {
+                const restoredTable = await a.table(next);
+                if (my !== navSeq) return;
+                setPath(next);
+                setTable(restoredTable);
+            } else {
+                const restoredChildren = await a.children(next);
+                if (my !== navSeq) return;
+                setPath(next);
+                setChildren(restoredChildren);
+            }
+        } catch (error) {
+            if (my !== navSeq) return;
+            setTableError(formatError(error));
+        } finally {
+            if (my === navSeq) setLoading(false);
+        }
+    };
 
     const reloadCurrent = async () => {
         const a = adapter();
         const p = path();
-        if (!a) return;
+        const my = ++navSeq;
+        if (!a) {
+            setLoading(false);
+            return;
+        }
         setLoading(true);
         try {
-            if (isTableLevel()) {
-                setTable(await a.table(p));
+            if (p.length === a.levels.length) {
+                const t = await a.table(p);
+                if (my !== navSeq) return;
+                setTable(t);
             } else if (p.length > 0) {
-                setChildren(await a.children(p));
+                const c = await a.children(p);
+                if (my !== navSeq) return;
+                setChildren(c);
                 setTable(null);
             } else {
                 setChildren([]);
@@ -574,61 +560,93 @@ export default function DatabaseExplorer(props) {
                 await props.onRefresh?.();
             }
         } finally {
-            setLoading(false);
+            if (my === navSeq) setLoading(false);
         }
     };
 
     const selectNode = async (node) => {
+        const a = adapter();
         const next = [...path(), node];
+        const my = ++navSeq;
         setPath(next);
         syncSubpath(next);
         setTable(null);
         setChildren([]);
         setTableError(null);
         setAddMenuOpen(false);
-        setActiveTab('browse');
+        if (!a) {
+            setLoading(false);
+            return;
+        }
         setLoading(true);
         try {
-            if (next.length === adapter().levels.length || props.serviceId === 'firestore' || props.serviceId === 'memorystore') {
-                setTable(await adapter().table(next));
+            if (next.length === a.levels.length) {
+                const t = await a.table(next);
+                if (my !== navSeq) return;
+                setTable(t);
             } else {
-                setChildren(await adapter().children(next));
+                const c = await a.children(next);
+                if (my !== navSeq) return;
+                setChildren(c);
             }
         } finally {
-            setLoading(false);
+            if (my === navSeq) setLoading(false);
         }
     };
 
     const goToDepth = async (depth) => {
+        const a = adapter();
         const next = path().slice(0, depth);
+        const my = ++navSeq;
         setPath(next);
         syncSubpath(next);
         setTable(null);
         setChildren([]);
         setTableError(null);
         setAddMenuOpen(false);
-        if (next.length === 0) return;
+        if (!a || next.length === 0) {
+            setLoading(false);
+            return;
+        }
         setLoading(true);
         try {
-            if (next.length === adapter().levels.length || props.serviceId === 'firestore' || props.serviceId === 'memorystore') {
-                setTable(await adapter().table(next));
+            if (next.length === a.levels.length) {
+                const t = await a.table(next);
+                if (my !== navSeq) return;
+                setTable(t);
             } else {
-                setChildren(await adapter().children(next));
+                const c = await a.children(next);
+                if (my !== navSeq) return;
+                setChildren(c);
             }
         } finally {
-            setLoading(false);
+            if (my === navSeq) setLoading(false);
         }
     };
 
+
+    let restoredService;
+    let restoredData;
     createEffect(() => {
-        props.serviceId;
-        props.data?.();
-        setPath([]);
-        setChildren([]);
-        setTable(null);
-        setTableError(null);
-        setAddMenuOpen(false);
-        setActiveTab('browse');
+        const service = props.serviceId;
+        const data = props.data?.();
+        const ids = subpathValue();
+        const force = service !== restoredService || data !== restoredData;
+        restoredService = service;
+        restoredData = data;
+        void untrack(() => restoreSubpath(ids, force));
+    });
+
+    let breadcrumbPath;
+    createEffect(() => {
+        const depth = path().length;
+        queueMicrotask(() => {
+            if (path().length !== depth) return;
+            breadcrumbPath?.querySelector('[aria-current="page"]')?.scrollIntoView?.({
+                block: 'nearest',
+                inline: 'nearest',
+            });
+        });
     });
 
     const breadcrumbs = createMemo(() => [
@@ -655,9 +673,7 @@ export default function DatabaseExplorer(props) {
 
     const tableActions = () => adapter()?.tableActions || {};
     const insertableColumns = () => table()?.columns?.filter(c => !c.readOnly) || [];
-    const addOperation = (operation, status, target, error) => {
-        setOperations(prev => [{ operation, status, target, error, at: new Date().toISOString() }, ...prev].slice(0, 50));
-    };
+    const addOperation = () => {};
 
     const insertRow = async (row, label = 'Insert Row') => {
         setTableError(null);
@@ -717,29 +733,6 @@ export default function DatabaseExplorer(props) {
         }
     };
 
-    const loadHistory = async () => {
-        if (!canShowHistory(props.serviceId)) return;
-        const result = await api.queryHistory(props.serviceId, 50, 0);
-        setHistory(result.entries || []);
-    };
-
-    const loadStats = async () => {
-        const custom = await adapter()?.stats?.(path(), table());
-        if (custom) {
-            setStats(custom);
-            return;
-        }
-        const t = table();
-        const nodes = currentNodes();
-        setStats({
-            totalObjects: isTableLevel() ? (t?.rows?.length || 0) : nodes.length,
-            tableCount: isTableLevel() ? 1 : nodes.filter(n => n.type === 'table').length,
-            columnCount: t?.columns?.length || 0,
-            rowCount: t?.rows?.length || 0,
-            details: isTableLevel() ? (t?.columns || []).map(c => ({ type: 'COLUMN', name: c.name, dataType: c.type })) : nodes.map(n => ({ type: n.type?.toUpperCase(), name: n.label, ...n.metadata })),
-        });
-    };
-
     const ContextActions = () => {
         const tableColumns = () => table()?.columns || [];
         const canAddRows = () => isTableLevel() && table() && tableActions().addRow && adapter()?.insertRow;
@@ -780,7 +773,7 @@ export default function DatabaseExplorer(props) {
                     <tbody>
                         <For each={currentNodes()}>
                             {(node) => (
-                                <tr class="clickable-row" onClick={() => selectNode(node)} role="button" tabIndex="0">
+                                <tr class="clickable-row" onClick={() => selectNode(node)} onKeyDown={onActivate(() => selectNode(node))} role="button" tabIndex="0">
                                     <td style="font-weight:500">{node.label}</td>
                                     <td><span class="badge badge-info">{node.type}</span></td>
                                     <td>{Object.entries(node.metadata || {}).map(([k, v]) => `${k}: ${v}`).join('  ')}</td>
@@ -828,7 +821,7 @@ export default function DatabaseExplorer(props) {
     return (
         <div class="data-explorer-shell">
             <div class="data-explorer-header">
-                <div class="data-explorer-path">
+                <div class="data-explorer-path" ref={element => { breadcrumbPath = element; }}>
                     <DataBreadcrumb crumbs={breadcrumbs()} />
                 </div>
                 <ContextActions />
@@ -873,57 +866,3 @@ export default function DatabaseExplorer(props) {
     );
 }
 
-function StatsPanel(props) {
-    const stats = () => props.stats || {};
-    const cards = () => [
-        ['Objects', stats().totalObjects],
-        ['Tables', stats().tableCount],
-        ['Columns', stats().columnCount],
-        ['Rows', stats().rowCount],
-        ['Indexes', stats().indexCount],
-    ].filter(([, value]) => value !== undefined && value !== null);
-    return (
-        <div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:16px">
-                <For each={cards()}>{([label, value]) => (
-                    <div style="border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--surface)">
-                        <div style="font-size:24px;font-weight:700">{value}</div>
-                        <div style="font-size:12px;color:var(--text-secondary)">{label}</div>
-                    </div>
-                )}</For>
-            </div>
-            <Show when={(stats().details || []).length > 0}>
-                <div class="data-table-wrapper">
-                    <table class="data-table">
-                        <thead><tr><th>Type</th><th>Name</th><th>Details</th></tr></thead>
-                        <tbody><For each={stats().details}>{d => <tr><td>{d.type}</td><td>{d.name}</td><td>{Object.entries(d).filter(([k]) => !['type', 'name'].includes(k)).map(([k, v]) => `${k}: ${v}`).join('  ')}</td></tr>}</For></tbody>
-                    </table>
-                </div>
-            </Show>
-        </div>
-    );
-}
-
-function HistoryPanel(props) {
-    return (
-        <Show when={(props.entries || []).length > 0} fallback={<div class="empty-state"><div class="empty-state-title">No history yet</div></div>}>
-            <div class="data-table-wrapper">
-                <table class="data-table">
-                    <thead><tr><th>Time</th><th>SQL / Operation</th><th>Target</th><th>Duration</th><th>Rows</th><th>Status</th></tr></thead>
-                    <tbody><For each={props.entries}>{e => <tr><td>{e.executed_at || e.executedAt || '--'}</td><td style="font-family:var(--font-mono);font-size:12px">{e.sql}</td><td>{e.database || e.instance || '--'}</td><td>{e.duration_ms || 0}ms</td><td>{e.row_count ?? '--'}</td><td>{e.success ? 'OK' : 'FAIL'}</td></tr>}</For></tbody>
-                </table>
-            </div>
-        </Show>
-    );
-}
-
-function OperationsPanel(props) {
-    return (
-        <div class="data-table-wrapper">
-            <table class="data-table">
-                <thead><tr><th>Time</th><th>Operation</th><th>Target</th><th>Status</th><th>Error</th></tr></thead>
-                <tbody><For each={props.operations}>{op => <tr><td>{op.at}</td><td>{op.operation}</td><td>{op.target}</td><td>{op.status}</td><td>{op.error || ''}</td></tr>}</For></tbody>
-            </table>
-        </div>
-    );
-}

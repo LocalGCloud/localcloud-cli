@@ -35,7 +35,7 @@ public class CloudRunEmulator extends AbstractEmulator {
     }
 
     public CloudRunEmulator(PostgresDataSource dataSource, ContainerManager containerManager, CredentialBroker credentialBroker) {
-        super("cloudrun", "Cloud Run", 8080, "grpc", "CLOUD_RUN_EMULATOR_HOST");
+        super("cloudrun", "Cloud Run", 24080, "grpc", "CLOUD_RUN_EMULATOR_HOST");
         this.dataSource = dataSource;
         this.containerManager = containerManager;
         this.credentialBroker = credentialBroker;

@@ -4,8 +4,9 @@
  * Props:
  *   value       - Initial/external text content
  *   onChange    - Callback(newValue) when content changes
+ *   language    - Language mode: 'sql' (default) | 'yaml'
  *   dialect     - SQL dialect: 'postgresql' | 'bigquery' | 'googlesql' | 'standard'
- *   schema      - CodeMirror SQL schema: { tableName: ['col1', 'col2'], ... }
+ *   schema      - CodeMirror SQL schema (SQL mode only): { tableName: ['col1', 'col2'], ... }
  *   placeholder - Placeholder text
  *   onRun       - Callback when Cmd/Ctrl+Enter is pressed
  *   readOnly    - Boolean, makes editor read-only
@@ -17,6 +18,7 @@ import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightAc
 import { EditorState, Compartment, Prec } from '@codemirror/state';
 import { sql, PostgreSQL, StandardSQL, SQLDialect } from '@codemirror/lang-sql';
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, acceptCompletion } from '@codemirror/autocomplete';
+import { yaml } from '@codemirror/lang-yaml';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { syntaxHighlighting, indentOnInput, bracketMatching, foldGutter, foldKeymap, HighlightStyle } from '@codemirror/language';
@@ -237,11 +239,16 @@ export default function CodeEditor(props) {
     let containerRef;
     let view;
     let isInternalUpdate = false;
+    let onChangeTimer;
 
     const langCompartment = new Compartment();
     const readOnlyCompartment = new Compartment();
+    const lintCompartment = new Compartment();
+    const placeholderCompartment = new Compartment();
 
     function buildLangExtension() {
+        if (props.language === 'yaml') return yaml();
+
         return sql({
             dialect: getDialect(props.dialect),
             schema: props.schema || undefined,
@@ -249,10 +256,18 @@ export default function CodeEditor(props) {
         });
     }
 
+    function buildLintExtension() {
+        if (props.language === 'yaml') return [];
+
+        const compatibilityLinter = createCompatibilityLinter(props.dialect || 'postgresql');
+        return props.lineNumbers !== false
+            ? [lintGutter(), compatibilityLinter]
+            : compatibilityLinter;
+    }
+
     onMount(() => {
         loadCachedCompatibilityWarnings();
         const extensions = [
-            // Appearance
             // Appearance
             props.lineNumbers !== false ? lineNumbers() : [],
             props.lineNumbers !== false ? highlightActiveLineGutter() : [],
@@ -298,7 +313,7 @@ export default function CodeEditor(props) {
                 indentWithTab,
             ]),
 
-            // SQL language (in compartment for dynamic reconfiguration)
+            // Language mode (in compartment for dynamic reconfiguration)
             langCompartment.of(buildLangExtension()),
 
             // Read-only state
@@ -308,17 +323,17 @@ export default function CodeEditor(props) {
             editorTheme,
             syntaxHighlighting(highlightStyle),
 
-            // Compatibility linter (yellow warnings for unsupported SQL)
-            props.lineNumbers !== false ? lintGutter() : [],
-            createCompatibilityLinter(props.dialect || 'postgresql'),
+            // SQL compatibility linter (disabled for non-SQL languages)
+            lintCompartment.of(buildLintExtension()),
 
             // Placeholder
-            props.placeholder ? placeholderExt(props.placeholder) : [],
+            placeholderCompartment.of(props.placeholder ? placeholderExt(props.placeholder) : []),
 
             // Update listener → props.onChange
             EditorView.updateListener.of((update) => {
                 if (update.docChanged && !isInternalUpdate) {
-                    props.onChange?.(update.state.doc.toString());
+                    clearTimeout(onChangeTimer);
+                    onChangeTimer = setTimeout(() => props.onChange?.(update.state.doc.toString()), 150);
                 }
             }),
         ];
@@ -344,13 +359,17 @@ export default function CodeEditor(props) {
         }
     });
 
-    // Reconfigure SQL dialect + schema when they change
+    // Reconfigure language, SQL dialect/schema, and language-specific linting
     createEffect(() => {
+        const _language = props.language;
         const _dialect = props.dialect;
         const _schema = props.schema;
         if (view) {
             view.dispatch({
-                effects: langCompartment.reconfigure(buildLangExtension()),
+                effects: [
+                    langCompartment.reconfigure(buildLangExtension()),
+                    lintCompartment.reconfigure(buildLintExtension()),
+                ],
             });
         }
     });
@@ -364,8 +383,18 @@ export default function CodeEditor(props) {
             });
         }
     });
+    // Reconfigure placeholder when it changes
+    createEffect(() => {
+        const _placeholder = props.placeholder;
+        if (view) {
+            view.dispatch({
+                effects: placeholderCompartment.reconfigure(_placeholder ? placeholderExt(_placeholder) : []),
+            });
+        }
+    });
 
     onCleanup(() => {
+        clearTimeout(onChangeTimer);
         view?.destroy();
     });
 

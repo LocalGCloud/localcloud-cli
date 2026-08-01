@@ -42,7 +42,7 @@ public class IAMEmulator extends AbstractEmulator {
     }
 
     public IAMEmulator(PostgresDataSource dataSource, boolean logWarnings) {
-        super("cloudiam", "Cloud IAM", 8080, "grpc", "IAM_EMULATOR_HOST");
+        super("cloudiam", "Cloud IAM", 24080, "grpc", "IAM_EMULATOR_HOST");
         this.repository = new IAMRepository(dataSource);
         this.logWarnings = logWarnings;
         runningInstance = this;

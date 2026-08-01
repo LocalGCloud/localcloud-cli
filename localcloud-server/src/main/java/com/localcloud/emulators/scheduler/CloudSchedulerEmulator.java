@@ -61,7 +61,7 @@ public class CloudSchedulerEmulator extends AbstractEmulator {
     }
 
     CloudSchedulerEmulator(PostgresDataSource dataSource, PubSubPublisher pubSubPublisher) {
-        super("cloudscheduler", "Cloud Scheduler", 8080, "grpc", "CLOUD_SCHEDULER_EMULATOR_HOST");
+        super("cloudscheduler", "Cloud Scheduler", 24080, "grpc", "CLOUD_SCHEDULER_EMULATOR_HOST");
         this.repository = new SchedulerRepository(dataSource);
         this.pubSubPublisher = pubSubPublisher;
         this.restService = new CloudSchedulerRestService(this.repository, this);
@@ -241,7 +241,7 @@ public class CloudSchedulerEmulator extends AbstractEmulator {
         public List<String> publish(String topicName, ByteString data, Map<String, String> attributes) {
             String pubsubHostEnv = System.getenv("PUBSUB_EMULATOR_HOST");
             String host = "localhost";
-            int port = 8085;
+            int port = 24082;
             if (pubsubHostEnv != null && !pubsubHostEnv.isEmpty()) {
                 String[] parts = pubsubHostEnv.split(":", 2);
                 host = parts[0];

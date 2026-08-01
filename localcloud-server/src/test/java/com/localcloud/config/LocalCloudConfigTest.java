@@ -56,7 +56,7 @@ class LocalCloudConfigTest {
     @Test
     void defaultGatewayPort() {
         LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
-        assertEquals(8080, config.getGatewayPort());
+        assertEquals(24080, config.getGatewayPort());
     }
 
     @Test
@@ -96,7 +96,7 @@ class LocalCloudConfigTest {
     @Test
     void defaultPostgresPort() {
         LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
-        assertEquals(5432, config.getPostgresPort());
+        assertEquals(24090, config.getPostgresPort());
     }
 
     @Test
@@ -189,17 +189,17 @@ class LocalCloudConfigTest {
     }
 
     @Test
-    void customGatewayPort() {
+    void gatewayPortOverrideIsIgnored() {
         setProperty("LOCALCLOUD_PORT", "9090");
         LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
-        assertEquals(9090, config.getGatewayPort());
+        assertEquals(24080, config.getGatewayPort());
     }
 
     @Test
-    void invalidPortFallsBackToDefault() {
+    void invalidGatewayPortOverrideIsIgnored() {
         setProperty("LOCALCLOUD_PORT", "not-a-number");
         LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
-        assertEquals(8080, config.getGatewayPort());
+        assertEquals(24080, config.getGatewayPort());
     }
 
     @Test
@@ -227,7 +227,7 @@ class LocalCloudConfigTest {
         LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
 
         assertEquals("db.example.com", config.getPostgresHost());
-        assertEquals(5433, config.getPostgresPort());
+        assertEquals(24090, config.getPostgresPort());
         assertEquals("mydb", config.getPostgresDatabase());
         assertEquals("admin", config.getPostgresUser());
         assertEquals("secret", config.getPostgresPassword());
@@ -382,5 +382,11 @@ class LocalCloudConfigTest {
         assertEquals(26, allServices.size(), "services.yaml should define exactly 26 services");
         assertFalse(config.isServiceEnabled("vertexai"), "vertexai should be disabled by default");
         assertFalse(config.isServiceEnabled("kms"), "kms should be disabled by default");
+
+        var infrastructure = config.getServiceRegistry().getInfrastructure();
+        assertEquals(24093, infrastructure.get("dns").port());
+        assertEquals(24094, infrastructure.get("caddyHttps").port());
+        assertEquals(24095, infrastructure.get("caddyHttp").port());
+        assertFalse(allServices.containsKey("dns"));
     }
 }

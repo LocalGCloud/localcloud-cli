@@ -28,7 +28,7 @@ class AdminApiServiceTerraformTest {
 
     @Test
     void terraformEnvVar_returnsConfiguredValue() {
-        var def = makeDef("gcs", 4443, "http://", "GOOGLE_STORAGE_CUSTOM_ENDPOINT");
+        var def = makeDef("gcs", 24081, "http://", "GOOGLE_STORAGE_CUSTOM_ENDPOINT");
         assertEquals("GOOGLE_STORAGE_CUSTOM_ENDPOINT", def.terraformEnvVar());
     }
 
@@ -46,34 +46,34 @@ class AdminApiServiceTerraformTest {
 
     @Test
     void envValue_correctEndpoint() {
-        var def = makeDef("gcs", 4443, "http://", "GOOGLE_STORAGE_CUSTOM_ENDPOINT");
-        assertEquals("http://localhost:4443", def.envValue("localhost"));
+        var def = makeDef("gcs", 24081, "http://", "GOOGLE_STORAGE_CUSTOM_ENDPOINT");
+        assertEquals("http://localhost:24081", def.envValue("localhost"));
     }
 
     @Test
     void envValue_grpcEndpoint_noPrefix() {
-        var def = makeDef("secretmanager", 8080, "", "GOOGLE_SECRET_MANAGER_CUSTOM_ENDPOINT");
-        assertEquals("localhost:8080", def.envValue("localhost"));
+        var def = makeDef("secretmanager", 24080, "", "GOOGLE_SECRET_MANAGER_CUSTOM_ENDPOINT");
+        assertEquals("localhost:24080", def.envValue("localhost"));
     }
 
     @Test
     void spannerRestPort_usedForTerraform() {
-        // Spanner has a REST port at 9020, gRPC at 9010
+        // Spanner has a REST port at 24086, gRPC at 24085
         var def = new ServiceDefinition(
-                "spanner", "Spanner", 9010, "grpc",
+                "spanner", "Spanner", 24085, "grpc",
                 "SPANNER_EMULATOR_HOST", "", "external",
-                true, "spanner", 9020,
-                java.util.Map.of("rest", 9020), null,
+                true, "spanner", 24086,
+                java.util.Map.of("rest", 24086), null,
                 "GOOGLE_SPANNER_CUSTOM_ENDPOINT", LicenseTier.PRO);
         assertEquals("GOOGLE_SPANNER_CUSTOM_ENDPOINT", def.terraformEnvVar());
         assertTrue(def.additionalPorts().containsKey("rest"));
-        assertEquals(9020, def.additionalPorts().get("rest"));
+        assertEquals(24086, def.additionalPorts().get("rest"));
     }
 
     @Test
     void allKnownServices_haveTerraformEnvVars() {
         // Load actual registry and verify all services have terraform env vars
-        ServiceRegistry registry = ServiceRegistry.load(8080);
+        ServiceRegistry registry = ServiceRegistry.load(24080);
         for (var entry : registry.getAllServices().entrySet()) {
             ServiceDefinition def = entry.getValue();
             assertNotNull(def.terraformEnvVar(),

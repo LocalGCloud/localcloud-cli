@@ -212,7 +212,7 @@ function EnvTabs(props) {
         supported: { bg: 'rgba(52,168,83,0.1)', fg: '#34a853', label: 'Supported' },
         partial: { bg: 'rgba(251,188,4,0.1)', fg: '#f9ab00', label: 'Partial' },
         unsupported: { bg: 'rgba(234,67,53,0.06)', fg: '#ea4335', label: 'Unsupported' },
-        unverified: { bg: 'rgba(128,128,128,0.1)', fg: '#808080', label: 'Unverified' },
+        unverified: { bg: 'rgba(128,128,128,0.1)', fg: '#2408080', label: 'Unverified' },
         planned: { bg: 'rgba(66,133,244,0.1)', fg: '#4285f4', label: 'Planned' },
         prod_only: { bg: 'rgba(138,180,248,0.1)', fg: '#8ab4f8', label: 'Prod Only' },
     };
@@ -448,7 +448,7 @@ function EnvTabs(props) {
                                     <div style={{ display: "flex", gap: "12px", "margin-bottom": "20px", "flex-wrap": "wrap" }}>
                                         <For each={Object.entries(summary.by_coverage_status || {})}>
                                             {([status, count]) => {
-                                                const c = STATUS_COLORS[status] || { bg: 'rgba(128,128,128,0.1)', fg: '#808080', label: status };
+                                                const c = STATUS_COLORS[status] || { bg: 'rgba(128,128,128,0.1)', fg: '#2408080', label: status };
                                                 return (
                                                     <div style={{
                                                         padding: "6px 14px", "border-radius": "8px",
@@ -832,7 +832,7 @@ export default function UserGuide(props) {
             .map(k => ({ key: k, value: cat.sdk[k] }));
     };
 
-    const autoConfigCmd = `eval "$(curl -s http://localhost:8080/env?format=shell)"`;
+    const autoConfigCmd = `eval "$(curl -s http://localhost:24080/env?format=shell)"`;
 
     const handleQuickCopy = async () => {
         const ok = await copyToClipboard(autoConfigCmd);
@@ -874,7 +874,7 @@ export default function UserGuide(props) {
                                     Option 1 — One-liner eval
                                 </span>
                                 <div style={{ flex: "1" }}>
-                                    <CopyableCodeBlock>{`eval "$(curl -s 'http://localhost:8080/env?format=shell')"`}</CopyableCodeBlock>
+                                    <CopyableCodeBlock>{`eval "$(curl -s 'http://localhost:24080/env?format=shell')"`}</CopyableCodeBlock>
                                 </div>
                             </div>
                             {/* OR divider */}
@@ -983,7 +983,7 @@ unset CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER
                     <GuideSection title="Loading seed data">
                         <GuideText>Seed files define initial state for services using YAML. Load them on startup or into a running instance:</GuideText>
                         <CopyableCodeBlock>{`# Load into a running instance
-curl -X POST http://localhost:8080/seed \\
+curl -X POST http://localhost:24080/seed \\
   -H "Content-Type: application/yaml" --data-binary @seed.yaml
 
 # Or mount on startup (docker-compose.yml)
@@ -1014,10 +1014,10 @@ services:
                     <GuideSection title="Reset data">
                         <GuideText>Reset all emulator data or restore the last loaded seed:</GuideText>
                         <CopyableCodeBlock>{`# Reset all data
-curl -X POST http://localhost:8080/reset
+curl -X POST http://localhost:24080/reset
 
 # Reset and restore last seed
-curl -X POST http://localhost:8080/reset \\
+curl -X POST http://localhost:24080/reset \\
   -H "Content-Type: application/json" \\
   -d '{"restore_seed": true}'`}</CopyableCodeBlock>
                     </GuideSection>
@@ -1028,7 +1028,7 @@ curl -X POST http://localhost:8080/reset \\
             <Show when={activeTab() === 'api'}>
                 <div class="section">
                     <GuideSection title="Admin API endpoints">
-                        <GuideText>The gateway at port 8080 exposes admin endpoints for managing LocalCloud:</GuideText>
+                        <GuideText>The gateway at port 24080 exposes admin endpoints for managing LocalCloud:</GuideText>
                         <div class="data-table-wrapper" style={{ "margin-bottom": "16px" }}>
                             <table class="data-table">
                                 <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
@@ -1051,27 +1051,27 @@ curl -X POST http://localhost:8080/reset \\
                     <GuideSection title="Secret Manager browse API">
                         <GuideText>Browse endpoints for inspecting secrets and their versions:</GuideText>
                         <CopyableCodeBlock>{`# List all secrets (with version counts)
-curl http://localhost:8080/browse/secretmanager
+curl http://localhost:24080/browse/secretmanager
 
 # List versions for a specific secret
-curl http://localhost:8080/browse/secretmanager/versions/api-key
+curl http://localhost:24080/browse/secretmanager/versions/api-key
 
 # View a specific version's value
-curl http://localhost:8080/browse/secretmanager/versions/api-key/3
+curl http://localhost:24080/browse/secretmanager/versions/api-key/3
 
 # Get stats (counts by state)
-curl http://localhost:8080/browse/secretmanager/stats`}</CopyableCodeBlock>
+curl http://localhost:24080/browse/secretmanager/stats`}</CopyableCodeBlock>
                     </GuideSection>
                     <GuideSection title="Project-scoped queries">
                         <GuideText>Add ?project= to browse, env, and reset endpoints to scope to a specific project:</GuideText>
                         <CopyableCodeBlock>{`# Browse secrets for a specific project
-curl http://localhost:8080/browse/secretmanager?project=staging
+curl http://localhost:24080/browse/secretmanager?project=staging
 
 # Get env vars for a specific project
-curl "http://localhost:8080/env?format=json&project=dev"
+curl "http://localhost:24080/env?format=json&project=dev"
 
 # Reset only one project's data
-curl -X POST http://localhost:8080/reset?project=staging`}</CopyableCodeBlock>
+curl -X POST http://localhost:24080/reset?project=staging`}</CopyableCodeBlock>
                     </GuideSection>
                 </div>
             </Show>

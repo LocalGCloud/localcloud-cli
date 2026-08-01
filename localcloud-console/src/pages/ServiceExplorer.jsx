@@ -5,12 +5,14 @@ import DataBrowser from './DataBrowser.jsx';
 import CodeEditor, { toCodeMirrorSchema } from '../components/CodeEditor.jsx';
 import Workflows from './Workflows.jsx';
 import { RemoteSyncPanel } from '../components/RemoteSyncPanel.jsx';
-import { TriggerTestPanel, JobOutputPanel, SchedulerHistoryPanel, ConnectionInfoPanel } from '../components/ServicePanels.jsx';
+import { TriggerTestPanel, SchedulerHistoryPanel, ConnectionInfoPanel } from '../components/ServicePanels.jsx';
+import { DataprocPanel } from '../components/DataprocPanel.jsx';
 import { IconDatabase, IconTable, IconColumn, IconChevron } from '../components/TreeIcons.jsx';
-import { formatNumber, formatTime, onActivate } from '../utils/a11y.js';
-import { formatSize } from '../utils/format.js';
+import { onActivate } from '../utils/a11y.js';
+import { formatNumber, formatSize, formatTime } from '../utils/format.js';
 import { SAMPLE_CODE, CLI_COMMANDS } from './settings-data.js';
 import { SERVICE_META, SQL_SERVICES, SQL_RESULT_PAGE_SIZE, SERVICE_SCHEMAS } from '../data/services.js';
+import { INFO_SCHEMA_VIEWS, normalizeMatrixRows, resolveDatabaseContext } from '../utils/databaseContext.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 function formatDuration(ms) {
@@ -50,7 +52,7 @@ function JsonCell(props) {
 }
 
 // ─── Services without SQL support ────────────────────────────────────────
-const NON_SQL_SERVICES = new Set(['firestore', 'secretmanager']);
+const NON_SQL_SERVICES = new Set(['firestore', 'secretmanager', 'cloudbilling', 'serviceusage']);
 
 // ─── Non-SQL service descriptions for the "no SQL" placeholder ───────────
 const NON_SQL_INFO = {
@@ -126,6 +128,27 @@ function SQLEditor(props) {
     const [resultPage, setResultPage] = createSignal(1);
     const [error, setError] = createSignal(null);
     const [history, setHistory] = createSignal([]);
+    // Token and abort guards prevent stale query writes after a newer request,
+    // service switch, mode switch, or unmount.
+    let queryRequest = 0;
+    let queryController = null;
+    const cancelActiveQuery = () => {
+        queryRequest++;
+        queryController?.abort();
+        queryController = null;
+        setRunning(false);
+    };
+    const beginQueryRequest = () => {
+        const requestId = ++queryRequest;
+        queryController?.abort();
+        queryController = new AbortController();
+        return { requestId, controller: queryController };
+    };
+    onCleanup(() => {
+        queryRequest++;
+        queryController?.abort();
+        queryController = null;
+    });
     const [showHistory, setShowHistory] = createSignal(false);
     const [dynamicSchema, setDynamicSchema] = createSignal(null);
     const [expanded, setExpanded] = createSignal({});
@@ -192,13 +215,13 @@ function SQLEditor(props) {
     // Spanner instance/database selection signals
     // Note: Spanner instance/database selection is independent from the Data Explorer tab.
     // Changing the selection in one tab does not affect the other.
-    const [spannerInstances, setSpannerInstances] = createSignal([]);
-    const [spannerDatabases, setSpannerDatabases] = createSignal([]);
     const [selectedInstance, setSelectedInstance] = createSignal('');
     const [selectedDatabase, setSelectedDatabase] = createSignal('');
 
     // Load GCS buckets and files when in GCS mode
     createEffect(() => {
+        // SQLEditor stays mounted (display:none) across tabs; only fetch when visible
+        if (props.modeSignal && props.modeSignal() !== 'editor') return;
         if (isGcsMode()) loadGcsFiles();
     });
 
@@ -278,6 +301,7 @@ function SQLEditor(props) {
         const svc = service();
         if (prev && prev !== svc) {
             schemaLoadRequest++;
+            cancelActiveQuery();
             // Save current SQL to cache before switching
             sqlCache[prev] = { text: sqlText(), tabs: sqlTabs(), activeTab: activeSqlTab(), placeholder: isPlaceholder() };
             // Restore from cache or reset
@@ -305,8 +329,17 @@ function SQLEditor(props) {
         return svc;
     });
 
+    // A request started in the editor must not land after navigating to another mode.
+    createEffect((wasVisible) => {
+        const visible = !props.modeSignal || props.modeSignal() === 'editor';
+        if (wasVisible && !visible) cancelActiveQuery();
+        return visible;
+    });
+
     // Load schema from API for SQL-capable services (not GCS — it uses file loading)
     createEffect(() => {
+        // SQLEditor stays mounted (display:none) across tabs; only fetch when visible
+        if (props.modeSignal && props.modeSignal() !== 'editor') return;
         const svc = service();
         props.refreshTrigger?.();
         // Note: For Spanner, instance/database may be empty on first load.
@@ -326,10 +359,6 @@ function SQLEditor(props) {
             if (requestId !== schemaLoadRequest || service() !== svc) { setSchemaLoading(false); return; }
             if (data && data.tables) setDynamicSchema(data);
             else setDynamicSchema(null);
-            if (svc === 'spanner' && data) {
-                if (data.instances) setSpannerInstances(data.instances);
-                if (data.databases) setSpannerDatabases(data.databases);
-            }
         } catch {
             if (requestId !== schemaLoadRequest || service() !== svc) { setSchemaLoading(false); return; }
             setDynamicSchema(null);
@@ -489,25 +518,24 @@ function SQLEditor(props) {
 
     async function runQuery() {
         const query = sqlText().trim();
-        if (!query || running()) return;
+        if (!query || running() || (props.modeSignal && props.modeSignal() !== 'editor')) return;
+        const svc = service();
+        const { requestId: myReq, controller } = beginQueryRequest();
         persistActiveTab(query);
         setRunning(true); setError(null); setResult(null); setResultPage(1);
         const startTime = performance.now();
         try {
             // GCS file queries route through BigQuery emulator
-            const queryService = service() === 'gcs' ? 'bigquery' : service();
-            const params = {};
-            if (queryService === 'spanner') {
-                const schema = currentSchema();
-                params.instance = schema?.selectedInstance || selectedInstance() || '';
-                const databases = schema?.databases || [];
-                params.database = selectedDatabase() || (databases.length > 0 ? databases[0] : '');
-            }
-            if (queryService === 'alloydb') {
-                const schema = currentSchema();
-                params.database = schema?.selectedDatabase || '';
-            }
-            const data = await api.query(queryService, query, params);
+            const queryService = svc === 'gcs' ? 'bigquery' : svc;
+            const context = resolveDatabaseContext(queryService, {
+                selectedInstance: selectedInstance(),
+                selectedDatabase: selectedDatabase(),
+                schema: currentSchema(),
+            });
+            const params = context.queryParams;
+            const data = await api.query(queryService, query, params, controller.signal);
+            // Bail if a newer query started, the service changed, or this request was cancelled.
+            if (myReq !== queryRequest || service() !== svc) return;
             const elapsed = Math.round(performance.now() - startTime);
             if (data.error) { setError(data.error); }
             else {
@@ -521,19 +549,28 @@ function SQLEditor(props) {
                     loadDynamicSchema(queryService);
                 }
             }
-            setHistory(prev => [{ sql: query, service: service(), timestamp: new Date(), rowCount: data.row_count ?? (data.rows || []).length, executionTime: data.execution_time_ms || Math.round(performance.now() - startTime), error: data.error || null }, ...prev.slice(0, 49)]);
+            setHistory(prev => [{ sql: query, service: svc, timestamp: new Date(), rowCount: data.row_count ?? (data.rows || []).length, executionTime: data.execution_time_ms || Math.round(performance.now() - startTime), error: data.error || null }, ...prev.slice(0, 49)]);
         } catch (err) {
+            if (myReq !== queryRequest || service() !== svc) return;
             setError(err.message || 'Query failed');
-            setHistory(prev => [{ sql: query, service: service(), timestamp: new Date(), rowCount: 0, executionTime: Math.round(performance.now() - startTime), error: err.message }, ...prev.slice(0, 49)]);
-        } finally { setRunning(false); }
+            setHistory(prev => [{ sql: query, service: svc, timestamp: new Date(), rowCount: 0, executionTime: Math.round(performance.now() - startTime), error: err.message }, ...prev.slice(0, 49)]);
+        } finally {
+            if (myReq === queryRequest) {
+                if (queryController === controller) queryController = null;
+                setRunning(false);
+            }
+        }
     }
 
     async function dryRunQuery() {
         const query = sqlText().trim();
-        if (!query || running()) return;
+        if (!query || running() || (props.modeSignal && props.modeSignal() !== 'editor')) return;
+        const svc = service();
+        const { requestId: myReq, controller } = beginQueryRequest();
         setRunning(true); setError(null); setResult(null); setResultPage(1);
         try {
-            const data = await api.queryDryRun(query);
+            const data = await api.queryDryRun(query, controller.signal);
+            if (myReq !== queryRequest || service() !== svc) return;
             if (data.valid) {
                 const bytes = data.totalBytesProcessed || 0;
                 const cost = data.estimatedCostUsd || 0;
@@ -553,9 +590,15 @@ function SQLEditor(props) {
                 setResult(null);
             }
         } catch (err) {
+            if (myReq !== queryRequest || service() !== svc) return;
             setError(err.message || 'Dry-run failed');
             setResult(null);
-        } finally { setRunning(false); }
+        } finally {
+            if (myReq === queryRequest) {
+                if (queryController === controller) queryController = null;
+                setRunning(false);
+            }
+        }
     }
 
     function loadHistoryItem(item) { setSqlText(item.sql); setShowHistory(false); }
@@ -1440,7 +1483,7 @@ function SQLEditor(props) {
                                     <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
                                 </svg>
                                 <span class="sql-status-ok">Query complete</span>
-                                <span class="sql-status-meta">{formatNumber(result().rowCount)} row{result().rowCount !== 1 ? 's' : ''} &middot; TTFB {formatDuration(Math.max(1, Math.round(result().executionTime * 0.42)))} &middot; Local latency {formatDuration(result().executionTime)}</span>
+                                <span class="sql-status-meta">{formatNumber(result().rowCount)} row{result().rowCount !== 1 ? 's' : ''} &middot; Local latency {formatDuration(result().executionTime)}</span>
                             </>
                         }>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--warning)" aria-hidden="true" focusable="false">
@@ -1463,7 +1506,7 @@ function SQLEditor(props) {
                                 <thead>
                                     <tr>
                                         <th class="sql-results-rownum">#</th>
-                                        <For each={result().columns}>{(col) => <th>{col}</th>}</For>
+                                        <For each={result().columns}>{(col) => <th title={col}>{col}</th>}</For>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -1553,46 +1596,35 @@ function SQLEditor(props) {
 const QUERY_HISTORY_SERVICES = new Set(['spanner', 'bigquery', 'alloydb', 'cloudsql', 'bigtable', 'memorystore']);
 
 const SERVICES_WITH_INFO_SCHEMA = new Set(['bigquery', 'spanner', 'alloydb', 'cloudsql']);
-const INFO_SCHEMA_VIEWS = {
-    bigquery: ['tables', 'columns', 'schemata', 'views', 'routines', 'partitions', 'table_storage'],
-    spanner: ['tables', 'columns', 'table_statistics'],
-    alloydb: ['tables', 'columns', 'schemata', 'views', 'routines'],
-    cloudsql: ['tables', 'columns', 'schemata', 'views', 'routines'],
-};
 const INFO_SCHEMA_VIEW_LABELS = {
     tables: 'TABLES', columns: 'COLUMNS', schemata: 'SCHEMATA', views: 'VIEWS',
     routines: 'ROUTINES', partitions: 'PARTITIONS', table_storage: 'TABLE_STORAGE',
     table_statistics: 'TABLE_STATISTICS',
 };
 
-// Info schema loaders per service — shared between Data Explorer and Stats panel
+// Info schema loaders per service — used by the Stats panel
 const INFO_SCHEMA_LOADERS = {
     bigquery: {
         views: INFO_SCHEMA_VIEWS.bigquery,
         async load(viewType) {
-            return api.bigqueryInfoSchema(viewType);
+            return normalizeMatrixRows(await api.bigqueryInfoSchema(viewType));
         },
     },
     spanner: {
         views: INFO_SCHEMA_VIEWS.spanner,
-        async load(viewType) {
+        async load(viewType, context) {
             const viewMap = {
                 tables: "SELECT t.table_catalog, t.table_schema, t.table_name, t.table_type FROM information_schema.tables t WHERE t.table_schema = '' ORDER BY t.table_name",
                 columns: "SELECT c.table_name, c.column_name, c.spanner_type, c.is_nullable FROM information_schema.columns c WHERE c.table_schema = '' ORDER BY c.table_name, c.ordinal_position",
                 table_statistics: "SELECT table_name, row_count, file_count FROM information_schema.table_statistics WHERE table_schema = '' ORDER BY table_name",
             };
             const sql = viewMap[viewType] || viewMap.tables;
-            const result = await api.query('spanner', sql, { instance: 'local-instance', database: 'local-database' });
-            return { columns: result.columns || [], rows: (result.rows || []).map(row => {
-                const obj = {};
-                result.columns.forEach((col, i) => obj[col] = row[i]);
-                return obj;
-            })};
+            return normalizeMatrixRows(await api.query('spanner', sql, context?.queryParams || {}));
         },
     },
     alloydb: {
         views: INFO_SCHEMA_VIEWS.alloydb,
-        async load(viewType) {
+        async load(viewType, context) {
             const viewMap = {
                 tables: "SELECT table_catalog, table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
                 columns: "SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position",
@@ -1601,17 +1633,12 @@ const INFO_SCHEMA_LOADERS = {
                 routines: "SELECT routine_name, routine_type, data_type FROM information_schema.routines WHERE routine_schema = 'public' ORDER BY routine_name",
             };
             const sql = viewMap[viewType] || viewMap.tables;
-            const result = await api.query('alloydb', sql);
-            return { columns: result.columns || [], rows: (result.rows || []).map(row => {
-                const obj = {};
-                result.columns.forEach((col, i) => obj[col] = row[i]);
-                return obj;
-            })};
+            return normalizeMatrixRows(await api.query('alloydb', sql, context?.queryParams || {}));
         },
     },
     cloudsql: {
         views: INFO_SCHEMA_VIEWS.cloudsql,
-        async load(viewType) {
+        async load(viewType, context) {
             const viewMap = {
                 tables: "SELECT table_catalog, table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
                 columns: "SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position",
@@ -1620,12 +1647,7 @@ const INFO_SCHEMA_LOADERS = {
                 routines: "SELECT routine_name, routine_type, data_type FROM information_schema.routines WHERE routine_schema = 'public' ORDER BY routine_name",
             };
             const sql = viewMap[viewType] || viewMap.tables;
-            const result = await api.query('cloudsql', sql);
-            return { columns: result.columns || [], rows: (result.rows || []).map(row => {
-                const obj = {};
-                result.columns.forEach((col, i) => obj[col] = row[i]);
-                return obj;
-            })};
+            return normalizeMatrixRows(await api.query('cloudsql', sql, context?.queryParams || {}));
         },
     },
 };
@@ -1683,6 +1705,11 @@ function DatabasePanels(props) {
 
     const currentMode = () => props.modeSignal?.();
     const canShowHistory = () => QUERY_HISTORY_SERVICES.has(props.serviceId);
+    const selectedSubpath = () => {
+        const value = typeof props.subpath === 'function' ? props.subpath() : props.subpath;
+        return Array.isArray(value) ? value : [];
+    };
+    const databaseContext = () => resolveDatabaseContext(props.serviceId, { subpath: selectedSubpath() });
 
     const loadHistory = async () => {
         if (!canShowHistory()) return;
@@ -1701,11 +1728,13 @@ function DatabasePanels(props) {
         setStatsLoading(true);
         setStatsData(null);
         try {
+            const context = databaseContext();
             if (props.serviceId === 'spanner') {
-                const result = await api.spannerStats('local-instance', 'local-database');
+                if (!context.instance || !context.database) return;
+                const result = await api.spannerStats(context.instance, context.database);
                 setStatsData(result);
             } else {
-                const result = await api.schema(props.serviceId);
+                const result = await api.schema(props.serviceId, context.schemaParams);
                 const tables = result?.tables || [];
                 setStatsData({
                     totalObjects: tables.length,
@@ -1729,7 +1758,7 @@ function DatabasePanels(props) {
         if (!loader) return;
         setInfoSchemaLoading(true);
         try {
-            const data = await loader.load(viewType);
+            const data = await loader.load(viewType, databaseContext());
             setInfoSchemaData(data);
         } catch (e) {
             setInfoSchemaData({ columns: ['error'], rows: [{ error: e.message || 'Failed to load' }] });
@@ -1921,39 +1950,41 @@ function DatabasePanels(props) {
 export default function ServiceExplorer(props) {
     const [mode, setMode] = createSignal(props.activeView?.() || 'explorer');
     const [refreshTrigger, setRefreshTrigger] = createSignal(0);
-    const [resetTrigger, setResetTrigger] = createSignal(0);
     let lastSyncedView = props.activeView?.();
 
     createEffect(() => {
         const view = props.activeView?.();
-        if (view && view !== lastSyncedView && (view === 'explorer' || view === 'editor')) {
+        if (view && view !== lastSyncedView && (view === 'explorer' || view === 'editor' || view === 'db-history' || view === 'db-stats')) {
             lastSyncedView = view;
             setMode(view);
         }
     });
 
+    // Only these four pages are backed by URL routes (pushed via onViewChange).
+    const URL_ROUTABLE_MODES = new Set(['explorer', 'editor', 'db-history', 'db-stats']);
     const switchPrimaryMode = (nextMode) => {
-        if (!['explorer', 'editor', 'db-history', 'db-stats', 'settings', 'guide'].includes(nextMode)) return;
-        lastSyncedView = nextMode;
-        props.onViewChange?.(nextMode);
         setMode(nextMode);
-        // Reset scroll position so user lands at top of new tab content
+        // Only the routable pages are pushed into the URL path; the rest are
+        // in-component tabs that stay local so they don't pollute the route.
+        if (URL_ROUTABLE_MODES.has(nextMode)) {
+            lastSyncedView = nextMode;
+            props.onViewChange?.(nextMode);
+        }
+        // Always reset scroll so the user lands at the top of the new tab content
         document.getElementById('main-content')?.scrollTo({ top: 0, behavior: 'instant' });
     };
 
-    const showSettings = () => setMode('settings');
+    const showSettings = () => switchPrimaryMode('settings');
 
     const activeService = () => props.selectedService?.() || 'gcs';
     const meta = () => SERVICE_META[activeService()] || { label: activeService(), description: '' };
 
-    const handleRefresh = () => setRefreshTrigger(prev => prev + 1);
-
     const triggerResetAndRefresh = () => {
-        setResetTrigger(prev => prev + 1);
         setRefreshTrigger(prev => prev + 1);
     };
 
     const isWorkflows = () => activeService() === 'workflows';
+    const isDataproc = () => activeService() === 'dataproc';
 
     return (
         <div class="se-root">
@@ -1981,8 +2012,13 @@ export default function ServiceExplorer(props) {
                 {(_) => <Workflows activeProject={props.activeProject} />}
             </Show>
 
+            {/* Dataproc has a dedicated cluster and job workspace. */}
+            <Show when={isDataproc()} keyed>
+                {(_) => <DataprocPanel project={(typeof props.activeProject === 'function' ? props.activeProject() : props.activeProject) || 'local-project'} />}
+            </Show>
+
             {/* Standard services get SQL Editor + Data Explorer */}
-<Show when={!isWorkflows()}>
+            <Show when={!isWorkflows() && !isDataproc()}>
                 {/* Mode Toggle + Action Buttons */}
                 <div class="se-mode-bar">
                     <div class="se-mode-tabs">
@@ -2009,7 +2045,7 @@ export default function ServiceExplorer(props) {
                         <Show when={activeService() === 'secretmanager'}>
                             <button
                                 class={`se-mode-tab ${mode() === 'stats' ? 'active' : ''}`}
-                                onClick={() => setMode('stats')}
+                                onClick={() => switchPrimaryMode('stats')}
                             >
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                     <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
@@ -2020,7 +2056,7 @@ export default function ServiceExplorer(props) {
                         <Show when={activeService() === 'cloudfunctions'}>
                             <button
                                 class={`se-mode-tab ${mode() === 'trigger' ? 'active' : ''}`}
-                                onClick={() => setMode('trigger')}
+                                onClick={() => switchPrimaryMode('trigger')}
                             >
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                     <path d="M13 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8z"/>
@@ -2028,21 +2064,10 @@ export default function ServiceExplorer(props) {
                                 Trigger Test
                             </button>
                         </Show>
-                        <Show when={activeService() === 'dataproc'}>
-                            <button
-                                class={`se-mode-tab ${mode() === 'jobs' ? 'active' : ''}`}
-                                onClick={() => setMode('jobs')}
-                            >
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
-                                    <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
-                                </svg>
-                                Job Output
-                            </button>
-                        </Show>
                         <Show when={activeService() === 'cloudscheduler'}>
                             <button
                                 class={`se-mode-tab ${mode() === 'history' ? 'active' : ''}`}
-                                onClick={() => setMode('history')}
+                                onClick={() => switchPrimaryMode('history')}
                             >
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                     <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>
@@ -2053,7 +2078,7 @@ export default function ServiceExplorer(props) {
                         <Show when={activeService() === 'alloydb'}>
                             <button
                                 class={`se-mode-tab ${mode() === 'connection' ? 'active' : ''}`}
-                                onClick={() => setMode('connection')}
+                                onClick={() => switchPrimaryMode('connection')}
                             >
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                     <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
@@ -2092,7 +2117,7 @@ export default function ServiceExplorer(props) {
                         </button>
                         <button
                             class={`se-mode-tab ${mode() === 'sync' ? 'active' : ''}`}
-                            onClick={() => setMode('sync')}
+                            onClick={() => switchPrimaryMode('sync')}
                         >
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                 <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
@@ -2113,7 +2138,7 @@ export default function ServiceExplorer(props) {
                         </button>
                         <button
                             class={`se-mode-tab ${mode() === 'guide' ? 'active' : ''}`}
-                            onClick={() => setMode('guide')}
+                            onClick={() => switchPrimaryMode('guide')}
                         >
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
                                 <path d="M19 2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4l3 3 3-3h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-5 12h-4v-2h4v2zm0-4h-4V8h4v2z"/>
@@ -2124,7 +2149,7 @@ export default function ServiceExplorer(props) {
                 </div>
 
                 <div style={{ display: mode() === 'editor' ? 'flex' : 'none', flex: '1', "min-height": '0', "flex-direction": 'column' }}>
-                    <SQLEditor serviceId={activeService()} refreshTrigger={refreshTrigger} />
+                    <SQLEditor serviceId={activeService()} refreshTrigger={refreshTrigger} modeSignal={mode} />
                 </div>
 
                 <Show when={mode() === 'explorer'}>
@@ -2153,15 +2178,10 @@ export default function ServiceExplorer(props) {
                     </div>
                 </Show>
 
-                <Show when={activeService() === 'dataproc' && mode() === 'jobs'}>
-                    <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '16px' }}>
-                        <JobOutputPanel outputPath={props.subpath?.[1]} />
-                    </div>
-                </Show>
 
                 <Show when={activeService() === 'cloudscheduler' && mode() === 'history'}>
                     <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '16px' }}>
-                        <SchedulerHistoryPanel jobName={props.subpath?.[1] ? `projects/local-project/locations/us-central1/jobs/${props.subpath[1]}` : null} />
+                        <SchedulerHistoryPanel jobName={(typeof props.subpath === 'function' ? props.subpath() : props.subpath)?.[1] ? `projects/${props.activeProject || 'local-project'}/locations/us-central1/jobs/${(typeof props.subpath === 'function' ? props.subpath() : props.subpath)[1]}` : null} />
                     </div>
                 </Show>
 
@@ -2171,14 +2191,19 @@ export default function ServiceExplorer(props) {
                     </div>
                 </Show>
 
-                <Show when={(mode() === 'db-history' || mode() === 'db-stats') && SQL_SERVICES.some(s => s.id === activeService())}>
+                <Show when={mode() === 'db-history' && SQL_SERVICES.some(s => s.id === activeService())}>
                     <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '16px' }}>
-                        <DatabasePanels serviceId={activeService()} modeSignal={mode} />
+                        <DatabasePanels serviceId={activeService()} modeSignal={mode} subpath={props.subpath} />
+                    </div>
+                </Show>
+                <Show when={mode() === 'db-stats' && SQL_SERVICES.some(s => s.id === activeService())}>
+                    <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '16px' }}>
+                        <DatabasePanels serviceId={activeService()} modeSignal={mode} subpath={props.subpath} />
                     </div>
                 </Show>
                 <Show when={activeService() === 'secretmanager' && mode() === 'stats'}>
                     <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '16px' }}>
-                        <SecretManagerStats activeProject={props.activeProject} />
+                        <SecretManagerStats />
                     </div>
                 </Show>
 
@@ -2188,13 +2213,14 @@ export default function ServiceExplorer(props) {
                             serviceId={activeService()}
                             serviceLabel={meta().label}
                             onReset={triggerResetAndRefresh}
+                            onNavigate={props.onNavigate}
                         />
                     </div>
                 </Show>
 
                 <Show when={mode() === 'guide'}>
                     <div style={{ display: 'flex', flex: '1', "min-height": '0', "flex-direction": 'column', padding: '24px', "overflow-y": 'auto' }}>
-                        <ServiceUserGuide serviceId={activeService()} projectId={props.activeProject} serviceLabel={meta().label} />
+                        <ServiceUserGuide serviceId={activeService()} serviceLabel={meta().label} />
                     </div>
                 </Show>
             </Show>
@@ -2211,7 +2237,6 @@ function ServiceUserGuide(props) {
     const [copiedSdk, setCopiedSdk] = createSignal(false);
     const [copiedCli, setCopiedCli] = createSignal(false);
     const [activeSdk, setActiveSdk] = createUrlBackedTab('sdk', ['python', 'nodejs', 'go', 'java', 'gcloud'], 'python', { history: 'replace' });
-    const projectId = () => typeof props.projectId === 'function' ? props.projectId() : props.projectId || 'local-project';
 
     const envVar = () => config().envVar || '';
     const envValue = () => config().envValue || '';
@@ -2267,7 +2292,7 @@ function ServiceUserGuide(props) {
                         </button>
                     </div>
                     <p style={{ "font-size": "11px", color: "var(--text-tertiary)", "margin-top": "8px" }}>
-                        Or auto-configure all services: <code style={{ "font-size": "11px" }}>eval "$(curl -s http://localhost:8080/env?format=shell)"</code>
+                        Or auto-configure all services: <code style={{ "font-size": "11px" }}>eval "$(curl -s http://localhost:24080/env?format=shell)"</code>
                     </p>
                 </div>
             </Show>
@@ -2397,31 +2422,31 @@ function ServiceUserGuide(props) {
 // ─── Service Configuration Data ─────────────────────────────────────────
 // Derived from services.yaml — used by the Settings tab to show read-only config
 const SERVICE_CONFIG = {
-    gcs:           { envVar: 'STORAGE_EMULATOR_HOST', envValue: 'http://localhost:4443', port: 4443, protocol: 'REST', type: 'External emulator', tier: 'Community', endpoint: 'http://localhost:4443', gcloudApi: 'storage', terraformVar: 'GOOGLE_STORAGE_CUSTOM_ENDPOINT', docPath: 'storage', sdkExample: `from google.cloud import storage\nclient = storage.Client()\nbucket = client.bucket("my-bucket")` },
-    pubsub:        { envVar: 'PUBSUB_EMULATOR_HOST', envValue: 'localhost:8085', port: 8085, protocol: 'gRPC', type: 'External emulator', tier: 'Community', endpoint: 'localhost:8085', gcloudApi: 'pubsub', terraformVar: 'GOOGLE_PUBSUB_CUSTOM_ENDPOINT', docPath: 'pubsub', sdkExample: `from google.cloud import pubsub_v1\npublisher = pubsub_v1.PublisherClient()\ntopic = publisher.topic_path("project", "my-topic")` },
-    firestore:     { envVar: 'FIRESTORE_EMULATOR_HOST', envValue: 'localhost:8086', port: 8086, protocol: 'gRPC', type: 'External emulator', tier: 'Community', endpoint: 'localhost:8086', gcloudApi: 'firestore', terraformVar: 'GOOGLE_FIRESTORE_CUSTOM_ENDPOINT', docPath: 'firestore', sdkExample: `from google.cloud import firestore\ndb = firestore.Client()\ndoc = db.collection("users").document("alice")` },
-    bigquery:      { envVar: 'BIGQUERY_EMULATOR_HOST', envValue: 'http://localhost:9050', port: 9050, protocol: 'REST', type: 'External emulator', tier: 'Community', endpoint: 'http://localhost:9050', gcloudApi: 'bigquery', terraformVar: 'GOOGLE_BIGQUERY_CUSTOM_ENDPOINT', docPath: 'bigquery', sdkExample: `from google.cloud import bigquery\nclient = bigquery.Client()\nrows = client.query("SELECT 1").result()` },
-    bigtable:      { envVar: 'BIGTABLE_EMULATOR_HOST', envValue: 'localhost:8087', port: 8087, protocol: 'gRPC', type: 'External emulator', tier: 'Pro', endpoint: 'localhost:8087', gcloudApi: null, terraformVar: 'GOOGLE_BIGTABLE_CUSTOM_ENDPOINT', docPath: 'bigtable', sdkExample: `from google.cloud import bigtable\nclient = bigtable.Client(project="project", admin=True)\ninstance = client.instance("my-instance")` },
-    spanner:       { envVar: 'SPANNER_EMULATOR_HOST', envValue: 'localhost:9010', port: 9010, protocol: 'gRPC', type: 'External emulator', tier: 'Pro', endpoint: 'localhost:9010', gcloudApi: 'spanner', terraformVar: 'GOOGLE_SPANNER_CUSTOM_ENDPOINT', docPath: 'spanner', sdkExample: `from google.cloud import spanner\nclient = spanner.Client()\ninstance = client.instance("my-instance")` },
-    memorystore:   { envVar: 'REDIS_HOST', envValue: 'localhost:6379', port: 6379, protocol: 'Redis', type: 'External emulator', tier: 'Community', endpoint: 'localhost:6379', gcloudApi: null, terraformVar: 'GOOGLE_REDIS_CUSTOM_ENDPOINT', docPath: 'memorystore', sdkExample: `import redis\nr = redis.Redis(host="localhost", port=6379)\nr.set("key", "value")` },
-    secretmanager: { envVar: 'SECRET_MANAGER_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'secretmanager', terraformVar: 'GOOGLE_SECRET_MANAGER_CUSTOM_ENDPOINT', docPath: 'secret-manager', sdkExample: `from google.cloud import secretmanager\nclient = secretmanager.SecretManagerServiceClient()\nsecret = client.create_secret(request={"parent": "projects/p", "secret_id": "my-secret"})` },
-    cloudtasks:    { envVar: 'CLOUD_TASKS_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'cloudtasks', terraformVar: 'GOOGLE_CLOUD_TASKS_CUSTOM_ENDPOINT', docPath: 'cloud-tasks', sdkExample: `from google.cloud import tasks_v2\nclient = tasks_v2.CloudTasksClient()\nqueue = client.create_queue(request={"parent": "projects/p/locations/us-central1", "queue": {}})` },
-    cloudscheduler:{ envVar: 'CLOUD_SCHEDULER_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'cloudscheduler', terraformVar: 'GOOGLE_CLOUD_SCHEDULER_CUSTOM_ENDPOINT', docPath: 'cloud-scheduler', sdkExample: `from google.cloud import scheduler_v1\nclient = scheduler_v1.CloudSchedulerClient()\njob = client.create_job(request={"parent": "projects/p/locations/us-central1", "job": {}})` },
-    cloudfunctions:{ envVar: 'CLOUD_FUNCTIONS_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'cloudfunctions', terraformVar: 'GOOGLE_CLOUD_FUNCTIONS_CUSTOM_ENDPOINT', docPath: 'cloud-functions', sdkExample: `gcloud functions deploy my-fn --runtime python311 --trigger-http` },
-    alloydb:       { envVar: 'ALLOYDB_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'alloydb', terraformVar: 'GOOGLE_ALLOYDB_CUSTOM_ENDPOINT', docPath: 'alloydb', sdkExample: `psql -h localhost -p 5432 -U postgres -d alloydb_<cluster_id>` },
-    dataproc:      { envVar: 'DATAPROC_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'dataproc', terraformVar: 'GOOGLE_DATAPROC_CUSTOM_ENDPOINT', docPath: 'dataproc', sdkExample: `gcloud dataproc clusters create my-cluster --region us-central1` },
-    cloudiam:      { envVar: 'IAM_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'iam', terraformVar: 'GOOGLE_IAM_CUSTOM_ENDPOINT', docPath: 'iam', sdkExample: `from google.cloud import iam\nclient = iam.IAMClient()` },
-    kms:           { envVar: 'CLOUD_KMS_EMULATOR_HOST', envValue: 'http://localhost:8080', port: 'gateway (8080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Pro', endpoint: 'http://localhost:8080', gcloudApi: 'cloudkms', terraformVar: 'GOOGLE_KMS_CUSTOM_ENDPOINT', docPath: 'kms', sdkExample: `from google.cloud import kms\nclient = kms.KeyManagementServiceClient()` },
-    logging:       { envVar: 'CLOUD_LOGGING_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'logging', terraformVar: 'GOOGLE_LOGGING_CUSTOM_ENDPOINT', docPath: 'logging', sdkExample: `from google.cloud import logging_v2\nclient = logging_v2.LoggingServiceV2Client()` },
-    monitoring:    { envVar: 'CLOUD_MONITORING_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'monitoring', terraformVar: 'GOOGLE_MONITORING_CUSTOM_ENDPOINT', docPath: 'monitoring', sdkExample: `from google.cloud import monitoring_v3\nclient = monitoring_v3.MetricServiceClient()` },
-    gke:           { envVar: 'GKE_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Pro', endpoint: 'localhost:8080', gcloudApi: 'container', terraformVar: 'GOOGLE_CONTAINER_CUSTOM_ENDPOINT', docPath: 'kubernetes-engine', sdkExample: `kubectl --kubeconfig=<(gcloud container clusters get-credentials my-cluster)` },
-    compute:       { envVar: 'COMPUTE_EMULATOR_HOST', envValue: 'http://localhost:8080', port: 'gateway (8080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Pro', endpoint: 'http://localhost:8080', gcloudApi: 'compute', terraformVar: 'GOOGLE_COMPUTE_CUSTOM_ENDPOINT', docPath: 'compute', sdkExample: `from google.cloud import compute_v1\nclient = compute_v1.InstancesClient()` },
-    cloudrun:      { envVar: 'CLOUD_RUN_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Pro', endpoint: 'localhost:8080', gcloudApi: 'run', terraformVar: 'GOOGLE_CLOUD_RUN_CUSTOM_ENDPOINT', docPath: 'cloud-run', sdkExample: `gcloud run deploy my-service --image gcr.io/project/image` },
-    cloudsql:      { envVar: 'CLOUD_SQL_EMULATOR_HOST', envValue: 'http://localhost:8080', port: 'gateway (8080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Community', endpoint: 'http://localhost:8080', gcloudApi: 'sqladmin', terraformVar: 'GOOGLE_SQL_CUSTOM_ENDPOINT', docPath: 'sql', sdkExample: `psql -h localhost -p 5432 -U postgres -d <db_name>` },
-    cloudbilling:  { envVar: 'CLOUD_BILLING_EMULATOR_HOST', envValue: 'http://localhost:8080', port: 'gateway (8080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Community', endpoint: 'http://localhost:8080', gcloudApi: 'cloudbilling', terraformVar: 'GOOGLE_CLOUD_BILLING_CUSTOM_ENDPOINT', docPath: 'billing', sdkExample: `from google.cloud import billing\nclient = billing.CloudBillingClient()` },
-    serviceusage:  { envVar: 'SERVICE_USAGE_EMULATOR_HOST', envValue: 'http://localhost:8080', port: 'gateway (8080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Community', endpoint: 'http://localhost:8080', gcloudApi: null, terraformVar: 'GOOGLE_SERVICE_USAGE_CUSTOM_ENDPOINT', docPath: 'service-usage', sdkExample: `gcloud services enable compute.googleapis.com` },
-    vertexai:      { envVar: 'AIPLATFORM_EMULATOR_HOST', envValue: 'http://localhost:8080', port: 'gateway (8080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Pro', endpoint: 'http://localhost:8080', gcloudApi: 'aiplatform', terraformVar: 'GOOGLE_VERTEX_AI_CUSTOM_ENDPOINT', docPath: 'vertex-ai', sdkExample: `from google.cloud import aiplatform\naiplatform.init(project="p", location="us-central1")` },
-    workflows:     { envVar: 'WORKFLOWS_EMULATOR_HOST', envValue: 'localhost:8080', port: 'gateway (8080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:8080', gcloudApi: 'workflows', terraformVar: 'GOOGLE_WORKFLOWS_CUSTOM_ENDPOINT', docPath: 'workflows', sdkExample: `gcloud workflows deploy my-wf --source=workflow.yaml` },
+    gcs:           { envVar: 'STORAGE_EMULATOR_HOST', envValue: 'http://localhost:24081', port: 24081, protocol: 'REST', type: 'External emulator', tier: 'Community', endpoint: 'http://localhost:24081', gcloudApi: 'storage', terraformVar: 'GOOGLE_STORAGE_CUSTOM_ENDPOINT', docPath: 'storage', sdkExample: `from google.cloud import storage\nclient = storage.Client()\nbucket = client.bucket("my-bucket")` },
+    pubsub:        { envVar: 'PUBSUB_EMULATOR_HOST', envValue: 'localhost:24082', port: 24082, protocol: 'gRPC', type: 'External emulator', tier: 'Community', endpoint: 'localhost:24082', gcloudApi: 'pubsub', terraformVar: 'GOOGLE_PUBSUB_CUSTOM_ENDPOINT', docPath: 'pubsub', sdkExample: `from google.cloud import pubsub_v1\npublisher = pubsub_v1.PublisherClient()\ntopic = publisher.topic_path("project", "my-topic")` },
+    firestore:     { envVar: 'FIRESTORE_EMULATOR_HOST', envValue: 'localhost:24083', port: 24083, protocol: 'gRPC', type: 'External emulator', tier: 'Community', endpoint: 'localhost:24083', gcloudApi: 'firestore', terraformVar: 'GOOGLE_FIRESTORE_CUSTOM_ENDPOINT', docPath: 'firestore', sdkExample: `from google.cloud import firestore\ndb = firestore.Client()\ndoc = db.collection("users").document("alice")` },
+    bigquery:      { envVar: 'BIGQUERY_EMULATOR_HOST', envValue: 'http://localhost:24087', port: 24087, protocol: 'REST', type: 'External emulator', tier: 'Community', endpoint: 'http://localhost:24087', gcloudApi: 'bigquery', terraformVar: 'GOOGLE_BIGQUERY_CUSTOM_ENDPOINT', docPath: 'bigquery', sdkExample: `from google.cloud import bigquery\nclient = bigquery.Client()\nrows = client.query("SELECT 1").result()` },
+    bigtable:      { envVar: 'BIGTABLE_EMULATOR_HOST', envValue: 'localhost:24084', port: 24084, protocol: 'gRPC', type: 'External emulator', tier: 'Pro', endpoint: 'localhost:24084', gcloudApi: null, terraformVar: 'GOOGLE_BIGTABLE_CUSTOM_ENDPOINT', docPath: 'bigtable', sdkExample: `from google.cloud import bigtable\nclient = bigtable.Client(project="project", admin=True)\ninstance = client.instance("my-instance")` },
+    spanner:       { envVar: 'SPANNER_EMULATOR_HOST', envValue: 'localhost:24085', port: 24085, protocol: 'gRPC', type: 'External emulator', tier: 'Pro', endpoint: 'localhost:24085', gcloudApi: 'spanner', terraformVar: 'GOOGLE_SPANNER_CUSTOM_ENDPOINT', docPath: 'spanner', sdkExample: `from google.cloud import spanner\nclient = spanner.Client()\ninstance = client.instance("my-instance")` },
+    memorystore:   { envVar: 'REDIS_HOST', envValue: 'localhost:24089', port: 24089, protocol: 'Redis', type: 'External emulator', tier: 'Community', endpoint: 'localhost:24089', gcloudApi: null, terraformVar: 'GOOGLE_REDIS_CUSTOM_ENDPOINT', docPath: 'memorystore', sdkExample: `import redis\nr = redis.Redis(host="localhost", port=24089)\nr.set("key", "value")` },
+    secretmanager: { envVar: 'SECRET_MANAGER_EMULATOR_HOST', envValue: 'localhost:24080', port: 'gateway (24080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:24080', gcloudApi: 'secretmanager', terraformVar: 'GOOGLE_SECRET_MANAGER_CUSTOM_ENDPOINT', docPath: 'secret-manager', sdkExample: `from google.cloud import secretmanager\nclient = secretmanager.SecretManagerServiceClient()\nsecret = client.create_secret(request={"parent": "projects/p", "secret_id": "my-secret"})` },
+    cloudtasks:    { envVar: 'CLOUD_TASKS_EMULATOR_HOST', envValue: 'localhost:24080', port: 'gateway (24080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:24080', gcloudApi: 'cloudtasks', terraformVar: 'GOOGLE_CLOUD_TASKS_CUSTOM_ENDPOINT', docPath: 'cloud-tasks', sdkExample: `from google.cloud import tasks_v2\nclient = tasks_v2.CloudTasksClient()\nqueue = client.create_queue(request={"parent": "projects/p/locations/us-central1", "queue": {}})` },
+    cloudscheduler:{ envVar: 'CLOUD_SCHEDULER_EMULATOR_HOST', envValue: 'localhost:24080', port: 'gateway (24080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:24080', gcloudApi: 'cloudscheduler', terraformVar: 'GOOGLE_CLOUD_SCHEDULER_CUSTOM_ENDPOINT', docPath: 'cloud-scheduler', sdkExample: `from google.cloud import scheduler_v1\nclient = scheduler_v1.CloudSchedulerClient()\njob = client.create_job(request={"parent": "projects/p/locations/us-central1", "job": {}})` },
+    cloudfunctions:{ envVar: 'CLOUD_FUNCTIONS_EMULATOR_HOST', envValue: 'localhost:24080', port: 'gateway (24080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:24080', gcloudApi: 'cloudfunctions', terraformVar: 'GOOGLE_CLOUD_FUNCTIONS_CUSTOM_ENDPOINT', docPath: 'cloud-functions', sdkExample: `gcloud functions deploy my-fn --runtime python311 --trigger-http` },
+    alloydb:       { envVar: 'ALLOYDB_EMULATOR_HOST', envValue: 'localhost:24080', port: 'gateway (24080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:24080', gcloudApi: 'alloydb', terraformVar: 'GOOGLE_ALLOYDB_CUSTOM_ENDPOINT', docPath: 'alloydb', sdkExample: `psql -h localhost -p 24090 -U postgres -d alloydb_<cluster_id>` },
+    dataproc:      { envVar: 'DATAPROC_EMULATOR_HOST', envValue: 'localhost:24080', port: 'gateway (24080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:24080', gcloudApi: 'dataproc', terraformVar: 'GOOGLE_DATAPROC_CUSTOM_ENDPOINT', docPath: 'dataproc', sdkExample: `gcloud dataproc clusters create my-cluster --region us-central1` },
+    cloudiam:      { envVar: 'IAM_EMULATOR_HOST', envValue: 'localhost:24080', port: 'gateway (24080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:24080', gcloudApi: 'iam', terraformVar: 'GOOGLE_IAM_CUSTOM_ENDPOINT', docPath: 'iam', sdkExample: `from google.cloud import iam\nclient = iam.IAMClient()` },
+    kms:           { envVar: 'CLOUD_KMS_EMULATOR_HOST', envValue: 'http://localhost:24080', port: 'gateway (24080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Pro', endpoint: 'http://localhost:24080', gcloudApi: 'cloudkms', terraformVar: 'GOOGLE_KMS_CUSTOM_ENDPOINT', docPath: 'kms', sdkExample: `from google.cloud import kms\nclient = kms.KeyManagementServiceClient()` },
+    logging:       { envVar: 'CLOUD_LOGGING_EMULATOR_HOST', envValue: 'localhost:24080', port: 'gateway (24080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:24080', gcloudApi: 'logging', terraformVar: 'GOOGLE_LOGGING_CUSTOM_ENDPOINT', docPath: 'logging', sdkExample: `from google.cloud import logging_v2\nclient = logging_v2.LoggingServiceV2Client()` },
+    monitoring:    { envVar: 'CLOUD_MONITORING_EMULATOR_HOST', envValue: 'localhost:24080', port: 'gateway (24080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:24080', gcloudApi: 'monitoring', terraformVar: 'GOOGLE_MONITORING_CUSTOM_ENDPOINT', docPath: 'monitoring', sdkExample: `from google.cloud import monitoring_v3\nclient = monitoring_v3.MetricServiceClient()` },
+    gke:           { envVar: 'GKE_EMULATOR_HOST', envValue: 'localhost:24080', port: 'gateway (24080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Pro', endpoint: 'localhost:24080', gcloudApi: 'container', terraformVar: 'GOOGLE_CONTAINER_CUSTOM_ENDPOINT', docPath: 'kubernetes-engine', sdkExample: `kubectl --kubeconfig=<(gcloud container clusters get-credentials my-cluster)` },
+    compute:       { envVar: 'COMPUTE_EMULATOR_HOST', envValue: 'http://localhost:24080', port: 'gateway (24080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Pro', endpoint: 'http://localhost:24080', gcloudApi: 'compute', terraformVar: 'GOOGLE_COMPUTE_CUSTOM_ENDPOINT', docPath: 'compute', sdkExample: `from google.cloud import compute_v1\nclient = compute_v1.InstancesClient()` },
+    cloudrun:      { envVar: 'CLOUD_RUN_EMULATOR_HOST', envValue: 'localhost:24080', port: 'gateway (24080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Pro', endpoint: 'localhost:24080', gcloudApi: 'run', terraformVar: 'GOOGLE_CLOUD_RUN_CUSTOM_ENDPOINT', docPath: 'cloud-run', sdkExample: `gcloud run deploy my-service --image gcr.io/project/image` },
+    cloudsql:      { envVar: 'CLOUD_SQL_EMULATOR_HOST', envValue: 'http://localhost:24080', port: 'gateway (24080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Community', endpoint: 'http://localhost:24080', gcloudApi: 'sqladmin', terraformVar: 'GOOGLE_SQL_CUSTOM_ENDPOINT', docPath: 'sql', sdkExample: `psql -h localhost -p 24090 -U postgres -d <db_name>` },
+    cloudbilling:  { envVar: 'CLOUD_BILLING_EMULATOR_HOST', envValue: 'http://localhost:24080', port: 'gateway (24080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Community', endpoint: 'http://localhost:24080', gcloudApi: 'cloudbilling', terraformVar: 'GOOGLE_CLOUD_BILLING_CUSTOM_ENDPOINT', docPath: 'billing', sdkExample: `from google.cloud import billing\nclient = billing.CloudBillingClient()` },
+    serviceusage:  { envVar: 'SERVICE_USAGE_EMULATOR_HOST', envValue: 'http://localhost:24080', port: 'gateway (24080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Community', endpoint: 'http://localhost:24080', gcloudApi: null, terraformVar: 'GOOGLE_SERVICE_USAGE_CUSTOM_ENDPOINT', docPath: 'service-usage', sdkExample: `gcloud services enable compute.googleapis.com` },
+    vertexai:      { envVar: 'AIPLATFORM_EMULATOR_HOST', envValue: 'http://localhost:24080', port: 'gateway (24080)', protocol: 'REST', type: 'Facade (in-process)', tier: 'Pro', endpoint: 'http://localhost:24080', gcloudApi: 'aiplatform', terraformVar: 'GOOGLE_VERTEX_AI_CUSTOM_ENDPOINT', docPath: 'vertex-ai', sdkExample: `from google.cloud import aiplatform\naiplatform.init(project="p", location="us-central1")` },
+    workflows:     { envVar: 'WORKFLOWS_EMULATOR_HOST', envValue: 'localhost:24080', port: 'gateway (24080)', protocol: 'gRPC', type: 'Facade (in-process)', tier: 'Community', endpoint: 'localhost:24080', gcloudApi: 'workflows', terraformVar: 'GOOGLE_WORKFLOWS_CUSTOM_ENDPOINT', docPath: 'workflows', sdkExample: `gcloud workflows deploy my-wf --source=workflow.yaml` },
 };
 
 // ─── Service Settings Component ──────────────────────────────────────────
@@ -2469,10 +2494,7 @@ function ServiceSettings(props) {
         setConfirmText('');
     };
 
-    const navigateToSettingsPage = () => {
-        history.pushState(null, '', '/settings');
-        window.dispatchEvent(new PopStateEvent('popstate'));
-    };
+    const navigateToSettingsPage = () => props.onNavigate?.('settings');
 
     const docUrl = () => config() ? `https://cloud.google.com/${config().docPath}/docs` : '#';
     const sdkUrl = () => config() ? `https://cloud.google.com/${config().docPath}/docs/reference/libraries` : '#';
@@ -2589,7 +2611,7 @@ function ServiceSettings(props) {
                             href="/settings"
                             onClick={(e) => { e.preventDefault(); navigateToSettingsPage(); }}
                             class="settings-resource-link"
-                            style={{ display: 'flex', "align-items": 'center', gap: '8px', padding: '8px 10px', "border-radius": '6px', color: 'var(--text-secondary)', "text-decoration": 'none', "font-size": '13px', transition: 'background 0.15s, color 0.15s' }}
+                            style={{ display: 'flex', "align-items": 'center', gap: '8px', padding: '8px 10px', "border-radius": '6px', "text-decoration": 'none', "font-size": '13px', transition: 'background 0.15s, color 0.15s' }}
                         >
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true" focusable="false"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
                             LocalCloud User Guide
@@ -2600,7 +2622,7 @@ function ServiceSettings(props) {
                             href={`/settings#${props.serviceId}`}
                             onClick={(e) => { e.preventDefault(); navigateToSettingsPage(); }}
                             class="settings-resource-link"
-                            style={{ display: 'flex', "align-items": 'center', gap: '8px', padding: '8px 10px', "border-radius": '6px', color: 'var(--text-secondary)', "text-decoration": 'none', "font-size": '13px', transition: 'background 0.15s, color 0.15s' }}
+                            style={{ display: 'flex', "align-items": 'center', gap: '8px', padding: '8px 10px', "border-radius": '6px', "text-decoration": 'none', "font-size": '13px', transition: 'background 0.15s, color 0.15s' }}
                         >
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" aria-hidden="true" focusable="false"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
                             Code Examples & CLI Commands
@@ -2627,7 +2649,7 @@ function ServiceSettings(props) {
                             target="_blank"
                             rel="noopener noreferrer"
                             class="settings-resource-link"
-                            style={{ display: 'flex', "align-items": 'center', gap: '8px', padding: '8px 10px', "border-radius": '6px', color: 'var(--text-secondary)', "text-decoration": 'none', "font-size": '13px', transition: 'background 0.15s, color 0.15s' }}
+                            style={{ display: 'flex', "align-items": 'center', gap: '8px', padding: '8px 10px', "border-radius": '6px', "text-decoration": 'none', "font-size": '13px', transition: 'background 0.15s, color 0.15s' }}
                         >
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
                             Google Cloud Documentation
@@ -2638,7 +2660,7 @@ function ServiceSettings(props) {
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 class="settings-resource-link"
-                                style={{ display: 'flex', "align-items": 'center', gap: '8px', padding: '8px 10px', "border-radius": '6px', color: 'var(--text-secondary)', "text-decoration": 'none', "font-size": '13px', transition: 'background 0.15s, color 0.15s' }}
+                                style={{ display: 'flex', "align-items": 'center', gap: '8px', padding: '8px 10px', "border-radius": '6px', "text-decoration": 'none', "font-size": '13px', transition: 'background 0.15s, color 0.15s' }}
                             >
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></svg>
                                 Client Library Reference
@@ -2649,7 +2671,7 @@ function ServiceSettings(props) {
                             target="_blank"
                             rel="noopener noreferrer"
                             class="settings-resource-link"
-                            style={{ display: 'flex', "align-items": 'center', gap: '8px', padding: '8px 10px', "border-radius": '6px', color: 'var(--text-secondary)', "text-decoration": 'none', "font-size": '13px', transition: 'background 0.15s, color 0.15s' }}
+                            style={{ display: 'flex', "align-items": 'center', gap: '8px', padding: '8px 10px', "border-radius": '6px', "text-decoration": 'none', "font-size": '13px', transition: 'background 0.15s, color 0.15s' }}
                         >
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M17.5 1.25a.5.5 0 0 1 1 0v2.5H21a.5.5 0 0 1 0 1h-2.5v2.5a.5.5 0 0 1-1 0v-2.5H15a.5.5 0 0 1 0-1h2.5v-2.5zm-11 4.5a1 1 0 0 1 1-1H11a.5.5 0 0 0 0-1H7.5a2 2 0 0 0-2 2v14a.5.5 0 0 0 .8.4l5.7-4.4 5.7 4.4a.5.5 0 0 0 .8-.4v-8.5a.5.5 0 0 0-1 0v7.48l-5.2-4a.5.5 0 0 0-.6 0l-5.2 4V5.75z"/></svg>
                             Terraform Registry
@@ -2877,7 +2899,7 @@ function ServiceSettings(props) {
 }
 
 // ─── Secret Manager Stats Component ────────────────────────────────────
-function SecretManagerStats(props) {
+function SecretManagerStats() {
     const [stats, setStats] = createSignal(null);
     const [loading, setLoading] = createSignal(true);
 

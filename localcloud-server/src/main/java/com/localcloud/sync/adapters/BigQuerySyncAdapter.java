@@ -20,7 +20,7 @@ import java.util.*;
  * Sync adapter for Google BigQuery.
  *
  * <p>Pulls data from a real GCP BigQuery project into the local DuckDB-based
- * BigQuery emulator (port 9050). This lets researchers pull filtered subsets of
+ * BigQuery emulator (port 24087). This lets researchers pull filtered subsets of
  * production data for $0 repeated querying locally.
  *
  * <p>GCP REST API docs:

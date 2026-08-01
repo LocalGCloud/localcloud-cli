@@ -83,11 +83,11 @@ public class MutateService {
 
         ServiceDefinition spannerDef = registry.getService("spanner");
         int spannerRestPort = spannerDef != null && spannerDef.additionalPorts().containsKey("rest")
-                ? spannerDef.additionalPorts().get("rest") : 9020;
+                ? spannerDef.additionalPorts().get("rest") : 24086;
         this.spannerBase = "http://localhost:" + spannerRestPort;
 
         ServiceDefinition bigtableDef = registry.getService("bigtable");
-        this.bigtablePort = bigtableDef != null ? bigtableDef.port() : 8087;
+        this.bigtablePort = bigtableDef != null ? bigtableDef.port() : 24084;
     }
 
     public void setWorkflowsService(WorkflowsServiceImpl service) {
@@ -1316,7 +1316,7 @@ public class MutateService {
             try (Connection conn = dataSource.getConnection();
                  PreparedStatement ps = conn.prepareStatement(
                      "INSERT INTO memorystore_instances (project_id, instance_id, display_name, tier, engine, redis_version, port, memory_size_gb, state, host) " +
-                     "VALUES (?, ?, ?, ?, 'REDIS', ?, 6379, ?, 'READY', 'localhost')")) {
+                     "VALUES (?, ?, ?, ?, 'REDIS', ?, 24089, ?, 'READY', 'localhost')")) {
                 ps.setString(1, projectId);
                 ps.setString(2, instanceId);
                 ps.setString(3, displayName);
@@ -2177,7 +2177,7 @@ public class MutateService {
             int dbIndex = json.containsKey("db") ? ((Number) json.get("db")).intValue() : 0;
 
             int redisPort = config.getServiceRegistry().getService("memorystore") != null
-                    ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+                    ? config.getServiceRegistry().getService("memorystore").port() : 24089;
             try (Jedis jedis = new Jedis("localhost", redisPort)) {
                 jedis.select(dbIndex);
                 jedis.del(key);
@@ -2189,7 +2189,7 @@ public class MutateService {
         if ("flushdb".equals(operation)) {
             int dbIndex = json.containsKey("db") ? ((Number) json.get("db")).intValue() : 0;
             int redisPort = config.getServiceRegistry().getService("memorystore") != null
-                    ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+                    ? config.getServiceRegistry().getService("memorystore").port() : 24089;
             try (Jedis jedis = new Jedis("localhost", redisPort)) {
                 jedis.select(dbIndex);
                 jedis.flushDB();
@@ -2208,7 +2208,7 @@ public class MutateService {
         int dbIndex = json.containsKey("db") ? ((Number) json.get("db")).intValue() : 0;
 
         int redisPort = config.getServiceRegistry().getService("memorystore") != null
-                ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+                ? config.getServiceRegistry().getService("memorystore").port() : 24089;
 
         try (Jedis jedis = new Jedis("localhost", redisPort)) {
             jedis.select(dbIndex);

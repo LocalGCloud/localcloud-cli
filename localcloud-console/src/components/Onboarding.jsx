@@ -1,4 +1,4 @@
-import { createSignal, Show, For, onCleanup } from 'solid-js';
+import { createSignal, For, onCleanup } from 'solid-js';
 import { trapFocus } from '../utils/a11y.js';
 
 const STEPS = [
@@ -21,7 +21,6 @@ const STEPS = [
 
 export default function Onboarding(props) {
     const [step, setStep] = createSignal(0);
-    let dialogRef;
 
     const finish = () => {
         try { localStorage.setItem('localcloud-onboarding-complete', 'true'); } catch {}
@@ -39,7 +38,16 @@ export default function Onboarding(props) {
             onClick={(e) => { if (e.target === e.currentTarget) finish(); }}>
             <div class="create-dialog"
                 onClick={(e) => e.stopPropagation()}
-                ref={el => { if (el) requestAnimationFrame(() => trapFocus(el, finish)); }}
+                ref={(el) => {
+                    let cleanup;
+                    const frame = requestAnimationFrame(() => {
+                        cleanup = trapFocus(el, finish);
+                    });
+                    onCleanup(() => {
+                        cancelAnimationFrame(frame);
+                        cleanup?.();
+                    });
+                }}
                 style={{ width: '420px', padding: '0', display: 'flex', 'flex-direction': 'column' }}>
                 <div class="create-dialog-accent" style="background:var(--primary)" />
                 <div class="create-dialog-header" style={{ 'text-align': 'center', 'padding-bottom': '8px' }}>

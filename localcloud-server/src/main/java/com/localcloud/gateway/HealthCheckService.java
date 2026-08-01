@@ -1,5 +1,12 @@
 package com.localcloud.gateway;
 
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
@@ -605,64 +612,157 @@ public class HealthCheckService {
         return "Inspect gateway logs for the in-process facade.";
     }
 
+    private static String resolveAFromCanonicalDns(String hostname) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (DataOutputStream query = new DataOutputStream(bytes)) {
+            query.writeShort(0x4C43);
+            query.writeShort(0x0100);
+            query.writeShort(1);
+            query.writeShort(0);
+            query.writeShort(0);
+            query.writeShort(0);
+            for (String label : hostname.split("\\.")) {
+                byte[] encoded = label.getBytes(StandardCharsets.US_ASCII);
+                if (encoded.length == 0 || encoded.length > 63) {
+                    throw new IOException("Invalid DNS label in " + hostname);
+                }
+                query.writeByte(encoded.length);
+                query.write(encoded);
+            }
+            query.writeByte(0);
+            query.writeShort(1);
+            query.writeShort(1);
+        }
+
+        byte[] requestBytes = bytes.toByteArray();
+        DatagramPacket request = new DatagramPacket(
+                requestBytes, requestBytes.length, InetAddress.getLoopbackAddress(), 24093);
+        byte[] responseBytes = new byte[512];
+        DatagramPacket response = new DatagramPacket(responseBytes, responseBytes.length);
+        try (DatagramSocket socket = new DatagramSocket()) {
+            socket.setSoTimeout(2000);
+            socket.send(request);
+            socket.receive(response);
+        }
+
+        int length = response.getLength();
+        if (length < 12 || (responseBytes[0] & 0xff) != 0x4C || (responseBytes[1] & 0xff) != 0x43) {
+            throw new IOException("Invalid DNS response");
+        }
+        int responseCode = responseBytes[3] & 0x0f;
+        int answerCount = ((responseBytes[6] & 0xff) << 8) | (responseBytes[7] & 0xff);
+        if (responseCode != 0 || answerCount == 0) {
+            throw new IOException("DNS response code " + responseCode + " with no answers");
+        }
+
+        int offset = skipDnsName(responseBytes, 12, length) + 4;
+        for (int answer = 0; answer < answerCount; answer++) {
+            offset = skipDnsName(responseBytes, offset, length);
+            if (offset + 10 > length) {
+                throw new IOException("Truncated DNS answer");
+            }
+            int type = ((responseBytes[offset] & 0xff) << 8) | (responseBytes[offset + 1] & 0xff);
+            int recordClass = ((responseBytes[offset + 2] & 0xff) << 8) | (responseBytes[offset + 3] & 0xff);
+            int dataLength = ((responseBytes[offset + 8] & 0xff) << 8) | (responseBytes[offset + 9] & 0xff);
+            offset += 10;
+            if (offset + dataLength > length) {
+                throw new IOException("Truncated DNS record data");
+            }
+            if (type == 1 && recordClass == 1 && dataLength == 4) {
+                return (responseBytes[offset] & 0xff) + "."
+                        + (responseBytes[offset + 1] & 0xff) + "."
+                        + (responseBytes[offset + 2] & 0xff) + "."
+                        + (responseBytes[offset + 3] & 0xff);
+            }
+            offset += dataLength;
+        }
+        throw new IOException("DNS response contained no A record");
+    }
+
+    private static int skipDnsName(byte[] message, int offset, int length) throws IOException {
+        while (offset < length) {
+            int labelLength = message[offset] & 0xff;
+            if (labelLength == 0) {
+                return offset + 1;
+            }
+            if ((labelLength & 0xc0) == 0xc0) {
+                if (offset + 1 >= length) {
+                    throw new IOException("Truncated DNS compression pointer");
+                }
+                return offset + 2;
+            }
+            offset += labelLength + 1;
+        }
+        throw new IOException("Truncated DNS name");
+    }
+
     /**
-     * Terraform-specific readiness check. Verifies that DNS redirect for
-     * {@code serviceusage.googleapis.com} is configured and port 443 is
-     * reachable. Returns actionable errors when prerequisites are missing.
+     * Terraform readiness check. Custom-endpoint mode is the default;
+     * {@code ?mode=transparent} additionally verifies DNS redirect and host 443.
+     * Returns actionable errors when prerequisites are missing.
      *
      * <p>Usage: {@code GET /terraform/readiness} — returns 200 if all
      * Terraform prerequisites are met, 503 with remediation hints otherwise.</p>
      */
     @Get("/terraform/readiness")
-    public HttpResponse terraformReadiness() {
+    public HttpResponse terraformReadiness(ServiceRequestContext ctx) {
+        boolean transparent = "transparent".equalsIgnoreCase(ctx.queryParams().get("mode", "custom"));
         return HttpResponse.of(CompletableFuture.supplyAsync(() -> {
             try {
                 List<Map<String, Object>> checks = new ArrayList<>();
                 boolean allPassed = true;
 
-                // Check 1: DNS resolution for serviceusage.googleapis.com
+                if (transparent) {
+                // Check 1: query the canonical in-container dnsmasq listener.
+                // The JVM's system resolver uses Docker's 127.0.0.11 proxy and
+                // cannot target LocalCloud's non-standard DNS port 24093.
                 Map<String, Object> dnsCheck = new LinkedHashMap<>();
                 dnsCheck.put("name", "dns_redirect");
-                dnsCheck.put("description", "serviceusage.googleapis.com resolves to 127.0.0.1");
+                dnsCheck.put("description", "Canonical DNS listener resolves serviceusage.googleapis.com to 127.0.0.1");
                 try {
-                    java.net.InetAddress addr = java.net.InetAddress.getByName("serviceusage.googleapis.com");
-                    boolean resolvedToLocal = "127.0.0.1".equals(addr.getHostAddress());
+                    String resolvedAddress = resolveAFromCanonicalDns("serviceusage.googleapis.com");
+                    boolean resolvedToLocal = "127.0.0.1".equals(resolvedAddress);
                     dnsCheck.put("passed", resolvedToLocal);
-                    dnsCheck.put("actual", addr.getHostAddress());
+                    dnsCheck.put("actual", resolvedAddress);
                     dnsCheck.put("expected", "127.0.0.1");
                     if (!resolvedToLocal) {
                         allPassed = false;
                         dnsCheck.put("remediation",
-                            "Option A (recommended): echo 'nameserver 127.0.0.1' | sudo tee /etc/resolver/googleapis.com");
-                        dnsCheck.put("remediation_alt",
-                            "Option B: echo '127.0.0.1 serviceusage.googleapis.com' | sudo tee -a /etc/hosts");
+                            "Confirm dnsmasq on port 24093 maps *.googleapis.com to 127.0.0.1");
                     }
-                } catch (java.net.UnknownHostException e) {
+                } catch (IOException e) {
                     dnsCheck.put("passed", false);
                     dnsCheck.put("error", e.getMessage());
                     allPassed = false;
                     dnsCheck.put("remediation",
-                        "Option A (recommended): echo 'nameserver 127.0.0.1' | sudo tee /etc/resolver/googleapis.com");
-                    dnsCheck.put("remediation_alt",
-                        "Option B: echo '127.0.0.1 serviceusage.googleapis.com' | sudo tee -a /etc/hosts");
+                        "Restart with LOCALCLOUD_ENABLE_LOCAL_PROXY=true and publish host UDP 53 to container 24093");
                 }
                 checks.add(dnsCheck);
 
-                // Check 2: Port 443 reachable (gateway must be mapped -p 443:8080)
+                // Check 2: Caddy's in-container transparent HTTPS listener is reachable.
+                // Host port 443 is mapped to this canonical listener by Docker and is not
+                // reachable as 127.0.0.1:443 from inside the container.
                 Map<String, Object> portCheck = new LinkedHashMap<>();
-                portCheck.put("name", "port_443");
-                portCheck.put("description", "Port 443 reachable (requires -p 443:8080)");
+                portCheck.put("name", "caddy_https");
+                portCheck.put("description", "Canonical Caddy HTTPS listener is reachable on port 24094");
                 try (var socket = new java.net.Socket()) {
-                    socket.connect(new java.net.InetSocketAddress("127.0.0.1", 443), 2000);
+                    socket.connect(new java.net.InetSocketAddress("127.0.0.1", 24094), 2000);
                     portCheck.put("passed", true);
                 } catch (Exception e) {
                     portCheck.put("passed", false);
                     portCheck.put("error", e.getMessage());
                     allPassed = false;
                     portCheck.put("remediation",
-                        "Restart container with: docker run -p 443:8080 ...");
+                        "Restart with LOCALCLOUD_ENABLE_LOCAL_PROXY=true and publish host 443 to container 24094");
                 }
                 checks.add(portCheck);
+                } else {
+                    Map<String, Object> endpointCheck = new LinkedHashMap<>();
+                    endpointCheck.put("name", "custom_endpoints");
+                    endpointCheck.put("description", "Generated GOOGLE_*_CUSTOM_ENDPOINT values use gateway " + config.getGatewayPort());
+                    endpointCheck.put("passed", true);
+                    checks.add(endpointCheck);
+                }
 
                 // Check 3: Service Usage API responds
                 Map<String, Object> apiCheck = new LinkedHashMap<>();
@@ -731,37 +831,43 @@ public class HealthCheckService {
                 }
                 checks.add(billingCheck);
 
-                // Check 5: BigQuery DNS (provider ignores GOOGLE_BIGQUERY_CUSTOM_ENDPOINT)
+                if (transparent) {
+                // Check 5: BigQuery through the same canonical DNS listener.
                 Map<String, Object> bqCheck = new LinkedHashMap<>();
                 bqCheck.put("name", "bigquery_dns");
-                bqCheck.put("description", "bigquery.googleapis.com resolves to 127.0.0.1 (required for BigQuery Terraform resources)");
+                bqCheck.put("description", "Canonical DNS listener resolves bigquery.googleapis.com to 127.0.0.1");
                 try {
-                    java.net.InetAddress bqAddr = java.net.InetAddress.getByName("bigquery.googleapis.com");
-                    boolean bqLocal = "127.0.0.1".equals(bqAddr.getHostAddress());
+                    String resolvedAddress = resolveAFromCanonicalDns("bigquery.googleapis.com");
+                    boolean bqLocal = "127.0.0.1".equals(resolvedAddress);
                     bqCheck.put("passed", bqLocal);
-                    bqCheck.put("actual", bqAddr.getHostAddress());
+                    bqCheck.put("actual", resolvedAddress);
                     bqCheck.put("expected", "127.0.0.1");
                     if (!bqLocal) {
+                        allPassed = false;
                         bqCheck.put("remediation",
-                            "If /etc/resolver/googleapis.com exists, this should work automatically. Otherwise add: echo '127.0.0.1 bigquery.googleapis.com' | sudo tee -a /etc/hosts");
+                            "Confirm dnsmasq on port 24093 maps *.googleapis.com to 127.0.0.1");
                     }
-                } catch (java.net.UnknownHostException e) {
+                } catch (IOException e) {
                     bqCheck.put("passed", false);
                     bqCheck.put("error", e.getMessage());
+                    allPassed = false;
                     bqCheck.put("remediation",
-                        "If /etc/resolver/googleapis.com exists, this should work automatically. Otherwise add: echo '127.0.0.1 bigquery.googleapis.com' | sudo tee -a /etc/hosts");
+                        "Restart with LOCALCLOUD_ENABLE_LOCAL_PROXY=true and publish host UDP 53 to container 24093");
                 }
                 checks.add(bqCheck);
+                }
 
                 Map<String, Object> response = new LinkedHashMap<>();
                 response.put("ready", allPassed);
                 response.put("status", allPassed ? "ready" : "not_ready");
                 response.put("project_id", config.getProjectId());
                 response.put("gateway_port", config.getGatewayPort());
+                response.put("mode", transparent ? "transparent" : "custom_endpoint");
                 response.put("checks", checks);
-                response.put("required_dns_entry",
-                    "127.0.0.1 serviceusage.googleapis.com");
-                response.put("required_docker_port", "-p 443:8080");
+                if (transparent) {
+                    response.put("required_dns_entry", "127.0.0.1 serviceusage.googleapis.com");
+                    response.put("required_docker_ports", "-p 127.0.0.1:53:24093/udp -p 127.0.0.1:80:24095 -p 127.0.0.1:443:24094");
+                }
 
                 String json = mapper.writeValueAsString(response);
                 return HttpResponse.of(

@@ -6,15 +6,22 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.sql.ResultSet;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Comparator;
+import java.util.HexFormat;
+import java.util.TreeMap;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import redis.clients.jedis.Jedis;
@@ -47,6 +54,7 @@ public class ExportService {
     private final LocalCloudConfig config;
     private final PostgresDataSource dataSource;
     private final ServiceRegistry registry;
+    private final ProjectService projectService;
     private final HttpClient httpClient;
     private final ObjectMapper mapper;
     private final YAMLMapper yamlMapper;
@@ -57,10 +65,12 @@ public class ExportService {
     private final String bigqueryBase;
     private final String spannerBase;
 
-    public ExportService(LocalCloudConfig config, PostgresDataSource dataSource, ServiceRegistry registry) {
+    public ExportService(LocalCloudConfig config, PostgresDataSource dataSource, ServiceRegistry registry,
+                         ProjectService projectService) {
         this.config = config;
         this.dataSource = dataSource;
         this.registry = registry;
+        this.projectService = projectService;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .build();
@@ -74,7 +84,7 @@ public class ExportService {
 
         ServiceDefinition spannerDef = registry.getService("spanner");
         int spannerRestPort = spannerDef != null && spannerDef.additionalPorts().containsKey("rest")
-                ? spannerDef.additionalPorts().get("rest") : 9020;
+                ? spannerDef.additionalPorts().get("rest") : 24086;
         this.spannerBase = "http://localhost:" + spannerRestPort;
     }
 
@@ -86,17 +96,24 @@ public class ExportService {
     /**
      * Export current state as a seed-compatible YAML file.
      *
-     * <p>Optional query parameter: {@code ?services=gcs,pubsub} exports only
-     * the selected service ids. Omitting it keeps the existing all-service
-     * behavior.</p>
+     * <p>Optional query parameters: {@code ?project=my-project} exports state
+     * for that project, and {@code ?services=gcs,pubsub} limits the export to
+     * selected service ids. Omitting either keeps the configured defaults.</p>
      */
     @Get("/export")
     public HttpResponse export(ServiceRequestContext ctx) {
         try {
             Set<String> selectedServices = parseSelectedServices(ctx.queryParams().get("services"));
-            String yaml = exportYaml(selectedServices);
+            String yaml = exportYaml(selectedServices, ctx.queryParams().get("project"));
 
             return HttpResponse.of(HttpStatus.OK, MediaType.parse("application/yaml"), yaml);
+        } catch (IllegalArgumentException e) {
+            try {
+                String error = mapper.writeValueAsString(Map.of("error", true, "message", e.getMessage()));
+                return HttpResponse.of(HttpStatus.BAD_REQUEST, MediaType.JSON, error);
+            } catch (Exception ex) {
+                return HttpResponse.of(HttpStatus.BAD_REQUEST, MediaType.PLAIN_TEXT_UTF_8, e.getMessage());
+            }
         } catch (Exception e) {
             logger.error("Export failed: {}", e.getMessage(), e);
             try {
@@ -110,13 +127,27 @@ public class ExportService {
     }
 
     public String exportYaml(Set<String> selectedServices) throws Exception {
-        return yamlMapper.writerWithDefaultPrettyPrinter().writeValueAsString(exportSeedData(selectedServices));
+        return exportYaml(selectedServices, config.getProjectId());
+    }
+
+    public String exportYaml(Set<String> selectedServices, String requestedProject) throws Exception {
+        String projectId = (requestedProject != null && !requestedProject.isBlank())
+                ? requestedProject : config.getProjectId();
+        if (!projectService.projectExists(projectId)) {
+            throw new IllegalArgumentException("Project not found: " + projectId);
+        }
+        return yamlMapper.writerWithDefaultPrettyPrinter()
+                .writeValueAsString(exportSeedData(selectedServices, projectId));
     }
 
     public Map<String, Object> exportSeedData(Set<String> selectedServices) {
+        return exportSeedData(selectedServices, config.getProjectId());
+    }
+
+    private Map<String, Object> exportSeedData(Set<String> selectedServices, String projectId) {
         Map<String, Object> seedData = new LinkedHashMap<>();
         seedData.put("version", "1.0");
-        seedData.put("project", config.getProjectId());
+        seedData.put("project", projectId);
         if (selectedServices != null && !selectedServices.isEmpty()) {
             seedData.put("selected_services", new ArrayList<>(selectedServices));
         }
@@ -124,13 +155,13 @@ public class ExportService {
         Set<String> requestedServices = selectedServices == null ? Set.of() : selectedServices;
         Map<String, Object> services = new LinkedHashMap<>();
 
-        exportIfSelected(requestedServices, services, "gcs", this::exportGcs);
-        exportIfSelected(requestedServices, services, "pubsub", this::exportPubSub);
-        exportIfSelected(requestedServices, services, "bigquery", this::exportBigQuery);
-        exportIfSelected(requestedServices, services, "secretmanager", this::exportSecretManager);
-        exportIfSelected(requestedServices, services, "spanner", this::exportSpanner);
+        exportIfSelected(requestedServices, services, "gcs", () -> exportGcs(projectId));
+        exportIfSelected(requestedServices, services, "pubsub", () -> exportPubSub(projectId));
+        exportIfSelected(requestedServices, services, "bigquery", () -> exportBigQuery(projectId));
+        exportIfSelected(requestedServices, services, "secretmanager", () -> exportSecretManager(projectId));
+        exportIfSelected(requestedServices, services, "spanner", () -> exportSpanner(projectId));
         exportIfSelected(requestedServices, services, "memorystore", this::exportMemorystore);
-        exportIfSelected(requestedServices, services, "cloudtasks", this::exportCloudTasks);
+        exportIfSelected(requestedServices, services, "cloudtasks", () -> exportCloudTasks(projectId));
 
         seedData.put("services", services);
         return seedData;
@@ -173,8 +204,7 @@ public class ExportService {
     // ========== GCS ==========
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> exportGcs() throws Exception {
-        String projectId = config.getProjectId();
+    private Map<String, Object> exportGcs(String projectId) throws Exception {
         String url = gcsBase + "/storage/v1/b?project=" + projectId;
         String response = proxyGet(url);
         Map<String, Object> data = mapper.readValue(response, Map.class);
@@ -192,21 +222,23 @@ public class ExportService {
                 bucket.put("location", item.get("location"));
             }
 
-            // List objects in this bucket (keys only, no content)
+            // Migration snapshots include exact object bytes so reset/restore is lossless.
             try {
-                String objUrl = gcsBase + "/storage/v1/b/" + item.get("name") + "/o";
+                String objUrl = gcsBase + "/storage/v1/b/" + encode(String.valueOf(item.get("name"))) + "/o";
                 String objResponse = proxyGet(objUrl);
                 Map<String, Object> objData = mapper.readValue(objResponse, Map.class);
                 List<Map<String, Object>> objItems = (List<Map<String, Object>>) objData.get("items");
                 if (objItems != null && !objItems.isEmpty()) {
                     List<Map<String, Object>> objects = new ArrayList<>();
                     for (Map<String, Object> obj : objItems) {
-                        Map<String, Object> o = new LinkedHashMap<>();
-                        o.put("key", obj.get("name"));
-                        if (obj.get("contentType") != null) {
-                            o.put("contentType", obj.get("contentType"));
-                        }
-                        objects.add(o);
+                        Map<String, Object> object = new LinkedHashMap<>();
+                        String objectName = String.valueOf(obj.get("name"));
+                        object.put("key", objectName);
+                        object.put("contentBase64", Base64.getEncoder().encodeToString(proxyGetBytes(
+                                gcsBase + "/download/storage/v1/b/" + encode(String.valueOf(item.get("name")))
+                                        + "/o/" + encode(objectName) + "?alt=media")));
+                        if (obj.get("contentType") != null) object.put("contentType", obj.get("contentType"));
+                        objects.add(object);
                     }
                     bucket.put("objects", objects);
                 }
@@ -223,8 +255,7 @@ public class ExportService {
     // ========== Pub/Sub ==========
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> exportPubSub() throws Exception {
-        String projectId = config.getProjectId();
+    private Map<String, Object> exportPubSub(String projectId) throws Exception {
         Map<String, Object> result = new LinkedHashMap<>();
 
         // List topics
@@ -282,72 +313,98 @@ public class ExportService {
     // ========== BigQuery ==========
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> exportBigQuery() throws Exception {
-        String projectId = config.getProjectId();
+    private Map<String, Object> exportBigQuery(String projectId) throws Exception {
         Map<String, Object> result = new LinkedHashMap<>();
-
-        // List datasets
-        String dsUrl = bigqueryBase + "/bigquery/v2/projects/" + projectId + "/datasets";
-        String dsResponse = proxyGet(dsUrl);
-        Map<String, Object> dsData = mapper.readValue(dsResponse, Map.class);
-        List<Map<String, Object>> rawDatasets = (List<Map<String, Object>>) dsData.get("datasets");
-
-        if (rawDatasets == null || rawDatasets.isEmpty()) {
-            return Map.of();
-        }
+        Map<String, Object> datasetResponse = mapper.readValue(proxyGet(bigqueryBase
+                + "/bigquery/v2/projects/" + encode(projectId) + "/datasets"), Map.class);
+        List<Map<String, Object>> rawDatasets =
+                (List<Map<String, Object>>) datasetResponse.getOrDefault("datasets", List.of());
+        if (rawDatasets.isEmpty()) return Map.of();
 
         List<Map<String, Object>> datasets = new ArrayList<>();
         List<Map<String, Object>> tables = new ArrayList<>();
-
-        for (Map<String, Object> ds : rawDatasets) {
-            Map<String, Object> ref = (Map<String, Object>) ds.get("datasetReference");
-            String datasetId = ref != null ? (String) ref.get("datasetId") : null;
-            if (datasetId == null) continue;
-
+        for (Map<String, Object> dataset : rawDatasets) {
+            Map<String, Object> reference = (Map<String, Object>) dataset.get("datasetReference");
+            String datasetId = reference == null ? null : String.valueOf(reference.get("datasetId"));
+            if (datasetId == null || datasetId.isBlank()) continue;
             datasets.add(Map.of("name", datasetId));
-
-            // List tables in this dataset
             try {
-                String tablesUrl = bigqueryBase + "/bigquery/v2/projects/" + projectId
-                        + "/datasets/" + datasetId + "/tables";
-                String tablesResponse = proxyGet(tablesUrl);
-                Map<String, Object> tablesData = mapper.readValue(tablesResponse, Map.class);
-                List<Map<String, Object>> rawTables = (List<Map<String, Object>>) tablesData.get("tables");
-                if (rawTables != null) {
-                    for (Map<String, Object> tbl : rawTables) {
-                        Map<String, Object> tblRef = (Map<String, Object>) tbl.get("tableReference");
-                        String tableId = tblRef != null ? (String) tblRef.get("tableId") : null;
-                        if (tableId != null) {
-                            Map<String, Object> table = new LinkedHashMap<>();
-                            table.put("dataset", datasetId);
-                            table.put("name", tableId);
-                            // Schema is available at table detail level but omitted for brevity
-                            tables.add(table);
-                        }
-                    }
+                Map<String, Object> tableResponse = mapper.readValue(proxyGet(bigqueryBase
+                        + "/bigquery/v2/projects/" + encode(projectId) + "/datasets/" + encode(datasetId)
+                        + "/tables"), Map.class);
+                List<Map<String, Object>> rawTables =
+                        (List<Map<String, Object>>) tableResponse.getOrDefault("tables", List.of());
+                for (Map<String, Object> rawTable : rawTables) {
+                    Map<String, Object> tableReference =
+                            (Map<String, Object>) rawTable.get("tableReference");
+                    String tableId = tableReference == null ? null : String.valueOf(tableReference.get("tableId"));
+                    if (tableId == null || tableId.isBlank()) continue;
+                    Map<String, Object> table = new LinkedHashMap<>();
+                    table.put("dataset", datasetId);
+                    table.put("name", tableId);
+                    Map<String, Object> detail = mapper.readValue(proxyGet(bigqueryBase
+                            + "/bigquery/v2/projects/" + encode(projectId) + "/datasets/" + encode(datasetId)
+                            + "/tables/" + encode(tableId)), Map.class);
+                    Map<String, Object> schema = (Map<String, Object>) detail.get("schema");
+                    if (schema != null) table.put("schema", schema);
+                    Map<String, Object> data = mapper.readValue(proxyGet(bigqueryBase
+                            + "/bigquery/v2/projects/" + encode(projectId) + "/datasets/" + encode(datasetId)
+                            + "/tables/" + encode(tableId) + "/data?maxResults=100000"), Map.class);
+                    List<Map<String, Object>> rows =
+                            (List<Map<String, Object>>) data.getOrDefault("rows", List.of());
+                    if (!rows.isEmpty()) table.put("rows", decodeBigQueryRows(rows, schema));
+                    tables.add(table);
                 }
             } catch (Exception e) {
-                logger.debug("Failed to list tables in dataset {}: {}", datasetId, e.getMessage());
+                logger.debug("Failed to snapshot BigQuery dataset {}: {}", datasetId, e.getMessage());
             }
         }
-
-        if (!datasets.isEmpty()) {
-            result.put("datasets", datasets);
-        }
-        if (!tables.isEmpty()) {
-            result.put("tables", tables);
-        }
-
+        if (!datasets.isEmpty()) result.put("datasets", datasets);
+        if (!tables.isEmpty()) result.put("tables", tables);
         return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    static List<Map<String, Object>> decodeBigQueryRows(List<Map<String, Object>> rows,
+                                                        Map<String, Object> schema) {
+        List<Map<String, Object>> fields = schema == null
+                ? List.of() : (List<Map<String, Object>>) schema.getOrDefault("fields", List.of());
+        List<Map<String, Object>> decoded = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            if (!row.containsKey("f") || fields.isEmpty()) {
+                decoded.add(row);
+            } else {
+                decoded.add(decodeBigQueryRecord((List<Map<String, Object>>) row.get("f"), fields));
+            }
+        }
+        return List.copyOf(decoded);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> decodeBigQueryRecord(List<Map<String, Object>> cells,
+                                                             List<Map<String, Object>> fields) {
+        Map<String, Object> decoded = new LinkedHashMap<>();
+        for (int index = 0; index < Math.min(cells.size(), fields.size()); index++) {
+            Map<String, Object> field = fields.get(index);
+            Object value = cells.get(index).get("v");
+            String mode = String.valueOf(field.getOrDefault("mode", "NULLABLE"));
+            if ("REPEATED".equals(mode) && value instanceof List<?> values) {
+                value = values.stream().map(item -> item instanceof Map<?, ?> map ? map.get("v") : item).toList();
+            } else if ("RECORD".equals(String.valueOf(field.get("type"))) && value instanceof Map<?, ?> record) {
+                value = decodeBigQueryRecord((List<Map<String, Object>>) record.get("f"),
+                        (List<Map<String, Object>>) field.getOrDefault("fields", List.of()));
+            }
+            decoded.put(String.valueOf(field.get("name")), value);
+        }
+        return java.util.Collections.unmodifiableMap(decoded);
     }
 
     // ========== Secret Manager ==========
 
-    private Map<String, Object> exportSecretManager() throws Exception {
+    private Map<String, Object> exportSecretManager(String projectId) throws Exception {
         if (!config.isPersistenceEnabled()) {
             return Map.of();
         }
-        String projectId = config.getProjectId();
 
         List<Map<String, Object>> secrets = new ArrayList<>();
         try (Connection conn = dataSource.getConnection();
@@ -370,8 +427,7 @@ public class ExportService {
     // ========== Spanner ==========
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> exportSpanner() throws Exception {
-        String projectId = config.getProjectId();
+    private Map<String, Object> exportSpanner(String projectId) throws Exception {
 
         // List instances
         String instUrl = spannerBase + "/v1/projects/" + projectId + "/instances";
@@ -456,7 +512,7 @@ public class ExportService {
         List<Map<String, Object>> databases = new ArrayList<>();
 
         int redisPort = config.getServiceRegistry().getService("memorystore") != null
-                ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+                ? config.getServiceRegistry().getService("memorystore").port() : 24089;
 
         try (Jedis jedis = new Jedis("localhost", redisPort)) {
             // Export all databases that have keys
@@ -507,11 +563,10 @@ public class ExportService {
 
     // ========== Cloud Tasks ==========
 
-    private Map<String, Object> exportCloudTasks() throws Exception {
+    private Map<String, Object> exportCloudTasks(String projectId) throws Exception {
         if (!config.isPersistenceEnabled()) {
             return Map.of();
         }
-        String projectId = config.getProjectId();
 
         List<Map<String, Object>> queues = new ArrayList<>();
         try (Connection conn = dataSource.getConnection();
@@ -533,6 +588,94 @@ public class ExportService {
             return Map.of();
         }
         return Map.of("queues", queues);
+    }
+
+    /**
+     * Content-addressed, deterministic state used by migration comparisons.
+     * Unlike seed export, this includes GCS object bytes and BigQuery rows.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, String> captureMigrationState() throws Exception {
+        Map<String, String> manifest = new TreeMap<>();
+        if (config.isServiceEnabled("gcs")) {
+        Map<String, Object> bucketsResponse = mapper.readValue(
+                proxyGet(gcsBase + "/storage/v1/b?project=" + encode(config.getProjectId())), Map.class);
+        List<Map<String, Object>> buckets = (List<Map<String, Object>>) bucketsResponse.getOrDefault("items", List.of());
+        buckets.stream().sorted(Comparator.comparing(item -> String.valueOf(item.get("name")))).forEach(bucket -> {
+            String bucketName = String.valueOf(bucket.get("name"));
+            try {
+                Map<String, Object> objectsResponse = mapper.readValue(
+                        proxyGet(gcsBase + "/storage/v1/b/" + encode(bucketName) + "/o"), Map.class);
+                List<Map<String, Object>> objects = (List<Map<String, Object>>) objectsResponse.getOrDefault("items", List.of());
+                for (Map<String, Object> object : objects.stream()
+                        .sorted(Comparator.comparing(item -> String.valueOf(item.get("name")))).toList()) {
+                    String objectName = String.valueOf(object.get("name"));
+                    byte[] content = proxyGetBytes(gcsBase + "/download/storage/v1/b/" + encode(bucketName)
+                            + "/o/" + encode(objectName) + "?alt=media");
+                    manifest.put("gcs://" + bucketName + "/" + objectName, sha256(content));
+                }
+            } catch (Exception e) {
+                throw new IllegalStateException("Unable to capture GCS bucket " + bucketName, e);
+            }
+        });
+        }
+
+        if (config.isServiceEnabled("bigquery")) {
+        Map<String, Object> datasetsResponse = mapper.readValue(proxyGet(bigqueryBase
+                + "/bigquery/v2/projects/" + encode(config.getProjectId()) + "/datasets"), Map.class);
+        List<Map<String, Object>> datasets = (List<Map<String, Object>>) datasetsResponse.getOrDefault("datasets", List.of());
+        for (Map<String, Object> dataset : datasets) {
+            Map<String, Object> reference = (Map<String, Object>) dataset.get("datasetReference");
+            if (reference == null) continue;
+            String datasetId = String.valueOf(reference.get("datasetId"));
+            Map<String, Object> tablesResponse = mapper.readValue(proxyGet(bigqueryBase + "/bigquery/v2/projects/"
+                    + encode(config.getProjectId()) + "/datasets/" + encode(datasetId) + "/tables"), Map.class);
+            List<Map<String, Object>> tables = (List<Map<String, Object>>) tablesResponse.getOrDefault("tables", List.of());
+            for (Map<String, Object> table : tables) {
+                Map<String, Object> tableReference = (Map<String, Object>) table.get("tableReference");
+                if (tableReference == null) continue;
+                String tableId = String.valueOf(tableReference.get("tableId"));
+                Map<String, Object> detail = mapper.readValue(proxyGet(bigqueryBase + "/bigquery/v2/projects/"
+                        + encode(config.getProjectId()) + "/datasets/" + encode(datasetId) + "/tables/" + encode(tableId)), Map.class);
+                Map<String, Object> rows = mapper.readValue(proxyGet(bigqueryBase + "/bigquery/v2/projects/"
+                        + encode(config.getProjectId()) + "/datasets/" + encode(datasetId) + "/tables/" + encode(tableId)
+                        + "/data?maxResults=100000"), Map.class);
+                List<String> normalizedRows = ((List<Object>) rows.getOrDefault("rows", List.of())).stream()
+                        .map(value -> {
+                            try { return mapper.writeValueAsString(value); }
+                            catch (Exception e) { throw new IllegalStateException(e); }
+                        }).sorted().toList();
+                Map<String, Object> normalized = new TreeMap<>();
+                normalized.put("schema", detail.getOrDefault("schema", Map.of()));
+                normalized.put("rows", normalizedRows);
+                manifest.put("bigquery://" + datasetId + "." + tableId,
+                        sha256(mapper.writeValueAsBytes(normalized)));
+            }
+        }
+        }
+        return Map.copyOf(manifest);
+    }
+
+    private static String encode(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
+    private static String sha256(byte[] value) {
+        try {
+            return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
+        } catch (Exception e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
+    }
+
+    private byte[] proxyGetBytes(String url) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url))
+                .timeout(Duration.ofSeconds(10)).GET().build();
+        java.net.http.HttpResponse<byte[]> response = httpClient.send(request, BodyHandlers.ofByteArray());
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("GET " + url + " returned " + response.statusCode());
+        }
+        return response.body();
     }
 
     // ========== HTTP proxy helper ==========

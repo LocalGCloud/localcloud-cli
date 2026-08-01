@@ -2,7 +2,9 @@ import { createSignal, createEffect, Show, For, onCleanup } from 'solid-js';
 import { api } from '../api.js';
 import { SchemaExplorer } from './SchemaExplorer.jsx';
 import { SyncFilterBuilder } from './SyncFilterBuilder.jsx';
-import { formatNumber, onActivate } from '../utils/a11y.js';
+import { onActivate } from '../utils/a11y.js';
+import { formatNumber } from '../utils/format.js';
+import { ErrorAlert, LoadingShield } from './AsyncState.jsx';
 
 export function RemoteSyncPanel(props) {
     const [connected, setConnected] = createSignal(false);
@@ -25,10 +27,53 @@ export function RemoteSyncPanel(props) {
     const [manifestError, setManifestError] = createSignal(null);
     const [historyHeight, setHistoryHeight] = createSignal(200);
     const [historyOpen, setHistoryOpen] = createSignal(true);
+    const [syncRunning, setSyncRunning] = createSignal(false);
 
-    // Track active polling interval for cleanup on unmount
-    let activePolling = null;
-    onCleanup(() => { if (activePolling) clearInterval(activePolling); });
+    // A run object owns every asynchronous callback and timer created for one
+    // server sync. Replacing/invalidation of the object makes stale callbacks
+    // harmless even though the API helpers do not currently accept signals.
+    let activeRun = null;
+    let syncGeneration = 0;
+    let disposed = false;
+
+    const clearRunTimers = (run) => {
+        if (!run) return;
+        if (run.pollInterval !== null) {
+            clearInterval(run.pollInterval);
+            run.pollInterval = null;
+        }
+        if (run.safetyTimeout !== null) {
+            clearTimeout(run.safetyTimeout);
+            run.safetyTimeout = null;
+        }
+    };
+
+    const isCurrentRun = (run) =>
+        !disposed && activeRun === run && run.generation === syncGeneration;
+
+    const invalidateActiveRun = () => {
+        const run = activeRun;
+        activeRun = null;
+        syncGeneration++;
+        clearRunTimers(run);
+        return run;
+    };
+
+    const cancelRunOnServer = (run) =>
+        api.syncCancel(run.serviceId, { resource: run.resource });
+
+    const releaseSyncGate = () => {
+        if (!disposed && !activeRun) setSyncRunning(false);
+    };
+
+    const resourcePathOf = (resource) =>
+        resource?.resourcePath ?? resource?.resource_path ?? resource?.id;
+
+    onCleanup(() => {
+        disposed = true;
+        const run = invalidateActiveRun();
+        if (run?.serverStarted) void cancelRunOnServer(run).catch(() => {});
+    });
 
     // Resizable bottom panel drag handler
     const startDrag = (e) => {
@@ -61,9 +106,23 @@ export function RemoteSyncPanel(props) {
         }
     };
 
-    // Reset state when serviceId changes (e.g. switching from GCS to BigQuery)
+    // Reset state when serviceId changes (e.g. switching from GCS to BigQuery).
+    // The run stores its original service/resource so cancellation never targets
+    // the newly selected service.
     createEffect(() => {
-        const _sid = props.serviceId; // track serviceId
+        const serviceId = props.serviceId;
+        const run = invalidateActiveRun();
+        if (run) {
+            // Keep the start gate closed until either the known server run is
+            // cancelled or an in-flight start request returns and self-cancels.
+            setSyncRunning(true);
+            if (run.serverStarted) {
+                void cancelRunOnServer(run)
+                    .catch(() => {})
+                    .finally(releaseSyncGate);
+            }
+        }
+
         setSelectedResource(null);
         setPreview(null);
         setPreviewError(null);
@@ -76,135 +135,245 @@ export function RemoteSyncPanel(props) {
         setSelectedManifest(null);
         setConfirmDelete(null);
         setManifestError(null);
-        if (activePolling) { clearInterval(activePolling); activePolling = null; }
+        void serviceId;
     });
 
-    // Check auth (re-runs when serviceId changes due to loadManifests dependency)
+    // Check auth and manifests again when switching services. Responses for the
+    // previous service are discarded rather than repopulating the new panel.
     createEffect(async () => {
-        const _sid = props.serviceId; // track serviceId to re-check on switch
+        const serviceId = props.serviceId;
         try {
             const s = await api.syncAuthStatus();
+            if (disposed || serviceId !== props.serviceId) return;
             setAuthStatus(s);
-            setConnected(s?.connected === true || s?.connected === 'true');
-            if (s?.connected === true || s?.connected === 'true') loadManifests();
-        } catch (e) { setConnected(false); }
+            const isConnected = s?.connected === true || s?.connected === 'true';
+            setConnected(isConnected);
+            if (isConnected) void loadManifests(serviceId);
+        } catch (e) {
+            if (!disposed && serviceId === props.serviceId) setConnected(false);
+        }
     });
 
-    const loadManifests = async () => {
+    const loadManifests = async (serviceId = props.serviceId) => {
         try {
-            const resp = await api.syncServiceManifests(props.serviceId);
+            const resp = await api.syncServiceManifests(serviceId);
+            if (disposed || serviceId !== props.serviceId) return;
             // Server wraps list in {manifests: [...]}, extract the array
             const m = resp?.manifests ?? resp;
             setSyncManifests(Array.isArray(m) ? m : []);
             setManifestError(null);
-        } catch (e) { setManifestError(e.message); }
+        } catch (e) {
+            if (!disposed && serviceId === props.serviceId) setManifestError(e.message);
+        }
     };
 
     const handleSelect = async (node) => {
+        const serviceId = props.serviceId;
+        const resource = resourcePathOf(node);
+        if (!resource) return;
         setSelectedResource(node);
         setPanel('preview');
         setPreviewLoading(true);
         setPreviewError(null);
         try {
-            const r = await api.syncPreview(props.serviceId, node.id, 5);
+            const r = await api.syncPreview(serviceId, resource, 5);
+            if (serviceId !== props.serviceId || selectedResource() !== node) return;
             setPreview(r);
-        } catch (e) { setPreview(null); setPreviewError(e.message); }
-        finally { setPreviewLoading(false); }
+        } catch (e) {
+            if (serviceId !== props.serviceId || selectedResource() !== node) return;
+            setPreview(null);
+            setPreviewError(e.message);
+        } finally {
+            if (serviceId === props.serviceId && selectedResource() === node) {
+                setPreviewLoading(false);
+            }
+        }
     };
 
     const showSyncForm = () => { setPanel('sync'); setCostEstimate(null); setFilters([]); };
 
     const estimateCost = async () => {
-        const res = selectedResource();
-        if (!res) return;
+        const selected = selectedResource();
+        const resource = resourcePathOf(selected);
+        if (!selected || !resource) return;
         try {
             const est = await api.syncEstimate(props.serviceId, {
-                resource: res.id,
+                resource,
                 source_project: authStatus()?.source_project,
                 filters: filters(),
                 row_limit: rowLimit()
             });
-            setCostEstimate(est);
-        } catch (e) { setCostEstimate({ error: e.message }); }
+            if (selectedResource() === selected) setCostEstimate(est);
+        } catch (e) {
+            if (selectedResource() === selected) setCostEstimate({ error: e.message });
+        }
     };
 
     const startSync = async () => {
-        const res = selectedResource();
-        if (!res) return;
+        const selected = selectedResource();
+        const resource = resourcePathOf(selected);
+        if (!selected || !resource) return;
+        // The signal disables the button; the imperative run guard also closes
+        // the double-activation window before reactive DOM updates.
+        if (activeRun || syncRunning()) return;
+
+        const run = {
+            generation: ++syncGeneration,
+            serviceId: props.serviceId,
+            resource,
+            manifestId: null,
+            serverStarted: false,
+            pollInterval: null,
+            safetyTimeout: null,
+            polling: false
+        };
+        activeRun = run;
+        setSyncRunning(true);
         setPanel('progress');
         setSyncProgress({ percent: 0, rowsTransferred: 0, status: 'running' });
         setSyncError(null);
+
+        const finishRun = (mutate) => {
+            if (!isCurrentRun(run)) return;
+            activeRun = null;
+            syncGeneration++;
+            clearRunTimers(run);
+            setSyncRunning(false);
+            mutate();
+        };
+
+        const pollRun = async () => {
+            // Avoid overlapping interval callbacks when a request takes longer
+            // than the polling cadence.
+            if (!isCurrentRun(run) || run.polling) return;
+            run.polling = true;
+            try {
+                const progress = await api.syncProgress(run.serviceId, run.resource);
+                if (!isCurrentRun(run)) return;
+
+                if (progress.status === 'running') {
+                    setSyncProgress({
+                        percent: progress.percent || 0,
+                        rowsTransferred: progress.rows_transferred || 0,
+                        bytesTransferred: progress.bytes_transferred || 0,
+                        estimatedTotal: progress.estimated_total || 0,
+                        elapsedMs: progress.elapsed_ms || 0,
+                        status: 'running'
+                    });
+                    return;
+                }
+
+                // A non-running progress response is not proof of completion.
+                // Only the manifest created by this exact start may finish it.
+                const resp = await api.syncServiceManifests(run.serviceId);
+                if (!isCurrentRun(run)) return;
+                const manifestList = resp?.manifests ?? (Array.isArray(resp) ? resp : []);
+                const manifests = Array.isArray(manifestList) ? manifestList : [];
+                setSyncManifests(manifests);
+                setManifestError(null);
+                const finalManifest = manifests.find(m => m.id === run.manifestId);
+
+                if (finalManifest?.status === 'completed') {
+                    finishRun(() => setSyncProgress({
+                        percent: 100,
+                        rowsSynced: finalManifest.row_count,
+                        bytesSynced: finalManifest.bytes_synced,
+                        status: 'completed'
+                    }));
+                } else if (finalManifest?.status === 'failed') {
+                    finishRun(() => {
+                        setSyncError(finalManifest.error_message || 'Sync failed');
+                        setSyncProgress(prev => ({ ...prev, status: 'failed' }));
+                    });
+                } else if (finalManifest?.status === 'cancelled') {
+                    finishRun(() =>
+                        setSyncProgress(prev => ({ ...prev, status: 'cancelled' }))
+                    );
+                } else {
+                    // Manifest persistence may lag the worker. Keep polling; do
+                    // not infer success from a previous manifest or a fallback.
+                    setSyncProgress(prev => ({ ...prev, status: 'finalizing' }));
+                }
+            } catch (e) {
+                // Transient progress/manifest failures leave this generation
+                // active so the next tick can retry.
+            } finally {
+                run.polling = false;
+            }
+        };
+
         try {
-            const result = await api.syncStart(props.serviceId, {
-                resource: res.id,
+            const result = await api.syncStart(run.serviceId, {
+                resource: run.resource,
                 source_project: authStatus()?.source_project,
                 filters: filters(),
                 row_limit: rowLimit()
             });
+            run.serverStarted = true;
 
-            const manifestId = result.manifest_id;
+            // A service switch/unmount may invalidate the request while start is
+            // in flight. Cancel the server work as soon as its response arrives.
+            if (!isCurrentRun(run)) {
+                try { await cancelRunOnServer(run); } catch (_) { /* best-effort cleanup */ }
+                releaseSyncGate();
+                return;
+            }
 
-            // Clear any previous polling
-            if (activePolling) clearInterval(activePolling);
+            if (result?.manifest_id == null) {
+                invalidateActiveRun();
+                setSyncError('Sync started without a manifest identifier');
+                setSyncProgress(prev => ({ ...prev, status: 'failed' }));
+                try { await cancelRunOnServer(run); } catch (_) { /* best-effort cleanup */ }
+                releaseSyncGate();
+                return;
+            }
+            run.manifestId = result.manifest_id;
 
-            // Poll progress until complete
-            activePolling = setInterval(async () => {
-                try {
-                    const progress = await api.syncProgress(props.serviceId, res.id);
-
-                    if (progress.status === 'running') {
-                        setSyncProgress({
-                            percent: progress.percent || 0,
-                            rowsTransferred: progress.rows_transferred || 0,
-                            bytesTransferred: progress.bytes_transferred || 0,
-                            estimatedTotal: progress.estimated_total || 0,
-                            elapsedMs: progress.elapsed_ms || 0,
-                            status: 'running'
-                        });
-                    } else {
-                        // Not running anymore - check manifest for final status
-                        clearInterval(activePolling);
-                        activePolling = null;
-                        await loadManifests();
-
-                        // Get final manifest data
-                        const resp = await api.syncServiceManifests(props.serviceId);
-                        const manifestList = resp?.manifests ?? (Array.isArray(resp) ? resp : []);
-                        const final_ = manifestList
-                            .find(m => m.id === manifestId || m.resource_path === res.id);
-
-                        if (final_ && final_.status === 'completed') {
-                            setSyncProgress({
-                                percent: 100,
-                                rowsSynced: final_.row_count,
-                                bytesSynced: final_.bytes_synced,
-                                status: 'completed'
-                            });
-                        } else if (final_ && final_.status === 'failed') {
-                            setSyncError(final_.error_message || 'Sync failed');
-                            setSyncProgress(prev => ({ ...prev, status: 'failed' }));
-                        } else if (final_ && final_.status === 'cancelled') {
-                            setSyncProgress(prev => ({ ...prev, status: 'cancelled' }));
-                        } else {
-                            setSyncProgress(prev => ({ ...prev, status: 'completed' }));
-                        }
-                    }
-                } catch (e) {
-                    // Progress endpoint might fail - keep polling
-                }
-            }, 2000);
-
-            // Safety timeout - stop polling after 30 minutes
-            setTimeout(() => {
-                if (activePolling) {
-                    clearInterval(activePolling);
-                    activePolling = null;
-                }
+            run.pollInterval = setInterval(pollRun, 2000);
+            run.safetyTimeout = setTimeout(() => {
+                if (!isCurrentRun(run)) return;
+                invalidateActiveRun();
+                setSyncError('Sync timed out after 30 minutes and was cancelled');
+                setSyncProgress(prev => ({ ...prev, status: 'failed' }));
+                void cancelRunOnServer(run)
+                    .catch(() => {})
+                    .finally(releaseSyncGate);
             }, 1800000);
-
         } catch (e) {
-            setSyncError(e.message);
-            setSyncProgress(prev => ({ ...prev, status: 'failed' }));
+            if (!isCurrentRun(run)) {
+                releaseSyncGate();
+                return;
+            }
+            finishRun(() => {
+                setSyncError(e.message);
+                setSyncProgress(prev => ({ ...prev, status: 'failed' }));
+            });
+        }
+    };
+
+    const cancelSync = async () => {
+        const run = activeRun;
+        if (!run || !isCurrentRun(run)) return;
+
+        invalidateActiveRun();
+        const cancellationGeneration = syncGeneration;
+        setSyncRunning(true);
+        setSyncError(null);
+        setSyncProgress(prev => ({ ...prev, status: 'cancelling' }));
+
+        try {
+            await cancelRunOnServer(run);
+            if (!disposed && cancellationGeneration === syncGeneration) {
+                setSyncProgress(prev => ({ ...prev, status: 'cancelled' }));
+                void loadManifests(run.serviceId);
+            }
+        } catch (e) {
+            if (!disposed && cancellationGeneration === syncGeneration) {
+                setSyncError(e.message);
+                setSyncProgress(prev => ({ ...prev, status: 'cancel_failed' }));
+            }
+        } finally {
+            releaseSyncGate();
         }
     };
 
@@ -232,6 +401,7 @@ export function RemoteSyncPanel(props) {
         // Pre-populate sync form with manifest's params
         setSelectedResource({
             id: manifest.resource_path,
+            resourcePath: manifest.resource_path,
             name: manifest.resource_path,
             schema: selectedResource()?.schema || []
         });
@@ -261,9 +431,13 @@ export function RemoteSyncPanel(props) {
     };
 
     const deleteManifest = async (id) => {
-        await api.syncDeleteManifest(id);
-        await loadManifests();
-        setPanel('empty');
+        try {
+            await api.syncDeleteManifest(id);
+            await loadManifests();
+            setPanel('empty');
+        } catch (e) {
+            setManifestError(e.message);
+        }
     };
 
     const timeAgo = (ts) => {
@@ -346,9 +520,7 @@ export function RemoteSyncPanel(props) {
                             <br/>Token expires in ~1 hour. Re-paste to refresh.
                         </div>
                     </div>
-                    <Show when={syncError()}>
-                        <div class="alert alert-error" role="alert" style="margin: 0">{syncError()}</div>
-                    </Show>
+                    <ErrorAlert message={syncError()} role="alert" style="margin: 0" />
                     <div class="aura-mapping-preview">
                         <div><span>Remote dataset</span><strong>{connectProject() || 'source-project'}</strong></div>
                         <div><span>Local target</span><strong>{props.serviceId}</strong></div>
@@ -401,7 +573,7 @@ export function RemoteSyncPanel(props) {
                     </div>
                     <Show when={manifestError()}>
                         <div style="padding: 8px 12px; border-top: 1px solid var(--border)">
-                            <div class="alert alert-error" role="alert" style="margin: 0; font-size: 12px">{manifestError()}</div>
+                            <ErrorAlert message={manifestError()} role="alert" style="margin: 0; font-size: 12px" />
                         </div>
                     </Show>
                 </div>
@@ -446,13 +618,9 @@ export function RemoteSyncPanel(props) {
                                         Sync to Local
                                     </button>
                                 </div>
-                                <Show when={previewLoading()}>
-                                    <div class="loading-state"><div class="loading-spinner" /></div>
-                                </Show>
-                                <Show when={!previewLoading() && previewError()}>
-                                    <div class="alert alert-error" role="alert">{previewError()}</div>
-                                </Show>
-                                <Show when={!previewLoading() && preview()}>
+                                <LoadingShield loading={previewLoading()}>
+                                    <ErrorAlert message={previewError()} role="alert" />
+                                    <Show when={preview()}>
                                     <div style="font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px">
                                         Sample Data ({(preview().rows || []).length} rows)
                                     </div>
@@ -478,7 +646,8 @@ export function RemoteSyncPanel(props) {
                                             </tbody>
                                         </table>
                                     </div>
-                                </Show>
+                                    </Show>
+                                </LoadingShield>
                             </Show>
                         </div>
                     </Show>
@@ -502,9 +671,7 @@ export function RemoteSyncPanel(props) {
                             </div>
                             <Show when={costEstimate()}>
                                 <div style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px">
-                                    <Show when={costEstimate().error}>
-                                        <div class="alert alert-error" role="alert">{costEstimate().error}</div>
-                                    </Show>
+                                    <ErrorAlert message={costEstimate().error} role="alert" />
                                     <Show when={!costEstimate().error}>
                                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 13px">
                                             <div><span style="color: var(--text-secondary)">Est. rows</span><br/><strong>{fmtNum(costEstimate().estimatedRows)}</strong></div>
@@ -517,7 +684,7 @@ export function RemoteSyncPanel(props) {
                             </Show>
                             <div style="display: flex; gap: 8px">
                                 <button class="btn" onClick={() => setPanel('preview')}>Cancel</button>
-                                <button class="btn btn-primary" onClick={startSync}>Start Sync</button>
+                                <button class="btn btn-primary" onClick={startSync} disabled={syncRunning()}>Start Sync</button>
                             </div>
                         </div>
                     </Show>
@@ -550,17 +717,10 @@ export function RemoteSyncPanel(props) {
                                     </Show>
                                 </div>
                             </Show>
-                            <Show when={syncProgress()?.status === 'running'}>
-                                <button class="btn btn-danger btn-sm" onClick={async () => {
-                                    if (activePolling) { clearInterval(activePolling); activePolling = null; }
-                                    await api.syncCancel(props.serviceId, { resource: selectedResource()?.id });
-                                    setSyncProgress(prev => ({ ...prev, status: 'cancelled' }));
-                                    await loadManifests();
-                                }}>Cancel Sync</button>
+                            <Show when={syncProgress()?.status === 'running' || syncProgress()?.status === 'finalizing'}>
+                                <button class="btn btn-danger btn-sm" onClick={cancelSync}>Cancel Sync</button>
                             </Show>
-                            <Show when={syncError()}>
-                                <div class="alert alert-error" role="alert" style="margin-top: 16px">{syncError()}</div>
-                            </Show>
+                            <ErrorAlert message={syncError()} role="alert" style="margin-top: 16px" />
                             <Show when={syncProgress()?.status === 'cancelled'}>
                                 <div style="margin-top: 16px; background: var(--warning-soft); color: var(--warning); border: 1px solid var(--warning); border-radius: var(--radius); padding: 12px; font-size: 13px">
                                     Sync cancelled.
@@ -606,11 +766,11 @@ export function RemoteSyncPanel(props) {
                                     </div>
                                 </Show>
                             </div>
-                            <Show when={selectedManifest().error_message}>
-                                <div class="alert alert-error" role="alert" style="margin-bottom: 16px; font-size: 12px">
-                                    {selectedManifest().error_message}
-                                </div>
-                            </Show>
+                            <ErrorAlert
+                                message={selectedManifest().error_message}
+                                role="alert"
+                                style="margin-bottom: 16px; font-size: 12px"
+                            />
                             <div style="display: flex; gap: 8px">
                                 <button class="btn btn-primary btn-sm" onClick={() => handleResync(selectedManifest())}>Resync</button>
                                 <Show when={confirmDelete() === selectedManifest()?.id} fallback={

@@ -29,10 +29,10 @@ class McpServiceTest {
 
     @BeforeEach
     void setUp() {
-        ServiceRegistry registry = ServiceRegistry.load(8080);
+        ServiceRegistry registry = ServiceRegistry.load(24080);
         LocalCloudConfig config = mock(LocalCloudConfig.class);
         when(config.getProjectId()).thenReturn("test-project");
-        when(config.getGatewayPort()).thenReturn(8080);
+        when(config.getGatewayPort()).thenReturn(24080);
         when(config.getServiceRegistry()).thenReturn(registry);
         when(config.isServiceEnabled(anyString())).thenAnswer(invocation -> {
             String serviceId = invocation.getArgument(0, String.class);

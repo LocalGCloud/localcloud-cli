@@ -1,7 +1,9 @@
 import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
 import { api } from '../api.js';
 import { createUrlBackedTab } from '../utils/urlTabs.js';
-import { formatDateTime, onActivate } from '../utils/a11y.js';
+import { onActivate } from '../utils/a11y.js';
+import { formatDateTime } from '../utils/format.js';
+import CodeEditor from '../components/CodeEditor.jsx';
 
 // --- Helpers ---
 
@@ -34,64 +36,6 @@ function StateBadge(props) {
     );
 }
 
-function YamlHighlight(props) {
-    const lines = () => {
-        const src = props.source || '';
-        return src.split('\n').map((line, idx) => {
-            // Simple YAML syntax highlighting
-            let html = line
-                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                // Comments
-                .replace(/(#.*)$/, '<span style="color:var(--sql-comment,#6a9955)">$1</span>')
-                // Strings (quoted)
-                .replace(/"([^"]*)"/g, '<span style="color:var(--sql-string,#ce9178)">"$1"</span>')
-                .replace(/'([^']*)'/g, '<span style="color:var(--sql-string,#ce9178)">\'$1\'</span>')
-                // Keys (word followed by colon)
-                .replace(/^(\s*)([\w_-]+)(:)/gm, '$1<span style="color:var(--sql-keyword,#569cd6)">$2</span>$3')
-                // Boolean / null
-                .replace(/\b(true|false|null)\b/g, '<span style="color:var(--sql-number,#b5cea8)">$1</span>')
-                // Numbers
-                // Note: Sequential regex replacements may double-wrap content in edge cases
-                // (e.g., numbers inside string values). This is cosmetic only.
-                .replace(/\b(\d+\.?\d*)\b/g, '<span style="color:var(--sql-number,#b5cea8)">$1</span>')
-                // ${...} expressions
-                .replace(/(\$\{[^}]+\})/g, '<span style="color:var(--sql-function,#dcdcaa)">$1</span>');
-            return { num: idx + 1, html };
-        });
-    };
-
-    return (
-        <div style={{
-            background: 'var(--sql-editor-bg, var(--bg-subtle))',
-            border: '1px solid var(--border)',
-            'border-radius': 'var(--radius-sm)',
-            'max-height': '600px', 'overflow-y': 'auto', 'font-size': '12px',
-            'font-family': 'var(--font-mono)', 'line-height': '1.7',
-        }}>
-            <table style={{ 'border-collapse': 'collapse', width: '100%' }}>
-                <tbody>
-                    <For each={lines()}>
-                        {(line) => (
-                            <tr>
-                                <td style={{
-                                    'text-align': 'right', padding: '0 12px 0 16px',
-                                    color: 'var(--text-tertiary)', 'user-select': 'none',
-                                    'font-size': '11px', 'min-width': '36px',
-                                    'border-right': '1px solid var(--border-subtle, var(--border))',
-                                    background: 'var(--sql-editor-gutter, var(--surface-variant))',
-                                }}>
-                                    {line.num}
-                                </td>
-                                <td style={{ padding: '0 16px', 'white-space': 'pre' }}
-                                    innerHTML={line.html} />
-                            </tr>
-                        )}
-                    </For>
-                </tbody>
-            </table>
-        </div>
-    );
-}
 
 // --- Breadcrumb ---
 function Breadcrumb(props) {
@@ -951,7 +895,12 @@ export default function Workflows(props) {
                 </div>
 
                 <Show when={activeTab() === 'definition'}>
-                    <YamlHighlight source={detail.sourceContents || detail.source_contents || '(no source)'} />
+                    <CodeEditor
+                        value={detail.sourceContents || detail.source_contents || '(no source)'}
+                        language="yaml"
+                        readOnly
+                        maxHeight="600px"
+                    />
                 </Show>
 
                 <Show when={activeTab() === 'executions'}>

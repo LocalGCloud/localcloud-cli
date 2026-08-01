@@ -294,7 +294,9 @@ public class McpService {
         addTool(tools, "localcloud_get_diagnostics", "Get the current LocalCloud diagnostics bundle", schema(), true, false);
         addTool(tools, "localcloud_get_recent_requests", "Get recent LocalCloud request log entries", schema(), true, false);
         addTool(tools, "localcloud_get_logs", "Get LocalCloud log-oriented diagnostics available through the request log", schema(), true, false);
-        addTool(tools, "localcloud_export_state", "Export LocalCloud state as seed-compatible YAML", schema(props(prop("services", "array", "Optional service ids to export")), List.of()), true, false);
+        addTool(tools, "localcloud_export_state", "Export LocalCloud state as seed-compatible YAML", schema(props(
+                prop("services", "array", "Optional service ids to export"),
+                prop("project", "string", "Optional project id")), List.of()), true, false);
 
         if (writeEnabled) {
             addTool(tools, "localcloud_seed_project", "Seed LocalCloud project data from seed YAML", schema(props(
@@ -448,7 +450,7 @@ public class McpService {
         if (services instanceof List<?> list && !list.isEmpty()) {
             selected = list.stream().map(String::valueOf).collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
         }
-        return exportService.exportYaml(selected);
+        return exportService.exportYaml(selected, string(args.get("project")));
     }
 
     private Map<String, Object> resetProject(Map<String, Object> args) {

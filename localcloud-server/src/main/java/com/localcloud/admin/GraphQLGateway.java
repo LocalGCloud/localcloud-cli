@@ -155,11 +155,11 @@ public class GraphQLGateway {
 
         ServiceDefinition spannerDef = registry.getService("spanner");
         int spannerRestPort = spannerDef != null && spannerDef.additionalPorts().containsKey("rest")
-                ? spannerDef.additionalPorts().get("rest") : 9020;
+                ? spannerDef.additionalPorts().get("rest") : 24086;
         this.spannerBase = "http://localhost:" + spannerRestPort;
 
         ServiceDefinition bqDef = registry.getService("bigquery");
-        this.bigqueryBase = bqDef != null ? "http://localhost:" + bqDef.port() : "http://localhost:9050";
+        this.bigqueryBase = bqDef != null ? "http://localhost:" + bqDef.port() : "http://localhost:24087";
 
         this.graphqlService = buildService();
     }

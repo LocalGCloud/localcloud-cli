@@ -63,6 +63,12 @@ async function get(path) {
     return handleResponse(r);
 }
 
+async function getText(path) {
+    const r = await fetch(`${BASE}${path}`);
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.text();
+}
+
 async function post(path, body) {
     const opts = { method: 'POST' };
     if (body) {
@@ -87,11 +93,12 @@ async function del(path) {
     return handleResponse(r);
 }
 
-async function postJson(path, body) {
+async function postJson(path, body, signal) {
     const r = await fetch(`${BASE}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal,
     });
     if (!r.ok) {
         try {
@@ -149,7 +156,7 @@ export const api = {
         return res;
     },
     resetService: (service, restoreSeed) => post(appendProject(`/reset/${service}`), { restore_seed: restoreSeed }),
-    export: () => get('/export'),
+    export: () => getText(appendProject('/export')),
     // Project management
     projects: () => get('/projects'),
     createProject: (projectId, displayName, location, zone) => postJson('/projects', { project_id: projectId, display_name: displayName, location: location, zone: zone }),
@@ -162,9 +169,9 @@ export const api = {
     enableService: (serviceId) => post(`/services/${encodeURIComponent(serviceId)}/enable`),
     disableService: (serviceId) => post(`/services/${encodeURIComponent(serviceId)}/disable`),
     // SQL query execution
-    query: (service, sql, params) => postJson(appendProject('/query'), { ...params, service, sql }),
+    query: (service, sql, params, signal) => postJson(appendProject('/query'), { ...params, service, sql }, signal),
     queryBatch: (service, statements, params) => postJson(appendProject('/query/batch'), { ...params, service, statements }),
-    queryDryRun: (sql) => postJson(appendProject('/query/dryrun'), { sql }),
+    queryDryRun: (sql, signal) => postJson(appendProject('/query/dryrun'), { sql }, signal),
     // Schema info
     schema: (service, params) => {
         let url = appendProject(`/schema/${encodeURIComponent(service)}`);
@@ -254,4 +261,30 @@ export const api = {
     syncCancel:           (service, body) => postJson(appendProject(`/sync/${service}/cancel`), body),
     syncResync:           (id)         => postJson(appendProject(`/sync/resync/${id}`), {}),
     syncDeleteManifest:   (id)         => del(appendProject(`/sync/manifests/${id}`)),
+    // Versioned runtime catalog and migration validation
+    runtimeCatalog: () => get('/runtime/profiles'),
+    resolveRuntimeProfile: (selector) => get(`/runtime/profiles/resolve?selector=${encodeURIComponent(selector)}`),
+    importRuntimeProfile: (profile) => postJson('/runtime/admin/profiles/import', profile),
+    publishRuntimeProfile: (revisionId, image, alias) => postJson('/runtime/admin/profiles/publish', { revisionId, image, alias }),
+    deprecateRuntimeProfile: (revisionId) => postJson('/runtime/admin/profiles/deprecate', { revisionId }),
+    setRuntimeProfileAlias: (alias, revisionId) => postJson('/runtime/admin/profiles/alias', { alias, revisionId }),
+    migrationSuites: () => get('/migration/suites'),
+    createMigrationSuite: (suite) => postJson('/migration/suites', suite),
+    migrationRuns: () => get('/migration/runs'),
+    startMigrationRun: (suiteId, revision) => postJson('/migration/runs', { suiteId, revision }),
+    migrationRun: (runId) => get(`/migration/runs/${encodeURIComponent(runId)}`),
+    cancelMigrationRun: (runId) => postJson(`/migration/runs/${encodeURIComponent(runId)}/cancel`, {}),
+    migrationReport: (runId) => get(`/migration/runs/${encodeURIComponent(runId)}/report`),
+    retryMigrationRun: (runId) => postJson(`/migration/runs/${encodeURIComponent(runId)}/retry`, {}),
+    cleanupMigrationRun: (runId) => postJson(`/migration/runs/${encodeURIComponent(runId)}/cleanup`, {}),
+    // Dataproc cluster management
+    dataprocClusters: (project, region) => get(`/v1/projects/${project}/regions/${region}/clusters`),
+    dataprocCreateCluster: (project, region, cluster) => postJson(`/v1/projects/${project}/regions/${region}/clusters`, cluster),
+    dataprocGetCluster: (project, region, name) => get(`/v1/projects/${project}/regions/${region}/clusters/${name}`),
+    dataprocDeleteCluster: (project, region, name) => del(`/v1/projects/${project}/regions/${region}/clusters/${name}`),
+    // Dataproc job management
+    dataprocJobs: (project, region) => get(`/v1/projects/${project}/regions/${region}/jobs`),
+    dataprocGetJob: (project, region, jobId) => get(`/v1/projects/${project}/regions/${region}/jobs/${jobId}`),
+    dataprocSubmitJob: (project, region, job) => postJson(`/v1/projects/${project}/regions/${region}/jobs:submit`, { project_id: project, region, job }),
+    dataprocCancelJob: (project, region, jobId) => postJson(`/v1/projects/${project}/regions/${region}/jobs/${jobId}:cancel`, {}),
 };

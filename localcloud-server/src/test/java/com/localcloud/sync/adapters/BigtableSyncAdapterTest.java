@@ -26,7 +26,7 @@ class BigtableSyncAdapterTest {
     @BeforeEach
     void setUp() {
         mapper = new ObjectMapper();
-        adapter = new BigtableSyncAdapter("localhost", 8087, mapper);
+        adapter = new BigtableSyncAdapter("localhost", 24084, mapper);
     }
 
     // -----------------------------------------------------------------------

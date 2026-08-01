@@ -31,7 +31,7 @@ public class MonitoringEmulator extends AbstractEmulator {
     private final ObjectMapper mapper = new ObjectMapper();
 
     public MonitoringEmulator(PostgresDataSource dataSource) {
-        super("monitoring", "Cloud Monitoring", 8080, "grpc", "MONITORING_EMULATOR_HOST");
+        super("monitoring", "Cloud Monitoring", 24080, "grpc", "MONITORING_EMULATOR_HOST");
         this.dataSource = dataSource;
         this.monitoringService = new MonitoringService();
     }

@@ -1,7 +1,10 @@
-import { createSignal, createEffect, createMemo, onCleanup, Show, For } from 'solid-js';
+import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
 import { api } from '../api.js';
-import { formatNumber, formatTime } from '../utils/a11y.js';
+import { formatNumber, formatTime } from '../utils/format.js';
+import { setUsageRefreshInterval, usageRefreshInterval } from '../utils/refreshPreferences.js';
 
+// Indicative pricing, last reviewed 2026-07-31 — not live GCP rates.
+const PRICING_LAST_REVIEWED = '2026-07-31';
 const GCP_PRICING = {
     gcs: { label: 'Cloud Storage', unit: 'per 10K operations', price: 0.05, category: 'storage' },
     pubsub: { label: 'Pub/Sub', unit: 'per 1M messages', price: 0.40, category: 'messaging' },
@@ -51,44 +54,14 @@ const PROTOCOL_MAP = {
     cloudrun: 'gRPC',
 };
 
-function estimateCost(serviceId, requestCount) {
-    const pricing = GCP_PRICING[serviceId];
-    if (!pricing || !requestCount) return 0;
-
-    switch (serviceId) {
-        case 'gcs': return (requestCount / 10000) * pricing.price;
-        case 'pubsub': return (requestCount / 1000000) * pricing.price;
-        case 'firestore': return (requestCount / 100000) * pricing.price;
-        case 'bigquery': return (requestCount / 1000) * pricing.price;
-        case 'secretmanager': return (requestCount / 10000) * pricing.price;
-        case 'cloudtasks': return (requestCount / 1000000) * pricing.price;
-        case 'spanner': return (requestCount / 3600) * pricing.price;
-        case 'bigtable': return (requestCount / 3600) * pricing.price;
-        case 'logging': return (requestCount / 10000) * pricing.price;
-        case 'monitoring': return (requestCount / 1000) * pricing.price;
-        case 'gke': return (requestCount / 3600) * pricing.price;
-        case 'compute': return (requestCount / 3600) * pricing.price;
-        case 'cloudrun': return (requestCount / 1000000) * pricing.price;
-        case 'memorystore': return (requestCount / 10000) * pricing.price;
-        default: return 0;
-    }
-}
-
-function formatCost(amount) {
-    return '$' + amount.toFixed(2);
-}
-
 export default function Usage(props) {
     const [usageData, setUsageData] = createSignal([]);
     const [loading, setLoading] = createSignal(true);
     const [error, setError] = createSignal(null);
     const [lastUpdated, setLastUpdated] = createSignal(null);
-    const [autoRefresh, setAutoRefresh] = createSignal(() => {
+    const [autoRefresh, setAutoRefresh] = createSignal((() => {
         try { return localStorage.getItem('localcloud-usage-autorefresh') !== 'false'; } catch { return true; }
-    });
-    const [refreshInterval, setRefreshInterval] = createSignal(() => {
-        try { return parseInt(localStorage.getItem('localcloud-usage-interval') || '30', 10); } catch { return 30; }
-    });
+    })());
     let isInitialLoad = true;
 
     const fetchUsage = async () => {
@@ -115,7 +88,7 @@ export default function Usage(props) {
 
     createEffect(() => {
         if (!autoRefresh()) return;
-        const interval = refreshInterval() * 1000;
+        const interval = usageRefreshInterval() * 1000;
         const timer = setInterval(fetchUsage, interval);
         onCleanup(() => clearInterval(timer));
     });
@@ -126,9 +99,7 @@ export default function Usage(props) {
     };
 
     const applyInterval = (seconds) => {
-        if (seconds < 1 || seconds > 120) return;
-        setRefreshInterval(seconds);
-        try { localStorage.setItem('localcloud-usage-interval', String(seconds)); } catch {}
+        setUsageRefreshInterval(seconds);
     };
 
     const serviceUsage = () => {
@@ -136,21 +107,13 @@ export default function Usage(props) {
             const id = svc.id;
             const pricing = GCP_PRICING[id];
             const count = svc.request_count || 0;
-            const cost = estimateCost(id, count);
             return {
                 id,
                 name: pricing ? pricing.label : (svc.name || id),
                 requestCount: count,
                 protocol: PROTOCOL_MAP[id] || 'REST',
-                cost,
-                unit: pricing ? pricing.unit : '--',
-                price: pricing ? pricing.price : 0,
             };
         });
-    };
-
-    const totalCost = () => {
-        return serviceUsage().reduce((sum, svc) => sum + svc.cost, 0);
     };
 
     const totalRequests = () => {
@@ -160,9 +123,9 @@ export default function Usage(props) {
     return (
         <div>
             <div class="page-header">
-                <h1>Cost Analysis</h1>
+                <h1>Usage &amp; Pricing</h1>
                 <p class="page-header-subtitle">
-                    Cumulative API usage per service and estimated GCP costs saved by using LocalCloud.
+                    Cumulative API request counts by service, alongside an indicative pricing reference.
                 </p>
             </div>
 
@@ -188,7 +151,7 @@ export default function Usage(props) {
                         type="number"
                         min="1"
                         max="120"
-                        value={refreshInterval()}
+                        value={usageRefreshInterval()}
                         onChange={e => applyInterval(parseInt(e.currentTarget.value) || 30)}
                         disabled={!autoRefresh()}
                         style="width:50px"
@@ -220,9 +183,9 @@ export default function Usage(props) {
                     <div class="summary-bar" style={{ "margin-bottom": "24px" }}>
                         <div class="stat-card">
                             <div class="stat-card-main">
-                                <span class="stat-card-label">Saved (lifetime)</span>
-                                <span class="stat-card-value">{formatCost(totalCost())}</span>
-                                <span class="stat-card-sublabel">{formatNumber(totalRequests())} requests</span>
+                                <span class="stat-card-label">API requests</span>
+                                <span class="stat-card-value">{formatNumber(totalRequests())}</span>
+                                <span class="stat-card-sublabel">cumulative</span>
                             </div>
                         </div>
                         <div class="stat-card">
@@ -261,7 +224,6 @@ export default function Usage(props) {
                                             <th>Service</th>
                                             <th style={{ "text-align": "right" }}>Requests</th>
                                             <th>Protocol</th>
-                                            <th style={{ "text-align": "right" }}>Est. Cost</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -275,9 +237,6 @@ export default function Usage(props) {
                                                     <td>
                                                         <span class="badge badge-neutral">{svc.protocol}</span>
                                                     </td>
-                                                    <td style={{ "text-align": "right", "font-family": "var(--font-mono)", "font-size": "12px" }}>
-                                                        {formatCost(svc.cost)}
-                                                    </td>
                                                 </tr>
                                             )}
                                         </For>
@@ -288,9 +247,6 @@ export default function Usage(props) {
                                                 {formatNumber(totalRequests())}
                                             </td>
                                             <td></td>
-                                            <td style={{ "text-align": "right", "font-weight": "700", "font-family": "var(--font-mono)", "font-size": "12px" }}>
-                                                {formatCost(totalCost())}
-                                            </td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -300,6 +256,9 @@ export default function Usage(props) {
                         {/* Right: Pricing Reference */}
                         <div>
                             <h2 style={{ "margin-bottom": "14px", "font-size": "var(--font-size-lg)" }}>Pricing Reference</h2>
+                            <p style={{ "font-size": "11px", "color": "var(--text-tertiary)", "margin-bottom": "8px" }}>
+                                Indicative pricing only — not live GCP rates. Last reviewed {PRICING_LAST_REVIEWED}.
+                            </p>
                             <div class="card" style={{ padding: "16px" }}>
                             <h3 style={{ "margin-bottom": "12px" }}>API Pricing</h3>
                             <div style={{ "display": "flex", "flex-direction": "column", "gap": "6px", "margin-bottom": "20px" }}>

@@ -15,7 +15,7 @@ import java.util.Map;
 /**
  * REST endpoints for Pub/Sub topic and subscription management.
  * Terraform's google_pubsub_topic and google_pubsub_subscription resources
- * use these REST paths (not the gRPC data plane on port 8085).
+ * use these REST paths (not the gRPC data plane on port 24082).
  *
  * Routes: /v1/projects/{project}/topics[/{topic}]
  *         /v1/projects/{project}/subscriptions[/{subscription}]

@@ -32,7 +32,7 @@ public class LoggingEmulator extends AbstractEmulator {
     private final ObjectMapper mapper = new ObjectMapper();
 
     public LoggingEmulator(PostgresDataSource dataSource) {
-        super("logging", "Cloud Logging", 8080, "grpc", "LOGGING_EMULATOR_HOST");
+        super("logging", "Cloud Logging", 24080, "grpc", "LOGGING_EMULATOR_HOST");
         this.dataSource = dataSource;
         this.sinkRepository = new LoggingSinkRepository(dataSource);
         this.loggingService = new LoggingService();

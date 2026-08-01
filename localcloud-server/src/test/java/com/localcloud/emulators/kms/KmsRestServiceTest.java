@@ -18,7 +18,7 @@ class KmsRestServiceTest {
     void symmetricEncryptDecryptRoundTrips() throws Exception {
         TestDataSource testDataSource = TestDataSource.create("kms_round_trip");
         try {
-            KmsRestService service = new KmsEmulator(testDataSource.getDataSource(), 8080).getRestService();
+            KmsRestService service = new KmsEmulator(testDataSource.getDataSource(), 24080).getRestService();
             body(service.createKeyRing(null, "local-project", "us-central1", "{\"keyRingId\":\"ring1\"}"));
             body(service.createCryptoKey(null, "local-project", "us-central1", "ring1", "{\"cryptoKeyId\":\"key1\"}"));
 

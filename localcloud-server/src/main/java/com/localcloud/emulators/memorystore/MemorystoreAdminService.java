@@ -42,7 +42,7 @@ public class MemorystoreAdminService {
             int memorySizeGb = root.has("memorySizeGb") ? root.get("memorySizeGb").asInt(1) : 1;
             boolean authEnabled = root.has("authEnabled") ? root.get("authEnabled").asBoolean(false) : false;
             String persistenceMode = root.has("persistenceMode") ? root.get("persistenceMode").asText("DISABLED") : "DISABLED";
-            Map<String, Object> row = store.createInstance(project, instanceId, displayName, tier, "REDIS", redisVersion, 6379, memorySizeGb, authEnabled, persistenceMode);
+            Map<String, Object> row = store.createInstance(project, instanceId, displayName, tier, "REDIS", redisVersion, 24089, memorySizeGb, authEnabled, persistenceMode);
             // Return an operation (LRO pattern) instead of the instance directly.
             // Terraform provider polls GET /operations/{name} until done=true.
             String opName = "projects/" + project + "/locations/" + location + "/operations/" + instanceId;

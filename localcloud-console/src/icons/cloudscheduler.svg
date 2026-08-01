@@ -1,12 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-  <!-- Clock face -->
-  <circle cx="12" cy="12" r="9" fill="#aecbfa"/>
-  <circle cx="12" cy="12" r="7" fill="#669df6"/>
-  <!-- Clock hands forming a cron symbol -->
-  <path d="M12 7v5.5l3 1.5" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-  <!-- Hour markers -->
-  <circle cx="12" cy="5" r="0.8" fill="#fff"/>
-  <circle cx="12" cy="19" r="0.8" fill="#fff"/>
-  <circle cx="5" cy="12" r="0.8" fill="#fff"/>
-  <circle cx="19" cy="12" r="0.8" fill="#fff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#4285F4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="12" cy="12" r="10"/>
+  <polyline points="12 6 12 12 16 14"/>
+  <path d="M4 4l4 4"/>
+  <path d="M20 4l-4 4"/>
 </svg>

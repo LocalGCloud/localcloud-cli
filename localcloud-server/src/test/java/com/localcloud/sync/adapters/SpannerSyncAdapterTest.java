@@ -22,7 +22,7 @@ class SpannerSyncAdapterTest {
 
     @BeforeEach
     void setUp() {
-        adapter = new SpannerSyncAdapter("localhost", 9010, new ObjectMapper());
+        adapter = new SpannerSyncAdapter("localhost", 24085, new ObjectMapper());
     }
 
     // -----------------------------------------------------------------------

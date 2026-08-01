@@ -7,6 +7,7 @@ import ServiceExplorer from './pages/ServiceExplorer.jsx';
 import Settings from './pages/Settings.jsx';
 import UserGuide from './pages/UserGuide.jsx';
 import Usage from './pages/Usage.jsx';
+import Migration from './pages/Migration.jsx';
 import { trapFocus } from './utils/a11y.js';
 import { normalizeLocalSchema, normalizeRemoteBrowse } from './components/SchemaExplorer.jsx';
 import Onboarding from './components/Onboarding.jsx';
@@ -14,6 +15,8 @@ import GetStarted from './pages/GetStarted.jsx';
 import ComboBox from './components/ComboBox.jsx';
 import { GCP_REGIONS, getZonesForRegion } from './data/gcpLocations.js';
 import { setCompatibilityWarnings, loadCachedCompatibilityWarnings } from './data/compatibility.js';
+import { shortVersion, parseBuildDate } from './utils/version.js';
+import { commitUrl } from './utils/urlTabs.js';
 
 const ICON_PATHS = {
     dashboard: 'M4 13h6a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1zm-1 7h6a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1zm10 0h6a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1zM13 4v4a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1z',
@@ -43,6 +46,7 @@ function Icon(props) {
 const NAV_ITEMS = [
     { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
     { id: 'getstarted', label: 'Get Started', icon: 'spark' },
+    { id: 'migration', label: 'Migration Lab', icon: 'spark' },
     { id: 'logs', label: 'Logs', icon: 'logs' },
     { id: 'usage', label: 'Cost Analysis', icon: 'usage' },
     { id: 'userguide', label: 'Setup & SDKs', icon: 'book' },
@@ -82,8 +86,7 @@ const SERVICE_GROUPS = [
     { name: 'Operations', tone: 'violet', services: [
         { id: 'logging', label: 'Logging', desc: 'Logs — ingestion, storage, query, export' },
         { id: 'monitoring', label: 'Monitoring', desc: 'Metrics — dashboards, alerts, uptime checks' },
-        { id: 'cloudbilling', label: 'Billing', desc: 'Cost — budgets, alerts, cost breakdown' },
-        { id: 'serviceusage', label: 'Service Usage', desc: 'API enablement — service activation & quotas' },
+        { id: 'usage', label: 'Usage & Pricing', desc: 'Service request counts with an indicative GCP pricing reference' },
     ]},
     { name: 'AI/ML', tone: 'purple', services: [
         { id: 'vertexai', label: 'Vertex AI', desc: 'ML platform — training, prediction, model registry', tag: 'Coming up' },
@@ -93,22 +96,7 @@ const FLAT_SERVICES = SERVICE_GROUPS.flatMap(group => group.services.map(svc => 
 const DOCKERHUB_IMAGE = 'localcloud/localcloud';
 const DOCKERHUB_LATEST_TAG_URL = `https://hub.docker.com/v2/repositories/${DOCKERHUB_IMAGE}/tags/latest`;
 
-function shortVersion(health) {
-    const raw = String(health?.version || '0.1.0').trim();
-    const base = (raw.split('+')[0] || raw).trim();
-    if (!base) return 'v0.1.0';
-    return base.startsWith('v') ? base : `v${base}`;
-}
-
-function parseBuildDate(health) {
-    const raw = String(health?.version || '').trim();
-    const buildPart = raw.includes('+') ? raw.split('+').slice(1).join('+') : '';
-    const dateText = buildPart.includes('.') ? buildPart.split('.').slice(1).join('.') : '';
-    const parsed = dateText ? Date.parse(dateText) : NaN;
-    return Number.isFinite(parsed) ? parsed : null;
-}
-
-const STANDALONE_PAGES = ['dashboard', 'getstarted', 'logs', 'usage', 'settings', 'userguide'];
+const STANDALONE_PAGES = ['dashboard', 'migration', 'getstarted', 'logs', 'usage', 'settings', 'userguide'];
 const SERVICE_PAGES = ['explorer', 'editor', 'db-history', 'db-stats'];
 
 function parseProject() {
@@ -116,11 +104,21 @@ function parseProject() {
     return params.get('project') || null;
 }
 
+function decodePathSegment(segment) {
+    try {
+        return decodeURIComponent(segment);
+    } catch {
+        return segment;
+    }
+}
+
 function parsePath() {
-    const pathname = window.location.pathname.replace(/\/$/, '').replace(/\/+$/, '');
-    const parts = pathname.split('/').filter(Boolean);
+    const pathname = window.location.pathname.replace(/\/+$/, '');
+    const parts = pathname.split('/').filter(Boolean).map(decodePathSegment);
     if (parts.length === 0) return { page: 'dashboard', service: null };
-    const first = decodeURIComponent(parts[0]);
+    const first = parts[0];
+    // Operations services redirect to Cost Analysis page
+    if (first === 'cloudbilling' || first === 'serviceusage') return { page: 'usage', service: null };
     if (STANDALONE_PAGES.includes(first)) return { page: first, service: null };
     if (parts.length >= 2 && SERVICE_PAGES.includes(parts[1])) {
         return { page: parts[1], service: first, subpath: parts.slice(2) };
@@ -133,7 +131,7 @@ function buildPath(page, service, subpath) {
     if (service && SERVICE_PAGES.includes(page)) segments.push(service, page);
     else segments.push(page);
     if (subpath && subpath.length > 0) segments.push(...subpath);
-    return '/' + segments.join('/');
+    return '/' + segments.map(segment => encodeURIComponent(segment)).join('/');
 }
 
 function buildUrl(page, service, subpath, projectId, options = {}) {
@@ -152,9 +150,7 @@ function currentPathMatches(page, service, subpath) {
 
 function navigateWithProject(page, service, subpath, projectId) {
     const url = buildUrl(page, service, subpath, projectId);
-    if (window.location.pathname + window.location.search !== url) {
-        history.pushState(null, '', url);
-    }
+    commitUrl(url, { history: 'push', compareHash: false });
 }
 
 function App() {
@@ -225,9 +221,7 @@ function App() {
             const svc = selectedService();
             const sp = subpath();
             const url = buildUrl(page, svc, sp, projectId, { preserveSearch: true });
-            if (window.location.pathname + window.location.search !== url) {
-                history.pushState(null, '', url);
-            }
+            commitUrl(url, { history: 'push', compareHash: false });
         }
     };
     const [projectDropdownOpen, setProjectDropdownOpen] = createSignal(false);
@@ -302,9 +296,7 @@ function App() {
         const sp = subpath();
         const project = activeProject();
         const url = buildUrl(page, svc, sp, project, { preserveSearch: currentPathMatches(page, svc, sp) });
-        if (window.location.pathname + window.location.search !== url) {
-            history.replaceState(null, '', url);
-        }
+        commitUrl(url, { history: 'replace', compareHash: false });
     });
 
     const onPopState = () => {
@@ -390,6 +382,18 @@ function App() {
     };
 
     const handleServiceClick = (serviceId) => {
+        // Usage & Billing redirects to Cost Analysis page
+        if (serviceId === 'usage') {
+            batch(() => {
+                setSelectedService(null);
+                setCurrentPage('usage');
+                setSubpath([]);
+                navigateWithProject('usage', null, null, activeProject());
+            });
+            setSearchOpen(false);
+            setMobileSidebarOpen(false);
+            return;
+        }
         batch(() => {
             setSelectedService(serviceId);
             setCurrentPage('explorer');
@@ -520,15 +524,17 @@ function App() {
         switch (currentPage()) {
             case 'dashboard':
                 return <Dashboard healthData={healthData} routingData={routingData} onServiceClick={handleServiceClick} activeProject={activeProject} />;
+            case 'migration':
+                return <Migration activeProject={activeProject} />;
             case 'getstarted':
-                return <GetStarted healthData={healthData} activeProject={activeProject} onServiceClick={handleServiceClick} recentServices={recentServices} projectRegion={projectRegion} />;
+                return <GetStarted healthData={healthData} activeProject={activeProject} onServiceClick={handleServiceClick} onNavigate={navigateTo} recentServices={recentServices} projectRegion={projectRegion} />;
             case 'logs':
                 return <Logs activeProject={activeProject} />;
             case 'explorer':
             case 'editor':
             case 'db-history':
             case 'db-stats':
-                return <ServiceExplorer selectedService={selectedService} activeView={currentPage} onViewChange={setCurrentPage} onTabChange={setSelectedService} activeProject={activeProject} projectRegion={projectRegion} subpath={subpath} onSubpathChange={setSubpath} />;
+                return <ServiceExplorer selectedService={selectedService} activeView={currentPage} onViewChange={setCurrentPage} onTabChange={setSelectedService} onNavigate={navigateTo} activeProject={activeProject} projectRegion={projectRegion} subpath={subpath} onSubpathChange={setSubpath} />;
             case 'usage':
                 return <Usage activeProject={activeProject} />;
             case 'settings':
@@ -635,6 +641,11 @@ function App() {
                         <span class="aura-sidebar-nav-label">Dashboard</span>
                         <div class="aura-tooltip">Dashboard</div>
                     </button>
+                    <button class={`aura-sidebar-nav-item ${currentPage() === 'migration' ? 'active' : ''}`} onClick={() => navigateTo('migration')}>
+                        <Icon name="spark" size={22} />
+                        <span class="aura-sidebar-nav-label">Migration Lab</span>
+                        <div class="aura-tooltip">Migration Lab</div>
+                    </button>
                     <button class="aura-sidebar-pin-btn" onClick={() => setSidebarPinned(!sidebarPinned())} aria-label={sidebarPinned() ? 'Unpin sidebar' : 'Pin sidebar'} aria-pressed={sidebarPinned()}>
                         <Icon name="pin" size={16} />
                         <div class="aura-tooltip">{sidebarPinned() ? 'Unpin sidebar' : 'Pin sidebar'}</div>
@@ -730,8 +741,15 @@ function App() {
 
             <Show when={showNewProjectDialog()}>
                 <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="new-project-title" onClick={(e) => { if (e.target === e.currentTarget) { setShowNewProjectDialog(false); setProjectError(null); } }}>
-                    <div class="create-dialog" onClick={(e) => e.stopPropagation()} ref={el => {
-                        if (el) requestAnimationFrame(() => trapFocus(el, () => { setShowNewProjectDialog(false); setProjectError(null); }));
+                    <div class="create-dialog" onClick={(e) => e.stopPropagation()} ref={(el) => {
+                        let cleanup;
+                        const frame = requestAnimationFrame(() => {
+                            cleanup = trapFocus(el, () => { setShowNewProjectDialog(false); setProjectError(null); });
+                        });
+                        onCleanup(() => {
+                            cancelAnimationFrame(frame);
+                            cleanup?.();
+                        });
                     }}>
                         <div class="create-dialog-accent" style="background:var(--purple)" />
                         <div class="create-dialog-header">

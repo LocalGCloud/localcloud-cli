@@ -121,12 +121,7 @@ export function generateMockValue(columnName, type = 'STRING') {
         return `+1-555-01${randomDigits(2)}-${randomDigits(4)}`;
     }
     if (nameLower.includes('uuid') || nameLower.includes('guid') || nameLower === 'id' || nameLower.endsWith('_id') || nameLower.endsWith('id')) {
-        // Simple random UUIDv4 generator
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-            const r = Math.random() * 16 | 0;
-            const v = c === 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
-        });
+        return uuid();
     }
     if (nameLower.includes('status')) {
         return pickRandom(STATUSES);

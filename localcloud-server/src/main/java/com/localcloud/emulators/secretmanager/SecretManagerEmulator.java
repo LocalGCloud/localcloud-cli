@@ -54,7 +54,7 @@ public class SecretManagerEmulator extends AbstractEmulator {
     private final IAMPolicyGrpcHelper iamHelper;
 
     public SecretManagerEmulator(PostgresDataSource dataSource) {
-        super("secretmanager", "Secret Manager", 8080, "grpc", "SECRET_MANAGER_EMULATOR_HOST");
+        super("secretmanager", "Secret Manager", 24080, "grpc", "SECRET_MANAGER_EMULATOR_HOST");
         this.store = new SecretManagerStore(dataSource);
         this.iamHelper = new IAMPolicyGrpcHelper(new IAMRepository(dataSource));
         this.serviceImpl = new SecretManagerServiceImpl();

@@ -19,7 +19,7 @@ class CompatibilityRegistryTest {
 
     @Test
     void registryCoversEveryServiceAndValidates() {
-        ServiceRegistry services = ServiceRegistry.load(8080);
+        ServiceRegistry services = ServiceRegistry.load(24080);
 
         CompatibilityRegistry registry = assertDoesNotThrow(() -> CompatibilityRegistry.load(services));
         Map<String, Object> asMap = registry.asMap(services);
@@ -32,7 +32,7 @@ class CompatibilityRegistryTest {
 
     @Test
     void supportedClaimsHaveEvidence() {
-        ServiceRegistry services = ServiceRegistry.load(8080);
+        ServiceRegistry services = ServiceRegistry.load(24080);
         CompatibilityRegistry registry = CompatibilityRegistry.load(services);
 
         @SuppressWarnings("unchecked")
@@ -52,7 +52,7 @@ class CompatibilityRegistryTest {
 
     @Test
     void warningsCanBeFilteredForBigQuerySql() {
-        ServiceRegistry services = ServiceRegistry.load(8080);
+        ServiceRegistry services = ServiceRegistry.load(24080);
         CompatibilityRegistry registry = CompatibilityRegistry.load(services);
 
         List<Map<String, Object>> warnings = registry.warnings("bigquery", "sql");
@@ -72,7 +72,7 @@ class CompatibilityRegistryTest {
 
     @Test
     void evidenceSourceFilesExistWhenTheyAreRepoPaths() {
-        ServiceRegistry services = ServiceRegistry.load(8080);
+        ServiceRegistry services = ServiceRegistry.load(24080);
         CompatibilityRegistry registry = CompatibilityRegistry.load(services);
 
         @SuppressWarnings("unchecked")

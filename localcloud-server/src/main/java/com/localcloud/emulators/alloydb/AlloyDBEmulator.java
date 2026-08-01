@@ -42,7 +42,7 @@ public class AlloyDBEmulator extends AbstractEmulator {
     private final AlloyDBRestService restService;
 
     public AlloyDBEmulator(PostgresDataSource dataSource) {
-        super("alloydb", "AlloyDB", 8080, "grpc", "ALLOYDB_EMULATOR_HOST");
+        super("alloydb", "AlloyDB", 24080, "grpc", "ALLOYDB_EMULATOR_HOST");
         this.repository = new AlloyDBRepository(dataSource);
         this.restService = new AlloyDBRestService(repository, this);
     }

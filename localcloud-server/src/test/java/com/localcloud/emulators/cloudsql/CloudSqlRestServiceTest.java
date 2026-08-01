@@ -15,7 +15,7 @@ class CloudSqlRestServiceTest {
     void createsInstancesDatabasesAndUsersInAdminMetadata() throws Exception {
         TestDataSource testDataSource = TestDataSource.create("cloudsql_metadata");
         try {
-            CloudSqlRestService service = new CloudSqlEmulator(testDataSource.getDataSource(), 8080).getRestService();
+            CloudSqlRestService service = new CloudSqlEmulator(testDataSource.getDataSource(), 24080).getRestService();
             body(service.insertInstance("local-project",
                     "{\"name\":\"pg1\",\"region\":\"us-central1\",\"databaseVersion\":\"POSTGRES_15\",\"settings\":{\"tier\":\"db-custom-1-3840\"}}"));
             body(service.insertDatabase("local-project", "pg1", "{\"name\":\"appdb\"}"));
@@ -39,7 +39,7 @@ class CloudSqlRestServiceTest {
     void mysqlFlavorIsExplicitlyMarkedAsOpenHaloDependent() throws Exception {
         TestDataSource testDataSource = TestDataSource.create("cloudsql_mysql_metadata");
         try {
-            CloudSqlRestService service = new CloudSqlEmulator(testDataSource.getDataSource(), 8080).getRestService();
+            CloudSqlRestService service = new CloudSqlEmulator(testDataSource.getDataSource(), 24080).getRestService();
             body(service.insertInstance("local-project",
                     "{\"name\":\"mysql1\",\"region\":\"us-central1\",\"databaseVersion\":\"MYSQL_8_0\"}"));
             var instance = mapper.readTree(body(service.getInstance("local-project", "mysql1")));

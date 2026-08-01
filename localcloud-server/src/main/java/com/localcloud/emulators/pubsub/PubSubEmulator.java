@@ -35,7 +35,7 @@ public class PubSubEmulator extends AbstractEmulator {
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     public PubSubEmulator(PostgresDataSource dataSource) {
-        super("pubsub", "Pub/Sub", 8080, "grpc", "PUBSUB_EMULATOR_HOST");
+        super("pubsub", "Pub/Sub", 24080, "grpc", "PUBSUB_EMULATOR_HOST");
         this.store = new PubSubStore(dataSource.getDataSource());
         this.notifier = new PubSubNotifier();
         this.publisherService = new PublisherServiceImpl();

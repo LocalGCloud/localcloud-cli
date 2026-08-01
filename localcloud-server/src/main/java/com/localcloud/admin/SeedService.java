@@ -110,13 +110,13 @@ public class SeedService {
 
         ServiceDefinition spannerDef = registry.getService("spanner");
         this.spannerRestPort = spannerDef != null && spannerDef.additionalPorts().containsKey("rest")
-                ? spannerDef.additionalPorts().get("rest") : 9020;
+                ? spannerDef.additionalPorts().get("rest") : 24086;
 
         ServiceDefinition firestoreDef = registry.getService("firestore");
-        this.firestorePort = firestoreDef != null ? firestoreDef.port() : 8086;
+        this.firestorePort = firestoreDef != null ? firestoreDef.port() : 24083;
 
         ServiceDefinition bigtableDef = registry.getService("bigtable");
-        this.bigtablePort = bigtableDef != null ? bigtableDef.port() : 8087;
+        this.bigtablePort = bigtableDef != null ? bigtableDef.port() : 24084;
     }
 
     private static String baseUrl(ServiceDefinition def) {
@@ -926,7 +926,7 @@ public class SeedService {
 
     private int resetMemorystore(String projectId) {
         int redisPort = config.getServiceRegistry().getService("memorystore") != null
-                ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+                ? config.getServiceRegistry().getService("memorystore").port() : 24089;
         try (Jedis jedis = new Jedis("localhost", redisPort)) {
             int flushed = 0;
             for (int db = 0; db < 16; db++) {
@@ -1044,8 +1044,10 @@ public class SeedService {
                         for (Map<String, Object> obj : bucketObjects) {
                             try {
                                 String key = (String) obj.get("key");
-                                String content = (String) obj.getOrDefault("content", "");
-                                String contentType = (String) obj.getOrDefault("contentType", "application/octet-stream");
+                                byte[] content = obj.containsKey("contentBase64")
+                                        ? Base64.getDecoder().decode(String.valueOf(obj.get("contentBase64")))
+                                        : String.valueOf(obj.getOrDefault("content", "")).getBytes(StandardCharsets.UTF_8);
+                                String contentType = String.valueOf(obj.getOrDefault("contentType", "application/octet-stream"));
 
                                 String objUrl = gcsBase + "/upload/storage/v1/b/" + name
                                         + "/o?name=" + java.net.URLEncoder.encode(key, StandardCharsets.UTF_8)
@@ -1434,7 +1436,7 @@ public class SeedService {
         Map<String, Object> ms = (Map<String, Object>) msData;
         int count = 0;
         int redisPort = config.getServiceRegistry().getService("memorystore") != null
-                ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+                ? config.getServiceRegistry().getService("memorystore").port() : 24089;
 
         // Support optional 'database' field (default: 0)
         int dbIndex = ms.containsKey("database") ? ((Number) ms.get("database")).intValue() : 0;
@@ -3155,7 +3157,7 @@ public class SeedService {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
                  "INSERT INTO memorystore_instances (project_id, instance_id, display_name, tier, engine, redis_version, port, memory_size_gb, state, host) " +
-                 "VALUES (?, ?, ?, ?, 'REDIS', ?, 6379, ?, 'READY', 'localhost') ON CONFLICT DO NOTHING")) {
+                 "VALUES (?, ?, ?, ?, 'REDIS', ?, 24089, ?, 'READY', 'localhost') ON CONFLICT DO NOTHING")) {
             ps.setString(1, projectId);
             ps.setString(2, instanceId);
             ps.setString(3, displayName);
@@ -3443,6 +3445,20 @@ public class SeedService {
             logger.warn("HTTP POST {} failed ({}): {}", url, response.statusCode(), errorBody);
             throw new RuntimeException(String.format("HTTP POST %s failed with status %d: %s",
                     url, response.statusCode(), errorBody));
+        }
+    }
+
+    private void httpPost(String url, byte[] body, String contentType) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(Duration.ofSeconds(10))
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+                .header("Content-Type", contentType)
+                .build();
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() >= 400) {
+            throw new RuntimeException(String.format("HTTP POST %s failed with status %d: %s",
+                    url, response.statusCode(), response.body()));
         }
     }
 

@@ -51,7 +51,7 @@ export const IconCollection = () => (
 );
 
 export const IconInstance = () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--primary)" class="tree-icon" aria-hidden="true" focusable="false" style={{"flex-shrink":"0"}}>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" class="tree-icon" aria-hidden="true" focusable="false" style={{"flex-shrink":"0"}}>
         <path d="M19 15v4H5v-4h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 18.5c-.82 0-1.5-.67-1.5-1.5s.68-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM19 3v4H5V3h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V2c0-.55-.45-1-1-1zM7 6.5c-.82 0-1.5-.67-1.5-1.5S6.19 3.5 7 3.5s1.5.67 1.5 1.5S7.83 6.5 7 6.5z"/>
     </svg>
 );
@@ -66,6 +66,9 @@ export function iconForType(type) {
         case 'prefix':
         case 'objects': return IconBucket;
         case 'collection': return IconCollection;
+        case 'keyspace':
+        case 'cluster':
+        case 'user': return IconDatabase;
         case 'instance': return IconInstance;
         default: return IconTable;
     }

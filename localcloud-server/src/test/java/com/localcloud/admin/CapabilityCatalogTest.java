@@ -33,7 +33,7 @@ class CapabilityCatalogTest {
 
     @BeforeEach
     void setUp() {
-        registry = ServiceRegistry.load(8080);
+        registry = ServiceRegistry.load(24080);
 
         when(config.getServiceRegistry()).thenReturn(registry);
         when(config.getProjectId()).thenReturn("test-project");

@@ -69,10 +69,6 @@ export const SQL_SERVICES = [
       placeholder: "SELECT cluster_name, region, created_at\nFROM dataproc_clusters\nORDER BY created_at DESC" },
     { id: 'cloudiam', label: 'Cloud IAM', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'cloudiam',
       placeholder: "SELECT resource_type, resource_id\nFROM iam_policies\nORDER BY resource_type" },
-    { id: 'cloudbilling', label: 'Cloud Billing', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'usage',
-      placeholder: "SELECT budget_id, display_name, create_time\nFROM billing_budgets\nORDER BY create_time DESC" },
-    { id: 'serviceusage', label: 'Service Usage', dialect: 'postgresql', dialectLabel: 'PostgreSQL', icon: 'services',
-      placeholder: "" },
 ];
 
 export const SQL_RESULT_PAGE_SIZE = 50;
@@ -153,15 +149,15 @@ export const TABS = Object.keys(SERVICE_META).filter(id => !['workflows'].includ
 
 export const SERVICE_INFO = {
     gke: {
-        name: 'GKE', port: 443, envVar: 'GKE_EMULATOR_HOST', envValue: 'localhost:443',
+        name: 'GKE', port: 24080, envVar: 'GKE_EMULATOR_HOST', envValue: 'localhost:24080',
         protocol: 'gRPC', description: 'Use GKE SDK or kubectl to manage clusters.',
     },
     compute: {
-        name: 'Compute Engine', port: 4443, envVar: 'COMPUTE_EMULATOR_HOST', envValue: 'localhost:4443',
+        name: 'Compute Engine', port: 24080, envVar: 'COMPUTE_EMULATOR_HOST', envValue: 'localhost:24080',
         protocol: 'REST', description: 'Use the Compute Engine SDK to manage instances.',
     },
     cloudrun: {
-        name: 'Cloud Run', port: 4443, envVar: 'CLOUD_RUN_EMULATOR_HOST', envValue: 'localhost:4443',
+        name: 'Cloud Run', port: 24080, envVar: 'CLOUD_RUN_EMULATOR_HOST', envValue: 'localhost:24080',
         protocol: 'gRPC', description: 'Use the Cloud Run SDK to manage services.',
     },
 };

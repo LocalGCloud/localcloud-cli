@@ -1,6 +1,6 @@
-import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
+import { createSignal, createEffect, createMemo, onCleanup, Show, For } from 'solid-js';
 import { api } from '../api.js';
-import { formatNumber, onActivate } from '../utils/a11y.js';
+import { formatNumber } from '../utils/format.js';
 
 const SERVICE_NAMES = {
   gcs: 'Cloud Storage',
@@ -29,29 +29,29 @@ const SERVICE_NAMES = {
 };
 
 const ALL_SERVICE_IDS = [
-  { id: 'gcs', port: 4443, protocol: 'REST', env_var: 'STORAGE_EMULATOR_HOST', endpoint: 'http://localhost:4443' },
-  { id: 'pubsub', port: 8085, protocol: 'GRPC', env_var: 'PUBSUB_EMULATOR_HOST', endpoint: 'localhost:8085' },
-  { id: 'firestore', port: 8086, protocol: 'GRPC', env_var: 'FIRESTORE_EMULATOR_HOST', endpoint: 'localhost:8086' },
-  { id: 'bigtable', port: 8087, protocol: 'GRPC', env_var: 'BIGTABLE_EMULATOR_HOST', endpoint: 'localhost:8087' },
-  { id: 'spanner', port: 9010, protocol: 'GRPC', env_var: 'SPANNER_EMULATOR_HOST', endpoint: 'localhost:9010' },
-  { id: 'bigquery', port: 9050, protocol: 'REST', env_var: 'BIGQUERY_EMULATOR_HOST', endpoint: 'http://localhost:9050' },
-  { id: 'secretmanager', port: 8080, protocol: 'GRPC', env_var: 'SECRET_MANAGER_EMULATOR_HOST', endpoint: 'localhost:8080' },
-  { id: 'cloudtasks', port: 8080, protocol: 'GRPC', env_var: 'CLOUD_TASKS_EMULATOR_HOST', endpoint: 'localhost:8080' },
-  { id: 'logging', port: 8080, protocol: 'GRPC', env_var: 'CLOUD_LOGGING_EMULATOR_HOST', endpoint: 'localhost:8080' },
-  { id: 'monitoring', port: 8080, protocol: 'GRPC', env_var: 'CLOUD_MONITORING_EMULATOR_HOST', endpoint: 'localhost:8080' },
-  { id: 'memorystore', port: 6379, protocol: 'REDIS', env_var: 'REDIS_HOST', endpoint: 'localhost:6379' },
-  { id: 'gke', port: 8080, protocol: 'GRPC', env_var: 'GKE_EMULATOR_HOST', endpoint: 'localhost:8080' },
-  { id: 'compute', port: 8080, protocol: 'REST', env_var: 'COMPUTE_EMULATOR_HOST', endpoint: 'http://localhost:8080' },
-  { id: 'cloudrun', port: 8080, protocol: 'GRPC', env_var: 'CLOUD_RUN_EMULATOR_HOST', endpoint: 'localhost:8080' },
-  { id: 'workflows', port: 8080, protocol: 'REST', env_var: 'WORKFLOWS_EMULATOR_HOST', endpoint: 'http://localhost:8080' },
-  { id: 'vertexai', port: 8080, protocol: 'REST', env_var: 'AIPLATFORM_EMULATOR_HOST', endpoint: 'http://localhost:8080' },
-  { id: 'kms', port: 8080, protocol: 'REST', env_var: 'CLOUD_KMS_EMULATOR_HOST', endpoint: 'http://localhost:8080' },
-  { id: 'cloudsql', port: 8080, protocol: 'REST', env_var: 'CLOUD_SQL_EMULATOR_HOST', endpoint: 'http://localhost:8080' },
-  { id: 'alloydb', port: 8080, protocol: 'GRPC', env_var: 'ALLOYDB_EMULATOR_HOST', endpoint: 'localhost:8080' },
-  { id: 'cloudscheduler', port: 8080, protocol: 'GRPC', env_var: 'CLOUD_SCHEDULER_EMULATOR_HOST', endpoint: 'localhost:8080' },
-  { id: 'cloudfunctions', port: 8080, protocol: 'GRPC', env_var: 'CLOUD_FUNCTIONS_EMULATOR_HOST', endpoint: 'localhost:8080' },
-  { id: 'dataproc', port: 8080, protocol: 'GRPC', env_var: 'DATAPROC_EMULATOR_HOST', endpoint: 'localhost:8080' },
-  { id: 'cloudiam', port: 8080, protocol: 'GRPC', env_var: 'IAM_EMULATOR_HOST', endpoint: 'localhost:8080' },
+  { id: 'gcs', port: 24081, protocol: 'REST', env_var: 'STORAGE_EMULATOR_HOST', endpoint: 'http://localhost:24081' },
+  { id: 'pubsub', port: 24082, protocol: 'GRPC', env_var: 'PUBSUB_EMULATOR_HOST', endpoint: 'localhost:24082' },
+  { id: 'firestore', port: 24083, protocol: 'GRPC', env_var: 'FIRESTORE_EMULATOR_HOST', endpoint: 'localhost:24083' },
+  { id: 'bigtable', port: 24084, protocol: 'GRPC', env_var: 'BIGTABLE_EMULATOR_HOST', endpoint: 'localhost:24084' },
+  { id: 'spanner', port: 24085, protocol: 'GRPC', env_var: 'SPANNER_EMULATOR_HOST', endpoint: 'localhost:24085' },
+  { id: 'bigquery', port: 24087, protocol: 'REST', env_var: 'BIGQUERY_EMULATOR_HOST', endpoint: 'http://localhost:24087' },
+  { id: 'secretmanager', port: 24080, protocol: 'GRPC', env_var: 'SECRET_MANAGER_EMULATOR_HOST', endpoint: 'localhost:24080' },
+  { id: 'cloudtasks', port: 24080, protocol: 'GRPC', env_var: 'CLOUD_TASKS_EMULATOR_HOST', endpoint: 'localhost:24080' },
+  { id: 'logging', port: 24080, protocol: 'GRPC', env_var: 'CLOUD_LOGGING_EMULATOR_HOST', endpoint: 'localhost:24080' },
+  { id: 'monitoring', port: 24080, protocol: 'GRPC', env_var: 'CLOUD_MONITORING_EMULATOR_HOST', endpoint: 'localhost:24080' },
+  { id: 'memorystore', port: 24089, protocol: 'REDIS', env_var: 'REDIS_HOST', endpoint: 'localhost:24089' },
+  { id: 'gke', port: 24080, protocol: 'GRPC', env_var: 'GKE_EMULATOR_HOST', endpoint: 'localhost:24080' },
+  { id: 'compute', port: 24080, protocol: 'REST', env_var: 'COMPUTE_EMULATOR_HOST', endpoint: 'http://localhost:24080' },
+  { id: 'cloudrun', port: 24080, protocol: 'GRPC', env_var: 'CLOUD_RUN_EMULATOR_HOST', endpoint: 'localhost:24080' },
+  { id: 'workflows', port: 24080, protocol: 'REST', env_var: 'WORKFLOWS_EMULATOR_HOST', endpoint: 'http://localhost:24080' },
+  { id: 'vertexai', port: 24080, protocol: 'REST', env_var: 'AIPLATFORM_EMULATOR_HOST', endpoint: 'http://localhost:24080' },
+  { id: 'kms', port: 24080, protocol: 'REST', env_var: 'CLOUD_KMS_EMULATOR_HOST', endpoint: 'http://localhost:24080' },
+  { id: 'cloudsql', port: 24080, protocol: 'REST', env_var: 'CLOUD_SQL_EMULATOR_HOST', endpoint: 'http://localhost:24080' },
+  { id: 'alloydb', port: 24080, protocol: 'GRPC', env_var: 'ALLOYDB_EMULATOR_HOST', endpoint: 'localhost:24080' },
+  { id: 'cloudscheduler', port: 24080, protocol: 'GRPC', env_var: 'CLOUD_SCHEDULER_EMULATOR_HOST', endpoint: 'localhost:24080' },
+  { id: 'cloudfunctions', port: 24080, protocol: 'GRPC', env_var: 'CLOUD_FUNCTIONS_EMULATOR_HOST', endpoint: 'localhost:24080' },
+  { id: 'dataproc', port: 24080, protocol: 'GRPC', env_var: 'DATAPROC_EMULATOR_HOST', endpoint: 'localhost:24080' },
+  { id: 'cloudiam', port: 24080, protocol: 'GRPC', env_var: 'IAM_EMULATOR_HOST', endpoint: 'localhost:24080' },
 ];
 
 function ServiceIcon({ id, size = 20 }) {
@@ -76,10 +76,11 @@ function formatMemory(mb) {
   return `${Math.round(mb)} MB`;
 }
 
-function formatCost(requests) {
-  const cost = requests * 0.0001;
-  if (cost < 0.01) return '<$0.01';
-  return `$${cost.toFixed(2)}`;
+function sameServiceRow(previous, next) {
+  if (!previous) return false;
+  const keys = Object.keys(next);
+  return keys.length === Object.keys(previous).length
+    && keys.every(key => Object.is(previous[key], next[key]));
 }
 
 /* ================================================================
@@ -244,9 +245,9 @@ function StatusCard({ healthData, activeCount, inactiveCount, unhealthyCount, to
 }
 
 /* ================================================================
-   Uptime card — uptime, requests, cost saved
+   Uptime card — uptime and request activity
    ================================================================ */
-function UptimeCard({ uptime, startTime, totalRequests, totalCost }) {
+function UptimeCard({ uptime, startTime, totalRequests }) {
   return (
     <div class="dash-card dash-card-uptime">
       <div class="dash-uptime-col">
@@ -263,8 +264,6 @@ function UptimeCard({ uptime, startTime, totalRequests, totalCost }) {
       <div class="dash-uptime-col">
         <span class="dash-card-label">Requests</span>
         <span class="dash-uptime-value">{formatNumber(totalRequests())}</span>
-        <span class="dash-card-label" style={{ "margin-top": "7px" }}>Saved</span>
-        <span class="dash-uptime-value" style={{ color: "var(--success)" }}>{totalCost()}</span>
       </div>
     </div>
   );
@@ -280,10 +279,30 @@ export default function Dashboard(props) {
   const [togglingService, setTogglingService] = createSignal(null);
   const [copiedEnvVar, setCopiedEnvVar] = createSignal(null);
   const [autoConfigCopied, setAutoConfigCopied] = createSignal(false);
+  const [envCmdCopied, setEnvCmdCopied] = createSignal(false);
+  let envCmdCopyTimer;
+  let autoConfigCopyTimer;
   let failCounter = 0;
   const MAX_HISTORY = 60;
   const [cpuHistory, setCpuHistory] = createSignal([]);
   const [memHistory, setMemHistory] = createSignal([]);
+
+  const showEnvCmdCopied = () => {
+    clearTimeout(envCmdCopyTimer);
+    setEnvCmdCopied(true);
+    envCmdCopyTimer = setTimeout(() => setEnvCmdCopied(false), 2000);
+  };
+
+  const showAutoConfigCopied = () => {
+    clearTimeout(autoConfigCopyTimer);
+    setAutoConfigCopied(true);
+    autoConfigCopyTimer = setTimeout(() => setAutoConfigCopied(false), 2000);
+  };
+
+  onCleanup(() => {
+    clearTimeout(envCmdCopyTimer);
+    clearTimeout(autoConfigCopyTimer);
+  });
 
   const fetchServices = async () => {
     try {
@@ -329,16 +348,18 @@ export default function Dashboard(props) {
     }
   });
 
-  const services = () => {
+  const serviceRowCache = new Map();
+  let previousServices = [];
+  const services = createMemo(() => {
     const svcList = servicesData();
     const h = props.healthData();
     const healthServices = h?.services || {};
     const liveMap = {};
     for (const svc of svcList) liveMap[svc.id] = svc;
-    return ALL_SERVICE_IDS.map(def => {
+    const nextServices = ALL_SERVICE_IDS.map(def => {
       const live = liveMap[def.id] || {};
       const healthStatus = healthServices[def.id]?.status;
-      return {
+      const next = {
         ...def, ...live,
         id: def.id,
         displayName: SERVICE_NAMES[def.id] || live.name || def.id,
@@ -349,15 +370,24 @@ export default function Dashboard(props) {
         enabled: live.enabled !== undefined ? live.enabled : true,
         enabledSource: live.enabledSource || 'default',
       };
+      const previous = serviceRowCache.get(def.id);
+      if (sameServiceRow(previous, next)) return previous;
+      serviceRowCache.set(def.id, next);
+      return next;
     });
-  };
+    if (previousServices.length === nextServices.length
+        && nextServices.every((service, index) => service === previousServices[index])) {
+      return previousServices;
+    }
+    previousServices = nextServices;
+    return nextServices;
+  });
 
   const activeCount = () => services().filter(s => s.enabled && s.status === 'healthy').length;
   const inactiveCount = () => services().filter(s => !s.enabled).length;
   const unhealthyCount = () => services().filter(s => s.enabled && s.status !== 'healthy').length;
   const totalCount = () => services().length;
   const totalRequests = () => services().reduce((sum, s) => sum + (s.request_count || 0), 0);
-  const totalCost = () => formatCost(totalRequests());
 
   const handleToggle = async (serviceId, currentlyEnabled) => {
     setTogglingService(serviceId);
@@ -454,7 +484,7 @@ export default function Dashboard(props) {
         />
 
         <UptimeCard uptime={uptimeSec} startTime={startTimeStr}
-          totalRequests={totalRequests} totalCost={totalCost} />
+          totalRequests={totalRequests} />
       </div>
 
       {/* ── Auto-configure Quick Copy ── */}
@@ -463,20 +493,19 @@ export default function Dashboard(props) {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="flex-shrink:0"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
           <span>Configure your shell to use LocalCloud:</span>
         </div>
-        <code class="dash-env-code">eval "$(curl -s http://localhost:8080/env?format=shell)"</code>
+        <code class="dash-env-code">eval "$(curl -s http://localhost:24080/env?format=shell)"</code>
         <button class="dash-env-copy" onClick={async () => {
           try {
-            await navigator.clipboard.writeText('eval "$(curl -s http://localhost:8080/env?format=shell)"');
-            setAutoConfigCopied(true);
-            setTimeout(() => setAutoConfigCopied(false), 2000);
+            await navigator.clipboard.writeText('eval "$(curl -s http://localhost:24080/env?format=shell)"');
+            showEnvCmdCopied();
           } catch {}
         }}>
-          <Show when={autoConfigCopied()} fallback={
+          <Show when={envCmdCopied()} fallback={
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           }>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
           </Show>
-          {autoConfigCopied() ? 'Copied!' : 'Copy'}
+          {envCmdCopied() ? 'Copied!' : 'Copy'}
         </button>
       </div>
 
@@ -486,6 +515,11 @@ export default function Dashboard(props) {
           <h2 style={{ margin: 0 }}>APIs & Services</h2>
         </div>
 
+      <Show when={toggleError()}>
+        <div class="toggle-error" role="alert" style={{ 'margin-bottom': '12px' }}>{toggleError()}</div>
+      </Show>
+
+        <div style={{ overflow: 'auto', '-webkit-overflow-scrolling': 'touch' }}>
         <div class="data-table-wrapper dash-table">
           <table class="data-table">
             <thead>
@@ -499,7 +533,6 @@ export default function Dashboard(props) {
                 <th>Env Var</th>
                 <th style={{ "text-align": 'right' }}>Requests</th>
                 <th style={{ "text-align": 'right' }}>Memory</th>
-                <th style={{ "text-align": 'right' }}>Usage</th>
               </tr>
             </thead>
             <tbody>
@@ -531,16 +564,13 @@ export default function Dashboard(props) {
                   const endpointVal = svc.endpoint || '--';
                   const copied = copiedEnvVar() === envVar;
                   return (
-                    <tr class={`clickable-row ${isDisabled() ? 'service-row-disabled' : ''}`}
-                      onClick={() => handleRowClick(svc.id)}
-                      onKeyDown={onActivate(() => handleRowClick(svc.id))}
-                      role="button" tabIndex="0">
-                      <td onClick={(e) => e.stopPropagation()}>
+                    <tr class={isDisabled() ? 'service-row-disabled' : ''}>
+                      <td>
                         <label class="toggle-switch">
                           <input type="checkbox" checked={svc.enabled}
-                            disabled={isToggling()}
+                            disabled={isToggling() || svc.id === 'firestore' || svc.id === 'vertexai'}
                             onChange={() => handleToggle(svc.id, svc.enabled)}
-                            aria-label={`${svc.enabled ? 'Disable' : 'Enable'} ${svc.displayName}`} />
+                            aria-label={`${svc.displayName} is ${svc.enabled ? 'enabled' : 'disabled'}`} />
                           <span class="toggle-slider" />
                         </label>
                       </td>
@@ -551,7 +581,7 @@ export default function Dashboard(props) {
                         <button
                           type="button"
                           class="service-name-link"
-                          onClick={(e) => { e.stopPropagation(); handleRowClick(svc.id); }}
+                          onClick={() => handleRowClick(svc.id)}
                           aria-label={`Open ${svc.displayName}`}
                         >
                           <span>{svc.displayName}</span>
@@ -567,7 +597,7 @@ export default function Dashboard(props) {
                       </td>
                       <td style={{ "font-family": "var(--font-mono)" }}>{svc.port || '--'}</td>
                       <td><span class={`badge ${protocolBadge()}`}>{svc.protocol || '--'}</span></td>
-                      <td onClick={(e) => e.stopPropagation()}>
+                      <td>
                         <div class="env-var-cell">
                           <code class="env-var-text"
                             title={envVar !== '--' ? `export ${envVar}="${endpointVal.startsWith('http') ? endpointVal.replace(/^https?:\/\//, '') : endpointVal}"` : ''}>
@@ -590,9 +620,6 @@ export default function Dashboard(props) {
                       <td style={{ "text-align": 'right', "font-weight": '600', "font-family": "var(--font-mono)", "font-size": "12px" }}>
                         {svc.memory_mb > 0 ? formatMemory(svc.memory_mb) : '--'}
                       </td>
-                      <td style={{ "text-align": 'right', "font-weight": '600', "font-family": "var(--font-mono)", "font-size": "12px", color: "var(--success)" }}>
-                        {formatCost(svc.request_count || 0)}
-                      </td>
                     </tr>
                   );
                 }}
@@ -600,11 +627,9 @@ export default function Dashboard(props) {
             </tbody>
           </table>
         </div>
+        </div>
       </div>
 
-      <Show when={toggleError()}>
-        <div class="toggle-error" role="alert">{toggleError()}</div>
-      </Show>
 
       <div class="actions-bar">
         <button class="btn btn-secondary" onClick={async () => {
@@ -612,14 +637,14 @@ export default function Dashboard(props) {
             const envData = await api.env();
             const lines = Object.entries(envData).map(([k, v]) => `export ${k}="${v}"`).join('\n');
             await navigator.clipboard.writeText(lines);
+            showAutoConfigCopied();
           } catch (e) { console.error('Copy failed:', e); }
         }}>
-          Copy Env Vars
+          {autoConfigCopied() ? '✓ Copied!' : 'Copy Env Vars'}
         </button>
         <button class="btn btn-secondary" onClick={async () => {
           try {
-            const resp = await fetch('/export');
-            const text = await resp.text();
+            const text = await api.export();
             const blob = new Blob([text], { type: 'application/yaml' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');

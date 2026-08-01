@@ -1,6 +1,13 @@
-import { createSignal, createEffect, Show, For } from 'solid-js';
+import { createSignal, Show, For } from 'solid-js';
 import { api } from '../api.js';
 import { createUrlBackedTab } from '../utils/urlTabs.js';
+import { shortVersion } from '../utils/version.js';
+import {
+    logsRefreshInterval,
+    setLogsRefreshInterval,
+    setUsageRefreshInterval,
+    usageRefreshInterval,
+} from '../utils/refreshPreferences.js';
 
 // --- SVG Icons ---
 const CopyIcon = () => (
@@ -42,10 +49,7 @@ async function copyToClipboard(text) {
 
 // ===== ABOUT PAGE =====
 function AboutPage(props) {
-    const versionDisplay = () => {
-        const h = props.healthData?.();
-        return h?.version_display || 'v0.1.0';
-    };
+    const versionDisplay = () => shortVersion(props.healthData?.());
     return (
         <div style={{ "max-width": "780px" }}>
             {/* Project Hero */}
@@ -179,12 +183,8 @@ function AboutPage(props) {
 export default function Settings(props) {
     const [intervalInput, setIntervalInput] = createSignal(Math.floor(props.refreshInterval() / 1000));
     const [intervalMsg, setIntervalMsg] = createSignal(null);
-    const [logsInterval, setLogsInterval] = createSignal(() => {
-        try { return parseInt(localStorage.getItem('localcloud-logs-interval') || '3', 10); } catch { return 3; }
-    });
-    const [usageInterval, setUsageInterval] = createSignal(() => {
-        try { return parseInt(localStorage.getItem('localcloud-usage-interval') || '30', 10); } catch { return 30; }
-    });
+    const [logsInterval, setLogsInterval] = createSignal(logsRefreshInterval());
+    const [usageInterval, setUsageInterval] = createSignal(usageRefreshInterval());
     const [prefsMsg, setPrefsMsg] = createSignal(null);
     const [iamLogWarnings, setIamLogWarnings] = createSignal(true);
     const [iamLogMsg, setIamLogMsg] = createSignal(null);
@@ -238,7 +238,7 @@ export default function Settings(props) {
     const applyLogsInterval = () => {
         const val = logsInterval();
         if (val < 1 || val > 60) { setPrefsMsg('Logs interval must be 1-60 seconds.'); setTimeout(() => setPrefsMsg(null), 3000); return; }
-        try { localStorage.setItem('localcloud-logs-interval', String(val)); } catch {}
+        setLogsRefreshInterval(val);
         setPrefsMsg('Applied.'); setTimeout(() => setPrefsMsg(null), 2000);
     };
 
@@ -265,7 +265,7 @@ export default function Settings(props) {
     const applyUsageInterval = () => {
         const val = usageInterval();
         if (val < 1 || val > 120) { setPrefsMsg('Usage interval must be 1-120 seconds.'); setTimeout(() => setPrefsMsg(null), 3000); return; }
-        try { localStorage.setItem('localcloud-usage-interval', String(val)); } catch {}
+        setUsageRefreshInterval(val);
         setPrefsMsg('Applied.'); setTimeout(() => setPrefsMsg(null), 2000);
     };
 
@@ -362,7 +362,7 @@ export default function Settings(props) {
                     <div class="settings-row" style={{ padding: "16px 20px", "border-top": "1px solid var(--border)" }}>
                         <div class="settings-row-info">
                             <label class="settings-row-label" for="settings-usage-refresh">Usage Auto-Refresh</label>
-                            <div class="settings-row-desc">Polling interval for the Cost Analysis page (1-120 seconds). Toggle on/off in the Usage page.</div>
+                            <div class="settings-row-desc">Polling interval for the Usage &amp; Pricing page (1-120 seconds). Toggle on/off in the Usage page.</div>
                         </div>
                         <div class="settings-row-action">
                             <div class="input-group">
@@ -446,8 +446,7 @@ export default function Settings(props) {
                 </p>
                 <button class="btn btn-secondary" onClick={async () => {
                     try {
-                        const resp = await fetch('/export');
-                        const text = await resp.text();
+                        const text = await api.export();
                         const blob = new Blob([text], { type: 'application/yaml' });
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement('a');

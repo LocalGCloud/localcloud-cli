@@ -18,7 +18,7 @@ class GcsSyncAdapterTest {
 
     @BeforeEach
     void setUp() {
-        adapter = new GcsSyncAdapter("http://localhost:4443", new ObjectMapper());
+        adapter = new GcsSyncAdapter("http://localhost:24081", new ObjectMapper());
     }
 
     // -----------------------------------------------------------------------

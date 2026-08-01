@@ -35,7 +35,7 @@ class BrowseServiceNewFacadesTest {
         LocalCloudConfig config = LocalCloudConfig.fromEnvironment();
         UsageMetricsRepository usageMetrics = new UsageMetricsRepository(ds.getDataSource());
         return new BrowseService(config, ds.getDataSource(),
-                ServiceRegistry.load(8080), usageMetrics);
+                ServiceRegistry.load(24080), usageMetrics);
     }
 
     private static void insertCloudRunService(Connection c, String project, String location,
@@ -160,7 +160,7 @@ class BrowseServiceNewFacadesTest {
             ps.setString(2, location);
             ps.setString(3, name);
             ps.setString(4, name + "-k3d");
-            ps.setString(5, "https://127.0.0.1:" + (6443 + nodeCount));
+            ps.setString(5, "https://127.0.0.1:" + (24092 + nodeCount));
             ps.setString(6, version);
             ps.setInt(7, nodeCount);
             ps.executeUpdate();

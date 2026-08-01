@@ -39,7 +39,7 @@ class QueryServiceSchemaTest {
         return new QueryService(
                 config,
                 dataSource,
-                ServiceRegistry.load(8080),
+                ServiceRegistry.load(24080),
                 new UsageMetricsRepository(dataSource),
                 new QueryHistoryRepository(dataSource));
     }

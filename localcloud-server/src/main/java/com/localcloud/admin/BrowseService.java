@@ -92,14 +92,14 @@ public class BrowseService {
 
         ServiceDefinition spannerDef = registry.getService("spanner");
         int spannerRestPort = spannerDef != null && spannerDef.additionalPorts().containsKey("rest")
-                ? spannerDef.additionalPorts().get("rest") : 9020;
+                ? spannerDef.additionalPorts().get("rest") : 24086;
         this.spannerBase = "http://localhost:" + spannerRestPort;
 
         ServiceDefinition bigtableDef = registry.getService("bigtable");
-        this.bigtablePort = bigtableDef != null ? bigtableDef.port() : 8087;
+        this.bigtablePort = bigtableDef != null ? bigtableDef.port() : 24084;
 
         ServiceDefinition firestoreDef = registry.getService("firestore");
-        this.firestorePort = firestoreDef != null ? firestoreDef.port() : 8086;
+        this.firestorePort = firestoreDef != null ? firestoreDef.port() : 24083;
     }
 
     private static String baseUrl(ServiceDefinition def) {
@@ -223,7 +223,7 @@ public class BrowseService {
                     // memorystore/db/{index}/keys?prefix=...
                     if ("db".equals(a) && "keys".equals(c)) {
                         int redisPort = config.getServiceRegistry().getService("memorystore") != null
-                                ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+                                ? config.getServiceRegistry().getService("memorystore").port() : 24089;
                         yield browseMemorystoreKeys(redisPort, Integer.parseInt(b), null);
                     }
                     yield mapper.writeValueAsString(Map.of("error", true,
@@ -1261,7 +1261,7 @@ public class BrowseService {
         }
 
         int redisPort = config.getServiceRegistry().getService("memorystore") != null
-                ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+                ? config.getServiceRegistry().getService("memorystore").port() : 24089;
 
         // Browse path: "db" + resourceId -> browse keys in that database
         if ("db".equals(resourceType) && resourceId != null) {

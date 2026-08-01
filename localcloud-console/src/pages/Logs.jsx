@@ -1,6 +1,7 @@
 import { createSignal, createEffect, createMemo, onCleanup, Show, For } from 'solid-js';
 import { api } from '../api.js';
-import { formatTime } from '../utils/a11y.js';
+import { formatTime } from '../utils/format.js';
+import { logsRefreshInterval, setLogsRefreshInterval } from '../utils/refreshPreferences.js';
 
 const PAGE_SIZE = 50;
 
@@ -123,29 +124,45 @@ export default function Logs(props) {
     const [autoRefresh, setAutoRefresh] = createSignal((() => {
         try { return localStorage.getItem('localcloud-logs-autorefresh') !== 'false'; } catch { return true; }
     })());
-    const [refreshInterval, setRefreshInterval] = createSignal((() => {
-        try { return parseInt(localStorage.getItem('localcloud-logs-interval') || '3', 10); } catch { return 3; }
-    })());
     const [page, setPage] = createSignal(1);
     let isInitialLoad = true;
     let tableScrollRef;
+    let requestSeq = 0;
 
     const fetchRequests = async () => {
-        if (isInitialLoad) setLoading(true);
+        const requestId = ++requestSeq;
+        const initialRequest = isInitialLoad;
+        if (initialRequest) setLoading(true);
         setError(null);
         try {
             const data = await api.requests();
-            const list = data.requests || [];
-            setRequests(list);
+            if (requestId !== requestSeq) return;
+
+            const scrollTarget = tableScrollRef;
+            const shouldFollowTail = tailMode()
+                && scrollTarget
+                && scrollTarget.scrollHeight - scrollTarget.scrollTop - scrollTarget.clientHeight <= 40;
+            setRequests(data.requests || []);
+            if (shouldFollowTail) {
+                queueMicrotask(() => {
+                    if (tailMode() && scrollTarget.isConnected) {
+                        scrollTarget.scrollTop = scrollTarget.scrollHeight;
+                    }
+                });
+            }
         } catch (err) {
-            setError('Failed to load requests: ' + err.message);
+            if (requestId === requestSeq) {
+                setError('Failed to load requests: ' + err.message);
+            }
         } finally {
-            if (isInitialLoad) {
+            if (requestId === requestSeq && initialRequest) {
                 isInitialLoad = false;
                 setLoading(false);
             }
         }
     };
+
+    onCleanup(() => { requestSeq++; });
 
     // Re-fetch on project change
     createEffect(() => {
@@ -155,7 +172,7 @@ export default function Logs(props) {
 
     createEffect(() => {
         if (!autoRefresh()) return;
-        const interval = refreshInterval() * 1000;
+        const interval = logsRefreshInterval() * 1000;
         const timer = setInterval(fetchRequests, interval);
         onCleanup(() => clearInterval(timer));
     });
@@ -172,9 +189,7 @@ export default function Logs(props) {
     };
 
     const applyInterval = (seconds) => {
-        if (seconds < 1 || seconds > 60) return;
-        setRefreshInterval(seconds);
-        try { localStorage.setItem('localcloud-logs-interval', String(seconds)); } catch {}
+        setLogsRefreshInterval(seconds);
     };
 
     const filteredRequests = createMemo(() => {
@@ -194,13 +209,6 @@ export default function Logs(props) {
     createEffect(() => {
         if (page() > totalPages()) {
             setPage(totalPages());
-        }
-    });
-
-    createEffect(() => {
-        visibleRequests().length;
-        if (tailMode() && tableScrollRef) {
-            queueMicrotask(() => { tableScrollRef.scrollTop = tableScrollRef.scrollHeight; });
         }
     });
 
@@ -288,7 +296,7 @@ export default function Logs(props) {
                         type="number"
                         min="1"
                         max="60"
-                        value={refreshInterval()}
+                        value={logsRefreshInterval()}
                         onChange={e => applyInterval(parseInt(e.currentTarget.value) || 3)}
                         disabled={!autoRefresh()}
                         style="width:50px"
@@ -319,7 +327,7 @@ export default function Logs(props) {
                                 Send requests to the emulated services to see them appear here.
                             </div>
                             <div class="empty-state-hint">
-                                <code>curl http://localhost:8080/health</code>
+                                <code>curl http://localhost:24080/health</code>
                             </div>
                         </div>
                     }>

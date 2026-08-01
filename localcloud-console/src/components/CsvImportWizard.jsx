@@ -12,8 +12,9 @@
  *   onImportDone  - Optional callback after import completes (to refresh data)
  *   serviceName   - Display name (e.g., 'Spanner', 'BigQuery')
  */
-import { createSignal, createMemo, Show, For } from 'solid-js';
+import { createSignal, createMemo, Show, For, onCleanup } from 'solid-js';
 import { onActivate } from '../utils/a11y.js';
+import { ErrorAlert } from './AsyncState.jsx';
 
 export default function CsvImportWizard(props) {
     const [csvFile, setCsvFile] = createSignal(null);
@@ -21,12 +22,13 @@ export default function CsvImportWizard(props) {
     const [csvMapping, setCsvMapping] = createSignal({});
     const [csvErrors, setCsvErrors] = createSignal([]);
     const [csvWarnings, setCsvWarnings] = createSignal([]);
-    const [csvImporting, setCsvImporting] = createSignal(false);
     const [csvImportResult, setCsvImportResult] = createSignal(null);
     const [csvSelectedRows, setCsvSelectedRows] = createSignal(new Set());
     const [csvStep, setCsvStep] = createSignal('upload');
     const [connecting, setConnecting] = createSignal(null);
     const [mousePos, setMousePos] = createSignal({x: 0, y: 0});
+    const [trimCsvCells, setTrimCsvCells] = createSignal(false);
+    const [dropBlankCsvRows, setDropBlankCsvRows] = createSignal(false);
 
     const csvMappedTargets = createMemo(() => new Set(Object.values(csvMapping()).filter(v => v)));
     const csvMappedCount = createMemo(() => Object.values(csvMapping()).filter(v => v).length);
@@ -35,8 +37,12 @@ export default function CsvImportWizard(props) {
     const columns = () => props.columns || (csvParsed()?.headers || []);
     const colTypes = () => props.columnTypes || {};
     const nnCols = () => props.notNullColumns || new Set();
+    // Generation token shared by file reads and imports. Resetting or closing
+    // invalidates pending asynchronous work before it can mutate wizard state.
+    let generation = 0;
+    onCleanup(() => { generation++; });
 
-    const parseCSV = (text) => {
+    const parseCSV = (text, {trimCells = false, dropBlankRows = false} = {}) => {
         if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
         const firstLine = text.split('\n')[0];
         const delimiters = [',', '\t', ';', '|'];
@@ -45,37 +51,75 @@ export default function CsvImportWizard(props) {
             const count = (firstLine.match(new RegExp(d === '|' ? '\\|' : (d === '\t' ? '\t' : d), 'g')) || []).length;
             if (count > bestCount) { bestCount = count; bestDelim = d; }
         }
+
         const lines = [];
-        let current = '', inQuote = false, row = [];
+        let field = '', inQuote = false, row = [], endedWithRowBreak = false;
+        const commitField = () => {
+            row.push(trimCells ? field.trim() : field);
+            field = '';
+            inQuote = false;
+        };
+        const commitRow = () => {
+            commitField();
+            if (!dropBlankRows || row.some(cell => cell.trim() !== '')) lines.push(row);
+            row = [];
+        };
+
         for (let i = 0; i < text.length; i++) {
             const ch = text[i];
-            if (ch === '"') {
-                if (inQuote && text[i + 1] === '"') { current += '"'; i++; }
-                else inQuote = !inQuote;
-            } else if (ch === bestDelim && !inQuote) {
-                row.push(current.trim()); current = '';
-            } else if ((ch === '\n' || ch === '\r') && !inQuote) {
+            endedWithRowBreak = false;
+            if (inQuote) {
+                if (ch === '"') {
+                    if (text[i + 1] === '"') { field += '"'; i++; }
+                    else { inQuote = false; }
+                } else {
+                    field += ch;
+                }
+            } else if (ch === '"') {
+                inQuote = true;
+            } else if (ch === bestDelim) {
+                commitField();
+            } else if (ch === '\n' || ch === '\r') {
                 if (ch === '\r' && text[i + 1] === '\n') i++;
-                row.push(current.trim()); current = '';
-                if (row.some(c => c !== '')) lines.push(row);
-                row = [];
-            } else { current += ch; }
+                commitRow();
+                endedWithRowBreak = true;
+            } else {
+                field += ch;
+            }
         }
-        row.push(current.trim());
-        if (row.some(c => c !== '')) lines.push(row);
+        if (!endedWithRowBreak) commitRow();
         if (lines.length < 2) return null;
-        return { headers: lines[0], rows: lines.slice(1), delimiter: bestDelim === '\t' ? 'TAB' : bestDelim, rowCount: lines.length - 1 };
+        return {headers: lines[0], rows: lines.slice(1), delimiter: bestDelim === '\t' ? 'TAB' : bestDelim, rowCount: lines.length - 1};
     };
 
     const handleCsvFile = (file) => {
         if (!file) return;
+        const maxFileSize = 10 * 1024 * 1024;
+        if (file.size > maxFileSize) {
+            setCsvErrors([{row: -1, col: '', message: `File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Select a file no larger than 10 MB.`}]);
+            return;
+        }
+
+        const myGeneration = ++generation;
         setCsvFile(file);
+        setCsvParsed(null);
+        setCsvMapping({});
+        setCsvWarnings([]);
+        setCsvSelectedRows(new Set());
+        setCsvErrors([]);
         const reader = new FileReader();
         reader.onload = (e) => {
-            const parsed = parseCSV(e.target.result);
-            if (!parsed) { setCsvErrors([{row: -1, col: '', message: 'Could not parse CSV. Check format.'}]); return; }
+            if (myGeneration !== generation) return;
+            const parsed = parseCSV(e.target.result, {
+                trimCells: trimCsvCells(),
+                dropBlankRows: dropBlankCsvRows(),
+            });
+            if (!parsed) {
+                setCsvErrors([{row: -1, col: '', message: 'Could not parse CSV. Check format.'}]);
+                return;
+            }
             setCsvParsed(parsed);
-            const cols = columns();
+            const cols = props.columns || parsed.headers;
             const mapping = {};
             for (const h of parsed.headers) {
                 const exact = cols.find(c => c === h);
@@ -89,6 +133,10 @@ export default function CsvImportWizard(props) {
             setCsvMapping(mapping);
             setCsvStep('mapping');
             setCsvErrors([]);
+        };
+        reader.onerror = () => {
+            if (myGeneration !== generation) return;
+            setCsvErrors([{row: -1, col: '', message: 'Could not read the selected CSV file.'}]);
         };
         reader.readAsText(file);
     };
@@ -140,12 +188,13 @@ export default function CsvImportWizard(props) {
         const mapping = csvMapping();
         const selected = csvSelectedRows();
         if (!parsed || selected.size === 0) return;
-        setCsvImporting(true);
+
+        const myGeneration = ++generation;
         setCsvStep('importing');
         const mappedHeaders = parsed.headers.filter(h => mapping[h]);
         const targetCols = mappedHeaders.map(h => mapping[h]);
 
-        // Batch mode: send all rows in a single request (used by Spanner)
+        // Batch mode: send all rows in a single request (used by Spanner).
         if (props.onImportBatch) {
             const sortedIndices = [...selected].sort((a, b) => a - b);
             const allValues = sortedIndices.map(rowIdx => {
@@ -155,8 +204,11 @@ export default function CsvImportWizard(props) {
                     return colIdx < row.length ? row[colIdx] : '';
                 });
             });
+
+            let importResult;
             try {
                 const result = await props.onImportBatch(targetCols, allValues);
+                if (myGeneration !== generation) return;
                 let imported = 0, failed = 0;
                 const failedRows = [];
                 if (result && result.results) {
@@ -173,20 +225,24 @@ export default function CsvImportWizard(props) {
                 } else {
                     imported = allValues.length;
                 }
-                setCsvImportResult({imported, failed, failedRows, total: selected.size});
+                importResult = {imported, failed, failedRows, total: selected.size};
             } catch (e) {
-                setCsvImportResult({imported: 0, failed: selected.size, failedRows: [{row: 1, error: e.message || 'Batch import failed'}], total: selected.size});
+                if (myGeneration !== generation) return;
+                importResult = {imported: 0, failed: selected.size, failedRows: [{row: 1, error: e.message || 'Batch import failed'}], total: selected.size};
             }
-            setCsvImporting(false);
+
+            if (myGeneration !== generation) return;
+            setCsvImportResult(importResult);
             setCsvStep('done');
             if (props.onImportDone) props.onImportDone();
             return;
         }
 
-        // Row-by-row mode (fallback for non-batch services)
+        // Row-by-row mode (fallback for non-batch services).
         let imported = 0, failed = 0;
         const failedRows = [];
         for (const rowIdx of [...selected].sort((a, b) => a - b)) {
+            if (myGeneration !== generation) return;
             const row = parsed.rows[rowIdx];
             const values = mappedHeaders.map((h) => {
                 const colIdx = parsed.headers.indexOf(h);
@@ -194,6 +250,7 @@ export default function CsvImportWizard(props) {
             });
             try {
                 const result = await props.onImportRow(targetCols, values);
+                if (myGeneration !== generation) return;
                 if (result && result.error) {
                     failed++;
                     let errMsg = result.error;
@@ -203,23 +260,26 @@ export default function CsvImportWizard(props) {
                     imported++;
                 }
             } catch (e) {
+                if (myGeneration !== generation) return;
                 failed++;
                 failedRows.push({row: rowIdx + 1, error: e.message || 'Insert failed'});
             }
         }
+
+        if (myGeneration !== generation) return;
         setCsvImportResult({imported, failed, failedRows, total: selected.size});
-        setCsvImporting(false);
         setCsvStep('done');
         if (imported > 0 && props.onImportDone) props.onImportDone();
     };
-
     const resetCsvImport = () => {
+        generation++;
         setCsvFile(null); setCsvParsed(null); setCsvMapping({});
-        setCsvErrors([]); setCsvWarnings([]); setCsvImporting(false); setCsvImportResult(null);
+        setCsvErrors([]); setCsvWarnings([]); setCsvImportResult(null);
         setCsvSelectedRows(new Set()); setCsvStep('upload'); setConnecting(null);
+        setTrimCsvCells(false); setDropBlankCsvRows(false);
     };
 
-    const closeWizard = () => { if (props.onClose) props.onClose(); resetCsvImport(); };
+    const closeWizard = () => { resetCsvImport(); if (props.onClose) props.onClose(); };
 
     // Interactive mapping helpers
     const startConnect = (header) => {
@@ -296,11 +356,38 @@ export default function CsvImportWizard(props) {
 	                            >
                                 <div style="font-size:32px;margin-bottom:8px;opacity:0.4">{'\u2191'}</div>
                                 <div style="font-size:14px;font-weight:500;margin-bottom:4px;color:var(--text)">Drop CSV file here or click to browse</div>
-                                <div style="font-size:12px;color:var(--text-tertiary)">Supports .csv, .tsv, .txt with comma, tab, semicolon, or pipe delimiters</div>
+                                <div style="font-size:12px;color:var(--text-tertiary)">Supports .csv, .tsv, .txt with comma, tab, semicolon, or pipe delimiters. Maximum 10 MB.</div>
                             </div>
-                            <Show when={csvErrors().length > 0}>
-	                                <div class="alert alert-error" role="alert" style="margin-top:12px">{csvErrors()[0].message}</div>
+                            <div style="display:flex;gap:16px;align-items:center;margin-top:12px;font-size:12px;color:var(--text-secondary);flex-wrap:wrap">
+                                <label style="display:flex;gap:6px;align-items:center">
+                                    <input
+                                        type="checkbox"
+                                        checked={trimCsvCells()}
+                                        disabled={!!csvParsed()}
+                                        onChange={(e) => setTrimCsvCells(e.currentTarget.checked)}
+                                    />
+                                    Trim cell whitespace
+                                </label>
+                                <label style="display:flex;gap:6px;align-items:center">
+                                    <input
+                                        type="checkbox"
+                                        checked={dropBlankCsvRows()}
+                                        disabled={!!csvParsed()}
+                                        onChange={(e) => setDropBlankCsvRows(e.currentTarget.checked)}
+                                    />
+                                    Drop blank rows
+                                </label>
+                                <span style="color:var(--text-tertiary)">Off by default to preserve CSV content exactly.</span>
+                            </div>
+                            <Show when={csvParsed()}>
+                                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;padding:10px 12px;border:1px solid var(--border);border-radius:6px">
+                                    <span style="font-size:12px;color:var(--text-secondary)">
+                                        {csvFile()?.name} remains loaded with {csvParsed()?.rowCount} rows.
+                                    </span>
+                                    <button class="btn btn-primary" onClick={() => setCsvStep('mapping')}>Continue Mapping</button>
+                                </div>
                             </Show>
+                            <ErrorAlert message={csvErrors()[0]?.message} role="alert" style="margin-top:12px" />
                         </Show>
 
                         {/* Step 2: Interactive Mapping */}
@@ -433,11 +520,9 @@ export default function CsvImportWizard(props) {
                                             <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;border:2px solid #fbbc04;display:inline-block;box-sizing:border-box" /> Unmapped</span>
                                             <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;border:2px solid #ea4335;display:inline-block;box-sizing:border-box" /> Required</span>
                                         </div>
-                                        <Show when={csvErrors().length > 0}>
-                                            <div class="alert alert-error" role="alert" style="margin-bottom:12px">{csvErrors()[0].message}</div>
-                                        </Show>
+                                        <ErrorAlert message={csvErrors()[0]?.message} role="alert" style="margin-bottom:12px" />
                                         <div style="display:flex;gap:8px;justify-content:flex-end">
-                                            <button class="btn btn-secondary" onClick={resetCsvImport}>Back</button>
+                                            <button class="btn btn-secondary" onClick={() => setCsvStep('upload')}>Back</button>
                                             <button class="btn btn-primary" onClick={validateCsvRows}>Validate & Preview</button>
                                         </div>
                                     </div>

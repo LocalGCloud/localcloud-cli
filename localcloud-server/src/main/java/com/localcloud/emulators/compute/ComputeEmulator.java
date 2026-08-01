@@ -26,7 +26,7 @@ public class ComputeEmulator extends AbstractEmulator {
     }
 
     public ComputeEmulator(PostgresDataSource dataSource, ContainerManager containerManager, CredentialBroker credentialBroker, IAMPolicyRestHandler iamHandler) {
-        super("compute", "Compute Engine", 8080, "rest", "COMPUTE_EMULATOR_HOST");
+        super("compute", "Compute Engine", 24080, "rest", "COMPUTE_EMULATOR_HOST");
         this.dataSource = dataSource;
         this.containerManager = containerManager;
         this.credentialBroker = credentialBroker;

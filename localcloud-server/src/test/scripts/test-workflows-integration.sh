@@ -1,10 +1,10 @@
 #!/bin/bash
 # Cloud Workflows Integration Tests
-# Requires: LocalCloud container running on localhost:8080
+# Requires: LocalCloud container running on localhost:24080
 # Usage: bash test-workflows-integration.sh
 set -euo pipefail
 
-BASE="http://localhost:8080"
+BASE="http://localhost:24080"
 PASS=0
 FAIL=0
 PROJECT="local-project"
@@ -98,7 +98,7 @@ services:
               - list_buckets:
                   call: http.get
                   args:
-                    url: http://localhost:4443/storage/v1/b?project=local-project
+                    url: http://localhost:24081/storage/v1/b?project=local-project
                   result: gcs_response
               - done:
                   return:

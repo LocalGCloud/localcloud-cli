@@ -33,7 +33,7 @@ public interface EmulatorBase {
     String getEnvVarName();
 
     /**
-     * Environment variable value for the given host (e.g., "http://localhost:8080").
+     * Environment variable value for the given host (e.g., "http://localhost:24080").
      */
     String getEnvVarValue(String host);
 

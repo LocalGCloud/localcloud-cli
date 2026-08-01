@@ -80,16 +80,16 @@ public class QueryService {
         this.mapper = new ObjectMapper();
 
         ServiceDefinition bqDef = registry.getService("bigquery");
-        this.bigqueryBase = "http://localhost:" + (bqDef != null ? bqDef.port() : 9050);
+        this.bigqueryBase = "http://localhost:" + (bqDef != null ? bqDef.port() : 24087);
 
         ServiceDefinition spannerDef = registry.getService("spanner");
         int spannerRestPort = spannerDef != null && spannerDef.additionalPorts().containsKey("rest")
-                ? spannerDef.additionalPorts().get("rest") : 9020;
+                ? spannerDef.additionalPorts().get("rest") : 24086;
         this.spannerBase = "http://localhost:" + spannerRestPort;
-        this.spannerGrpcPort = spannerDef != null ? spannerDef.port() : 9010;
+        this.spannerGrpcPort = spannerDef != null ? spannerDef.port() : 24085;
 
         ServiceDefinition bigtableDef = registry.getService("bigtable");
-        this.bigtablePort = bigtableDef != null ? bigtableDef.port() : 8087;
+        this.bigtablePort = bigtableDef != null ? bigtableDef.port() : 24084;
     }
 
     /**
@@ -380,8 +380,8 @@ public class QueryService {
             }
         }
 
-        // Direct gRPC to Spanner emulator on port 9010 — bypasses the broken REST gateway.
-        // The REST gateway (port 9020) corrupts its gRPC connection after commit operations,
+        // Direct gRPC to Spanner emulator on port 24085 — bypasses the broken REST gateway.
+        // The REST gateway (port 24086) corrupts its gRPC connection after commit operations,
         // returning EOF/code-14 errors and failing to persist data.
         // Per-statement isolation: each row gets its own session+transaction so one bad row
         // doesn't block others.
@@ -1498,7 +1498,7 @@ public class QueryService {
      */
     private HttpResponse executePubSubQuery(String sql, String projectId, long startTime) {
         try {
-            String pubsubBase = "http://localhost:8085";
+            String pubsubBase = "http://localhost:24082";
 
             // Parse topic name and limit from SQL
             String trimmed = sql.trim();
@@ -1584,7 +1584,7 @@ public class QueryService {
      */
     private HttpResponse schemaPubSub(String projectId) {
         try {
-            String pubsubBase = "http://localhost:8085";
+            String pubsubBase = "http://localhost:24082";
             String topicsUrl = pubsubBase + "/v1/projects/" + projectId + "/topics";
             String topicsBody = proxyGet(topicsUrl);
             @SuppressWarnings("unchecked")
@@ -1958,7 +1958,7 @@ public class QueryService {
     private HttpResponse schemaMemorystore() {
         try {
             int redisPort = config.getServiceRegistry().getService("memorystore") != null
-                    ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+                    ? config.getServiceRegistry().getService("memorystore").port() : 24089;
 
             List<Map<String, Object>> tables = new ArrayList<>();
             try (Jedis jedis = new Jedis("localhost", redisPort)) {
@@ -2806,7 +2806,7 @@ public class QueryService {
     private HttpResponse executeMemorystoreQuery(String sql, String projectId, long startTime) {
         try {
             int redisPort = config.getServiceRegistry().getService("memorystore") != null
-                    ? config.getServiceRegistry().getService("memorystore").port() : 6379;
+                    ? config.getServiceRegistry().getService("memorystore").port() : 24089;
 
             String trimmed = sql.trim();
             String upper = trimmed.toUpperCase();

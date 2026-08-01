@@ -22,7 +22,7 @@ class BigQuerySyncAdapterTest {
 
     @BeforeEach
     void setUp() {
-        adapter = new BigQuerySyncAdapter("http://localhost:9050", new ObjectMapper());
+        adapter = new BigQuerySyncAdapter("http://localhost:24087", new ObjectMapper());
     }
 
     // -----------------------------------------------------------------------

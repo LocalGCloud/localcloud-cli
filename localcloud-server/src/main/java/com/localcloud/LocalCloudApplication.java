@@ -77,10 +77,24 @@ import com.localcloud.gateway.MetadataServerService;
 import com.localcloud.gateway.ServiceGatingDecorator;
 import com.localcloud.gateway.ProcessHealthChecker;
 import com.localcloud.gateway.RequestLogger;
+import com.localcloud.gateway.RequestLoggingDecorator;
 import com.localcloud.gateway.SpannerIamService;
 import com.localcloud.persistence.FlywayMigrationRunner;
 import com.localcloud.persistence.PostgresDataSource;
 import com.localcloud.persistence.SchemaManager;
+import com.localcloud.runtime.AgentRuntimeProvider;
+import com.localcloud.runtime.DockerRuntimeProvider;
+import com.localcloud.runtime.MetadataOnlyRuntimeProvider;
+import com.localcloud.runtime.RuntimeAgentService;
+import com.localcloud.runtime.RuntimeAdminService;
+import com.localcloud.runtime.RuntimeBroker;
+import com.localcloud.runtime.RuntimeCatalogStore;
+import com.localcloud.runtime.RuntimePolicy;
+import com.localcloud.runtime.RuntimeProvider;
+import com.localcloud.runtime.RuntimeWorkloadRepository;
+import com.localcloud.migration.MigrationEngine;
+import com.localcloud.migration.MigrationRepository;
+import com.localcloud.migration.MigrationService;
 import com.localcloud.config.ServiceRegistry.ServiceDefinition;
 import com.localcloud.licensing.LicenseTier;
 import com.localcloud.licensing.LicenseTierProvider;
@@ -156,7 +170,7 @@ public class LocalCloudApplication {
         this.mutateService = new MutateService(config, dataSource, config.getServiceRegistry());
         var workflowsStore = new com.localcloud.emulators.workflows.WorkflowsStore(dataSource);
         this.seedService = new SeedService(config, dataSource, config.getServiceRegistry(), workflowsStore);
-        this.exportService = new ExportService(config, dataSource, config.getServiceRegistry());
+        this.exportService = new ExportService(config, dataSource, config.getServiceRegistry(), projectService);
         this.queryService = new QueryService(config, dataSource, config.getServiceRegistry(), usageMetrics, queryHistoryRepo);
         this.iamPolicyRestHandler = new IAMPolicyRestHandler(new IAMRepository(dataSource));
 
@@ -303,6 +317,10 @@ public class LocalCloudApplication {
         // Fault injection — optional local failures for resilience testing
         sb.decorator(new FaultInjectionDecorator(faultInjectionRegistry));
 
+        // Request logging — records every served request into the RequestLogger ring
+        // buffer, backing the console Logs page (/requests).
+        sb.decorator(new RequestLoggingDecorator(requestLogger));
+
         // SPA routing decorator: serve index.html for browser GET requests before
         // they reach annotated services. This makes hard refresh work for /usage,
         // /logs, /settings, and all client-side routes.
@@ -349,11 +367,15 @@ public class LocalCloudApplication {
                 exportService, queryService, faultInjectionService));
         sb.annotatedService("/computeMetadata/v1", new MetadataServerService(config));
 
-        // Infrastructure services (Compute, Cloud Run, GKE) require Docker socket
+        // Infrastructure emulators may use Docker directly. Migration workloads use an
+        // outbound-polling host agent unless embedded Docker is explicitly enabled.
+        boolean embeddedRuntime = Boolean.parseBoolean(
+                System.getenv().getOrDefault("LOCALCLOUD_RUNTIME_EMBEDDED_DOCKER", "false"));
         ContainerManager containerManager = null;
         boolean needsDocker = config.isServiceEnabled("compute")
                 || config.isServiceEnabled("cloudrun")
-                || config.isServiceEnabled("gke");
+                || config.isServiceEnabled("gke")
+                || embeddedRuntime;
         if (needsDocker) {
             try {
                 containerManager = new ContainerManager(DockerClientProvider.getClient());
@@ -362,6 +384,25 @@ public class LocalCloudApplication {
                 logger.warn("Docker not available — infrastructure services will use simulated mode: {}", e.getMessage());
             }
         }
+        RuntimeCatalogStore runtimeCatalog = new RuntimeCatalogStore(config.getDataDir());
+        String agentToken = System.getenv().getOrDefault("LOCALCLOUD_RUNTIME_AGENT_TOKEN", "");
+        RuntimeProvider runtimeProvider;
+        if (embeddedRuntime && containerManager != null) {
+            runtimeProvider = new DockerRuntimeProvider(containerManager, new RuntimePolicy(config.getRuntimeWorkspaceRoots()));
+            logger.warn("Embedded Docker runtime enabled; use the polling host agent for the production security boundary");
+        } else if (!agentToken.isBlank()) {
+            AgentRuntimeProvider agentProvider = new AgentRuntimeProvider(new RuntimeWorkloadRepository(dataSource));
+            runtimeProvider = agentProvider;
+            sb.annotatedService("/", new RuntimeAgentService(agentProvider, agentToken));
+        } else {
+            runtimeProvider = new MetadataOnlyRuntimeProvider();
+        }
+        RuntimeBroker runtimeBroker = new RuntimeBroker(runtimeProvider);
+        sb.annotatedService("/", new RuntimeAdminService(runtimeCatalog, runtimeBroker));
+        MigrationRepository migrationRepository = new MigrationRepository(dataSource);
+        MigrationEngine migrationEngine = new MigrationEngine(config.getProjectId(), config.getDataDir(),
+                runtimeCatalog, runtimeBroker, migrationRepository, exportService, seedService);
+        sb.annotatedService("/", new MigrationService(migrationRepository, migrationEngine));
 
         var grpcBuilder = GrpcService.builder()
                 .enableHttpJsonTranscoding(true);
@@ -370,7 +411,8 @@ public class LocalCloudApplication {
         // Build registration context with resolved ContainerManager and ApiGateway
         var regCtx = new ServiceRegistrationContext(
                 config, dataSource, seedService, mutateService, credentialBroker,
-                containerManager, projectService, iamPolicyRestHandler, gateway);
+                containerManager, projectService, iamPolicyRestHandler, gateway,
+                runtimeCatalog, runtimeBroker);
 
         // Delegate all facade emulator route registration to their registrars
         logger.info("Registering {} facade emulator services...", serviceRegistrars.size());
@@ -453,8 +495,8 @@ public class LocalCloudApplication {
         logger.info("Spanner IAM stubs registered (permissive mode)");
 
         // Spanner REST proxy — forwards non-IAM Spanner API requests from the gateway
-        // to the external C++ Spanner emulator (port 9020). This enables Terraform's
-        // GOOGLE_SPANNER_CUSTOM_ENDPOINT to point at the gateway (port 8080) so that
+        // to the external C++ Spanner emulator (port 24086). This enables Terraform's
+        // GOOGLE_SPANNER_CUSTOM_ENDPOINT to point at the gateway (port 24080) so that
         // SpannerIamService can intercept IAM calls while data-plane calls proxy through.
         if (config.isServiceEnabled("spanner")) {
             var spannerPort = config.getServiceRegistry().getService("spanner");

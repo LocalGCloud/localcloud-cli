@@ -293,7 +293,7 @@ public class SchemaManager {
                 "    tier VARCHAR(32) DEFAULT 'BASIC'," +
                 "    engine VARCHAR(32) DEFAULT 'REDIS'," +
                 "    redis_version VARCHAR(32) DEFAULT '7_0'," +
-                "    port INT DEFAULT 6379," +
+                "    port INT DEFAULT 24089," +
                 "    memory_size_gb INT DEFAULT 1," +
                 "    state VARCHAR(32) DEFAULT 'READY'," +
                 "    host VARCHAR(255) DEFAULT 'localhost'," +

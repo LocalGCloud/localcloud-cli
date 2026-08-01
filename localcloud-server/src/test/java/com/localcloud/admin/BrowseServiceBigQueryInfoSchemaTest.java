@@ -98,7 +98,7 @@ class BrowseServiceBigQueryInfoSchemaTest {
         return new BrowseService(
                 LocalCloudConfig.fromEnvironment(),
                 testDataSource.getDataSource(),
-                ServiceRegistry.load(8080),
+                ServiceRegistry.load(24080),
                 new UsageMetricsRepository(testDataSource.getDataSource()),
                 bigQueryBase);
     }

@@ -32,12 +32,12 @@ export default function DataBreadcrumb(props) {
         };
     };
 
-    const Content = (props) => (
+    const Content = ({ crumb }) => (
         <span style={{ display: "inline-flex", "align-items": "center", gap: "6px" }}>
-            <Show when={props.crumb.tag || props.crumb.type}>
-                <span style={tagStyle(props.crumb.type)}>{props.crumb.tag || props.crumb.type}</span>
+            <Show when={crumb.tag || crumb.type}>
+                <span style={tagStyle(crumb.type)}>{crumb.tag || crumb.type}</span>
             </Show>
-            <span>{props.crumb.label}</span>
+            <span>{crumb.label}</span>
         </span>
     );
 
@@ -50,7 +50,7 @@ export default function DataBreadcrumb(props) {
                             <span class="data-breadcrumb-sep" aria-hidden="true">{'\u203A'}</span>
                         </Show>
                         <Show when={crumb.onClick && !crumb.active} fallback={
-                            <span class="data-breadcrumb-active"><Content crumb={crumb} /></span>
+                            <span class="data-breadcrumb-active" aria-current="page"><Content crumb={crumb} /></span>
                         }>
                             <button class="data-breadcrumb-link" onClick={crumb.onClick}>
                                 <Content crumb={crumb} />

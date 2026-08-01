@@ -167,7 +167,7 @@ public class SyncApiService {
 
             String project = resolveProject(ctx);
 
-            String redirectUri = "http://localhost:8080/sync/auth/callback";
+            String redirectUri = "http://localhost:24080/sync/auth/callback";
             String scope = "https://www.googleapis.com/auth/cloud-platform.read-only";
 
             // Build the Google OAuth authorization URL with the supplied client_id.
@@ -586,7 +586,7 @@ public class SyncApiService {
                 + "box-shadow:0 1px 3px rgba(0,0,0,.12)}"
                 + ".icon{font-size:48px;color:" + color + ";margin-bottom:16px}"
                 + ".msg{font-size:16px;color:#5f6368;margin-top:8px}"
-                + ".hint{font-size:13px;color:#80868b;margin-top:16px}</style></head>"
+                + ".hint{font-size:13px;color:#240838b;margin-top:16px}</style></head>"
                 + "<body><div class='card'><div class='icon'>" + icon + "</div>"
                 + "<h2 style='margin:0;color:#202124'>"
                 + (success ? "Connected!" : "Connection Failed") + "</h2>"

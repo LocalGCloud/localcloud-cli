@@ -1,6 +1,6 @@
-import { createSignal, Show, For } from 'solid-js';
-import { GCP_REGIONS, getZonesForRegion } from '../data/gcpLocations.js';
+import { createSignal, Show, For, createMemo } from 'solid-js';
 import { createUrlBackedTab } from '../utils/urlTabs.js';
+import { shortVersion } from '../utils/version.js';
 
 const SDK_SNIPPETS = [
     {
@@ -98,9 +98,9 @@ provider "google" {
   region  = "us-central1"
 
   # Override endpoints to use LocalCloud
-  storage_custom_endpoint    = "http://localhost:4443"
-  secret_manager_custom_endpoint = "http://localhost:8080"
-  cloud_tasks_custom_endpoint = "http://localhost:8080"
+  storage_custom_endpoint    = "http://localhost:24081"
+  secret_manager_custom_endpoint = "http://localhost:24080"
+  cloud_tasks_custom_endpoint = "http://localhost:24080"
 }
 
 resource "google_storage_bucket" "example" {
@@ -117,6 +117,44 @@ resource "google_secret_manager_secret" "example" {
     },
 ];
 
+const ALL_SERVICES = {
+    gcs: { label: 'Cloud Storage', icon: 'gcs', desc: 'Object storage (buckets, blobs)' },
+    pubsub: { label: 'Pub/Sub', icon: 'pubsub', desc: 'Async messaging & event ingestion' },
+    spanner: { label: 'Spanner', icon: 'spanner', desc: 'Globally distributed SQL database' },
+    bigquery: { label: 'BigQuery', icon: 'bigquery', desc: 'Serverless data warehouse & SQL analytics' },
+    bigtable: { label: 'Bigtable', icon: 'bigtable', desc: 'Wide-column NoSQL for large analytical workloads' },
+    memorystore: { label: 'Memorystore', icon: 'memorystore', desc: 'Managed Redis / Valkey' },
+    cloudsql: { label: 'Cloud SQL', icon: 'cloudsql', desc: 'Managed PostgreSQL / MySQL' },
+    alloydb: { label: 'AlloyDB', icon: 'alloydb', desc: 'PostgreSQL-compatible for enterprise workloads' },
+    secretmanager: { label: 'Secret Manager', icon: 'secretmanager', desc: 'Store and manage secrets' },
+    kms: { label: 'Cloud KMS', icon: 'kms', desc: 'Manage encryption keys' },
+    cloudiam: { label: 'Cloud IAM', icon: 'cloudiam', desc: 'Identity & access management' },
+    cloudrun: { label: 'Cloud Run', icon: 'cloudrun', desc: 'Serverless container platform' },
+    gke: { label: 'GKE', icon: 'gke', desc: 'Managed Kubernetes clusters' },
+    compute: { label: 'Compute Engine', icon: 'compute', desc: 'Virtual machine instances' },
+    dataproc: { label: 'Dataproc', icon: 'dataproc', desc: 'Managed Spark & Hadoop' },
+    cloudtasks: { label: 'Cloud Tasks', icon: 'cloudtasks', desc: 'Distributed task queues' },
+    workflows: { label: 'Workflows', icon: 'workflows', desc: 'Orchestrate services with YAML workflows' },
+    cloudscheduler: { label: 'Cloud Scheduler', icon: 'cloudscheduler', desc: 'Managed cron job scheduler' },
+    cloudfunctions: { label: 'Cloud Functions', icon: 'cloudfunctions', desc: 'Event-driven serverless functions' },
+    logging: { label: 'Logging', icon: 'logging', desc: 'Real-time log management & analysis' },
+    monitoring: { label: 'Monitoring', icon: 'monitoring', desc: 'Metrics, dashboards & alerting' },
+};
+
+const QUICK_START_SERVICES = [
+    { id: 'gcs', action: 'Create a bucket, upload files' },
+    { id: 'bigquery', action: 'Run SQL queries, explore datasets' },
+    { id: 'pubsub', action: 'Create topics, publish messages' },
+    { id: 'spanner', action: 'Create instances, run SQL' },
+];
+
+function serviceStatusDot(status) {
+    if (status === 'healthy') return 'status-dot healthy';
+    if (status === 'unhealthy') return 'status-dot unhealthy';
+    if (status === 'unknown') return 'status-dot warning';
+    return 'status-dot disabled';
+}
+
 export default function GetStarted(props) {
     const [copiedEval, setCopiedEval] = createSignal(false);
     const [activeSdkTab, setActiveSdkTab] = createUrlBackedTab('sdk', SDK_SNIPPETS.map(s => s.lang), 'Python', { history: 'replace' });
@@ -126,13 +164,18 @@ export default function GetStarted(props) {
     const services = () => healthData()?.services || {};
     const healthyCount = () => Object.values(services()).filter(s => s.status === 'healthy').length;
     const totalCount = () => Object.keys(services()).length;
-    const shortVersion = () => {
-        const raw = String(healthData()?.version || '0.1.0').trim();
-        const base = raw.split('+')[0]?.trim() || raw;
-        return base.startsWith('v') ? base : `v${base}`;
-    };
+    const quickStartItems = createMemo(() => QUICK_START_SERVICES.map((item) => {
+        const live = services()[item.id];
+        const status = live?.status || 'unavailable';
+        return {
+            ...item,
+            ...ALL_SERVICES[item.id],
+            status,
+            available: Boolean(live) && live.enabled !== false && status !== 'disabled',
+        };
+    }));
 
-    const autoConfigCmd = `eval "$(curl -s http://localhost:8080/env?format=shell)"`;
+    const autoConfigCmd = `eval "$(curl -s http://localhost:24080/env?format=shell)"`;
 
     const copyEval = async () => {
         try {
@@ -150,34 +193,11 @@ export default function GetStarted(props) {
         } catch {}
     };
 
-    const recentServiceItems = () => {
+    const recentServiceItems = createMemo(() => {
         const recent = props.recentServices?.() || [];
         if (recent.length === 0) return [];
-        const allServices = {
-            gcs: { label: 'Cloud Storage', icon: 'gcs', desc: 'Object storage (buckets, blobs)' },
-            pubsub: { label: 'Pub/Sub', icon: 'pubsub', desc: 'Async messaging & event ingestion' },
-            spanner: { label: 'Spanner', icon: 'spanner', desc: 'Globally distributed SQL database' },
-            bigquery: { label: 'BigQuery', icon: 'bigquery', desc: 'Serverless data warehouse & SQL analytics' },
-            bigtable: { label: 'Bigtable', icon: 'bigtable', desc: 'Wide-column NoSQL for large analytical workloads' },
-            memorystore: { label: 'Memorystore', icon: 'memorystore', desc: 'Managed Redis / Valkey' },
-            cloudsql: { label: 'Cloud SQL', icon: 'cloudsql', desc: 'Managed PostgreSQL / MySQL' },
-            alloydb: { label: 'AlloyDB', icon: 'alloydb', desc: 'PostgreSQL-compatible for enterprise workloads' },
-            secretmanager: { label: 'Secret Manager', icon: 'secretmanager', desc: 'Store and manage secrets' },
-            kms: { label: 'Cloud KMS', icon: 'kms', desc: 'Manage encryption keys' },
-            cloudiam: { label: 'Cloud IAM', icon: 'cloudiam', desc: 'Identity & access management' },
-            cloudrun: { label: 'Cloud Run', icon: 'cloudrun', desc: 'Serverless container platform' },
-            gke: { label: 'GKE', icon: 'gke', desc: 'Managed Kubernetes clusters' },
-            compute: { label: 'Compute Engine', icon: 'compute', desc: 'Virtual machine instances' },
-            dataproc: { label: 'Dataproc', icon: 'dataproc', desc: 'Managed Spark & Hadoop' },
-            cloudtasks: { label: 'Cloud Tasks', icon: 'cloudtasks', desc: 'Distributed task queues' },
-            workflows: { label: 'Workflows', icon: 'workflows', desc: 'Orchestrate services with YAML workflows' },
-            cloudscheduler: { label: 'Cloud Scheduler', icon: 'cloudscheduler', desc: 'Managed cron job scheduler' },
-            cloudfunctions: { label: 'Cloud Functions', icon: 'cloudfunctions', desc: 'Event-driven serverless functions' },
-            logging: { label: 'Logging', icon: 'logging', desc: 'Real-time log management & analysis' },
-            monitoring: { label: 'Monitoring', icon: 'monitoring', desc: 'Metrics, dashboards & alerting' },
-        };
-        return recent.map(id => ({ id, ...(allServices[id] || { label: id, icon: 'gcs', desc: '' }) }));
-    };
+        return recent.map(id => ({ id, ...(ALL_SERVICES[id] || { label: id, icon: 'gcs', desc: '' }) }));
+    });
 
     return (
         <div class="get-started">
@@ -212,7 +232,7 @@ export default function GetStarted(props) {
                         <span class="gs-hero-stat-label">Healthy</span>
                     </div>
                     <div class="gs-hero-stat">
-                        <span class="gs-hero-stat-value">{shortVersion()}</span>
+                        <span class="gs-hero-stat-value">{shortVersion(healthData())}</span>
                         <span class="gs-hero-stat-label">Version</span>
                     </div>
                 </div>
@@ -227,38 +247,39 @@ export default function GetStarted(props) {
                         Quick Start
                     </h2>
                     <div class="gs-quick-items">
-                        <button class="gs-quick-item" onClick={() => props.onServiceClick('gcs')}>
-                            <img src="/icons/gcs.svg" alt="" width="22" height="22" />
-                            <div>
-                                <strong>Cloud Storage</strong>
-                                <small>Create a bucket, upload files</small>
-                            </div>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.5"><path d="M9 18l6-6-6-6"/></svg>
-                        </button>
-                        <button class="gs-quick-item" onClick={() => props.onServiceClick('bigquery')}>
-                            <img src="/icons/bigquery.svg" alt="" width="22" height="22" />
-                            <div>
-                                <strong>BigQuery</strong>
-                                <small>Run SQL queries, explore datasets</small>
-                            </div>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.5"><path d="M9 18l6-6-6-6"/></svg>
-                        </button>
-                        <button class="gs-quick-item" onClick={() => props.onServiceClick('pubsub')}>
-                            <img src="/icons/pubsub.svg" alt="" width="22" height="22" />
-                            <div>
-                                <strong>Pub/Sub</strong>
-                                <small>Create topics, publish messages</small>
-                            </div>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.5"><path d="M9 18l6-6-6-6"/></svg>
-                        </button>
-                        <button class="gs-quick-item" onClick={() => props.onServiceClick('spanner')}>
-                            <img src="/icons/spanner.svg" alt="" width="22" height="22" />
-                            <div>
-                                <strong>Spanner</strong>
-                                <small>Create instances, run SQL</small>
-                            </div>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.5"><path d="M9 18l6-6-6-6"/></svg>
-                        </button>
+                        <For each={quickStartItems()}>
+                            {(service) => {
+                                const unavailableMessage = () => service.status === 'disabled'
+                                    ? `${service.label} is disabled`
+                                    : `${service.label} is unavailable`;
+                                return (
+                                    <button
+                                        type="button"
+                                        class="gs-quick-item"
+                                        disabled={!service.available}
+                                        onClick={() => props.onServiceClick?.(service.id)}
+                                        aria-label={service.available ? `Open ${service.label}` : unavailableMessage()}
+                                        title={service.available ? `Open ${service.label}` : unavailableMessage()}
+                                    >
+                                        <img src={`/icons/${service.icon}.svg`} alt="" width="22" height="22" />
+                                        <div>
+                                            <strong>
+                                                {service.label}
+                                                <span
+                                                    class={serviceStatusDot(service.status)}
+                                                    aria-hidden="true"
+                                                    title={service.status}
+                                                />
+                                            </strong>
+                                            <small>{service.available ? service.action : unavailableMessage()}</small>
+                                        </div>
+                                        <Show when={service.available} fallback={<span class="gs-quick-unavailable">Unavailable</span>}>
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
+                                        </Show>
+                                    </button>
+                                );
+                            }}
+                        </For>
                     </div>
                 </div>
 
@@ -330,21 +351,21 @@ export default function GetStarted(props) {
                     More Resources
                 </h2>
                 <div class="gs-resources">
-                    <a href="https://github.com/localcloud" target="_blank" rel="noopener noreferrer" class="gs-resource-item">
+                    <a href="https://github.com/jhsenjaliya/localcloud" target="_blank" rel="noopener noreferrer" class="gs-resource-item">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
                         <span>GitHub Repository</span>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.4"><path d="M7 17L17 7M7 7h10v10"/></svg>
                     </a>
-                    <a href="/docs" target="_blank" rel="noopener noreferrer" class="gs-resource-item">
+                    <a href="/dashboard/docs" target="_blank" rel="noopener noreferrer" class="gs-resource-item">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                         <span>API Documentation</span>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.4"><path d="M7 17L17 7M7 7h10v10"/></svg>
                     </a>
-                    <button onClick={() => window.location.href = '/settings'} class="gs-resource-item">
+                    <a href="/settings" onClick={(e) => { e.preventDefault(); props.onNavigate?.('settings'); }} class="gs-resource-item" style={{ 'text-decoration': 'none' }}>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
                         <span>Setup & SDKs — all env vars and code samples</span>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.4"><path d="M9 18l6-6-6-6"/></svg>
-                    </button>
+                    </a>
                 </div>
             </div>
         </div>

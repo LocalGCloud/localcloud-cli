@@ -16,7 +16,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class GkeEmulator extends AbstractEmulator {
 
-    private static final AtomicInteger nextK8sPort = new AtomicInteger(6443);
+    private static final int PRIMARY_K8S_PORT = 24092;
+    private static final int FIRST_DYNAMIC_K8S_PORT = 24128;
+    private static final AtomicInteger nextK8sPort = new AtomicInteger(PRIMARY_K8S_PORT);
 
     private final PostgresDataSource dataSource;
     private final K3dManager k3dManager;
@@ -24,7 +26,7 @@ public class GkeEmulator extends AbstractEmulator {
     private final ClusterManagerServiceImpl clusterManagerService;
 
     public GkeEmulator(PostgresDataSource dataSource, K3dManager k3dManager) {
-        super("gke", "GKE", 8080, "grpc", "GKE_EMULATOR_HOST");
+        super("gke", "GKE", 24080, "grpc", "GKE_EMULATOR_HOST");
         this.dataSource = dataSource;
         this.k3dManager = k3dManager;
         this.store = new GkeStore(dataSource);
@@ -72,6 +74,11 @@ public class GkeEmulator extends AbstractEmulator {
         }
         return null;
     }
+    private static int allocateK8sPort() {
+        return nextK8sPort.getAndUpdate(
+                current -> current == PRIMARY_K8S_PORT ? FIRST_DYNAMIC_K8S_PORT : current + 1);
+    }
+
 
     @SuppressWarnings("deprecation")
     private Cluster buildClusterProto(GkeStore.Cluster c) {
@@ -148,7 +155,7 @@ public class GkeEmulator extends AbstractEmulator {
                         ? "1.28" : reqCluster.getInitialClusterVersion();
 
                 // Create k3d cluster with dynamic port allocation
-                int apiPort = nextK8sPort.getAndIncrement();
+                int apiPort = allocateK8sPort();
                 String k3dName;
                 String endpoint;
                 String kubeconfig;

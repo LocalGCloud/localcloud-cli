@@ -166,7 +166,7 @@ class CloudFunctionsServiceTest {
 
             assertEquals("projects/p/topics/events", registrar.topicName);
             assertEquals("projects/p/subscriptions/localcloud-fn-fn", registrar.subscriptionName);
-            assertEquals("http://localhost:8080/functions/trigger/p/us-central1/fn", registrar.pushEndpoint);
+            assertEquals("http://localhost:24080/functions/trigger/p/us-central1/fn", registrar.pushEndpoint);
 
             var delete = new TestObserver<Operation>();
             emulator.getServiceImpl().deleteFunction(DeleteFunctionRequest.newBuilder().setName(name).build(), delete);

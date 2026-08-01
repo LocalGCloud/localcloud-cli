@@ -18,7 +18,7 @@ import java.util.*;
  * Sync adapter for Google Cloud Storage.
  *
  * <p>Pulls objects from a real GCP Cloud Storage bucket into the local
- * fake-gcs-server emulator (port 4443). This lets developers work with
+ * fake-gcs-server emulator (port 24081). This lets developers work with
  * production data locally without repeated downloads.
  *
  * <p>GCP REST API docs:

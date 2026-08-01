@@ -21,7 +21,7 @@ public class BigtableRegistrar implements ServiceRegistrar {
         if (!ctx.config().isServiceEnabled("bigtable")) return;
 
         int emulatorPort = ctx.config().getServiceRegistry().getService("bigtable") != null
-                ? ctx.config().getServiceRegistry().getService("bigtable").port() : 8087;
+                ? ctx.config().getServiceRegistry().getService("bigtable").port() : 24084;
 
         var emulator = new BigtableEmulator(emulatorPort, ctx.config().getGatewayPort(),
                 ctx.iamPolicyRestHandler());

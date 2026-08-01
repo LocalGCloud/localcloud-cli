@@ -968,7 +968,7 @@
 
 .aura-sidebar.pinned .aura-tooltip,
 .aura-sidebar:hover .aura-tooltip {
-  display: none !important;
+  display: none;
 }
 
 .aura-sidebar:hover,

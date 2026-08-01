@@ -1,4 +1,4 @@
-import { createSignal, createEffect, For, Show } from 'solid-js';
+import { createSignal, createEffect, For, Show, onCleanup } from 'solid-js';
 import { api } from '../api.js';
 import { IconChevron, IconColumn, iconForType } from './TreeIcons.jsx';
 import { onActivate } from '../utils/a11y.js';
@@ -10,26 +10,42 @@ export function SchemaExplorer(props) {
     const [selected, setSelected] = createSignal(null);
     const [loading, setLoading] = createSignal(false);
     const [error, setError] = createSignal(null);
+    let schemaSeq = 0;
 
-    createEffect(async () => {
+    createEffect(() => {
+        const my = ++schemaSeq;
         const svc = props.serviceId;
-        if (!svc) return;
+        const source = props.source;
+        onCleanup(() => {
+            if (my === schemaSeq) schemaSeq++;
+        });
+        if (!svc) {
+            setNodes([]);
+            setLoading(false);
+            setError(null);
+            return;
+        }
         setLoading(true);
         setError(null);
-        try {
-            if (props.source === 'remote') {
-                const data = await api.syncBrowse(svc);
-                const rawNodes = data.nodes || data || [];
-                setNodes(normalizeRemoteBrowse(rawNodes, svc));
-            } else {
-                const data = await api.schema(svc);
-                setNodes(normalizeLocalSchema(data, svc));
+        (async () => {
+            try {
+                if (source === 'remote') {
+                    const data = await api.syncBrowse(svc);
+                    if (my !== schemaSeq) return;
+                    const rawNodes = data.nodes || data || [];
+                    setNodes(normalizeRemoteBrowse(rawNodes, svc));
+                } else {
+                    const data = await api.schema(svc);
+                    if (my !== schemaSeq) return;
+                    setNodes(normalizeLocalSchema(data, svc));
+                }
+            } catch (e) {
+                if (my !== schemaSeq) return;
+                setError(e.message || 'Failed to load');
+            } finally {
+                if (my === schemaSeq) setLoading(false);
             }
-        } catch (e) {
-            setError(e.message || 'Failed to load');
-        } finally {
-            setLoading(false);
-        }
+        })();
     });
 
     const toggle = (key) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
@@ -51,7 +67,7 @@ export function SchemaExplorer(props) {
         const hasChildren = node.children && node.children.length > 0;
         const isLeaf = !hasChildren;
         const Icon = iconForType(node.type);
-        const syncInfo = () => isLeaf ? getSyncBadge(node.id) : null;
+        const syncInfo = () => isLeaf ? getSyncBadge(node.resourcePath) : null;
 
         const activate = () => isLeaf ? select(node) : toggle(node.id);
 
@@ -158,6 +174,28 @@ function typeLabel(type) {
 /**
  * Normalize the local schema API response into tree nodes.
  */
+function treeId(serviceId, type, ...context) {
+    return [serviceId, type, ...context].map(part => encodeURIComponent(String(part ?? ''))).join('/');
+}
+
+function arrayOf(value) {
+    return Array.isArray(value) ? value : [];
+}
+
+function itemValue(item, ...keys) {
+    if (item == null) return '';
+    if (typeof item !== 'object') return String(item);
+    for (const key of keys) {
+        if (item[key] != null && item[key] !== '') return String(item[key]);
+    }
+    return '';
+}
+
+function countValue(value) {
+    const count = Number.parseInt(value, 10);
+    return Number.isNaN(count) ? 0 : count;
+}
+
 export function normalizeLocalSchema(data, serviceId) {
     const tables = data?.tables || [];
     const groups = {};
@@ -173,15 +211,16 @@ export function normalizeLocalSchema(data, serviceId) {
         }
         if (!groups[dbName]) groups[dbName] = [];
         groups[dbName].push({
-            id: `${serviceId}/${t.name}`,
+            id: treeId(serviceId, 'table', dbName, tableName),
+            resourcePath: t.name,
             name: tableName,
             type: 'table',
             schema: (t.columns || []).map(c => ({ name: c.name || c, type: c.type || 'unknown' })),
-            metadata: { rowCount: t.row_count || null }
+            metadata: { rowCount: t.row_count ?? null }
         });
     }
     return Object.entries(groups).map(([dbName, children]) => ({
-        id: `${serviceId}/${dbName}`,
+        id: treeId(serviceId, 'database', dbName),
         name: dbName,
         type: 'database',
         children
@@ -189,83 +228,178 @@ export function normalizeLocalSchema(data, serviceId) {
 }
 
 /**
- * Normalize the remote browse API response into tree nodes.
+ * Normalize every remote node independently because browse responses can mix
+ * resource kinds and primitive/object entries in their nested arrays.
  */
 export function normalizeRemoteBrowse(rawNodes, serviceId) {
-    if (!rawNodes || rawNodes.length === 0) return [];
+    if (!Array.isArray(rawNodes) || rawNodes.length === 0) return [];
 
-    const first = rawNodes[0];
-    const nodeType = first.type;
+    return rawNodes.map(rawNode => {
+        const n = rawNode && typeof rawNode === 'object'
+            ? rawNode
+            : { id: String(rawNode ?? 'unknown'), name: String(rawNode ?? 'unknown') };
+        const nodeType = n.type || 'unknown';
+        const nodeName = itemValue(n, 'id', 'name') || 'unknown';
 
-    if (nodeType === 'dataset') {
-        return rawNodes.map(ds => ({
-            id: ds.id, name: ds.id, type: 'dataset',
-            children: (ds.tables || []).map(t => ({
-                id: t.id, name: t.name || t.id, type: 'table',
-                metadata: { rowCount: parseInt(t.numRows, 10) || 0, sizeBytes: parseInt(t.numBytes, 10) || 0 },
-                schema: (t.columns || []).map(c => ({ name: c.name, type: c.type })),
-            })),
-        }));
-    }
-
-    if (nodeType === 'collection') {
-        return rawNodes.map(col => ({
-            id: col.id, name: col.id, type: 'collection',
-            children: [{
-                id: col.id, name: col.id, type: 'collection',
-                metadata: { rowCount: col.documentCount || 0 },
-                schema: (col.fields || []).map(f => ({
-                    name: typeof f === 'string' ? f : f.name,
-                    type: typeof f === 'string' ? 'VALUE' : (f.type || 'VALUE'),
-                })),
-            }],
-        }));
-    }
-
-    if (nodeType === 'bucket') {
-        return rawNodes.map(b => ({
-            id: b.id, name: b.id, type: 'bucket',
-            children: (b.prefixes || []).map(p => ({
-                id: `${b.id}/${p}`, name: p, type: 'prefix',
-                metadata: { storageClass: b.storageClass, location: b.location },
-                schema: [],
-            })).concat(b.topLevelObjects > 0 ? [{
-                id: `${b.id}/`, name: `${b.topLevelObjects} root object${b.topLevelObjects !== 1 ? 's' : ''}`,
-                type: 'objects', metadata: { rowCount: b.topLevelObjects }, schema: [],
-            }] : []),
-        }));
-    }
-
-    if (nodeType === 'instance' && first.databases) {
-        return rawNodes.map(inst => ({
-            id: inst.id, name: inst.id, type: 'instance',
-            children: (inst.databases || []).map(db => ({
-                id: db.id, name: db.name || db.id, type: 'database',
-                metadata: { rowCount: (db.tables || []).length },
-                schema: (db.tables || []).map(t => ({
-                    name: typeof t === 'string' ? t : t.name, type: 'TABLE',
-                })),
-            })),
-        }));
-    }
-
-    if (nodeType === 'instance' && first.tables) {
-        return rawNodes.map(inst => ({
-            id: inst.id, name: inst.id, type: 'instance',
-            children: (inst.tables || []).map(t => ({
-                id: t.id, name: t.name || t.id, type: 'table',
-                metadata: { columnFamilies: (t.columnFamilies || []).length },
-                schema: (t.columnFamilies || []).map(cf => ({
-                    name: typeof cf === 'string' ? cf : cf.name, type: 'COLUMN_FAMILY',
-                })),
-            })),
-        }));
-    }
-
-    return rawNodes.map(n => ({
-        id: n.id || n.name || 'unknown', name: n.name || n.id || 'unknown',
-        type: n.type || 'unknown', children: (n.children || []),
-    }));
+        switch (nodeType) {
+            case 'dataset': {
+                const datasetId = itemValue(n, 'id', 'name') || 'unknown';
+                return {
+                    id: treeId(serviceId, 'dataset', datasetId),
+                    name: datasetId,
+                    type: 'dataset',
+                    children: arrayOf(n.tables).map(item => {
+                        const table = item && typeof item === 'object' ? item : { id: item, name: item };
+                        const tableId = itemValue(table, 'id', 'name') || 'unknown';
+                        const tableName = itemValue(table, 'name', 'id') || tableId;
+                        const resourcePath = tableId.includes('.') ? tableId : `${datasetId}.${tableId}`;
+                        return {
+                            id: treeId(serviceId, 'table', datasetId, tableId),
+                            resourcePath,
+                            name: tableName,
+                            type: 'table',
+                            metadata: {
+                                rowCount: countValue(table.numRows ?? table.rowCount),
+                                sizeBytes: countValue(table.numBytes ?? table.sizeBytes),
+                            },
+                            schema: arrayOf(table.columns).map(column => ({
+                                name: itemValue(column, 'name', 'id') || 'unknown',
+                                type: typeof column === 'object' ? (column.type || 'unknown') : 'unknown',
+                            })),
+                        };
+                    }),
+                };
+            }
+            case 'collection': {
+                const collectionId = itemValue(n, 'id', 'name') || 'unknown';
+                return {
+                    id: treeId(serviceId, 'collection-group', collectionId),
+                    name: collectionId,
+                    type: 'collection',
+                    children: [{
+                        id: treeId(serviceId, 'collection', collectionId),
+                        resourcePath: collectionId,
+                        name: collectionId,
+                        type: 'collection',
+                        metadata: { rowCount: n.documentCount ?? 0 },
+                        schema: arrayOf(n.fields).map(field => ({
+                            name: itemValue(field, 'name', 'id') || 'unknown',
+                            type: typeof field === 'object' ? (field.type || 'VALUE') : 'VALUE',
+                        })),
+                    }],
+                };
+            }
+            case 'bucket': {
+                const bucketId = itemValue(n, 'id', 'name') || 'unknown';
+                const prefixNodes = arrayOf(n.prefixes).map(item => {
+                    const prefix = itemValue(item, 'prefix', 'name', 'id') || 'unknown';
+                    return {
+                        id: treeId(serviceId, 'prefix', bucketId, prefix),
+                        resourcePath: `${bucketId}/${prefix}`,
+                        name: prefix,
+                        type: 'prefix',
+                        metadata: { storageClass: n.storageClass, location: n.location },
+                        schema: [],
+                    };
+                });
+                if ((n.topLevelObjects ?? 0) > 0) {
+                    prefixNodes.push({
+                        id: treeId(serviceId, 'objects', bucketId, ''),
+                        resourcePath: `${bucketId}/`,
+                        name: `${n.topLevelObjects} root object${n.topLevelObjects !== 1 ? 's' : ''}`,
+                        type: 'objects',
+                        metadata: { rowCount: n.topLevelObjects },
+                        schema: [],
+                    });
+                }
+                return {
+                    id: treeId(serviceId, 'bucket', bucketId),
+                    name: bucketId,
+                    type: 'bucket',
+                    children: prefixNodes,
+                };
+            }
+            case 'instance': {
+                const instanceId = itemValue(n, 'id', 'name') || 'unknown';
+                if (Array.isArray(n.databases)) {
+                    return {
+                        id: treeId(serviceId, 'instance', instanceId),
+                        name: instanceId,
+                        type: 'instance',
+                        children: n.databases.map(item => {
+                            const database = item && typeof item === 'object' ? item : { id: item, name: item };
+                            const databasePath = itemValue(database, 'id', 'name') || 'unknown';
+                            const databaseName = itemValue(database, 'name') || databasePath.split('/').pop();
+                            return {
+                                id: treeId(serviceId, 'database', instanceId, databaseName),
+                                name: databaseName,
+                                type: 'database',
+                                children: arrayOf(database.tables).map(tableItem => {
+                                    const table = tableItem && typeof tableItem === 'object'
+                                        ? tableItem
+                                        : { id: tableItem, name: tableItem };
+                                    const tablePath = itemValue(table, 'id', 'name') || 'unknown';
+                                    const tableName = itemValue(table, 'name') || tablePath.split('/').pop();
+                                    const resourcePath = tablePath.split('/').length >= 3
+                                        ? tablePath
+                                        : `${instanceId}/${databaseName}/${tableName}`;
+                                    return {
+                                        id: treeId(serviceId, 'table', instanceId, databaseName, tableName),
+                                        resourcePath,
+                                        name: tableName,
+                                        type: 'table',
+                                        metadata: {},
+                                        schema: [],
+                                    };
+                                }),
+                            };
+                        }),
+                    };
+                }
+                if (Array.isArray(n.tables)) {
+                    return {
+                        id: treeId(serviceId, 'instance', instanceId),
+                        name: instanceId,
+                        type: 'instance',
+                        children: n.tables.map(item => {
+                            const table = item && typeof item === 'object' ? item : { id: item, name: item };
+                            const tablePath = itemValue(table, 'id', 'name') || 'unknown';
+                            const tableName = itemValue(table, 'name') || tablePath.split('/').pop();
+                            return {
+                                id: treeId(serviceId, 'table', instanceId, tableName),
+                                resourcePath: tablePath.includes('/') ? tablePath : `${instanceId}/${tablePath}`,
+                                name: tableName,
+                                type: 'table',
+                                metadata: { columnFamilies: arrayOf(table.columnFamilies).length },
+                                schema: arrayOf(table.columnFamilies).map(family => ({
+                                    name: itemValue(family, 'name', 'id') || 'unknown',
+                                    type: 'COLUMN_FAMILY',
+                                })),
+                            };
+                        }),
+                    };
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        return {
+            id: treeId(serviceId, nodeType, nodeName),
+            resourcePath: itemValue(n, 'resourcePath', 'id', 'name') || nodeName,
+            name: itemValue(n, 'name', 'id') || 'unknown',
+            type: nodeType,
+            children: arrayOf(n.children).map((child, index) => {
+                const childName = itemValue(child, 'name', 'id') || String(index);
+                return {
+                    ...(child && typeof child === 'object' ? child : {}),
+                    id: treeId(serviceId, nodeType, nodeName, childName),
+                    resourcePath: itemValue(child, 'resourcePath', 'id', 'name') || childName,
+                    name: childName,
+                };
+            }),
+        };
+    });
 }
 
 function formatNum(n) {

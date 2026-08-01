@@ -458,7 +458,7 @@ export function ConnectionInfoPanel(props) {
                                     </div>
                                     <div class="connection-detail-row">
                                         <span class="connection-detail-label">Port</span>
-                                        <code class="connection-detail-value">5432</code>
+                                        <code class="connection-detail-value">24090</code>
                                     </div>
                                     <div class="connection-detail-row">
                                         <span class="connection-detail-label">Database</span>
@@ -467,12 +467,12 @@ export function ConnectionInfoPanel(props) {
                                     <div class="connection-detail-row">
                                         <span class="connection-detail-label">Connection</span>
                                         <code class="connection-detail-value" style={{ "font-size": "10px" }}>
-                                            postgresql://postgres@localhost:5432/{cluster.databaseName || cluster.database_name}
+                                            postgresql://postgres@localhost:24090/{cluster.databaseName || cluster.database_name}
                                         </code>
                                     </div>
                                 </div>
                                 <button class="connection-copy-btn" onClick={async () => {
-                                    const connStr = `postgresql://postgres@localhost:5432/${cluster.databaseName || cluster.database_name}`;
+                                    const connStr = `postgresql://postgres@localhost:24090/${cluster.databaseName || cluster.database_name}`;
                                     await navigator.clipboard.writeText(connStr);
                                 }}>
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">

@@ -34,7 +34,7 @@ public class MemorystoreStore {
             ps.setString(4, tier != null ? tier : "BASIC");
             ps.setString(5, engine != null ? engine : "REDIS");
             ps.setString(6, redisVersion != null ? redisVersion : "7_0");
-            ps.setInt(7, port > 0 ? port : 6379);
+            ps.setInt(7, port > 0 ? port : 24089);
             ps.setInt(8, memorySizeGb > 0 ? memorySizeGb : 1);
             ps.setBoolean(9, authEnabled);
             ps.setString(10, authPassword);

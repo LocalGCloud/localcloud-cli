@@ -11,6 +11,8 @@ import com.localcloud.docker.ContainerManager;
 import com.localcloud.emulators.iam.IAMPolicyRestHandler;
 import com.localcloud.gateway.ApiGateway;
 import com.localcloud.persistence.PostgresDataSource;
+import com.localcloud.runtime.RuntimeBroker;
+import com.localcloud.runtime.RuntimeCatalogStore;
 
 /**
  * Bundle of shared dependencies passed to each {@link ServiceRegistrar}
@@ -26,5 +28,7 @@ public record ServiceRegistrationContext(
         ContainerManager containerManager,
         ProjectService projectService,
         IAMPolicyRestHandler iamPolicyRestHandler,
-        ApiGateway gateway) {
+        ApiGateway gateway,
+        RuntimeCatalogStore runtimeCatalog,
+        RuntimeBroker runtimeBroker) {
 }

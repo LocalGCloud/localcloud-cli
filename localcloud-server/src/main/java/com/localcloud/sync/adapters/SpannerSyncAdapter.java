@@ -20,7 +20,7 @@ import java.util.*;
  * Sync adapter for Google Cloud Spanner.
  *
  * <p>Pulls data from a real GCP Spanner instance/database into the local
- * Spanner emulator (port 9010). This lets developers work with filtered
+ * Spanner emulator (port 24085). This lets developers work with filtered
  * production data locally.
  *
  * <p>GCP REST API docs:

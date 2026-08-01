@@ -32,10 +32,10 @@ class DiagnosticsServiceTest {
 
     @BeforeEach
     void setUp() {
-        ServiceRegistry registry = ServiceRegistry.load(8080);
+        ServiceRegistry registry = ServiceRegistry.load(24080);
         LocalCloudConfig config = mock(LocalCloudConfig.class);
         when(config.getProjectId()).thenReturn("test-project");
-        when(config.getGatewayPort()).thenReturn(8080);
+        when(config.getGatewayPort()).thenReturn(24080);
         when(config.getDataDir()).thenReturn(Path.of("/tmp/localcloud-test"));
         when(config.isPersistenceEnabled()).thenReturn(true);
         when(config.getIamMode()).thenReturn("permissive");

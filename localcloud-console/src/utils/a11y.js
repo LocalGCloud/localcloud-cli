@@ -11,58 +11,38 @@ export function onActivate(handler) {
   };
 }
 
-export function formatNumber(value) {
-  if (value === null || value === undefined || value === '') {
-    return '0';
-  }
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) {
-    return String(value);
-  }
-  return new Intl.NumberFormat(undefined).format(numeric);
-}
-
-function toDate(value) {
-  if (!value) {
-    return null;
-  }
-  if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? null : value;
-  }
-  const normalized = typeof value === 'string' ? value.replace(' ', 'T') : value;
-  const date = new Date(normalized);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-export function formatDateTime(value, options = { dateStyle: 'medium', timeStyle: 'short' }) {
-  const date = toDate(value);
-  if (!date) {
-    return 'Unknown';
-  }
-  return new Intl.DateTimeFormat(undefined, options).format(date);
-}
-
-export function formatTime(value, options = {
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-}) {
-  const date = toDate(value);
-  if (!date) {
-    return 'Unknown';
-  }
-  return new Intl.DateTimeFormat(undefined, options).format(date);
-}
-
-const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea:not([disabled]), '
+    + 'input:not([disabled]), select:not([disabled]), [contenteditable]:not([contenteditable="false"]), '
+    + 'summary:not([tabindex="-1"]), audio[controls], video[controls], '
+    + '[tabindex]:not([tabindex="-1"])';
 
 /**
- * Traps focus within a container element. Call on mount.
- * Returns a cleanup function.
+ * Traps focus within a container element (WCAG 2.4.3 compliant). Call on open.
+ *
+ * - Captures the previously-focused element and restores focus to it on cleanup.
+ * - If the container has no focusable children, focuses the container itself (made
+ *   programmatically focusable via tabindex=-1) and prevents Tab from escaping.
+ * - Returns a cleanup function that removes the keydown handler and restores focus;
+ *   callers SHOULD capture and invoke it on close (via `onCleanup` for components).
+ *
+ * @param {HTMLElement} containerEl  the dialog/menu root
+ * @param {function} [onEscape]     invoked on Escape
+ * @returns {function} cleanup — call to tear down the trap and restore focus
  */
 export function trapFocus(containerEl, onEscape) {
-    const first = containerEl.querySelector(FOCUSABLE_SELECTOR);
-    if (first) first.focus();
+    const previouslyFocused = document.activeElement;
+    const previousTabIndex = containerEl.getAttribute('tabindex');
+    let active = true;
+
+    // Make the container itself focusable so we always have a Tab anchor.
+    containerEl.tabIndex = -1;
+
+    const firstFocusable = containerEl.querySelector(FOCUSABLE_SELECTOR);
+    if (firstFocusable) {
+        firstFocusable.focus();
+    } else {
+        containerEl.focus();
+    }
 
     const handler = (e) => {
         if (e.key === 'Escape' && onEscape) {
@@ -71,19 +51,25 @@ export function trapFocus(containerEl, onEscape) {
         }
         if (e.key !== 'Tab') return;
 
-        const focusable = containerEl.querySelectorAll(FOCUSABLE_SELECTOR);
-        if (focusable.length === 0) return;
+        const focusable = Array.from(containerEl.querySelectorAll(FOCUSABLE_SELECTOR));
+        if (focusable.length === 0) {
+            // No focusable children — keep focus pinned to the container.
+            e.preventDefault();
+            containerEl.focus();
+            return;
+        }
 
         const first = focusable[0];
         const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
 
         if (e.shiftKey) {
-            if (document.activeElement === first) {
+            if (active === first || active === containerEl) {
                 e.preventDefault();
                 last.focus();
             }
         } else {
-            if (document.activeElement === last) {
+            if (active === last || active === containerEl) {
                 e.preventDefault();
                 first.focus();
             }
@@ -91,5 +77,18 @@ export function trapFocus(containerEl, onEscape) {
     };
 
     containerEl.addEventListener('keydown', handler);
-    return () => containerEl.removeEventListener('keydown', handler);
+
+    return () => {
+        if (!active) return;
+        active = false;
+        containerEl.removeEventListener('keydown', handler);
+        if (previousTabIndex === null) {
+            containerEl.removeAttribute('tabindex');
+        } else {
+            containerEl.setAttribute('tabindex', previousTabIndex);
+        }
+        if (previouslyFocused?.isConnected && typeof previouslyFocused.focus === 'function') {
+            previouslyFocused.focus();
+        }
+    };
 }

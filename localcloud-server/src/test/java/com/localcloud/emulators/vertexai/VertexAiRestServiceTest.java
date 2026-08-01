@@ -15,7 +15,7 @@ class VertexAiRestServiceTest {
     void generateContentReturnsGeminiShapedResponse() throws Exception {
         TestDataSource testDataSource = TestDataSource.create("vertex_generate");
         try {
-            VertexAiRestService service = new VertexAiEmulator(testDataSource.getDataSource(), 8080).getRestService();
+            VertexAiRestService service = new VertexAiEmulator(testDataSource.getDataSource(), 24080).getRestService();
             String request = "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"hello local model\"}]}]}";
             var json = mapper.readTree(body(service.generateContent(
                     "local-project", "us-central1", "google", "gemini-local", request)));

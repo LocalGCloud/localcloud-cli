@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, readd
 import { join, extname } from 'path';
 
 const PREFERRED_PORT = 3001;
-const API_TARGET = process.env.LOCALCLOUD_API_TARGET || 'http://127.0.0.1:8080';
+const API_TARGET = process.env.LOCALCLOUD_API_TARGET || 'http://127.0.0.1:24080';
 const DIST = 'dist';
 
 // --- Build static files ---
@@ -51,7 +51,7 @@ const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.css': 't
 const API_PREFIXES = [
     '/health', '/services', '/requests', '/env', '/reset', '/browse', '/mutate',
     '/projects', '/routing', '/credentials', '/query', '/schema', '/gcs',
-    '/usage', '/query-history', '/workflow-env', '/workflow', '/sync',
+    '/usage', '/query-history', '/workflow-env', '/workflow', '/sync', '/runtime',
     '/export', '/reseed', '/coverage', '/compatibility',
 ];
 

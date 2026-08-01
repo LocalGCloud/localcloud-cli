@@ -51,7 +51,7 @@ public class CloudFunctionsEmulator extends AbstractEmulator {
 
     CloudFunctionsEmulator(PostgresDataSource dataSource, CloudRunStore cloudRunStore,
                            PubSubTriggerRegistrar pubSubTriggerRegistrar) {
-        super("cloudfunctions", "Cloud Functions (2nd Gen)", 8080, "grpc", "CLOUD_FUNCTIONS_EMULATOR_HOST");
+        super("cloudfunctions", "Cloud Functions (2nd Gen)", 24080, "grpc", "CLOUD_FUNCTIONS_EMULATOR_HOST");
         this.repository = new CloudFunctionsRepository(dataSource);
         this.cloudRunStore = cloudRunStore;
         this.pubSubTriggerRegistrar = pubSubTriggerRegistrar;
@@ -122,7 +122,7 @@ public class CloudFunctionsEmulator extends AbstractEmulator {
         if (topic == null || topic.isEmpty()) return;
 
         String subName = "projects/" + projectId + "/subscriptions/localcloud-fn-" + functionId;
-        String triggerUrl = "http://localhost:8080/functions/trigger/" + projectId + "/" + locationId + "/" + functionId;
+        String triggerUrl = "http://localhost:24080/functions/trigger/" + projectId + "/" + locationId + "/" + functionId;
         try {
             pubSubTriggerRegistrar.register(topic, subName, triggerUrl);
             logger.info("Created Pub/Sub trigger subscription {} for function {}", subName, functionId);
@@ -150,7 +150,7 @@ public class CloudFunctionsEmulator extends AbstractEmulator {
         public void register(String topicName, String subscriptionName, String pushEndpoint) {
         String pubsubHostEnv = System.getenv("PUBSUB_EMULATOR_HOST");
         String host = "localhost";
-        int port = 8085;
+        int port = 24082;
         if (pubsubHostEnv != null && !pubsubHostEnv.isEmpty()) {
             String[] parts = pubsubHostEnv.split(":", 2);
             host = parts[0];
@@ -194,7 +194,7 @@ public class CloudFunctionsEmulator extends AbstractEmulator {
         public void unregister(String subscriptionName) {
             String pubsubHostEnv = System.getenv("PUBSUB_EMULATOR_HOST");
             String host = "localhost";
-            int port = 8085;
+            int port = 24082;
             if (pubsubHostEnv != null && !pubsubHostEnv.isEmpty()) {
                 String[] parts = pubsubHostEnv.split(":", 2);
                 host = parts[0];
@@ -444,7 +444,7 @@ public class CloudFunctionsEmulator extends AbstractEmulator {
         @Override public void generateUploadUrl(GenerateUploadUrlRequest request,
                                                 StreamObserver<GenerateUploadUrlResponse> responseObserver) {
             incrementRequestCount();
-            String url = "http://localhost:8080/functions/upload/" + Math.abs(request.getParent().hashCode());
+            String url = "http://localhost:24080/functions/upload/" + Math.abs(request.getParent().hashCode());
             responseObserver.onNext(GenerateUploadUrlResponse.newBuilder().setUploadUrl(url).build());
             responseObserver.onCompleted();
         }

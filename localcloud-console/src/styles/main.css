@@ -116,6 +116,7 @@
   --border-subtle: rgba(166,184,205,0.10);
   --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.28), 0 2px 4px -2px rgb(0 0 0 / 0.22);
   --shadow-hover: 0 18px 40px -18px rgb(0 0 0 / 0.62), 0 8px 16px -10px rgb(0 0 0 / 0.45);
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.4);
 
   --sql-keyword: #8ab4f8;
   --sql-function: #fdd663;
@@ -147,6 +148,10 @@
 html, body, #root {
   height: 100%;
   width: 100%;
+}
+
+html, body {
+  overflow-x: hidden;
 }
 
 body {
@@ -220,7 +225,7 @@ code, pre {
 }
 
 h1, h2, h3, .stat-card-value, .service-card-name {
-  letter-spacing: 0 !important;
+  letter-spacing: 0;
 }
 
 /* --- Scrollbar --- */

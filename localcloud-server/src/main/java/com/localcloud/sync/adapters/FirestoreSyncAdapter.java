@@ -20,7 +20,7 @@ import java.util.*;
  * Sync adapter for Google Cloud Firestore.
  *
  * <p>Pulls documents from a real GCP Firestore project into the local Firestore
- * emulator (port 8086). This lets developers pull filtered subsets of production
+ * emulator (port 24083). This lets developers pull filtered subsets of production
  * data for local development and testing.
  *
  * <p>GCP REST API docs:

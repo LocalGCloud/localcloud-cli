@@ -19,16 +19,16 @@ LocalCloud Console is a production-ready web UI served directly by the Armeria g
 ### Architecture
 
 ```
-Browser (http://localhost:8080)
+Browser (http://localhost:24080)
     ↓
     Solid.js SPA
     ↓
-Armeria Gateway (port 8080)
+Armeria Gateway (port 24080)
     ├─ Static file serving (Solid.js SPA)
     ├─ Admin REST API
     ├─ In-process gRPC/REST facades (17 services)
-    ├─ External emulator routing (GCS:4443, Pub/Sub:8085, Firestore:8086,
-    │  Bigtable:8087, Spanner:9010, BigQuery:9050, Memorystore:6379)
+    ├─ External emulator routing (GCS:24081, Pub/Sub:24082, Firestore:24083,
+    │  Bigtable:24084, Spanner:24085, BigQuery:24087, Memorystore:24089)
     └─ PostgreSQL 17 (persistence)
 ```
 
@@ -67,14 +67,14 @@ This creates:
 
 ## Usage
 
-For local development, run `npm run dev` and open **http://localhost:3001**. The dev server proxies `/*` to **http://localhost:8080**.
+For local development, run `npm run dev` and open **http://localhost:3001**. The dev server proxies `/*` to **http://localhost:24080**.
 
 ```bash
 # Start LocalCloud
 docker compose up -d
 
 # Open console in browser
-open http://localhost:8080
+open http://localhost:24080
 
 # Or use the CLI shortcut
 localcloud console

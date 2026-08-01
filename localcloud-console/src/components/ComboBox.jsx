@@ -1,4 +1,4 @@
-import { createSignal, createEffect, Show, For, onCleanup, onMount } from 'solid-js';
+import { createSignal, createEffect, createMemo, Show, For, onCleanup } from 'solid-js';
 import { Portal } from 'solid-js/web';
 
 /**
@@ -18,12 +18,12 @@ export default function ComboBox(props) {
     let dropdownRef;
     let containerRef;
 
-    const filtered = () => {
+    const filtered = createMemo(() => {
         const q = filter().toLowerCase().trim();
         const opts = props.options || [];
         if (!q) return opts;
         return opts.filter(o => o.toLowerCase().includes(q));
-    };
+    });
 
     const selectOption = (opt) => {
         props.onChange(opt);
@@ -36,8 +36,8 @@ export default function ComboBox(props) {
         if (!containerRef) return;
         const rect = containerRef.getBoundingClientRect();
         setInputRect({
-            top: rect.bottom + window.scrollY,
-            left: rect.left + window.scrollX,
+            top: rect.bottom,
+            left: rect.left,
             width: rect.width,
             height: rect.height,
         });
@@ -57,15 +57,12 @@ export default function ComboBox(props) {
             setOpen(true);
         }
         setHighlightIndex(-1);
-        if (props.options?.some(o => o.toLowerCase() === v.toLowerCase())) {
-            props.onChange(v);
-        }
     };
 
     const handleFocus = () => {
         recalcPosition();
         setOpen(true);
-        setFilter('');
+        setFilter(props.value || '');
         setHighlightIndex(-1);
     };
 
@@ -157,7 +154,7 @@ export default function ComboBox(props) {
         };
         if (dropdownAbove()) {
             // Position above the input
-            base.bottom = (window.innerHeight - rect.top + rect.height + window.scrollY) + 'px';
+            base.bottom = (window.innerHeight - rect.top + rect.height) + 'px';
         } else {
             base.top = rect.top + 'px';
         }

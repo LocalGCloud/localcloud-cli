@@ -41,6 +41,7 @@ public class EnvService {
 
             Map<String, String> envVars = new LinkedHashMap<>();
             ServiceRegistry registry = config.getServiceRegistry();
+            String gatewayBase = "http://localhost:" + registry.getGatewayPort();
             for (Map.Entry<String, ServiceDefinition> entry : registry.getAllServices().entrySet()) {
                 String service = entry.getKey();
                 if (config.isServiceEnabled(service)) {
@@ -75,8 +76,8 @@ public class EnvService {
                 }
                 case "oauth" -> {
                     String json = mapper().writerWithDefaultPrettyPrinter().writeValueAsString(Map.of(
-                        "token_uri", "http://localhost:8080/oauth2/token",
-                        "auth_uri", "http://localhost:8080/oauth2/auth",
+                        "token_uri", gatewayBase + "/oauth2/token",
+                        "auth_uri", gatewayBase + "/oauth2/auth",
                         "access_token", "ya29.localcloud-dev-access-token",
                         "token_type", "Bearer",
                         "expires_in", 3600
@@ -96,7 +97,7 @@ public class EnvService {
                 case "terraform" -> {
                     StringBuilder sb = new StringBuilder();
                     sb.append("# LocalCloud Terraform environment — run:\n");
-                    sb.append("# eval $(curl -s http://localhost:8080/env?format=terraform)\n\n");
+                    sb.append("# eval $(curl -s ").append(gatewayBase).append("/env?format=terraform)\n\n");
                     for (Map.Entry<String, ServiceDefinition> entry : registry.getAllServices().entrySet()) {
                         String service = entry.getKey();
                         if (!config.isServiceEnabled(service)) continue;
@@ -133,13 +134,16 @@ public class EnvService {
                     }
                     sb.append("export GOOGLE_PROJECT=\"").append(projectId).append("\"\n");
                     sb.append("export GOOGLE_OAUTH_ACCESS_TOKEN=\"ya29.localcloud-dev-access-token\"\n");
-                    sb.append("export GOOGLE_OAUTH_CUSTOM_ENDPOINT=\"http://localhost:8080/oauth2/\"\n");
-                    sb.append("export GOOGLE_OPENID_CONNECT_CUSTOM_ENDPOINT=\"http://localhost:8080/oauth2/\"\n");
-                    sb.append("export BIGTABLE_EMULATOR_HOST=\"localhost:8087\"\n");
+                    sb.append("export GOOGLE_OAUTH_CUSTOM_ENDPOINT=\"").append(gatewayBase).append("/oauth2/\"\n");
+                    sb.append("export GOOGLE_OPENID_CONNECT_CUSTOM_ENDPOINT=\"").append(gatewayBase).append("/oauth2/\"\n");
+                    ServiceDefinition bigtable = registry.getService("bigtable");
+                    if (bigtable != null) {
+                        sb.append("export BIGTABLE_EMULATOR_HOST=\"").append(bigtable.envValue("localhost")).append("\"\n");
+                    }
                     sb.append("export GOOGLE_APPLICATION_CREDENTIALS=\"/dev/null\"\n");
-                    sb.append("\n# REQUIRED: DNS redirect for all *.googleapis.com (one-time setup)\n");
-                    sb.append("# sudo sh -c 'echo \"nameserver 127.0.0.1\" > /etc/resolver/googleapis.com'\n");
-                    sb.append("# REQUIRED: Docker must map port 443: -p 443:8080\n");
+                    sb.append("\n# OPTIONAL transparent networking (explicit opt-in)\n");
+                    sb.append("# Maps host 53/udp, 80, and 443 to LocalCloud canonical infrastructure listeners.\n");
+                    sb.append("# Start with: LOCALCLOUD_TRANSPARENT_NETWORK=true ./start.sh\n");
                     sb.append("# Verify readiness: curl http://localhost:").append(config.getGatewayPort()).append("/terraform/readiness\n");
                     yield HttpResponse.of(HttpStatus.OK, MediaType.PLAIN_TEXT_UTF_8, sb.toString());
                 }
