@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "localcloud-cli"
+version = "0.1.0"
+description = "Shared-instance LocalCloud lifecycle, project context, caller attribution, and MCP bridge"
+requires-python = ">=3.11"
+dependencies = [
+  "docker>=7,<8",
+  "httpx>=0.28,<1",
+  "mcp>=2,<3",
+  "PyYAML>=6,<7",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8,<9",
+  "google-cloud-bigquery>=3,<4",
+  "google-cloud-dataproc>=5,<6",
+  "google-cloud-pubsub>=2,<3",
+  "google-cloud-storage>=3,<4",
+  "pytest-asyncio>=0.25,<1",
+  "respx>=0.22,<1",
+]
+
+[project.scripts]
+localcloud = "localcloud_cli.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "docker: requires a working local Docker engine",
+]

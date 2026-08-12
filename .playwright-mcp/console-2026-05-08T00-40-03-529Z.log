@@ -1,3 +1,0 @@
-[   65809ms] [ERROR] Failed to load resource: net::ERR_EMPTY_RESPONSE @ http://localhost:8080/_localcloud/health:0
-[   70809ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8080/_localcloud/health:0
-[   75810ms] [ERROR] Failed to load resource: net::ERR_EMPTY_RESPONSE @ http://localhost:8080/_localcloud/health:0
