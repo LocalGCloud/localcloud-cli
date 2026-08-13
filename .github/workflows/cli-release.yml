@@ -146,15 +146,15 @@ jobs:
           VERSION: ${{ needs.validate-release.outputs.version }}
         run: |
           docker pull "${RUNTIME_IMAGE}"
-          ./dist/localcloud doctor > doctor.json
+          ./dist/localcloud doctor --verbose > doctor.json
           python3 -c 'import json,os; data=json.load(open("doctor.json")); assert data["status"] == "ok"; assert data["cli_version"] == os.environ["VERSION"]; assert data["default_image"] == os.environ["RUNTIME_IMAGE"]'
-          ./dist/localcloud start --instance release-smoke > start.json
+          ./dist/localcloud start --instance release-smoke --verbose > start.json
           python3 -c 'import json; data=json.load(open("start.json")); assert data["status"] in {"started", "already_running"}; assert data["container"]["state"] == "running"'
-          ./dist/localcloud status --instance release-smoke > status.json
+          ./dist/localcloud status --instance release-smoke --verbose > status.json
           python3 -c 'import json; assert json.load(open("status.json"))["status"] == "running"'
           ./dist/localcloud env --instance release-smoke > env.txt
           test -s env.txt
-          ./dist/localcloud stop --instance release-smoke > stop.json
+          ./dist/localcloud stop --instance release-smoke --verbose > stop.json
           python3 -c 'import json; assert json.load(open("stop.json"))["status"] == "stopped"'
 
       - name: Clean Docker smoke resources

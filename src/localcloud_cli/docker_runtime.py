@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .config import DEFAULTS_CONFIG_LABEL, DEFAULT_PROJECT, LocalCloudConfig, default_resource_names, validate_instance
+from .config import DEFAULTS_CONFIG_LABEL, DEFAULT_INSTANCE, DEFAULT_PROJECT, LocalCloudConfig, default_resource_names, validate_instance
 from .errors import HostError
 
 MANAGED_LABEL = "com.localcloud.managed"
@@ -96,6 +96,7 @@ class DockerRuntime:
                 config.instance,
                 "volume",
                 names["volume"],
+                allow_legacy_default_volume=config.data == "persistent",
             )
             ports = self._port_bindings(config)
             network, network_created = self._network_for_create(config, names, metadata)
@@ -205,9 +206,27 @@ class DockerRuntime:
         if network is not None:
             _remove_verified(network, "network", _base_labels(environment["instance"], "network"), failures)
         if remove_volume:
-            volume = self._associated(self.client.volumes, environment["instance"], "volume", environment["volume_name"], required=False)
+            volume = self._associated(
+                self.client.volumes,
+                environment["instance"],
+                "volume",
+                environment["volume_name"],
+                required=False,
+                allow_legacy_default_volume=environment["data"] == "persistent",
+            )
             if volume is not None:
-                _remove_verified(volume, "volume", _base_labels(environment["instance"], "volume"), failures, force=True)
+                _remove_verified(
+                    volume,
+                    "volume",
+                    _base_labels(environment["instance"], "volume"),
+                    failures,
+                    legacy_default_volume=(
+                        (environment["instance"], environment["volume_name"])
+                        if environment["data"] == "persistent"
+                        else None
+                    ),
+                    force=True,
+                )
         if failures:
             raise HostError("cleanup_failed", "Managed instance cleanup was incomplete", {"instance": environment["instance"], "failures": failures})
 
@@ -224,13 +243,26 @@ class DockerRuntime:
             )
         if container is not None:
             _remove_verified(container, "container", _base_labels(instance, "container"), failures, force=True, v=True)
-        for role, collection, kwargs in (
-            ("network", self.client.networks, {}),
-            ("volume", self.client.volumes, {"force": True}),
-        ):
-            resource = self._discover_one(collection, instance, role)
-            if resource is not None:
-                _remove_verified(resource, role, _base_labels(instance, role), failures, **kwargs)
+        network = self._discover_one(self.client.networks, instance, "network")
+        if network is not None:
+            _remove_verified(network, "network", _base_labels(instance, "network"), failures)
+        volume = self._discover_one(self.client.volumes, instance, "volume")
+        volume_name = resource_names(instance)["volume"]
+        legacy_default_volume = None
+        if volume is None and instance == DEFAULT_INSTANCE:
+            named = self._get_optional(self.client.volumes, volume_name, "volume")
+            if named is not None and _is_legacy_default_volume(named, instance, volume_name):
+                volume = named
+                legacy_default_volume = (instance, volume_name)
+        if volume is not None:
+            _remove_verified(
+                volume,
+                "volume",
+                _base_labels(instance, "volume"),
+                failures,
+                legacy_default_volume=legacy_default_volume,
+                force=True,
+            )
         if failures:
             raise HostError("cleanup_failed", "Managed instance cleanup was incomplete", {"instance": instance, "failures": failures})
 
@@ -356,27 +388,52 @@ class DockerRuntime:
                 return existing, False
             existing.remove(force=True)
         else:
+            named = self._get_optional(self.client.volumes, names["volume"], "volume")
+            if (
+                named is not None
+                and config.data == "persistent"
+                and _is_legacy_default_volume(named, config.instance, names["volume"])
+            ):
+                return named, False
             self._require_name_available(self.client.volumes, names["volume"], expected, "volume")
         return self.client.volumes.create(name=names["volume"], labels=expected), True
 
     def _verify_associated(self, environment: dict[str, Any]) -> None:
         self._associated(self.client.networks, environment["instance"], "network", environment["network_name"], required=True)
-        self._associated(self.client.volumes, environment["instance"], "volume", environment["volume_name"], required=True)
+        self._associated(
+            self.client.volumes,
+            environment["instance"],
+            "volume",
+            environment["volume_name"],
+            required=True,
+            allow_legacy_default_volume=environment["data"] == "persistent",
+        )
 
-    def _associated(self, collection: Any, instance: str, role: str, expected_name: str, *, required: bool) -> Any | None:
+    def _associated(
+        self,
+        collection: Any,
+        instance: str,
+        role: str,
+        expected_name: str,
+        *,
+        required: bool,
+        allow_legacy_default_volume: bool = False,
+    ) -> Any | None:
         resource = self._discover_one(collection, instance, role)
         if resource is None:
-            named = self._get_optional(collection, expected_name, role)
-            if named is not None:
-                _verify_labels(named, _base_labels(instance, role), role)
-                resource = named
+            resource = self._get_optional(collection, expected_name, role)
         if resource is None:
             if required:
                 raise HostError("resource_missing", f"Managed instance {role} could not be found", {"instance": instance, "resource": role, "name": expected_name})
             return None
         if _resource_name(resource) != expected_name:
             raise HostError("ownership_mismatch", f"Managed instance {role} name does not match its container record", {"instance": instance, "resource": role, "expected_name": expected_name, "actual_name": _resource_name(resource)})
-        _verify_labels(resource, _base_labels(instance, role), role)
+        if not (
+            role == "volume"
+            and allow_legacy_default_volume
+            and _is_legacy_default_volume(resource, instance, expected_name)
+        ):
+            _verify_labels(resource, _base_labels(instance, role), role)
         return resource
 
     def _discover_one(self, collection: Any, instance: str, role: str) -> Any | None:
@@ -466,6 +523,8 @@ class DockerRuntime:
         instance: str,
         role: str,
         configured_name: str,
+        *,
+        allow_legacy_default_volume: bool = False,
     ) -> None:
         expected = _base_labels(instance, role)
         discovered = self._discover_one(collection, instance, role)
@@ -480,7 +539,11 @@ class DockerRuntime:
                 },
             )
         named = self._get_optional(collection, configured_name, role)
-        if named is not None:
+        if named is not None and not (
+            allow_legacy_default_volume
+            and role == "volume"
+            and _is_legacy_default_volume(named, instance, configured_name)
+        ):
             _verify_labels(named, expected, role)
 
 
@@ -625,10 +688,23 @@ def _verify_labels(resource: Any, expected: dict[str, str], kind: str) -> None:
         raise HostError("ownership_mismatch", f"Refusing to operate on an unlabeled, legacy, drifted, or mismatched {kind}", {"resource": kind, "name": _resource_name(resource), "label_mismatches": mismatches})
 
 
-def _remove_verified(resource: Any, kind: str, expected: dict[str, str], failures: list[dict[str, Any]], **kwargs: Any) -> None:
+def _remove_verified(
+    resource: Any,
+    kind: str,
+    expected: dict[str, str],
+    failures: list[dict[str, Any]],
+    *,
+    legacy_default_volume: tuple[str, str] | None = None,
+    **kwargs: Any,
+) -> None:
     identity = _resource_identity(resource)
     try:
-        _verify_labels(resource, expected, kind)
+        if not (
+            kind == "volume"
+            and legacy_default_volume is not None
+            and _is_legacy_default_volume(resource, *legacy_default_volume)
+        ):
+            _verify_labels(resource, expected, kind)
         resource.remove(**kwargs)
     except Exception as error:
         failures.append({"resource": kind, "identity": identity, "cause": str(error)})
@@ -653,6 +729,15 @@ def _resource_name(resource: Any) -> str | None:
         return None
     value = getattr(resource, "name", None) or getattr(resource, "id", None)
     return str(value) if value else None
+
+
+def _is_legacy_default_volume(resource: Any, instance: str, configured_name: str) -> bool:
+    return (
+        instance == DEFAULT_INSTANCE
+        and configured_name == "localcloud-data"
+        and _resource_name(resource) == "localcloud-data"
+        and not _resource_labels(resource)
+    )
 
 
 def _resource_identity(resource: Any) -> str:

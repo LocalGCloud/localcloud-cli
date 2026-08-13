@@ -34,6 +34,21 @@ brew uninstall localcloud
 Removing the CLI does not stop containers or delete the managed
 `localcloud-data` volume.
 
+## Output
+
+Commands show their current task on stderr and print a concise result on stdout.
+Use `--verbose` for the complete JSON result, or add selected JSON paths to the
+default summary with `--fields`:
+
+```sh
+localcloud status
+localcloud status --verbose
+localcloud start --fields container.name,mcp.direct_url
+```
+
+Colors and animation are enabled only on interactive terminals. Set `NO_COLOR=1`
+to disable color; redirected output remains plain.
+
 ## Develop
 
 LocalCloud CLI requires Python 3.11 or newer and uses [uv](https://docs.astral.sh/uv/).

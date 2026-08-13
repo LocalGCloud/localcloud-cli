@@ -212,6 +212,159 @@ def test_named_and_custom_resources_are_created_and_discovered_by_labels(
     assert inspected["volume_name"] == "custom-volume"
 
 
+def test_persistent_default_reuses_unlabeled_legacy_volume(
+    tmp_path: Path, ready_runtime: tuple[DockerRuntime, Client]
+) -> None:
+    runtime, client = ready_runtime
+    legacy_volume = Resource("localcloud-data")
+    client.volumes.values[legacy_volume.name] = legacy_volume
+
+    environment = runtime.create(load_config(directory=tmp_path))
+    inspected = runtime.inspect("default")
+    run = client.containers.run_calls[0]
+
+    assert client.volumes.values["localcloud-data"] is legacy_volume
+    assert client.volumes.created == []
+    assert legacy_volume.labels == {}
+    assert environment["volume_created"] is False
+    assert run["volumes"]["localcloud-data"] == {
+        "bind": "/var/lib/localcloud",
+        "mode": "rw",
+    }
+    assert client.networks.created[0][0] == "localcloud"
+    assert inspected is not None
+    assert inspected["volume_name"] == "localcloud-data"
+
+    runtime.remove(environment, remove_volume=False)
+
+    assert legacy_volume.removed == []
+
+
+def test_explicit_removal_removes_reused_unlabeled_default_volume(
+    tmp_path: Path, ready_runtime: tuple[DockerRuntime, Client]
+) -> None:
+    runtime, client = ready_runtime
+    legacy_volume = Resource("localcloud-data")
+    client.volumes.values[legacy_volume.name] = legacy_volume
+    environment = runtime.create(load_config(directory=tmp_path))
+
+    runtime.remove(environment, remove_volume=True)
+
+    assert legacy_volume.removed == [{"force": True}]
+
+
+def test_purge_removes_orphaned_unlabeled_default_volume(
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    legacy_volume = Resource("localcloud-data")
+    client.volumes.values[legacy_volume.name] = legacy_volume
+
+    runtime.purge("default")
+
+    assert legacy_volume.removed == [{"force": True}]
+
+
+def test_ephemeral_default_rejects_unlabeled_legacy_volume(
+    tmp_path: Path, ready_runtime: tuple[DockerRuntime, Client]
+) -> None:
+    runtime, client = ready_runtime
+    legacy_volume = Resource("localcloud-data")
+    client.volumes.values[legacy_volume.name] = legacy_volume
+    (tmp_path / "localcloud.yaml").write_text("data: ephemeral\n", encoding="utf-8")
+
+    with pytest.raises(HostError) as caught:
+        runtime.create(load_config(directory=tmp_path))
+
+    assert caught.value.code == "ownership_mismatch"
+    assert legacy_volume.removed == []
+    assert client.volumes.created == []
+    assert client.containers.run_calls == []
+
+
+def test_ephemeral_container_record_rejects_unlabeled_default_volume(
+    tmp_path: Path, ready_runtime: tuple[DockerRuntime, Client]
+) -> None:
+    runtime, client = ready_runtime
+    (tmp_path / "localcloud.yaml").write_text("data: ephemeral\n", encoding="utf-8")
+    environment = runtime.create(load_config(directory=tmp_path))
+    managed_volume = client.volumes.values["localcloud-data"]
+    legacy_volume = Resource("localcloud-data")
+    client.volumes.values["localcloud-data"] = legacy_volume
+
+    with pytest.raises(HostError) as inspect_error:
+        runtime.inspect("default")
+
+    assert inspect_error.value.code == "ownership_mismatch"
+
+    with pytest.raises(HostError) as remove_error:
+        runtime.remove(environment, remove_volume=True)
+
+    assert remove_error.value.code == "ownership_mismatch"
+    assert managed_volume.removed == []
+    assert legacy_volume.removed == []
+
+
+def test_unlabeled_custom_volume_collision_fails_closed(
+    tmp_path: Path, ready_runtime: tuple[DockerRuntime, Client]
+) -> None:
+    runtime, client = ready_runtime
+    client.volumes.values["custom-volume"] = Resource("custom-volume")
+    config = load_config(directory=tmp_path, volume_name="custom-volume")
+
+    with pytest.raises(HostError) as caught:
+        runtime.create(config)
+
+    assert caught.value.code == "ownership_mismatch"
+    assert client.containers.run_calls == []
+
+
+def test_unlabeled_named_instance_volume_collision_fails_closed(
+    tmp_path: Path, ready_runtime: tuple[DockerRuntime, Client]
+) -> None:
+    runtime, client = ready_runtime
+    client.volumes.values["localcloud-data-team-a"] = Resource(
+        "localcloud-data-team-a"
+    )
+    config = load_config(directory=tmp_path, instance="team-a")
+
+    with pytest.raises(HostError) as caught:
+        runtime.create(config)
+
+    assert caught.value.code == "ownership_mismatch"
+    assert client.containers.run_calls == []
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        {MANAGED_LABEL: "true"},
+        {"third.party.owner": "external"},
+        {
+            MANAGED_LABEL: "true",
+            INSTANCE_LABEL: "other",
+            RESOURCE_ROLE_LABEL: "volume",
+        },
+    ],
+    ids=["partial-localcloud", "unrelated", "mismatched-instance"],
+)
+def test_labeled_default_volume_collision_fails_closed(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+    labels: dict[str, str],
+) -> None:
+    runtime, client = ready_runtime
+    client.volumes.values["localcloud-data"] = Resource(
+        "localcloud-data", labels
+    )
+
+    with pytest.raises(HostError) as caught:
+        runtime.create(load_config(directory=tmp_path))
+
+    assert caught.value.code == "ownership_mismatch"
+    assert client.containers.run_calls == []
+
+
 def test_unmanaged_deterministic_collision_fails_closed(ready_runtime: tuple[DockerRuntime, Client]) -> None:
     runtime, client = ready_runtime
     client.containers.values["localcloud"] = Resource("localcloud")

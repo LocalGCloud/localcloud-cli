@@ -84,7 +84,7 @@ def test_help_surface_uses_instance_project_and_user_only() -> None:
         ]
     )
 
-    assert "Shared LocalCloud instance" in help_text
+    assert "Run Google Cloud-compatible services locally in Docker" in help_text
     assert "--" + "work" + "space" not in help_text
     assert lifecycle.instance == "team-a"
     assert lifecycle.project_id == "agent-project-1"
@@ -181,6 +181,21 @@ def test_reset_all_projects_dispatches_explicit_scope() -> None:
     assert values[1] is True
 
 
+def test_reset_progress_uses_resolved_config_instance(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "team.yaml"
+    config.write_text("instance: team-a\nproject: team-project-1\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["reset", str(config)]) == 0
+    captured = capsys.readouterr()
+    assert "Resetting project data in instance 'team-a'" in captured.err
+    assert "instance 'default'" not in captured.err
+
+
 def test_instance_only_commands_dispatch_without_context_config() -> None:
     assert _execute(_parser().parse_args(["stop", "--instance", "team-a"])) == {
         "status": "stopped"
@@ -235,6 +250,25 @@ def test_env_dispatch_preserves_context(
     assert calls[0][1:3] == ("agent-project-1", "alice")
 
 
+def test_main_env_json_prints_valid_json(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "localcloud_cli.endpoints.environment_config",
+        lambda *_args, **_kwargs: {"GOOGLE_CLOUD_PROJECT": "agent-project-1"},
+    )
+
+    assert main(["env", "--format", "json"]) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "GOOGLE_CLOUD_PROJECT": "agent-project-1"
+    }
+    assert "Processing" in captured.err
+
+
 def test_mcp_dispatch_passes_instance_project_and_user(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -261,7 +295,28 @@ def test_mcp_dispatch_passes_instance_project_and_user(
     assert calls == [("team-a", "agent-project-1", "alice")]
 
 
-def test_main_returns_structured_host_error(
+def test_native_guide_and_mcp_do_not_emit_lifecycle_status(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert main(["guide"]) == 0
+    guide = capsys.readouterr()
+    assert guide.out
+    assert guide.err == ""
+
+    monkeypatch.setattr(
+        "localcloud_cli.mcp_stdio.run",
+        lambda _instance, _project, _user: None,
+    )
+    assert main(["mcp"]) == 0
+    mcp = capsys.readouterr()
+    assert mcp.out == ""
+    assert mcp.err == ""
+
+
+def test_main_returns_concise_host_error_by_default(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def fail(_self: FakeController, _instance: str) -> dict[str, Any]:
@@ -269,6 +324,20 @@ def test_main_returns_structured_host_error(
 
     monkeypatch.setattr(FakeController, "status", fail)
     assert main(["status"]) == 2
+    captured = capsys.readouterr()
+    assert "Processing" in captured.err
+    assert "Failed" in captured.err
+    assert "Error [instance_not_running] start it" in captured.err
+
+
+def test_main_returns_structured_host_error_when_verbose(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(_self: FakeController, _instance: str) -> dict[str, Any]:
+        raise HostError("instance_not_running", "start it")
+
+    monkeypatch.setattr(FakeController, "status", fail)
+    assert main(["status", "--verbose"]) == 2
     error = json.loads(capsys.readouterr().err)
     assert error["error"] is True
     assert error["code"] == "instance_not_running"

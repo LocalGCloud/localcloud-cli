@@ -18,7 +18,7 @@ Publish and qualify `jaysen2apache/localcloud:latest` using the private LocalClo
 The private `.github/workflows/docker-publish.yml` workflow is manual-only and is currently disabled. After the reviewed LocalCloud source and release tag are pushed, enable and dispatch it yourself:
 
 ```sh
-VERSION=X.Y.Z
+VERSION=0.1.0
 gh workflow enable docker-publish.yml --repo jhsenjaliya/localcloud
 gh workflow run docker-publish.yml \
   --repo jhsenjaliya/localcloud \
@@ -44,15 +44,15 @@ In `LocalGCloud/localcloud-cli`:
 3. Regenerate and verify third-party notices.
 4. Run the release tests and a frozen-binary smoke test.
 
-For version `X.Y.Z`:
+For version `0.1.0`:
 
 ```sh
 uv lock --check
-uv run --frozen --extra test python -m pytest -q
+uv run --frozen --extra test python -m pytest
 uv run --frozen --extra release python scripts/generate-third-party-notices.py
 git diff --exit-code -- THIRD_PARTY_NOTICES
 uv run --frozen --extra release python -m PyInstaller --clean --noconfirm localcloud.spec
-test "$(./dist/localcloud --version)" = "localcloud X.Y.Z"
+test "$(./dist/localcloud --version)" = "localcloud 0.1.0"
 ./dist/localcloud --help >/dev/null
 ./dist/localcloud guide >/dev/null
 ```
@@ -64,7 +64,7 @@ Commit and push the reviewed CLI changes. Confirm the working tree is clean befo
 The tag, package version, and requested release version must match exactly:
 
 ```sh
-VERSION=X.Y.Z
+VERSION=0.1.0
 git tag -a "v${VERSION}" -m "Release LocalCloud CLI ${VERSION}"
 git push origin main
 git push origin "v${VERSION}"
@@ -86,7 +86,7 @@ Watch the run in GitHub Actions or with `gh run watch --repo LocalGCloud/localcl
 
 The workflow:
 
-- verifies the selected ref is an existing `vX.Y.Z` tag matching `localcloud_cli.__version__`;
+- verifies the selected ref is an existing `v0.1.0` tag matching `localcloud_cli.__version__`;
 - resolves and records the exact digest behind `jaysen2apache/localcloud:latest`;
 - runs the CLI test suite;
 - builds native macOS and Linux archives for ARM64 and AMD64;
