@@ -20,6 +20,20 @@ brew install LocalGCloud/tap/localcloud
 
 Release archives are checksummed and include Sigstore verification bundles.
 
+Supported standalone archives target macOS 13 or newer and Linux distributions
+with glibc 2.35 or newer (Ubuntu 22.04 equivalent). Windows users should follow
+the manual Docker instructions at <https://local.cloud/docs/getting-started/>.
+
+Upgrade or remove the Homebrew package with:
+
+```sh
+brew upgrade localcloud
+brew uninstall localcloud
+```
+
+Removing the CLI does not stop containers or delete the managed
+`localcloud-data` volume.
+
 ## Develop
 
 LocalCloud CLI requires Python 3.11 or newer and uses [uv](https://docs.astral.sh/uv/).

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .config import DEFAULT_IMAGE
+
 
 _SERVICE_INVENTORY = (
     ("gcs", "Cloud Storage", True),
@@ -111,7 +113,7 @@ services:
 {_service_inventory()}
 seed: auto
 data: persistent
-image: localcloud/localcloud:latest
+image: {DEFAULT_IMAGE}
 memory: 4g
 docker_socket: false
 transparent_network: false

@@ -1,0 +1,49 @@
+# This catalog covers third-party components bundled in supported LocalCloud CLI archives.
+# LocalCloud itself is proprietary and governed exclusively by LICENSE.
+
+[interpreter]
+name = "CPython"
+version = "3.11.x"
+license = "PSF-2.0"
+source = "https://www.python.org/"
+
+[runtime]
+annotated-types = { license = "MIT", source = "https://github.com/annotated-types/annotated-types" }
+anyio = { license = "MIT", source = "https://github.com/agronholm/anyio" }
+attrs = { license = "MIT", source = "https://github.com/python-attrs/attrs" }
+certifi = { license = "MPL-2.0", source = "https://github.com/certifi/python-certifi" }
+cffi = { license = "MIT", source = "https://github.com/python-cffi/cffi" }
+charset-normalizer = { license = "MIT", source = "https://github.com/jawah/charset_normalizer" }
+click = { license = "BSD-3-Clause", source = "https://github.com/pallets/click" }
+cryptography = { license = "Apache-2.0 OR BSD-3-Clause", source = "https://github.com/pyca/cryptography" }
+docker = { license = "Apache-2.0", source = "https://github.com/docker/docker-py" }
+h11 = { license = "MIT", source = "https://github.com/python-hyper/h11" }
+httpcore = { license = "BSD-3-Clause", source = "https://github.com/encode/httpcore" }
+httpcore2 = { license = "BSD-3-Clause", source = "https://github.com/pydantic/httpx2" }
+httpx = { license = "BSD-3-Clause", source = "https://github.com/encode/httpx" }
+httpx2 = { license = "BSD-3-Clause", source = "https://github.com/pydantic/httpx2" }
+idna = { license = "BSD-3-Clause", source = "https://github.com/kjd/idna" }
+jsonschema = { license = "MIT", source = "https://github.com/python-jsonschema/jsonschema" }
+jsonschema-specifications = { license = "MIT", source = "https://github.com/python-jsonschema/jsonschema-specifications" }
+mcp = { license = "MIT", source = "https://github.com/modelcontextprotocol/python-sdk" }
+mcp-types = { license = "MIT", source = "https://github.com/modelcontextprotocol/python-sdk" }
+opentelemetry-api = { license = "Apache-2.0", source = "https://github.com/open-telemetry/opentelemetry-python" }
+pycparser = { license = "BSD-3-Clause", source = "https://github.com/eliben/pycparser" }
+pydantic = { license = "MIT", source = "https://github.com/pydantic/pydantic" }
+pydantic-core = { license = "MIT", source = "https://github.com/pydantic/pydantic-core" }
+pyjwt = { license = "MIT", source = "https://github.com/jpadilla/pyjwt" }
+python-multipart = { license = "Apache-2.0", source = "https://github.com/Kludex/python-multipart" }
+pyyaml = { license = "MIT", source = "https://github.com/yaml/pyyaml" }
+referencing = { license = "MIT", source = "https://github.com/python-jsonschema/referencing" }
+requests = { license = "Apache-2.0", source = "https://github.com/psf/requests" }
+rpds-py = { license = "MIT", source = "https://github.com/crate-py/rpds" }
+sse-starlette = { license = "BSD-3-Clause", source = "https://github.com/sysid/sse-starlette" }
+starlette = { license = "BSD-3-Clause", source = "https://github.com/Kludex/starlette" }
+truststore = { license = "MIT", source = "https://github.com/sethmlarson/truststore" }
+typing-extensions = { license = "PSF-2.0", source = "https://github.com/python/typing_extensions" }
+typing-inspection = { license = "MIT", source = "https://github.com/pydantic/typing-inspection" }
+urllib3 = { license = "MIT", source = "https://github.com/urllib3/urllib3" }
+uvicorn = { license = "BSD-3-Clause", source = "https://github.com/Kludex/uvicorn" }
+
+[build]
+pyinstaller = { license = "GPL-2.0-or-later with PyInstaller Bootloader Exception", source = "https://github.com/pyinstaller/pyinstaller" }

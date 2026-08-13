@@ -6,6 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "localcloud-cli"
 dynamic = ["version"]
 description = "Shared-instance LocalCloud lifecycle, project context, caller attribution, and MCP bridge"
+readme = "README.md"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
   "docker>=7,<8",

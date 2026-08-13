@@ -1,0 +1,146 @@
+id: olap-application
+description: Deterministic end-to-end OLAP application with storage, warehouse, PostgreSQL, streaming, and Spark.
+recipes: [analytics-core, database-postgres, streaming, batch-spark]
+seed: seed.yaml
+artifacts: [customer_order_summary.py]
+runtime:
+  required: true
+  mode: docker
+verification:
+  - id: gcs-olap-input-bucket
+    service: gcs
+    type: http_json
+    port: 24081
+    path: /storage/v1/b/${project}-olap-input
+    expect:
+      json_path: name
+      equals: ${project}-olap-input
+  - id: gcs-orders-object
+    service: gcs
+    type: http_json
+    port: 24081
+    path: /storage/v1/b/${project}-olap-input/o/orders%2Forders.jsonl
+    expect:
+      json_path: name
+      equals: orders/orders.jsonl
+  - id: pubsub-order-events-topic
+    service: pubsub
+    type: http_json
+    port: 24082
+    path: /v1/projects/${project}/topics/order-events
+    expect:
+      json_path: name
+      equals: projects/${project}/topics/order-events
+  - id: pubsub-order-events-subscription
+    service: pubsub
+    type: http_json
+    port: 24082
+    path: /v1/projects/${project}/subscriptions/order-events-agent
+    expect:
+      json_path: name
+      equals: projects/${project}/subscriptions/order-events-agent
+  - id: bigquery-agent-analytics-dataset
+    service: bigquery
+    type: http_json
+    port: 24087
+    path: /bigquery/v2/projects/${project}/datasets/agent_analytics
+    expect:
+      json_path: datasetReference.datasetId
+      equals: agent_analytics
+  - id: bigquery-customers-table
+    service: bigquery
+    type: http_json
+    port: 24087
+    path: /bigquery/v2/projects/${project}/datasets/agent_analytics/tables/customers
+    expect:
+      json_path: tableReference.tableId
+      equals: customers
+  - id: bigquery-orders-table
+    service: bigquery
+    type: http_json
+    port: 24087
+    path: /bigquery/v2/projects/${project}/datasets/agent_analytics/tables/orders
+    expect:
+      json_path: tableReference.tableId
+      equals: orders
+  - id: bigquery-order-events-table
+    service: bigquery
+    type: http_json
+    port: 24087
+    path: /bigquery/v2/projects/${project}/datasets/agent_analytics/tables/order_events
+    expect:
+      json_path: tableReference.tableId
+      equals: order_events
+  - id: bigquery-orders-rows
+    service: bigquery
+    type: http_json
+    port: 24087
+    path: /bigquery/v2/projects/${project}/datasets/agent_analytics/tables/orders/data?maxResults=1
+    expect:
+      json_path: rows
+      non_empty: true
+  - id: cloudsql-analytics-postgres-instance
+    service: cloudsql
+    type: http_json
+    port: 24080
+    path: /sql/v1beta4/projects/${project}/instances/analytics-postgres
+    expect:
+      json_path: name
+      equals: analytics-postgres
+  - id: cloudsql-analytics-database
+    service: cloudsql
+    type: http_json
+    port: 24080
+    path: /sql/v1beta4/projects/${project}/instances/analytics-postgres/databases/analytics
+    expect:
+      json_path: name
+      equals: analytics
+  - id: cloudsql-postgres-data-plane
+    service: cloudsql
+    type: tcp
+    port: 24090
+  - id: dataproc-analytics-spark-cluster
+    service: dataproc
+    type: http_json
+    port: 24080
+    path: /v1/projects/${project}/regions/us-central1/clusters/analytics-spark
+    expect:
+      json_path: clusterName
+      equals: analytics-spark
+  - id: dataproc-runtime-provider
+    service: dataproc
+    type: http_json
+    port: 24080
+    path: /runtime/status
+    expect:
+      json_path: mode
+      equals: docker
+  - id: dataproc-runtime-available
+    service: dataproc
+    type: http_json
+    port: 24080
+    path: /runtime/status
+    expect:
+      json_path: available
+      equals: true
+  - id: dataproc-spark-consoles
+    service: dataproc
+    type: http_json
+    port: 24080
+    path: /v1/projects/${project}/regions/us-central1/clusters/analytics-spark/consoles
+    expect:
+      json_path: consoles
+      non_empty: true
+  - id: dataproc-spark-metrics
+    service: dataproc
+    type: http_json
+    port: 24080
+    path: /v1/projects/${project}/regions/us-central1/clusters/analytics-spark/metrics
+    expect:
+      json_path: metrics.source
+      equals: container
+expected_outputs:
+  - id: spark-customer-order-summary
+    service: bigquery
+    resource_type: table
+    resource: projects/${project}/datasets/agent_analytics/tables/customer_order_summary

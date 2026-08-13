@@ -1,0 +1,46 @@
+id: analytics-smoke
+description: Fast GCS and BigQuery lifecycle smoke data.
+recipes: [analytics-core]
+seed: seed.yaml
+artifacts: []
+verification:
+  - id: gcs-analytics-bucket
+    service: gcs
+    type: http_json
+    port: 24081
+    path: /storage/v1/b/${project}-analytics-smoke
+    expect:
+      json_path: name
+      equals: ${project}-analytics-smoke
+  - id: gcs-analytics-object
+    service: gcs
+    type: http_json
+    port: 24081
+    path: /storage/v1/b/${project}-analytics-smoke/o/input%2Fevents.jsonl
+    expect:
+      json_path: name
+      equals: input/events.jsonl
+  - id: bigquery-agent-smoke-dataset
+    service: bigquery
+    type: http_json
+    port: 24087
+    path: /bigquery/v2/projects/${project}/datasets/agent_smoke
+    expect:
+      json_path: datasetReference.datasetId
+      equals: agent_smoke
+  - id: bigquery-events-table
+    service: bigquery
+    type: http_json
+    port: 24087
+    path: /bigquery/v2/projects/${project}/datasets/agent_smoke/tables/events
+    expect:
+      json_path: tableReference.tableId
+      equals: events
+  - id: bigquery-events-rows
+    service: bigquery
+    type: http_json
+    port: 24087
+    path: /bigquery/v2/projects/${project}/datasets/agent_smoke/tables/events/data?maxResults=1
+    expect:
+      json_path: rows
+      non_empty: true

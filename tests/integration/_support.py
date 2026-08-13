@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import pytest
 
-from localcloud_cli.config import HostPaths, LocalCloudConfig, load_config
+from localcloud_cli.config import DEFAULT_IMAGE, HostPaths, LocalCloudConfig, load_config
 from localcloud_cli.controller import Controller
 from localcloud_cli.docker_runtime import (
     INSTANCE_LABEL,
@@ -20,9 +20,7 @@ from localcloud_cli.docker_runtime import (
 def controller_for(
     tmp_path: Path,
 ) -> tuple[Controller, DockerRuntime, str]:
-    image = os.environ.get(
-        "LOCALCLOUD_IMAGE", "localcloud/localcloud:latest"
-    )
+    image = os.environ.get("LOCALCLOUD_IMAGE", DEFAULT_IMAGE)
     try:
         runtime = DockerRuntime()
         runtime.client.ping()

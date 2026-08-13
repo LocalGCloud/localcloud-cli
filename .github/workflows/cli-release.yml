@@ -1,0 +1,314 @@
+name: Release LocalCloud CLI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: cli-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: localcloud/localcloud
+  PYTHON_VERSION: "3.11"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-release:
+    name: Validate release identity
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      image_digest: ${{ steps.image.outputs.digest }}
+      image: ${{ steps.image.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Match tag and CLI version
+        id: version
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          match = re.fullmatch(r"v([0-9]+\.[0-9]+\.[0-9]+)", tag)
+          if match is None:
+              raise SystemExit(f"release tag must have the form vX.Y.Z, got {tag!r}")
+          version = match.group(1)
+          source = Path("src/localcloud_cli/__init__.py").read_text(encoding="utf-8")
+          source_match = re.search(r'^__version__ = "([^"]+)"$', source, re.MULTILINE)
+          if source_match is None:
+              raise SystemExit("localcloud_cli.__version__ is missing")
+          if source_match.group(1) != version:
+              raise SystemExit(
+                  f"tag {tag!r} does not match CLI version {source_match.group(1)!r}"
+              )
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+          PY
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Require matching qualified Docker image
+        id: image
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          image="${IMAGE_NAME}:${VERSION}"
+          inspection=$(docker buildx imagetools inspect "$image")
+          digest=$(python3 -c 'import re,sys; text=sys.stdin.read(); match=re.search(r"(?m)^Digest:\s+(sha256:[0-9a-f]{64})\s*$", text); match or sys.exit("qualified Docker index digest is missing"); print(match.group(1))' <<<"$inspection")
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "image=$image@$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Test release source
+        run: uv run --frozen --extra test python -m pytest -q
+
+      - name: Verify generated notices
+        run: |
+          uv run --frozen --extra release python scripts/generate-third-party-notices.py
+          git diff --exit-code -- THIRD_PARTY_NOTICES
+
+  build-native:
+    name: Build ${{ matrix.asset }}
+    needs: validate-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            expected_machine: arm64
+            asset: localcloud-darwin-arm64.tar.gz
+            linux_smoke: false
+          - runner: macos-15-intel
+            expected_machine: x86_64
+            asset: localcloud-darwin-amd64.tar.gz
+            linux_smoke: false
+          - runner: ubuntu-22.04-arm
+            expected_machine: aarch64
+            asset: localcloud-linux-arm64.tar.gz
+            linux_smoke: false
+          - runner: ubuntu-22.04
+            expected_machine: x86_64
+            asset: localcloud-linux-amd64.tar.gz
+            linux_smoke: true
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require native architecture
+        shell: bash
+        env:
+          EXPECTED_MACHINE: ${{ matrix.expected_machine }}
+        run: test "$(uname -m)" = "$EXPECTED_MACHINE"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install locked release dependencies
+        run: uv sync --frozen --extra release
+
+      - name: Build one-file executable
+        run: uv run --frozen --extra release python -m PyInstaller --clean --noconfirm localcloud.spec
+
+      - name: Smoke frozen executable
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate-release.outputs.version }}
+        run: |
+          test "$(./dist/localcloud --version)" = "localcloud ${VERSION}"
+          ./dist/localcloud --help >/dev/null
+          ./dist/localcloud guide >/dev/null
+
+      - name: Exercise Docker lifecycle
+        if: matrix.linux_smoke
+        shell: bash
+        env:
+          LOCALCLOUD_HOME: ${{ runner.temp }}/localcloud-home
+          VERSION: ${{ needs.validate-release.outputs.version }}
+        run: |
+          docker pull "${IMAGE_NAME}:${VERSION}"
+          ./dist/localcloud doctor > doctor.json
+          python3 -c 'import json; data=json.load(open("doctor.json")); assert data["status"] == "ok"; assert data["cli_version"] == data["default_image"].rsplit(":", 1)[1]'
+          ./dist/localcloud start --instance release-smoke > start.json
+          python3 -c 'import json; data=json.load(open("start.json")); assert data["status"] in {"started", "already_running"}; assert data["container"]["state"] == "running"'
+          ./dist/localcloud status --instance release-smoke > status.json
+          python3 -c 'import json; assert json.load(open("status.json"))["status"] == "running"'
+          ./dist/localcloud env --instance release-smoke > env.txt
+          test -s env.txt
+          ./dist/localcloud stop --instance release-smoke > stop.json
+          python3 -c 'import json; assert json.load(open("stop.json"))["status"] == "stopped"'
+
+      - name: Clean Docker smoke resources
+        if: always() && matrix.linux_smoke
+        shell: bash
+        env:
+          LOCALCLOUD_HOME: ${{ runner.temp }}/localcloud-home
+        run: |
+          ./dist/localcloud stop --instance release-smoke || true
+          docker rm -f localcloud-release-smoke || true
+          docker network rm localcloud-release-smoke || true
+          docker volume rm localcloud-data-release-smoke || true
+
+      - name: Package stable archive
+        shell: bash
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: |
+          stage="${RUNNER_TEMP}/localcloud-archive"
+          mkdir -p "$stage"
+          install -m 0755 dist/localcloud "$stage/localcloud"
+          install -m 0644 LICENSE THIRD_PARTY_NOTICES "$stage/"
+          tar -C "$stage" -czf "$ASSET" localcloud LICENSE THIRD_PARTY_NOTICES
+          test "$(tar -tzf "$ASSET" | sort | tr '\n' ' ')" = "LICENSE THIRD_PARTY_NOTICES localcloud "
+
+      - name: Upload native archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-release:
+    name: Publish signed release
+    needs: [validate-release, build-native]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      id-token: write
+    outputs:
+      version: ${{ needs.validate-release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download native archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: localcloud-*.tar.gz
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify asset set and generate checksums
+        shell: bash
+        working-directory: release-assets
+        run: |
+          expected="localcloud-darwin-amd64.tar.gz localcloud-darwin-arm64.tar.gz localcloud-linux-amd64.tar.gz localcloud-linux-arm64.tar.gz"
+          actual=$(printf '%s\n' localcloud-*.tar.gz | sort | tr '\n' ' ' | sed 's/ $//')
+          test "$actual" = "$expected"
+          sha256sum localcloud-darwin-amd64.tar.gz localcloud-darwin-arm64.tar.gz localcloud-linux-amd64.tar.gz localcloud-linux-arm64.tar.gz > SHA256SUMS
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Keyless-sign release files
+        shell: bash
+        working-directory: release-assets
+        run: |
+          for asset in localcloud-*.tar.gz SHA256SUMS; do
+            cosign sign-blob --yes --bundle "${asset}.sigstore.json" "$asset"
+          done
+
+      - name: Render Homebrew formula
+        env:
+          VERSION: ${{ needs.validate-release.outputs.version }}
+        run: |
+          python3 scripts/render-homebrew-formula.py \
+            --version "$VERSION" \
+            --checksums release-assets/SHA256SUMS \
+            --output Formula/localcloud.rb
+          ruby -c Formula/localcloud.rb
+
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate-release.outputs.version }}
+          IMAGE: ${{ needs.validate-release.outputs.image }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          printf "%s\n\n%s %s\n%s %s\n\n%s\n" \
+            "LocalCloud CLI ${VERSION}" \
+            "CLI source revision:" "$GITHUB_SHA" \
+            "Qualified Docker image:" "$IMAGE" \
+            "Supported hosts: macOS 13+ and Linux with glibc 2.35+ (Ubuntu 22.04 equivalent)." \
+            > release-notes.txt
+          gh release create "$GITHUB_REF_NAME" \
+            release-assets/* \
+            --title "LocalCloud CLI ${VERSION}" \
+            --notes-file release-notes.txt \
+            --verify-tag
+
+      - name: Upload rendered formula
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-formula
+          path: Formula/localcloud.rb
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-homebrew:
+    name: Verify and publish Homebrew formula
+    needs: [validate-release, publish-release]
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download rendered formula
+        uses: actions/download-artifact@v4
+        with:
+          name: homebrew-formula
+          path: Formula
+
+      - name: Verify formula against public release
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate-release.outputs.version }}
+        run: |
+          ruby -c Formula/localcloud.rb
+          brew install --formula Formula/localcloud.rb
+          test "$(localcloud --version)" = "localcloud ${VERSION}"
+          brew test localcloud
+
+      - name: Check out official tap
+        uses: actions/checkout@v4
+        with:
+          repository: LocalGCloud/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Publish formula to official tap
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate-release.outputs.version }}
+        run: |
+          mkdir -p homebrew-tap/Formula
+          cp Formula/localcloud.rb homebrew-tap/Formula/localcloud.rb
+          git -C homebrew-tap config user.name "github-actions[bot]"
+          git -C homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C homebrew-tap add Formula/localcloud.rb
+          git -C homebrew-tap commit -m "Update LocalCloud to ${VERSION}"
+          git -C homebrew-tap push origin HEAD:main

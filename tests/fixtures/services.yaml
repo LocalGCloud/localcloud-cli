@@ -1,0 +1,29 @@
+# Release-contract snapshot of the LocalCloud service registry fields used by the CLI guide.
+services:
+  gcs: {displayName: Cloud Storage, defaultEnabled: true}
+  pubsub: {displayName: Pub/Sub, defaultEnabled: true}
+  firestore: {displayName: Firestore, defaultEnabled: true}
+  bigtable: {displayName: Bigtable, defaultEnabled: true}
+  spanner: {displayName: Spanner, defaultEnabled: true}
+  bigquery: {displayName: BigQuery, defaultEnabled: true}
+  sheets: {displayName: Google Sheets, defaultEnabled: true}
+  secretmanager: {displayName: Secret Manager, defaultEnabled: true}
+  cloudtasks: {displayName: Cloud Tasks, defaultEnabled: true}
+  cloudscheduler: {displayName: Cloud Scheduler, defaultEnabled: true}
+  cloudfunctions: {displayName: Cloud Functions (2nd Gen), defaultEnabled: true}
+  alloydb: {displayName: AlloyDB, defaultEnabled: true}
+  dataproc: {displayName: Dataproc, defaultEnabled: true}
+  cloudiam: {displayName: Cloud IAM, defaultEnabled: true}
+  cloudresourcemanager: {displayName: Cloud Resource Manager, defaultEnabled: true}
+  serviceusage: {displayName: Service Usage, defaultEnabled: true}
+  cloudbilling: {displayName: Cloud Billing, defaultEnabled: true}
+  logging: {displayName: Cloud Logging, defaultEnabled: true}
+  monitoring: {displayName: Cloud Monitoring, defaultEnabled: true}
+  gke: {displayName: GKE, defaultEnabled: false}
+  compute: {displayName: Compute Engine, defaultEnabled: false}
+  cloudrun: {displayName: Cloud Run, defaultEnabled: false}
+  memorystore: {displayName: Memorystore (Redis/Valkey), defaultEnabled: true}
+  workflows: {displayName: Cloud Workflows, defaultEnabled: true}
+  vertexai: {displayName: Vertex AI, defaultEnabled: false}
+  kms: {displayName: Cloud KMS, defaultEnabled: false}
+  cloudsql: {displayName: Cloud SQL, defaultEnabled: true}

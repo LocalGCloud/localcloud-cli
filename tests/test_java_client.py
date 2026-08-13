@@ -14,14 +14,7 @@ from localcloud_cli.java_client import JavaMcpClient
 
 PROJECT = "agent-project"
 USER = "integration-agent"
-SCENARIO_ROOT = (
-    Path(__file__).parents[2]
-    / "localcloud-server"
-    / "src"
-    / "main"
-    / "resources"
-    / "agent-scenarios"
-)
+SCENARIO_ROOT = Path(__file__).parent / "fixtures" / "agent-scenarios"
 SCENARIO_SERVICES = {
     "analytics-smoke": ["gcs", "bigquery", "logging", "monitoring"],
     "olap-application": [

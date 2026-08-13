@@ -16,7 +16,7 @@ SERVICE_LINE = re.compile(
 
 
 def _canonical_services() -> dict[str, dict[str, Any]]:
-    registry_path = Path(__file__).parents[2] / "services.yaml"
+    registry_path = Path(__file__).parent / "fixtures" / "services.yaml"
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
     return registry["services"]
 
