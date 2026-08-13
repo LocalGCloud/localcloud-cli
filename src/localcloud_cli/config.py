@@ -18,7 +18,7 @@ from . import __version__
 from .errors import HostError
 
 DEFAULT_CONFIG_NAME = "localcloud.yaml"
-DEFAULT_IMAGE = f"localcloud/localcloud:{__version__}"
+DEFAULT_IMAGE = f"jaysen2apache/localcloud:{__version__}"
 DEFAULT_MEMORY = "4g"
 DEFAULTS_CONFIG_LABEL = "<defaults>"
 DEFAULT_INSTANCE = "default"

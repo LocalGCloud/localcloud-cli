@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE_NAME: localcloud/localcloud
+  IMAGE_NAME: jaysen2apache/localcloud
   PYTHON_VERSION: "3.11"
 
 permissions:

@@ -36,7 +36,7 @@ def test_zero_config_uses_shared_defaults(tmp_path: Path) -> None:
 def test_default_image_matches_cli_version(tmp_path: Path) -> None:
     selected = load_config(directory=tmp_path)
 
-    assert DEFAULT_IMAGE == f"localcloud/localcloud:{__version__}"
+    assert DEFAULT_IMAGE == f"jaysen2apache/localcloud:{__version__}"
     assert selected.image == DEFAULT_IMAGE
 
 
