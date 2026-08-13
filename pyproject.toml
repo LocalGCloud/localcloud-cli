@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "localcloud-cli"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Shared-instance LocalCloud lifecycle, project context, caller attribution, and MCP bridge"
 requires-python = ">=3.11"
 dependencies = [
@@ -24,6 +24,7 @@ test = [
   "pytest-asyncio>=0.25,<1",
   "respx>=0.22,<1",
 ]
+release = ["pyinstaller==6.14.1"]
 
 [project.scripts]
 localcloud = "localcloud_cli.cli:main"
@@ -33,6 +34,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+[tool.setuptools.dynamic]
+version = {attr = "localcloud_cli.__version__"}
+
 
 
 [tool.pytest.ini_options]

@@ -6,6 +6,8 @@ from typing import Any
 
 import pytest
 
+from localcloud_cli import __version__
+
 from localcloud_cli.cli import _execute, _parser, main
 from localcloud_cli.errors import HostError
 
@@ -87,6 +89,15 @@ def test_help_surface_uses_instance_project_and_user_only() -> None:
     assert lifecycle.instance == "team-a"
     assert lifecycle.project_id == "agent-project-1"
     assert lifecycle.user == "alice"
+
+def test_version_output_is_exact(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as caught:
+        _parser().parse_args(["--version"])
+
+    assert caught.value.code == 0
+    assert capsys.readouterr().out == f"localcloud {__version__}\n"
 
 
 def test_start_dispatch_applies_cli_context_and_resource_names(

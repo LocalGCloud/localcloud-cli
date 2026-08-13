@@ -4,8 +4,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+from . import __version__
+
 from .config import (
     DEFAULTS_CONFIG_LABEL,
+    DEFAULT_IMAGE,
     DEFAULT_PROJECT,
     DEFAULT_USER,
     HostPaths,
@@ -272,6 +275,8 @@ class Controller:
                 if path.is_file() and _LEGACY_LOCK.fullmatch(path.name)
             )
         result["legacy_host_state"] = legacy_host_state
+        result["cli_version"] = __version__
+        result["default_image"] = DEFAULT_IMAGE
         result["legacy_locks"] = legacy_locks
         if legacy_host_state or legacy_locks:
             warning = (

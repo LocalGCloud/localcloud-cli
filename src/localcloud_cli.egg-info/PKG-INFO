@@ -1,0 +1,21 @@
+Metadata-Version: 2.4
+Name: localcloud-cli
+Version: 0.1.0
+Summary: Shared-instance LocalCloud lifecycle, project context, caller attribution, and MCP bridge
+Requires-Python: >=3.11
+License-File: LICENSE
+Requires-Dist: docker<8,>=7
+Requires-Dist: httpx<1,>=0.28
+Requires-Dist: mcp<3,>=2
+Requires-Dist: PyYAML<7,>=6
+Provides-Extra: test
+Requires-Dist: pytest<9,>=8; extra == "test"
+Requires-Dist: google-cloud-bigquery<4,>=3; extra == "test"
+Requires-Dist: google-cloud-dataproc<6,>=5; extra == "test"
+Requires-Dist: google-cloud-pubsub<3,>=2; extra == "test"
+Requires-Dist: google-cloud-storage<4,>=3; extra == "test"
+Requires-Dist: pytest-asyncio<1,>=0.25; extra == "test"
+Requires-Dist: respx<1,>=0.22; extra == "test"
+Provides-Extra: release
+Requires-Dist: pyinstaller==6.14.1; extra == "release"
+Dynamic: license-file

@@ -5,7 +5,15 @@ from typing import Any
 
 import pytest
 
-from localcloud_cli.config import DEFAULT_PROJECT, HostPaths, LocalCloudConfig, load_config
+from localcloud_cli import __version__
+
+from localcloud_cli.config import (
+    DEFAULT_IMAGE,
+    DEFAULT_PROJECT,
+    HostPaths,
+    LocalCloudConfig,
+    load_config,
+)
 from localcloud_cli.controller import Controller
 from localcloud_cli.errors import HostError
 
@@ -250,6 +258,35 @@ def test_reconfiguration_preserves_volume_and_reports_fields(tmp_path: Path) -> 
     assert result["status"] == "reconfigured"
     assert result["changed_fields"] == ["memory"]
     assert runtime.removes == [False]
+
+def test_version_reconfiguration_preserves_persistent_volume(tmp_path: Path) -> None:
+    config_path = tmp_path / "localcloud.yaml"
+    config_path.write_text(
+        "image: localcloud/localcloud:0.0.9\n",
+        encoding="utf-8",
+    )
+    controller, runtime = _controller(tmp_path)
+    controller.start(load_config(directory=tmp_path))
+    config_path.unlink()
+
+    current = load_config(directory=tmp_path)
+    result = controller.start(current)
+
+    assert current.image == DEFAULT_IMAGE
+    assert result["status"] == "reconfigured"
+    assert result["changed_fields"] == ["image"]
+    assert runtime.removes == [False]
+    assert runtime.record is not None
+    assert runtime.record["instance_config"]["image"] == DEFAULT_IMAGE
+
+
+def test_doctor_reports_cli_and_default_image_versions(tmp_path: Path) -> None:
+    controller, _runtime = _controller(tmp_path)
+
+    result = controller.doctor()
+
+    assert result["cli_version"] == __version__
+    assert result["default_image"] == f"localcloud/localcloud:{__version__}"
 
 
 def test_status_logs_stop_and_target_are_instance_scoped(tmp_path: Path) -> None:

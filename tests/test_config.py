@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from localcloud_cli import __version__
+
 from localcloud_cli.config import (
+    DEFAULT_IMAGE,
     DEFAULT_INSTANCE,
     DEFAULT_PROJECT,
     DEFAULT_USER,
@@ -29,6 +32,25 @@ def test_zero_config_uses_shared_defaults(tmp_path: Path) -> None:
     assert selected.network_name == "localcloud"
     assert selected.volume_name == "localcloud-data"
     assert selected.config_path is None
+
+def test_default_image_matches_cli_version(tmp_path: Path) -> None:
+    selected = load_config(directory=tmp_path)
+
+    assert DEFAULT_IMAGE == f"localcloud/localcloud:{__version__}"
+    assert selected.image == DEFAULT_IMAGE
+
+
+def test_image_precedence_keeps_yaml_over_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCALCLOUD_IMAGE", "mirror.example/localcloud:env-pinned")
+    assert load_config(directory=tmp_path).image == "mirror.example/localcloud:env-pinned"
+
+    (tmp_path / "localcloud.yaml").write_text(
+        "image: mirror.example/localcloud:yaml-pinned\n",
+        encoding="utf-8",
+    )
+    assert load_config(directory=tmp_path).image == "mirror.example/localcloud:yaml-pinned"
 
 
 def test_default_named_and_custom_resource_names(tmp_path: Path) -> None:

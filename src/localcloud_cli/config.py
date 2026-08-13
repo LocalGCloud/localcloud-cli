@@ -13,10 +13,12 @@ from typing import Iterator
 
 import yaml
 
+from . import __version__
+
 from .errors import HostError
 
 DEFAULT_CONFIG_NAME = "localcloud.yaml"
-DEFAULT_IMAGE = "localcloud/localcloud:latest"
+DEFAULT_IMAGE = f"localcloud/localcloud:{__version__}"
 DEFAULT_MEMORY = "4g"
 DEFAULTS_CONFIG_LABEL = "<defaults>"
 DEFAULT_INSTANCE = "default"

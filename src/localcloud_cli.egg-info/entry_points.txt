@@ -1,0 +1,2 @@
+[console_scripts]
+localcloud = localcloud_cli.cli:main

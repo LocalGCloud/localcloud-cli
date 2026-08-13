@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
+from . import __version__
+
 from .config import DEFAULT_INSTANCE, load_config, validate_instance
 from .errors import HostError
 
@@ -111,6 +113,11 @@ def _parser() -> argparse.ArgumentParser:
         prog="localcloud",
         description="Shared LocalCloud instance lifecycle and MCP bridge.",
         epilog=AGENT_HELP,
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("guide", help="Print the coding-agent operating guide")
