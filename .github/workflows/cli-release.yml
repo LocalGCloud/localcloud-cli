@@ -1,16 +1,14 @@
 name: Release LocalCloud CLI
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 concurrency:
   group: cli-release-${{ github.ref }}
   cancel-in-progress: false
 
 env:
-  IMAGE_NAME: jaysen2apache/localcloud
+  RUNTIME_IMAGE: jaysen2apache/localcloud:latest
   PYTHON_VERSION: "3.11"
 
 permissions:
@@ -36,6 +34,8 @@ jobs:
           import re
           from pathlib import Path
 
+          if os.environ.get("GITHUB_REF_TYPE") != "tag":
+              raise SystemExit("run the release workflow from an existing vX.Y.Z tag")
           tag = os.environ["GITHUB_REF_NAME"]
           match = re.fullmatch(r"v([0-9]+\.[0-9]+\.[0-9]+)", tag)
           if match is None:
@@ -56,15 +56,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Require matching qualified Docker image
+      - name: Resolve runtime Docker image
         id: image
         shell: bash
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          image="${IMAGE_NAME}:${VERSION}"
+          image="${RUNTIME_IMAGE}"
+          raw=$(docker buildx imagetools inspect --raw "$image")
+          python3 -c 'import json,sys; data=json.load(sys.stdin); actual={(item.get("platform", {}).get("os"), item.get("platform", {}).get("architecture")) for item in data.get("manifests", [])}; required={("linux", "amd64"), ("linux", "arm64")}; missing=sorted(required-actual); missing and sys.exit("runtime Docker image is missing: " + ", ".join("/".join(platform) for platform in missing))' <<<"$raw"
           inspection=$(docker buildx imagetools inspect "$image")
-          digest=$(python3 -c 'import re,sys; text=sys.stdin.read(); match=re.search(r"(?m)^Digest:\s+(sha256:[0-9a-f]{64})\s*$", text); match or sys.exit("qualified Docker index digest is missing"); print(match.group(1))' <<<"$inspection")
+          digest=$(python3 -c 'import re,sys; text=sys.stdin.read(); match=re.search(r"(?m)^Digest:\s+(sha256:[0-9a-f]{64})\s*$", text); match or sys.exit("runtime Docker index digest is missing"); print(match.group(1))' <<<"$inspection")
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "image=$image@$digest" >> "$GITHUB_OUTPUT"
 
@@ -145,9 +145,9 @@ jobs:
           LOCALCLOUD_HOME: ${{ runner.temp }}/localcloud-home
           VERSION: ${{ needs.validate-release.outputs.version }}
         run: |
-          docker pull "${IMAGE_NAME}:${VERSION}"
+          docker pull "${RUNTIME_IMAGE}"
           ./dist/localcloud doctor > doctor.json
-          python3 -c 'import json; data=json.load(open("doctor.json")); assert data["status"] == "ok"; assert data["cli_version"] == data["default_image"].rsplit(":", 1)[1]'
+          python3 -c 'import json,os; data=json.load(open("doctor.json")); assert data["status"] == "ok"; assert data["cli_version"] == os.environ["VERSION"]; assert data["default_image"] == os.environ["RUNTIME_IMAGE"]'
           ./dist/localcloud start --instance release-smoke > start.json
           python3 -c 'import json; data=json.load(open("start.json")); assert data["status"] in {"started", "already_running"}; assert data["container"]["state"] == "running"'
           ./dist/localcloud status --instance release-smoke > status.json
@@ -234,8 +234,8 @@ jobs:
           python3 scripts/render-homebrew-formula.py \
             --version "$VERSION" \
             --checksums release-assets/SHA256SUMS \
-            --output Formula/localcloud.rb
-          ruby -c Formula/localcloud.rb
+            --output release-assets/localcloud.rb
+          ruby -c release-assets/localcloud.rb
 
       - name: Create GitHub Release
         shell: bash
@@ -251,7 +251,7 @@ jobs:
           printf "%s\n\n%s %s\n%s %s\n\n%s\n" \
             "LocalCloud CLI ${VERSION}" \
             "CLI source revision:" "$GITHUB_SHA" \
-            "Qualified Docker image:" "$IMAGE" \
+            "Runtime Docker image:" "$IMAGE" \
             "Supported hosts: macOS 13+ and Linux with glibc 2.35+ (Ubuntu 22.04 equivalent)." \
             > release-notes.txt
           gh release create "$GITHUB_REF_NAME" \
@@ -259,56 +259,3 @@ jobs:
             --title "LocalCloud CLI ${VERSION}" \
             --notes-file release-notes.txt \
             --verify-tag
-
-      - name: Upload rendered formula
-        uses: actions/upload-artifact@v4
-        with:
-          name: homebrew-formula
-          path: Formula/localcloud.rb
-          if-no-files-found: error
-          retention-days: 1
-
-  publish-homebrew:
-    name: Verify and publish Homebrew formula
-    needs: [validate-release, publish-release]
-    runs-on: macos-15
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download rendered formula
-        uses: actions/download-artifact@v4
-        with:
-          name: homebrew-formula
-          path: Formula
-
-      - name: Verify formula against public release
-        shell: bash
-        env:
-          VERSION: ${{ needs.validate-release.outputs.version }}
-        run: |
-          ruby -c Formula/localcloud.rb
-          brew install --formula Formula/localcloud.rb
-          test "$(localcloud --version)" = "localcloud ${VERSION}"
-          brew test localcloud
-
-      - name: Check out official tap
-        uses: actions/checkout@v4
-        with:
-          repository: LocalGCloud/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-tap
-
-      - name: Publish formula to official tap
-        shell: bash
-        env:
-          VERSION: ${{ needs.validate-release.outputs.version }}
-        run: |
-          mkdir -p homebrew-tap/Formula
-          cp Formula/localcloud.rb homebrew-tap/Formula/localcloud.rb
-          git -C homebrew-tap config user.name "github-actions[bot]"
-          git -C homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C homebrew-tap add Formula/localcloud.rb
-          git -C homebrew-tap commit -m "Update LocalCloud to ${VERSION}"
-          git -C homebrew-tap push origin HEAD:main

@@ -332,6 +332,79 @@ def test_create_and_reset_project_use_selected_project(
     ]
 
 
+def test_project_lifecycle_falls_back_to_rest_when_mcp_tools_are_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
+    projects = [{"project_id": PROJECT}]
+    calls: list[dict[str, Any]] = []
+
+    def missing_tool(
+        name: str, arguments: dict[str, Any] | None = None
+    ) -> Any:
+        raise HostError("java_tool_error", "Tool not found", {"tool": name})
+
+    def request(method: str, url: str, **kwargs: Any) -> FakeResponse:
+        calls.append({"method": method, "url": url, **kwargs})
+        payload = projects if method == "GET" else projects[0]
+        return FakeResponse(payload)
+
+    monkeypatch.setattr(client, "tool", missing_tool)
+    monkeypatch.setattr(java_client_module.httpx, "request", request)
+
+    assert client.list_projects() == projects
+    assert client.create_project() == projects[0]
+    assert calls == [
+        {
+            "method": "GET",
+            "url": "http://127.0.0.1:49080/projects",
+            "headers": {
+                "Accept": "application/json",
+                "X-LocalCloud-Project": PROJECT,
+                "X-LocalCloud-User": USER,
+            },
+            "timeout": 60.0,
+        },
+        {
+            "method": "POST",
+            "url": "http://127.0.0.1:49080/projects",
+            "headers": {
+                "Accept": "application/json",
+                "X-LocalCloud-Project": PROJECT,
+                "X-LocalCloud-User": USER,
+            },
+            "timeout": 60.0,
+            "json": {"project_id": PROJECT},
+        },
+    ]
+
+
+def test_project_lifecycle_does_not_bypass_mcp_write_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
+    write_error = HostError(
+        "java_tool_error",
+        "Tool localcloud_create_project requires LOCALCLOUD_MCP_WRITE=true",
+        {"tool": "localcloud_create_project"},
+    )
+
+    def blocked_tool(name: str, arguments: dict[str, Any]) -> Any:
+        raise write_error
+
+    monkeypatch.setattr(client, "tool", blocked_tool)
+    monkeypatch.setattr(
+        java_client_module.httpx,
+        "request",
+        lambda *_args, **_kwargs: pytest.fail("REST fallback must not run"),
+    )
+
+    with pytest.raises(HostError) as caught:
+        client.create_project()
+
+    assert caught.value is write_error
+
+
 def test_forward_preserves_json_rpc_envelope_and_identity_headers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -6,8 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from localcloud_cli import __version__
-
 from localcloud_cli.config import (
     DEFAULT_IMAGE,
     DEFAULT_INSTANCE,
@@ -33,10 +31,10 @@ def test_zero_config_uses_shared_defaults(tmp_path: Path) -> None:
     assert selected.volume_name == "localcloud-data"
     assert selected.config_path is None
 
-def test_default_image_matches_cli_version(tmp_path: Path) -> None:
+def test_default_image_uses_public_latest_channel(tmp_path: Path) -> None:
     selected = load_config(directory=tmp_path)
 
-    assert DEFAULT_IMAGE == f"jaysen2apache/localcloud:{__version__}"
+    assert DEFAULT_IMAGE == "jaysen2apache/localcloud:latest"
     assert selected.image == DEFAULT_IMAGE
 
 

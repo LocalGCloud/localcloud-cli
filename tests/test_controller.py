@@ -259,7 +259,7 @@ def test_reconfiguration_preserves_volume_and_reports_fields(tmp_path: Path) -> 
     assert result["changed_fields"] == ["memory"]
     assert runtime.removes == [False]
 
-def test_version_reconfiguration_preserves_persistent_volume(tmp_path: Path) -> None:
+def test_image_reconfiguration_preserves_persistent_volume(tmp_path: Path) -> None:
     config_path = tmp_path / "localcloud.yaml"
     config_path.write_text(
         "image: jaysen2apache/localcloud:0.0.9\n",
@@ -280,13 +280,13 @@ def test_version_reconfiguration_preserves_persistent_volume(tmp_path: Path) -> 
     assert runtime.record["instance_config"]["image"] == DEFAULT_IMAGE
 
 
-def test_doctor_reports_cli_and_default_image_versions(tmp_path: Path) -> None:
+def test_doctor_reports_cli_and_default_image_metadata(tmp_path: Path) -> None:
     controller, _runtime = _controller(tmp_path)
 
     result = controller.doctor()
 
     assert result["cli_version"] == __version__
-    assert result["default_image"] == f"jaysen2apache/localcloud:{__version__}"
+    assert result["default_image"] == "jaysen2apache/localcloud:latest"
 
 
 def test_status_logs_stop_and_target_are_instance_scoped(tmp_path: Path) -> None:

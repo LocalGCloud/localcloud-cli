@@ -110,14 +110,51 @@ class JavaMcpClient:
         content = result.get("content", [])
         return content[0].get("text") if content else None
 
+    @staticmethod
+    def _is_missing_tool(error: HostError, name: str) -> bool:
+        if error.message != "Tool not found":
+            return False
+        if error.details.get("tool") == name:
+            return True
+        rpc_error = error.details.get("error")
+        return isinstance(rpc_error, dict) and rpc_error.get("data") == name
+
+    def _project_api(
+        self, method: str, payload: dict[str, Any] | None = None
+    ) -> Any:
+        url = f"{self.url}/projects"
+        headers = self._headers()
+        headers["Accept"] = "application/json"
+        request_args: dict[str, Any] = {
+            "headers": headers,
+            "timeout": self.timeout,
+        }
+        if payload is not None:
+            request_args["json"] = payload
+        try:
+            response = httpx.request(method, url, **request_args)
+            response.raise_for_status()
+            return response.json()
+        except Exception as error:
+            raise HostError(
+                "java_project_api_unavailable",
+                "Java LocalCloud project API request failed",
+                {"url": url, "method": method, "cause": str(error)},
+            ) from error
+
     def list_projects(self) -> list[dict[str, Any]]:
-        projects = self.tool("localcloud_list_projects")
+        try:
+            projects = self.tool("localcloud_list_projects")
+        except HostError as error:
+            if not self._is_missing_tool(error, "localcloud_list_projects"):
+                raise
+            projects = self._project_api("GET")
         if not isinstance(projects, list) or not all(
             isinstance(project, dict) for project in projects
         ):
             raise HostError(
                 "java_mcp_invalid_response",
-                "Java LocalCloud MCP returned an invalid project catalog",
+                "Java LocalCloud returned an invalid project catalog",
             )
         return projects
 
@@ -128,10 +165,15 @@ class JavaMcpClient:
         )
 
     def create_project(self) -> dict[str, Any]:
-        return self._project_result(
-            "localcloud_create_project",
-            self.tool("localcloud_create_project", {"project": self.project}),
-        )
+        try:
+            result = self.tool(
+                "localcloud_create_project", {"project": self.project}
+            )
+        except HostError as error:
+            if not self._is_missing_tool(error, "localcloud_create_project"):
+                raise
+            result = self._project_api("POST", {"project_id": self.project})
+        return self._project_result("localcloud_create_project", result)
 
     def reset_project(self) -> dict[str, Any]:
         return self._project_result(

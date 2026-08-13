@@ -44,6 +44,8 @@ uv run --extra test python -m pytest -q
 uv run localcloud --help
 ```
 
+Release operators should follow [RELEASING.md](RELEASING.md). The release workflow is manual-only and does not build the LocalCloud Docker image.
+
 ## Source and license
 
 This repository contains the CLI source. The LocalCloud server and Docker image implementation are maintained separately.
