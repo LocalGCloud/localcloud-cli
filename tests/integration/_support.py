@@ -11,9 +11,8 @@ import pytest
 from localcloud_cli.config import DEFAULT_IMAGE, HostPaths, LocalCloudConfig, load_config
 from localcloud_cli.controller import Controller
 from localcloud_cli.docker_runtime import (
-    INSTANCE_LABEL,
+    VOLUME_NAME_LABEL,
     DockerRuntime,
-    resource_names,
 )
 
 
@@ -41,7 +40,7 @@ def write_config(
     services: list[str],
     project: str = "local-gcp-project",
     user: str = "local-developer",
-    instance: str = "default",
+    data_volume: str = "localcloud-data",
     data: str = "persistent",
     docker_socket: bool = False,
     seed: str | None = "seed.yaml",
@@ -52,7 +51,7 @@ def write_config(
     path.write_text(
         "\n".join(
             [
-                f"instance: {instance}",
+                f"data_volume: {data_volume}",
                 f"project: {project}",
                 f"user: {user}",
                 "services:",
@@ -72,7 +71,7 @@ def write_config(
     return load_config(
         explicit=path,
         directory=directory,
-        instance=instance,
+        data_volume=data_volume,
         project=project,
         user=user,
     )
@@ -81,8 +80,9 @@ def write_config(
 def parent_container(
     runtime: DockerRuntime, config: LocalCloudConfig
 ):
-    names = resource_names(config.instance)
-    return runtime.client.containers.get(names["container"])
+    current = runtime.resolve(config, require=True)
+    assert current is not None
+    return runtime.client.containers.get(current.container_id)
 
 
 def dataproc_container(runtime: DockerRuntime, config: LocalCloudConfig):
@@ -90,7 +90,7 @@ def dataproc_container(runtime: DockerRuntime, config: LocalCloudConfig):
         all=True,
         filters={
             "label": [
-                f"{INSTANCE_LABEL}={config.instance}",
+                f"{VOLUME_NAME_LABEL}={config.data_volume}",
                 "localcloud.service=dataproc",
             ]
         },

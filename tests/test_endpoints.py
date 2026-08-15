@@ -8,6 +8,7 @@ import localcloud_cli.endpoints as endpoints_module
 from localcloud_cli.endpoints import (
     environment_config,
     rewrite_endpoints,
+    transform_endpoint_payload,
     validate_local_endpoints,
 )
 from localcloud_cli.errors import HostError
@@ -25,6 +26,38 @@ def test_rewrite_endpoints_is_recursive_and_preserves_unmapped_ports() -> None:
         "url": "http://127.0.0.1:49080/path",
         "nested": ["127.0.0.1:49081", "127.0.0.1:24099"],
     }
+
+
+def test_transform_endpoint_payload_rewrites_generated_endpoint_records() -> None:
+    value = {
+        "content": [
+            {
+                "type": "text",
+                "text": (
+                    '{"endpoint":"http://127.0.0.1:24081",'
+                    '"port":24081,"env_var":"STORAGE_EMULATOR_HOST"}'
+                ),
+            }
+        ]
+    }
+
+    transformed = transform_endpoint_payload(value, {"24081": 49081})
+
+    text = transformed["content"][0]["text"]
+    assert "127.0.0.1:49081" in text
+    assert '"port":49081' in text
+
+
+def test_transform_endpoint_payload_rejects_public_google_endpoint() -> None:
+    value = {
+        "endpoint": "https://storage.googleapis.com",
+        "env_var": "STORAGE_EMULATOR_HOST",
+    }
+
+    with pytest.raises(HostError) as caught:
+        transform_endpoint_payload(value, {"24081": 49081})
+
+    assert caught.value.code == "real_google_endpoint"
 
 
 def test_validate_local_endpoints_rejects_public_google_and_non_loopback() -> None:

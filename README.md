@@ -6,10 +6,14 @@ The official host CLI for [LocalCloud](https://local.cloud), a local Google Clou
 
 Docker Desktop, Colima, or Docker Engine must already be running.
 
+`lc` is an alias for `localcloud`; both commands behave identically. Official
+installers create the alias when that name is available. If another program
+already owns `lc`, it is preserved and `localcloud` remains available.
+
 ```sh
 curl -fsSL https://local.cloud/install.sh | sh
-localcloud doctor
-localcloud start
+lc doctor
+lc start
 ```
 
 Or install with Homebrew:
@@ -41,13 +45,42 @@ Use `--verbose` for the complete JSON result, or add selected JSON paths to the
 default summary with `--fields`:
 
 ```sh
-localcloud status
-localcloud status --verbose
-localcloud start --fields container.name,mcp.direct_url
+lc status
+lc status --verbose
+lc start --fields container.name,mcp.direct_url
 ```
 
 Colors and animation are enabled only on interactive terminals. Set `NO_COLOR=1`
 to disable color; redirected output remains plain.
+
+## Runtime identity and ownership
+
+LocalCloud selects a runtime by the named Docker volume mounted at
+`/var/lib/localcloud`; the default is `localcloud-data`. One volume can contain
+multiple project contexts. Select another runtime with `--data-volume`:
+
+```sh
+localcloud start --data-volume team-localcloud-data
+localcloud status --data-volume team-localcloud-data --verbose
+```
+
+The CLI discovers the unique compatible LocalCloud container using the selected
+volume, including containers created by another tool. Verbose output reports
+`origin`, per-resource `ownership`, the immutable container ID, configured and
+actual image identity, mount details, and configuration drift. Lifecycle
+commands may safely start, stop, or restart an attached container, but never
+remove or relabel Docker resources the CLI does not own. A full
+`reset --all-projects` requires fully CLI-managed container, network, and
+volume resources.
+
+Successful `start` and `restart` commands record the active data volume,
+configured image, and container ID under `LOCALCLOUD_HOME`. Commands without
+`--data-volume` use that record as a default hint and always revalidate live
+Docker state.
+
+Configuration uses `data_volume:`. Legacy `instance:` and `volume_name:` fields
+are rejected with an exact migration value, and the former `--instance` and
+`--volume-name` flags are no longer accepted.
 
 ## Develop
 
@@ -56,7 +89,7 @@ LocalCloud CLI requires Python 3.11 or newer and uses [uv](https://docs.astral.s
 ```sh
 uv sync --extra test
 uv run --extra test python -m pytest -q
-uv run localcloud --help
+uv run lc --help
 ```
 
 Release operators should follow [RELEASING.md](RELEASING.md). The release workflow is manual-only and does not build the LocalCloud Docker image.

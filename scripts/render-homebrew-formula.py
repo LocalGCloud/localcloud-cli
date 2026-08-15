@@ -86,6 +86,7 @@ def render(version: str, checksums_path: Path) -> str:
 
   def install
     bin.install "localcloud"
+    bin.install_symlink bin/"localcloud" => "lc"
   end
 
   def caveats
@@ -93,16 +94,20 @@ def render(version: str, checksums_path: Path) -> str:
       Docker Desktop, Colima, or Docker Engine must already be running.
       Linux binaries require glibc 2.35 or newer (Ubuntu 22.04 equivalent).
 
+      lc is an alias for localcloud; both commands behave identically.
+
       Diagnose Docker and start LocalCloud:
-        localcloud doctor
-        localcloud start
+        lc doctor
+        lc start
 
       Then open http://localhost:24080.
     EOS
   end
 
   test do
-    assert_equal "localcloud #{{version}}\\n", shell_output("#{{bin}}/localcloud --version")
+    canonical_version = shell_output("#{{bin}}/localcloud --version")
+    assert_equal "localcloud #{{version}}\\n", canonical_version
+    assert_equal canonical_version, shell_output("#{{bin}}/lc --version")
     assert_match "LocalCloud coding-agent guide", shell_output("#{{bin}}/localcloud guide")
   end
 end

@@ -33,7 +33,7 @@ New human-oriented examples should prefer `lc`, including the README quick start
 
 ### Standalone installer
 
-`LocalGCloud/LocalGCloud.github.io/public/install.sh` continues to download, verify, and install the signed `localcloud` executable. Only after the canonical binary is installed successfully does it attempt to create the relative symlink:
+`LocalStack-Google/localcloud-site/public/install.sh` continues to download, verify, and install the signed `localcloud` executable. Only after the canonical binary is installed successfully does it attempt to create the relative symlink:
 
 ```text
 $install_dir/lc -> localcloud
@@ -141,7 +141,7 @@ Homebrew release verification must confirm that both installed commands resolve 
 This is a coordinated change across:
 
 1. `LocalGCloud/localcloud-cli`, which defines CLI messaging, Python entry points, documentation, and the generated Homebrew formula.
-2. `LocalGCloud/LocalGCloud.github.io`, which owns `public/install.sh` and its installer tests.
+2. `LocalStack-Google/localcloud-site`, which owns `public/install.sh` and its installer tests.
 
 Publish the CLI release and formula changes through the existing signed release process. Deploy the website installer change only after its collision, upgrade, and uninstall tests pass. The installer can add the alias to supported existing CLI releases because the alias targets the unchanged canonical executable.
 

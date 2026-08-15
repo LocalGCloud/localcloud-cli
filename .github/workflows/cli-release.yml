@@ -126,6 +126,16 @@ jobs:
       - name: Install locked release dependencies
         run: uv sync --frozen --extra release
 
+      - name: Smoke Python command aliases
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate-release.outputs.version }}
+        run: |
+          canonical_version=$(uv run --frozen localcloud --version)
+          alias_version=$(uv run --frozen lc --version)
+          test "$canonical_version" = "localcloud ${VERSION}"
+          test "$alias_version" = "$canonical_version"
+
       - name: Build one-file executable
         run: uv run --frozen --extra release python -m PyInstaller --clean --noconfirm localcloud.spec
 
@@ -146,16 +156,22 @@ jobs:
           VERSION: ${{ needs.validate-release.outputs.version }}
         run: |
           docker pull "${RUNTIME_IMAGE}"
+          test "$(docker image inspect --format '{{ index .Config.Labels "com.localcloud.runtime-ownership" }}' "${RUNTIME_IMAGE}")" = "data-volume-v1"
+          cat > release-smoke.yaml <<YAML
+          data_volume: release-smoke-data
+          data: ephemeral
+          image: ${RUNTIME_IMAGE}
+          YAML
           ./dist/localcloud doctor --verbose > doctor.json
           python3 -c 'import json,os; data=json.load(open("doctor.json")); assert data["status"] == "ok"; assert data["cli_version"] == os.environ["VERSION"]; assert data["default_image"] == os.environ["RUNTIME_IMAGE"]'
-          ./dist/localcloud start --instance release-smoke --verbose > start.json
-          python3 -c 'import json; data=json.load(open("start.json")); assert data["status"] in {"started", "already_running"}; assert data["container"]["state"] == "running"'
-          ./dist/localcloud status --instance release-smoke --verbose > status.json
-          python3 -c 'import json; assert json.load(open("status.json"))["status"] == "running"'
-          ./dist/localcloud env --instance release-smoke > env.txt
+          ./dist/localcloud start release-smoke.yaml --verbose > start.json
+          python3 -c 'import json; data=json.load(open("start.json")); assert data["status"] in {"started", "already_running"}; assert data["data_volume"] == "release-smoke-data"; assert data["origin"] == "managed"; assert all(value == "managed" for value in data["ownership"].values()); assert data["container"]["state"] == "running"; assert "--data-volume" in data["mcp"]["args"]'
+          ./dist/localcloud status --data-volume release-smoke-data --verbose > status.json
+          python3 -c 'import json; data=json.load(open("status.json")); assert data["status"] == "running"; assert data["data_volume"] == "release-smoke-data"; assert data["container"]["id"]'
+          ./dist/localcloud env --data-volume release-smoke-data > env.txt
           test -s env.txt
-          ./dist/localcloud stop --instance release-smoke --verbose > stop.json
-          python3 -c 'import json; assert json.load(open("stop.json"))["status"] == "stopped"'
+          ./dist/localcloud stop --data-volume release-smoke-data --verbose > stop.json
+          python3 -c 'import json; data=json.load(open("stop.json")); assert data["status"] == "stopped"; assert data["container"]["state"] == "removed"'
 
       - name: Clean Docker smoke resources
         if: always() && matrix.linux_smoke
@@ -163,10 +179,10 @@ jobs:
         env:
           LOCALCLOUD_HOME: ${{ runner.temp }}/localcloud-home
         run: |
-          ./dist/localcloud stop --instance release-smoke || true
-          docker rm -f localcloud-release-smoke || true
-          docker network rm localcloud-release-smoke || true
-          docker volume rm localcloud-data-release-smoke || true
+          ./dist/localcloud stop --data-volume release-smoke-data || true
+          docker ps -aq --filter "label=com.localcloud.volume-name=release-smoke-data" | xargs -r docker rm -f
+          docker network ls -q --filter "label=com.localcloud.volume-name=release-smoke-data" | xargs -r docker network rm
+          docker volume rm release-smoke-data || true
 
       - name: Package stable archive
         shell: bash

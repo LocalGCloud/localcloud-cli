@@ -21,11 +21,11 @@ _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _MISSING = object()
 _SPINNERS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _CLOUD = (
-    "       ▁▃▅▇▅▃▁      ",
-    "   ▁▃▆██████████▆▃▁ ",
-    " ▁▃▆████████████▆▃▁ ",
-    "████████████████████",
-    "▀██████████████████▀",
+    "       ╭────╮       ",
+    "   ╭───╯    ╰───╮   ",
+    " ╭──╯          ╰──╮ ",
+    "╭╯                ╰╮",
+    "╰──────────────────╯",
 )
 _GRADIENT_STOPS = (
     (66, 133, 244),
@@ -37,6 +37,36 @@ _GRADIENT_STOPS = (
 _PHASES = (0.0, 0.25, 0.5, 0.75)
 _ANSI_256_RAMP = (33, 196, 226, 34, 33)
 _ANSI_16_RAMP = (94, 91, 93, 92, 94)
+_TRUECOLOR_SEMANTICS = {
+    "processing": (34, 211, 238),
+    "success": (52, 211, 153),
+    "error": (248, 113, 113),
+    "warning": (251, 191, 36),
+    "label": (96, 165, 250),
+    "url": (34, 211, 238),
+    "muted": (156, 163, 175),
+    "primary": (243, 244, 246),
+}
+_ANSI256_SEMANTICS = {
+    "processing": 45,
+    "success": 48,
+    "error": 203,
+    "warning": 220,
+    "label": 75,
+    "url": 45,
+    "muted": 245,
+    "primary": 255,
+}
+_ANSI16_SEMANTICS = {
+    "processing": 96,
+    "success": 92,
+    "error": 91,
+    "warning": 93,
+    "label": 94,
+    "url": 96,
+    "muted": 90,
+    "primary": 97,
+}
 
 
 class ColorMode(Enum):
@@ -62,7 +92,7 @@ class FieldSpec:
 
 @dataclass(frozen=True)
 class PanelContext:
-    instance: str
+    data_volume: str
     project: str
     user: str
     services: str | Sequence[str]
@@ -72,7 +102,8 @@ class PanelContext:
 
 _COMMON_FIELDS = (
     FieldSpec("status", "Status", "status"),
-    FieldSpec("instance", "Instance"),
+    FieldSpec("data_volume", "Data volume"),
+    FieldSpec("origin", "Origin"),
     FieldSpec("project", "Project"),
     FieldSpec("user", "User"),
     FieldSpec("container.state", "State", "status"),
@@ -94,7 +125,7 @@ _DOCTOR_FIELDS = (
 )
 _CONSOLE_FIELDS = (
     FieldSpec("status", "Status", "status"),
-    FieldSpec("instance", "Instance"),
+    FieldSpec("data_volume", "Data volume"),
     FieldSpec("project", "Project"),
     FieldSpec("user", "User"),
     FieldSpec("url", "URL", "url"),
@@ -102,19 +133,18 @@ _CONSOLE_FIELDS = (
 _EXTRA_COMMON = (
     FieldSpec("config", "Config", "muted"),
     FieldSpec("container.name", "Container", "muted"),
-    FieldSpec("network", "Network", "muted"),
-    FieldSpec("volume", "Volume", "muted"),
+    FieldSpec("container.id", "Container ID", "muted"),
+    FieldSpec("container.configured_image", "Configured image", "muted"),
+    FieldSpec("container.actual_image", "Actual image", "muted"),
+    FieldSpec("network.name", "Network", "muted"),
+    FieldSpec("mount.source", "Mounted volume", "muted"),
+    FieldSpec("ownership", "Ownership", "muted"),
+    FieldSpec("drift", "Drift", "warning"),
     FieldSpec("sdk_env", "SDK environment", "muted"),
     FieldSpec("mcp.command", "MCP command", "muted"),
     FieldSpec("mcp.args", "MCP arguments", "muted"),
     FieldSpec("mcp.direct_url", "MCP URL", "url"),
     FieldSpec("mcp.headers", "MCP headers", "muted"),
-)
-_EXTRA_DOCTOR = (
-    FieldSpec("legacy_resources", "Legacy resources", "warning"),
-    FieldSpec("legacy_host_state", "Legacy host state", "warning"),
-    FieldSpec("legacy_locks", "Legacy locks", "warning"),
-    FieldSpec("warning", "Warning", "warning"),
 )
 
 DEFAULT_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
@@ -127,7 +157,11 @@ DEFAULT_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
     "console": _CONSOLE_FIELDS,
 }
 ALLOWED_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
-    command: tuple(dict.fromkeys((*defaults, *(_EXTRA_DOCTOR if command == "doctor" else _EXTRA_COMMON))))
+    command: (
+        defaults
+        if command == "doctor"
+        else tuple(dict.fromkeys((*defaults, *_EXTRA_COMMON)))
+    )
     for command, defaults in DEFAULT_FIELDS.items()
 }
 
@@ -202,39 +236,12 @@ def style_text(value: str, role: str, color: ColorMode, *, bold: bool = False) -
 def _semantic_code(role: str, color: ColorMode) -> str:
     role = role.lower()
     if color is ColorMode.TRUECOLOR:
-        rgb = {
-            "processing": (34, 211, 238),
-            "success": (52, 211, 153),
-            "error": (248, 113, 113),
-            "warning": (251, 191, 36),
-            "label": (96, 165, 250),
-            "url": (34, 211, 238),
-            "muted": (156, 163, 175),
-            "primary": (243, 244, 246),
-        }.get(role, (243, 244, 246))
+        rgb = _TRUECOLOR_SEMANTICS.get(role, _TRUECOLOR_SEMANTICS["primary"])
         return f"\x1b[38;2;{rgb[0]};{rgb[1]};{rgb[2]}m"
     if color is ColorMode.ANSI256:
-        code = {
-            "processing": 45,
-            "success": 48,
-            "error": 203,
-            "warning": 220,
-            "label": 75,
-            "url": 45,
-            "muted": 245,
-            "primary": 255,
-        }.get(role, 255)
+        code = _ANSI256_SEMANTICS.get(role, _ANSI256_SEMANTICS["primary"])
         return f"\x1b[38;5;{code}m"
-    code = {
-        "processing": 96,
-        "success": 92,
-        "error": 91,
-        "warning": 93,
-        "label": 94,
-        "url": 96,
-        "muted": 90,
-        "primary": 97,
-    }.get(role, 97)
+    code = _ANSI16_SEMANTICS.get(role, _ANSI16_SEMANTICS["primary"])
     return f"\x1b[{code}m"
 
 
@@ -356,12 +363,13 @@ _CONCISE_ERROR_FIELDS = {
     "command",
     "config",
     "container",
+    "container_id",
     "data",
+    "data_volume",
     "docker_host",
     "field",
     "fields",
     "image",
-    "instance",
     "network",
     "project",
     "resource",
@@ -370,7 +378,6 @@ _CONCISE_ERROR_FIELDS = {
     "url",
     "user",
     "value",
-    "volume",
 }
 
 
@@ -475,7 +482,7 @@ def _context_rows(context: PanelContext) -> list[tuple[str, str, str]]:
     services = context.services if isinstance(context.services, str) else ", ".join(context.services)
     config = Path(context.config).name if context.config else "defaults"
     return [
-        ("Instance", context.instance, "primary"),
+        ("Data volume", context.data_volume, "primary"),
         ("Project", context.project, "primary"),
         ("User", context.user, "primary"),
         ("Services", services or "default", "primary"),
@@ -483,8 +490,9 @@ def _context_rows(context: PanelContext) -> list[tuple[str, str, str]]:
         ("Config", config, "muted"),
     ]
 
+
 def _styled_context(label: str, value: str, width: int, color: ColorMode, role: str) -> str:
-    label_width = 9
+    label_width = 12
     plain_value = truncate_visible(value, max(1, width - label_width))
     plain = label.ljust(label_width) + plain_value
     styled = style_text(label.ljust(label_width), "label", color, bold=True) + style_text(plain_value, role, color)
@@ -551,13 +559,13 @@ def _minimal_panel(
         bold=True,
     )
     title += " " * max(0, inside - visible_width(title))
-    instance = truncate_visible(context.instance, inside)
-    instance = style_text(instance, "primary", color)
-    instance += " " * max(0, inside - visible_width(instance))
+    data_volume = truncate_visible(context.data_volume, inside)
+    data_volume = style_text(data_volume, "primary", color)
+    data_volume += " " * max(0, inside - visible_width(data_volume))
     return [
         _border_title(box_width, color),
         f"{border}{title}{border}",
-        f"{border}{instance}{border}",
+        f"{border}{data_volume}{border}",
         _border_bottom(box_width, color),
     ]
 

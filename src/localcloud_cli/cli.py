@@ -8,7 +8,13 @@ from typing import Any
 from urllib.parse import urlencode
 
 from . import __version__
-from .config import DEFAULT_INSTANCE, LocalCloudConfig, load_config, validate_instance
+from .config import (
+    DEFAULT_DATA_VOLUME,
+    HostPaths,
+    LocalCloudConfig,
+    load_active_runtime,
+    load_config,
+)
 from .errors import HostError
 from .output import (
     LifecycleReporter,
@@ -21,9 +27,14 @@ from .output import (
     validate_fields,
 )
 
+ALIAS_HELP = "lc is an alias for localcloud; both commands behave identically."
 AGENT_HELP = "Coding agents: run 'localcloud guide' before using LocalCloud."
-_CONFIG_COMMANDS = {"start", "restart", "reset", "console", "env", "mcp"}
-_PROGRESS_COMMANDS = {"doctor", "start", "restart", "reset", "stop", "status", "logs", "console", "env"}
+_RUNTIME_COMMANDS = {
+    "start", "restart", "reset", "stop", "status", "logs", "console", "env", "mcp"
+}
+_PROGRESS_COMMANDS = {
+    "doctor", "start", "restart", "reset", "stop", "status", "logs", "console", "env"
+}
 
 
 class _ExecutionObserver:
@@ -42,7 +53,7 @@ class _ExecutionObserver:
         else:
             action = "Starting" if command == "start" else "Restarting"
         message = (
-            f"{action} instance {config.instance!r} "
+            f"{action} data volume {config.data_volume!r} "
             f"for project {config.project!r}…"
         )
         if command == "reset":
@@ -50,7 +61,7 @@ class _ExecutionObserver:
             return
         services: str | tuple[str, ...] = config.services or "default"
         panel = PanelContext(
-            instance=config.instance,
+            data_volume=config.data_volume,
             project=config.project,
             user=config.user,
             services=services,
@@ -111,7 +122,7 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
     if args.command == "doctor":
         return controller.doctor()
 
-    if args.command in _CONFIG_COMMANDS:
+    if args.command in _RUNTIME_COMMANDS:
         config = _command_config(controller, args)
         if observer is not None:
             observer.config(args.command, config, args)
@@ -119,17 +130,23 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
             return getattr(controller, args.command)(config)
         if args.command == "reset":
             return controller.reset(config, all_projects=args.all_projects)
+        if args.command == "stop":
+            return controller.stop(config)
+        if args.command == "status":
+            return controller.status(config)
+        if args.command == "logs":
+            return controller.logs(config, tail=args.tail)
         if args.command == "mcp":
             from .mcp_stdio import run
 
-            return run(config.instance, config.project, config.user)
-        target = controller.target(config.instance, config.project, config.user)
+            return run(config)
+        target = controller.target(config)
         if args.command == "console":
             url = f"{target['url']}?{urlencode({'project': config.project, 'user': config.user})}"
             webbrowser.open(url)
             return {
                 "status": "opened",
-                "instance": config.instance,
+                "data_volume": config.data_volume,
                 "project": config.project,
                 "user": config.user,
                 "url": url,
@@ -143,37 +160,44 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
                 config.user,
                 output_format=args.format,
             )
-
-    instance = validate_instance(args.instance)
-    if args.command == "stop":
-        return controller.stop(instance)
-    if args.command == "status":
-        return controller.status(instance)
-    if args.command == "logs":
-        return controller.logs(instance, tail=args.tail)
     raise HostError(
-        "unknown_command", "Unsupported LocalCloud command", {"command": args.command}
+        "unknown_command",
+        "Unsupported LocalCloud command",
+        {"command": args.command},
     )
 
 
 def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConfig:
-    explicit = Path(args.config) if getattr(args, "config", None) is not None else None
+    explicit_value = getattr(args, "config", None)
+    explicit = Path(explicit_value) if explicit_value is not None else None
     overrides = {
         "directory": Path.cwd(),
-        "instance": args.instance,
-        "project": args.project_id,
-        "user": args.user,
+        "data_volume": getattr(args, "data_volume", None),
+        "project": getattr(args, "project_id", None),
+        "user": getattr(args, "user", None),
         "container_name": getattr(args, "container_name", None),
         "network_name": getattr(args, "network_name", None),
-        "volume_name": getattr(args, "volume_name", None),
     }
-    preliminary = load_config(explicit=explicit, **overrides)
+    paths = getattr(controller, "paths", None) or HostPaths.from_environment()
+    active_diagnostics: list[dict[str, Any]] = []
+    active = load_active_runtime(paths, active_diagnostics)
+    snapshot = {
+        "paths": paths,
+        "active_runtime": active,
+        "active_diagnostics": tuple(active_diagnostics),
+    }
+    preliminary = load_config(explicit=explicit, **overrides, **snapshot)
     if preliminary.config_path is not None:
         return preliminary
-    remembered = controller.remembered_config(preliminary.instance)
+    remembered = controller.remembered_config(preliminary)
     if remembered is None:
         return preliminary
-    return load_config(explicit=explicit, remembered=remembered, **overrides)
+    return load_config(
+        explicit=explicit,
+        remembered=remembered,
+        **overrides,
+        **snapshot,
+    )
 
 
 def _print_result(args: argparse.Namespace, result: Any, fields: list[str]) -> None:
@@ -217,7 +241,7 @@ def _print_error(args: argparse.Namespace, error: HostError) -> None:
 
 
 def _initial_task(args: argparse.Namespace) -> str:
-    instance = getattr(args, "instance", None) or DEFAULT_INSTANCE
+    data_volume = getattr(args, "data_volume", None) or DEFAULT_DATA_VOLUME
     command = args.command
     if command == "doctor":
         return "Inspecting Docker and legacy LocalCloud state…"
@@ -227,11 +251,11 @@ def _initial_task(args: argparse.Namespace) -> str:
         scope = "all data" if args.all_projects else "the selected project"
         return f"Preparing to reset {scope}…"
     if command == "stop":
-        return f"Stopping instance {instance!r}…"
+        return f"Stopping runtime on data volume {data_volume!r}…"
     if command == "status":
-        return f"Inspecting instance {instance!r}…"
+        return f"Inspecting runtime on data volume {data_volume!r}…"
     if command == "logs":
-        return f"Reading {args.tail} recent log lines from instance {instance!r}…"
+        return f"Reading {args.tail} recent log lines from data volume {data_volume!r}…"
     if command == "console":
         return "Locating the selected project console…"
     if command == "env":
@@ -249,9 +273,9 @@ def _success_message(args: argparse.Namespace, result: Any) -> str:
     if command == "reset":
         return "LocalCloud data reset completed"
     if command == "stop":
-        return "LocalCloud instance stopped" if status != "not_running" else "LocalCloud instance was not running"
+        return "LocalCloud runtime stopped" if status != "not_running" else "LocalCloud runtime was not running"
     if command == "status":
-        return f"LocalCloud instance is {status or 'inspected'}"
+        return f"LocalCloud runtime is {status or 'inspected'}"
     if command == "logs":
         return "LocalCloud logs loaded"
     if command == "console":
@@ -266,9 +290,10 @@ def _parser() -> argparse.ArgumentParser:
         prog="localcloud",
         description=(
             "Run Google Cloud-compatible services locally in Docker. Manage "
-            "LocalCloud instances, project context, SDK environments, and the MCP bridge."
+            "LocalCloud runtimes by Docker data volume, project context, SDK "
+            "environments, and the MCP bridge."
         ),
-        epilog=AGENT_HELP,
+        epilog=f"{ALIAS_HELP} {AGENT_HELP}",
     )
     parser.add_argument(
         "--version",
@@ -289,9 +314,9 @@ def _parser() -> argparse.ArgumentParser:
     _add_output_options(doctor, fields=True)
 
     lifecycle_help = {
-        "start": "Start an instance and prepare the selected project",
-        "restart": "Restart an instance and reapply volatile seed data",
-        "reset": "Reset the selected project, or recreate all instance data",
+        "start": "Start the runtime selected by data volume and prepare a project",
+        "restart": "Restart the selected runtime and reapply volatile seed data",
+        "reset": "Reset the selected project, or recreate all managed runtime data",
     }
     for name, help_text in lifecycle_help.items():
         command = commands.add_parser(name, help=help_text, description=f"{help_text}.")
@@ -300,8 +325,8 @@ def _parser() -> argparse.ArgumentParser:
             metavar="CONFIG",
             nargs="?",
             help=(
-                "Configuration file. Otherwise use ./localcloud.yaml, the instance's "
-                "remembered file, or built-in defaults"
+                "Configuration file. Otherwise use ./localcloud.yaml, the "
+                "runtime's remembered file, or built-in defaults"
             ),
         )
         _add_context(command)
@@ -311,31 +336,31 @@ def _parser() -> argparse.ArgumentParser:
             command.add_argument(
                 "--all-projects",
                 action="store_true",
-                help="Delete and recreate all instance data instead of only the selected project",
+                help="Delete and recreate all managed runtime data instead of only the selected project",
             )
 
     stop = commands.add_parser(
         "stop",
-        help="Stop an instance without deleting persistent data",
-        description="Stop an instance without deleting persistent data.",
+        help="Stop the selected runtime without deleting persistent data",
+        description="Stop the selected runtime without deleting persistent data.",
     )
-    _add_instance(stop)
+    _add_data_volume(stop)
     _add_output_options(stop, fields=True)
 
     status = commands.add_parser(
         "status",
-        help="Show instance health and runtime details",
-        description="Show instance health and runtime details.",
+        help="Show runtime health, ownership, and Docker details",
+        description="Show runtime health, ownership, and Docker details.",
     )
-    _add_instance(status)
+    _add_data_volume(status)
     _add_output_options(status, fields=True)
 
     logs = commands.add_parser(
         "logs",
-        help="Print recent logs from an instance",
-        description="Print recent logs from an instance.",
+        help="Print recent logs from the selected runtime",
+        description="Print recent logs from the selected runtime.",
     )
-    _add_instance(logs)
+    _add_data_volume(logs)
     logs.add_argument(
         "--tail",
         type=_non_negative_int,
@@ -368,8 +393,8 @@ def _parser() -> argparse.ArgumentParser:
 
     mcp = commands.add_parser(
         "mcp",
-        help="Run the stdio MCP bridge for a running instance",
-        description="Run the stdio MCP bridge for a running instance.",
+        help="Run the stdio MCP bridge for the selected runtime",
+        description="Run the stdio MCP bridge for the selected runtime.",
     )
     _add_context(mcp)
     return parser
@@ -397,22 +422,25 @@ def _add_output_options(parser: argparse.ArgumentParser, *, fields: bool) -> Non
         )
 
 
-def _add_instance(parser: argparse.ArgumentParser) -> None:
+def _add_data_volume(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--instance",
+        "--data-volume",
         default=None,
         metavar="NAME",
-        help=f"Docker-backed LocalCloud instance name (default: {DEFAULT_INSTANCE})",
+        help=(
+            "Docker volume mounted at /var/lib/localcloud "
+            f"(default: active runtime or {DEFAULT_DATA_VOLUME})"
+        ),
     )
 
 
 def _add_context(parser: argparse.ArgumentParser) -> None:
-    _add_instance(parser)
+    _add_data_volume(parser)
     parser.add_argument(
         "--project-id",
         default=None,
         metavar="ID",
-        help="Project to create or select within the instance",
+        help="Project to create or select within the runtime",
     )
     parser.add_argument(
         "--user",
@@ -434,12 +462,6 @@ def _add_resource_names(parser: argparse.ArgumentParser) -> None:
         default=None,
         metavar="NAME",
         help="Override the managed Docker network name",
-    )
-    parser.add_argument(
-        "--volume-name",
-        default=None,
-        metavar="NAME",
-        help="Override the managed Docker volume name",
     )
 
 

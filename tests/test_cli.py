@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import json
+from importlib.metadata import distribution
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from localcloud_cli import __version__
-
-from localcloud_cli.cli import _execute, _parser, main
+from localcloud_cli.cli import _command_config, _execute, _parser, main
 from localcloud_cli.errors import HostError
 
 
@@ -20,42 +20,46 @@ class FakeController:
         self.calls: list[tuple[str, Any]] = []
         self.remembered: str | None = None
 
-    def remembered_config(self, instance: str) -> str | None:
-        self.calls.append(("remembered_config", instance))
+    def remembered_config(self, config: Any) -> str | None:
+        self.calls.append(("remembered_config", config))
         return self.remembered
 
     def start(self, config: Any) -> dict[str, Any]:
         self.calls.append(("start", config))
-        return {"status": "started", "instance": config.instance}
+        return {"status": "started", "data_volume": config.data_volume}
 
     def restart(self, config: Any) -> dict[str, Any]:
         self.calls.append(("restart", config))
-        return {"status": "restarted"}
+        return {"status": "restarted", "data_volume": config.data_volume}
 
     def reset(self, config: Any, *, all_projects: bool = False) -> dict[str, Any]:
         self.calls.append(("reset", (config, all_projects)))
-        return {"status": "reset", "reset_scope": "all_projects" if all_projects else "project"}
-
-    def stop(self, instance: str) -> dict[str, Any]:
-        self.calls.append(("stop", instance))
-        return {"status": "stopped"}
-
-    def status(self, instance: str) -> dict[str, Any]:
-        self.calls.append(("status", instance))
-        return {"status": "running"}
-
-    def logs(self, instance: str, tail: int = 200) -> dict[str, Any]:
-        self.calls.append(("logs", (instance, tail)))
-        return {"status": "logs", "logs": "output"}
-
-    def target(self, instance: str, project: str, user: str) -> dict[str, Any]:
-        self.calls.append(("target", (instance, project, user)))
         return {
-            "instance": instance,
+            "status": "reset",
+            "data_volume": config.data_volume,
+            "reset_scope": "all_projects" if all_projects else "project",
+        }
+
+    def stop(self, config: Any) -> dict[str, Any]:
+        self.calls.append(("stop", config))
+        return {"status": "stopped", "data_volume": config.data_volume}
+
+    def status(self, config: Any) -> dict[str, Any]:
+        self.calls.append(("status", config))
+        return {"status": "running", "data_volume": config.data_volume}
+
+    def logs(self, config: Any, tail: int = 200) -> dict[str, Any]:
+        self.calls.append(("logs", (config, tail)))
+        return {"status": "logs", "data_volume": config.data_volume, "logs": "output"}
+
+    def target(self, config: Any) -> dict[str, Any]:
+        self.calls.append(("target", config))
+        return {
+            "data_volume": config.data_volume,
             "url": "http://127.0.0.1:49080",
             "endpoint_map": {"24080": 49080},
-            "project": project,
-            "user": user,
+            "project": config.project,
+            "user": config.user,
         }
 
     def doctor(self) -> dict[str, Any]:
@@ -64,19 +68,23 @@ class FakeController:
 
 
 @pytest.fixture(autouse=True)
-def fake_controller(monkeypatch: pytest.MonkeyPatch) -> None:
+def fake_controller(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     import localcloud_cli.controller as controller_module
 
+    monkeypatch.setenv("LOCALCLOUD_HOME", str(tmp_path / "home"))
     monkeypatch.setattr(controller_module, "Controller", FakeController)
 
 
-def test_help_surface_uses_instance_project_and_user_only() -> None:
-    help_text = _parser().format_help()
-    lifecycle = _parser().parse_args(
+def test_help_surface_uses_data_volume_project_and_user() -> None:
+    parser = _parser()
+    help_text = parser.format_help()
+    lifecycle = parser.parse_args(
         [
             "start",
-            "--instance",
-            "team-a",
+            "--data-volume",
+            "team-data",
             "--project-id",
             "agent-project-1",
             "--user",
@@ -85,14 +93,26 @@ def test_help_surface_uses_instance_project_and_user_only() -> None:
     )
 
     assert "Run Google Cloud-compatible services locally in Docker" in help_text
-    assert "--" + "work" + "space" not in help_text
-    assert lifecycle.instance == "team-a"
+    assert "lc is an alias for localcloud; both commands behave identically." in help_text
+    assert lifecycle.data_volume == "team-data"
     assert lifecycle.project_id == "agent-project-1"
     assert lifecycle.user == "alice"
 
-def test_version_output_is_exact(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+
+@pytest.mark.parametrize("command", ["start", "restart", "reset", "stop", "status", "logs", "console", "env", "mcp"])
+def test_every_runtime_command_accepts_data_volume(command: str) -> None:
+    args = _parser().parse_args([command, "--data-volume", "team-data"])
+    assert args.data_volume == "team-data"
+
+
+def test_obsolete_instance_and_volume_flags_are_rejected() -> None:
+    with pytest.raises(SystemExit):
+        _parser().parse_args(["status", "--instance", "default"])
+    with pytest.raises(SystemExit):
+        _parser().parse_args(["start", "--volume-name", "legacy"])
+
+
+def test_version_output_is_exact(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as caught:
         _parser().parse_args(["--version"])
 
@@ -100,21 +120,31 @@ def test_version_output_is_exact(
     assert capsys.readouterr().out == f"localcloud {__version__}\n"
 
 
-def test_start_dispatch_applies_cli_context_and_resource_names(
+def test_console_commands_share_the_canonical_entry_point() -> None:
+    scripts = {
+        entry.name: entry
+        for entry in distribution("localcloud-cli").entry_points
+        if entry.group == "console_scripts"
+    }
+
+    assert scripts["lc"].value == scripts["localcloud"].value == "localcloud_cli.cli:main"
+    assert scripts["lc"].load() is scripts["localcloud"].load() is main
+
+
+def test_start_dispatch_applies_context_and_managed_resource_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config = tmp_path / "custom.yaml"
-    config.write_text(
-        "project: yaml-project-1\nuser: yaml-user\n",
-        encoding="utf-8",
+    config_path = tmp_path / "custom.yaml"
+    config_path.write_text(
+        "project: yaml-project-1\nuser: yaml-user\n", encoding="utf-8"
     )
     monkeypatch.chdir(tmp_path)
     args = _parser().parse_args(
         [
             "start",
-            str(config),
-            "--instance",
-            "team-a",
+            str(config_path),
+            "--data-volume",
+            "team-data",
             "--project-id",
             "cli-project-1",
             "--user",
@@ -123,20 +153,18 @@ def test_start_dispatch_applies_cli_context_and_resource_names(
             "custom-container",
             "--network-name",
             "custom-network",
-            "--volume-name",
-            "custom-volume",
         ]
     )
 
     result = _execute(args)
     call, selected = FakeController.instance.calls[-1]
-    assert result == {"status": "started", "instance": "team-a"}
+    assert result == {"status": "started", "data_volume": "team-data"}
     assert call == "start"
+    assert selected.data_volume == "team-data"
     assert selected.project == "cli-project-1"
     assert selected.user == "cli-user"
     assert selected.container_name == "custom-container"
     assert selected.network_name == "custom-network"
-    assert selected.volume_name == "custom-volume"
 
 
 def test_local_config_precedes_remembered_config(
@@ -150,9 +178,8 @@ def test_local_config_precedes_remembered_config(
     controller = FakeController()
     controller.remembered = str(remembered)
 
-    selected = __import__("localcloud_cli.cli", fromlist=["_command_config"])._command_config(
-        controller, _parser().parse_args(["start"])
-    )
+    selected = _command_config(controller, _parser().parse_args(["start"]))
+
     assert selected.project == "current-project-1"
     assert not any(call[0] == "remembered_config" for call in controller.calls)
 
@@ -166,11 +193,11 @@ def test_remembered_config_is_used_when_local_file_is_absent(
     controller = FakeController()
     controller.remembered = str(remembered)
 
-    selected = __import__("localcloud_cli.cli", fromlist=["_command_config"])._command_config(
-        controller, _parser().parse_args(["start"])
-    )
+    selected = _command_config(controller, _parser().parse_args(["start"]))
+
     assert selected.project == "remembered-project-1"
-    assert controller.calls == [("remembered_config", "default")]
+    assert controller.calls[0][0] == "remembered_config"
+    assert controller.calls[0][1].data_volume == "localcloud-data"
 
 
 def test_reset_all_projects_dispatches_explicit_scope() -> None:
@@ -181,31 +208,34 @@ def test_reset_all_projects_dispatches_explicit_scope() -> None:
     assert values[1] is True
 
 
-def test_reset_progress_uses_resolved_config_instance(
+def test_reset_progress_uses_resolved_data_volume(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = tmp_path / "team.yaml"
-    config.write_text("instance: team-a\nproject: team-project-1\n", encoding="utf-8")
+    config.write_text(
+        "data_volume: team-data\nproject: team-project-1\n", encoding="utf-8"
+    )
     monkeypatch.chdir(tmp_path)
 
     assert main(["reset", str(config)]) == 0
     captured = capsys.readouterr()
-    assert "Resetting project data in instance 'team-a'" in captured.err
-    assert "instance 'default'" not in captured.err
+    assert "data volume 'team-data'" in captured.err
+    assert "instance" not in captured.err.lower()
 
 
-def test_instance_only_commands_dispatch_without_context_config() -> None:
-    assert _execute(_parser().parse_args(["stop", "--instance", "team-a"])) == {
-        "status": "stopped"
-    }
-    assert FakeController.instance.calls == [("stop", "team-a")]
+def test_stop_dispatches_loaded_data_volume_config() -> None:
+    assert _execute(
+        _parser().parse_args(["stop", "--data-volume", "team-data"])
+    ) == {"status": "stopped", "data_volume": "team-data"}
+    call, config = FakeController.instance.calls[-1]
+    assert call == "stop"
+    assert config.data_volume == "team-data"
 
 
 def test_console_encodes_selected_project_and_user(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
     opened: list[str] = []
@@ -215,6 +245,8 @@ def test_console_encodes_selected_project_and_user(
         _parser().parse_args(
             [
                 "console",
+                "--data-volume",
+                "team-data",
                 "--project-id",
                 "agent-project-1",
                 "--user",
@@ -227,6 +259,7 @@ def test_console_encodes_selected_project_and_user(
         "user=alice%2Bagent%40example.test"
     )
     assert opened == [expected]
+    assert result["data_volume"] == "team-data"
     assert result["url"] == expected
 
 
@@ -269,22 +302,19 @@ def test_main_env_json_prints_valid_json(
     assert "Processing" in captured.err
 
 
-def test_mcp_dispatch_passes_instance_project_and_user(
+def test_mcp_dispatch_passes_full_runtime_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    calls: list[tuple[str, str, str]] = []
-    monkeypatch.setattr(
-        "localcloud_cli.mcp_stdio.run",
-        lambda instance, project, user: calls.append((instance, project, user)),
-    )
+    calls: list[Any] = []
+    monkeypatch.setattr("localcloud_cli.mcp_stdio.run", calls.append)
 
     _execute(
         _parser().parse_args(
             [
                 "mcp",
-                "--instance",
-                "team-a",
+                "--data-volume",
+                "team-data",
                 "--project-id",
                 "agent-project-1",
                 "--user",
@@ -292,7 +322,11 @@ def test_mcp_dispatch_passes_instance_project_and_user(
             ]
         )
     )
-    assert calls == [("team-a", "agent-project-1", "alice")]
+
+    assert len(calls) == 1
+    assert calls[0].data_volume == "team-data"
+    assert calls[0].project == "agent-project-1"
+    assert calls[0].user == "alice"
 
 
 def test_native_guide_and_mcp_do_not_emit_lifecycle_status(
@@ -306,10 +340,7 @@ def test_native_guide_and_mcp_do_not_emit_lifecycle_status(
     assert guide.out
     assert guide.err == ""
 
-    monkeypatch.setattr(
-        "localcloud_cli.mcp_stdio.run",
-        lambda _instance, _project, _user: None,
-    )
+    monkeypatch.setattr("localcloud_cli.mcp_stdio.run", lambda _config: None)
     assert main(["mcp"]) == 0
     mcp = capsys.readouterr()
     assert mcp.out == ""
@@ -319,25 +350,25 @@ def test_native_guide_and_mcp_do_not_emit_lifecycle_status(
 def test_main_returns_concise_host_error_by_default(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def fail(_self: FakeController, _instance: str) -> dict[str, Any]:
-        raise HostError("instance_not_running", "start it")
+    def fail(_self: FakeController, _config: Any) -> dict[str, Any]:
+        raise HostError("runtime_not_running", "start it")
 
     monkeypatch.setattr(FakeController, "status", fail)
     assert main(["status"]) == 2
     captured = capsys.readouterr()
     assert "Processing" in captured.err
     assert "Failed" in captured.err
-    assert "Error [instance_not_running] start it" in captured.err
+    assert "Error [runtime_not_running] start it" in captured.err
 
 
 def test_main_returns_structured_host_error_when_verbose(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def fail(_self: FakeController, _instance: str) -> dict[str, Any]:
-        raise HostError("instance_not_running", "start it")
+    def fail(_self: FakeController, _config: Any) -> dict[str, Any]:
+        raise HostError("runtime_not_running", "start it")
 
     monkeypatch.setattr(FakeController, "status", fail)
     assert main(["status", "--verbose"]) == 2
     error = json.loads(capsys.readouterr().err)
     assert error["error"] is True
-    assert error["code"] == "instance_not_running"
+    assert error["code"] == "runtime_not_running"

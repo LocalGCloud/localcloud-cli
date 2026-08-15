@@ -47,12 +47,14 @@ def test_guide_inventory_matches_canonical_service_registry() -> None:
         assert display_name == definition["displayName"]
 
 
-def test_guide_explains_shared_identity_and_catalog_first_workflow() -> None:
+def test_guide_explains_volume_identity_and_catalog_first_workflow() -> None:
     guide = render_agent_guide()
 
     assert "local-gcp-project" in guide
     assert "local-developer" in guide
-    assert "--instance NAME" in guide
+    assert "--data-volume NAME" in guide
+    assert "/var/lib/localcloud" in guide
+    assert "attached containers, networks, or volumes" in guide
     assert "localcloud reset --all-projects" in guide
     assert "localcloud://api/catalog" in guide
     assert "localcloud_get_api_catalog" in guide

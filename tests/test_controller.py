@@ -1,311 +1,570 @@
 from __future__ import annotations
 
+import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from localcloud_cli import __version__
-
+import localcloud_cli.controller as controller_module
+import localcloud_cli.endpoints as endpoints_module
 from localcloud_cli.config import (
-    DEFAULT_IMAGE,
-    DEFAULT_PROJECT,
     HostPaths,
     LocalCloudConfig,
+    load_active_runtime,
     load_config,
+    runtime_settings,
 )
 from localcloud_cli.controller import Controller
+from localcloud_cli.docker_runtime import RuntimeRecord
 from localcloud_cli.errors import HostError
 
 
 class FakeRuntime:
     def __init__(self) -> None:
-        self.record: dict[str, Any] | None = None
+        self.record: RuntimeRecord | None = None
         self.creates = 0
         self.starts = 0
+        self.restarts = 0
         self.stops = 0
         self.removes: list[bool] = []
-        self.purges: list[str] = []
+        self.purges = 0
         self.ready = True
+        self.recreation = {
+            "container": "managed",
+            "network": "managed",
+            "data_volume": "managed",
+        }
+        self.preferred: list[str | None] = []
+        self.preflights: list[str | None] = []
+        self.preflight_error: HostError | None = None
 
-    def inspect(self, _instance: str) -> dict[str, Any] | None:
-        return dict(self.record) if self.record is not None else None
 
-    def create(self, config: LocalCloudConfig) -> dict[str, Any]:
+
+
+
+    def resolve(
+        self,
+        _config: LocalCloudConfig,
+        *,
+        preferred_container_id: str | None = None,
+        require: bool = False,
+    ) -> RuntimeRecord | None:
+        self.preferred.append(preferred_container_id)
+        if self.record is None and require:
+            raise HostError("runtime_not_found", "not found")
+        return self.record
+
+    def preflight_create(
+        self,
+        _config: LocalCloudConfig,
+        replacing: RuntimeRecord | None = None,
+    ) -> None:
+        self.preflights.append(
+            None if replacing is None else str(replacing.container_id)
+        )
+        if self.preflight_error is not None:
+            raise self.preflight_error
+
+
+
+
+    def create(self, config: LocalCloudConfig) -> RuntimeRecord:
         self.creates += 1
-        self.record = _record(config)
-        self.record["volume_created"] = not self.removes
-        return dict(self.record)
+        self.record = replace(
+            _record(config, container_id=f"container-{self.creates}"),
+            volume_created=self.creates == 1,
+        )
+        return self.record
 
-    def start(self, environment: dict[str, Any]) -> dict[str, Any]:
+    def start(
+        self, _config: LocalCloudConfig, current: RuntimeRecord
+    ) -> RuntimeRecord:
         self.starts += 1
-        self.record = dict(environment, state="running", url="http://127.0.0.1:49080")
-        return dict(self.record)
+        self.record = replace(current, state="running", health="healthy")
+        return self.record
 
-    def stop(self, environment: dict[str, Any]) -> None:
+    def restart(
+        self, _config: LocalCloudConfig, current: RuntimeRecord
+    ) -> RuntimeRecord:
+        self.restarts += 1
+        self.record = replace(current, state="running", health="healthy")
+        return self.record
+
+    def stop(
+        self, _config: LocalCloudConfig, current: RuntimeRecord
+    ) -> RuntimeRecord:
         self.stops += 1
-        self.record = dict(environment, state="exited", url=None)
+        self.record = replace(current, state="exited", health=None)
+        return self.record
 
-    def remove(self, _environment: dict[str, Any], *, remove_volume: bool = True) -> None:
+    def remove(
+        self,
+        _config: LocalCloudConfig,
+        _current: RuntimeRecord,
+        *,
+        remove_volume: bool,
+    ) -> None:
         self.removes.append(remove_volume)
         self.record = None
 
-    def purge(self, instance: str) -> None:
-        self.purges.append(instance)
+    def purge(self, _config: LocalCloudConfig) -> None:
+        self.purges += 1
         self.record = None
 
-    def is_ready(self, _environment: dict[str, Any]) -> bool:
-        return self.ready
+    def recreation_ownership(
+        self, _config: LocalCloudConfig
+    ) -> dict[str, str]:
+        return dict(self.recreation)
 
-    def logs(self, _environment: dict[str, Any], tail: int = 200) -> str:
+    def logs(
+        self,
+        _config: LocalCloudConfig,
+        _current: RuntimeRecord,
+        *,
+        tail: int,
+    ) -> str:
         return f"tail={tail}"
 
+    def is_ready(self, _current: RuntimeRecord) -> bool:
+        return self.ready
+
     def doctor(self) -> dict[str, Any]:
-        return {"status": "ok", "legacy_resources": []}
+        return {"status": "ok", "warning": "runtime warning"}
 
 
-class FakeJavaMcpClient:
-    projects: set[str] = {DEFAULT_PROJECT}
-    calls: list[tuple[Any, ...]] = []
-    fail_create = False
+class FakeJavaClient:
+    projects: set[str] = {"local-gcp-project"}
+    reset_projects: list[str] = []
+    seeds: list[tuple[str, str, bool]] = []
+    fail_seed = False
 
-    def __init__(self, url: str, project: str, user: str):
-        self.url = url
+    def __init__(self, _url: str, project: str, user: str):
         self.project = project
         self.user = user
 
     def project_exists(self) -> bool:
-        type(self).calls.append(("project_exists", self.project, self.user))
         return self.project in type(self).projects
 
-    def create_project(self) -> dict[str, Any]:
-        type(self).calls.append(("create_project", self.project, self.user))
-        if type(self).fail_create:
-            raise RuntimeError("create failed")
+    def create_project(self) -> None:
         type(self).projects.add(self.project)
-        return {"project_id": self.project}
 
-    def reset_project(self) -> dict[str, Any]:
-        type(self).calls.append(("reset_project", self.project, self.user))
-        return {"project_id": self.project}
+    def reset_project(self) -> None:
+        type(self).reset_projects.append(self.project)
 
-    def seed_project(self, yaml: str, *, volatile_only: bool = False) -> dict[str, Any]:
-        type(self).calls.append(("seed_project", self.project, self.user, yaml, volatile_only))
-        return {"seeded": True}
+    def seed_project(self, yaml: str, *, volatile_only: bool) -> None:
+        if type(self).fail_seed:
+            raise RuntimeError("seed failed")
+        type(self).seeds.append((self.project, yaml, volatile_only))
 
 
 @pytest.fixture(autouse=True)
-def fake_java_and_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    FakeJavaMcpClient.projects = {DEFAULT_PROJECT}
-    FakeJavaMcpClient.calls = []
-    FakeJavaMcpClient.fail_create = False
-    monkeypatch.setattr("localcloud_cli.controller.JavaMcpClient", FakeJavaMcpClient)
+def fake_java(monkeypatch: pytest.MonkeyPatch) -> None:
+    FakeJavaClient.projects = {"local-gcp-project"}
+    FakeJavaClient.reset_projects = []
+    FakeJavaClient.seeds = []
+    FakeJavaClient.fail_seed = False
+    monkeypatch.setattr(controller_module, "JavaMcpClient", FakeJavaClient)
     monkeypatch.setattr(
-        "localcloud_cli.endpoints.environment_config",
-        lambda _environment, project, user, output_format="shell": {
-            "LOCALCLOUD_PROJECT": project,
+        endpoints_module,
+        "environment_config",
+        lambda _environment, project, user, output_format: {
+            "GOOGLE_CLOUD_PROJECT": project,
             "LOCALCLOUD_USER": user,
-            "format": output_format,
         },
     )
 
 
-def _controller(tmp_path: Path) -> tuple[Controller, FakeRuntime]:
+def _paths(tmp_path: Path) -> HostPaths:
+    return HostPaths(home=tmp_path / "home", locks=tmp_path / "home" / "locks")
+
+
+def _config(
+    tmp_path: Path,
+    *,
+    paths: HostPaths,
+    yaml: str | None = None,
+    **kwargs: Any,
+) -> LocalCloudConfig:
+    if yaml is not None:
+        (tmp_path / "localcloud.yaml").write_text(yaml, encoding="utf-8")
+    return load_config(directory=tmp_path, paths=paths, **kwargs)
+
+
+def _record(
+    config: LocalCloudConfig,
+    *,
+    container_id: str = "container-existing",
+    origin: str = "managed",
+    ownership: dict[str, str] | None = None,
+    state: str = "running",
+) -> RuntimeRecord:
+    return RuntimeRecord(
+        data_volume=config.data_volume,
+        origin=origin,
+        ownership=ownership
+        or {
+            "container": "managed",
+            "network": "managed",
+            "data_volume": "managed",
+        },
+        name=config.container_name or "localcloud",
+        container_id=container_id,
+        state=state,
+        health="healthy" if state == "running" else None,
+        url="http://127.0.0.1:49080",
+        endpoint_map={"24080": 49080},
+        network_name=config.network_name or "localcloud",
+        mount={
+            "type": "volume",
+            "source": config.data_volume,
+            "destination": "/var/lib/localcloud",
+            "mode": "rw",
+            "read_write": True,
+        },
+        configured_image=config.image,
+        actual_image=config.image,
+        image_id="sha256:image",
+        config_hash=config.config_hash,
+        config_path=str(config.config_path) if config.config_path else "<defaults>",
+        runtime_settings=runtime_settings(config),
+        services=(
+            "<default>"
+            if config.services is None
+            else ",".join(config.services)
+        ),
+        data=config.data,
+        labels={},
+        drift={},
+    )
+
+
+def _controller(tmp_path: Path) -> tuple[Controller, FakeRuntime, HostPaths]:
+    paths = _paths(tmp_path)
     runtime = FakeRuntime()
-    paths = HostPaths(tmp_path / "home", tmp_path / "home" / "locks")
-    return Controller(runtime=runtime, paths=paths), runtime
+    return Controller(runtime=runtime, paths=paths), runtime, paths
 
 
-def _record(config: LocalCloudConfig) -> dict[str, Any]:
-    instance_config = {
-        "instance": config.instance,
-        "services": list(config.services) if config.services is not None else None,
-        "data": config.data,
-        "image": config.image,
-        "memory": config.memory,
-        "docker_socket": config.docker_socket,
-        "transparent_network": config.transparent_network,
-        "environment": dict(config.environment),
-        "container_name": config.container_name,
-        "network_name": config.network_name,
-        "volume_name": config.volume_name,
-    }
-    return {
-        "instance": config.instance,
-        "name": config.container_name,
-        "network_name": config.network_name,
-        "volume_name": config.volume_name,
-        "state": "running",
-        "url": "http://127.0.0.1:49080",
-        "endpoint_map": {"24080": 49080, "24081": 49081},
-        "config_hash": config.config_hash,
-        "config_path": str(config.config_path) if config.config_path else "<defaults>",
-        "instance_config": instance_config,
-        "services": ",".join(config.services) if config.services is not None else "<default>",
-        "data": config.data,
-        "labels": {"com.localcloud.instance": config.instance},
-    }
+def test_start_creates_runtime_project_and_active_record(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(
+        tmp_path,
+        paths=paths,
+        project="new-project",
+        user="agent@example.test",
+    )
 
+    result = controller.start(config)
 
-def test_projects_share_instance_and_start_creates_only_missing_project(tmp_path: Path) -> None:
-    controller, runtime = _controller(tmp_path)
-    default = load_config(directory=tmp_path)
-    other = load_config(directory=tmp_path, project="other-project-1", user="alice")
-
-    first = controller.start(default)
-    second = controller.start(other)
-
-    assert runtime.creates == 1
-    assert default.config_hash == other.config_hash
-    assert first["container"]["name"] == second["container"]["name"] == "localcloud"
-    assert second["project"] == "other-project-1"
-    assert ("create_project", "other-project-1", "alice") in FakeJavaMcpClient.calls
-
-
-def test_payload_carries_direct_and_stdio_context(tmp_path: Path) -> None:
-    FakeJavaMcpClient.projects.add("agent-project-1")
-    controller, _runtime = _controller(tmp_path)
-    result = controller.start(load_config(directory=tmp_path, project="agent-project-1", user="alice"))
-
-    assert result["mcp"]["headers"] == {
-        "X-LocalCloud-Project": "agent-project-1",
-        "X-LocalCloud-User": "alice",
-    }
+    assert result["status"] == "started"
+    assert result["data_volume"] == "localcloud-data"
+    assert result["project"] == "new-project"
+    assert result["origin"] == "managed"
+    assert result["ownership"]["data_volume"] == "managed"
+    assert result["container"]["id"] == "container-1"
     assert result["mcp"]["args"] == [
-        "mcp", "--instance", "default", "--project-id", "agent-project-1", "--user", "alice"
+        "mcp",
+        "--data-volume",
+        "localcloud-data",
+        "--project-id",
+        "new-project",
+        "--user",
+        "agent@example.test",
     ]
-    assert result["sdk_env"]["LOCALCLOUD_PROJECT"] == "agent-project-1"
-    assert result["sdk_env"]["LOCALCLOUD_USER"] == "alice"
+    assert runtime.creates == 1
+    active = load_active_runtime(paths)
+    assert active is not None
+    assert active.data_volume == config.data_volume
+    assert active.image == config.image
+    assert active.container_id == "container-1"
 
 
-@pytest.mark.parametrize("operation", ["restart", "reset", "target"])
-def test_non_start_operations_reject_missing_project_without_creating(
-    tmp_path: Path, operation: str
+def test_start_adopts_attached_container_without_reconfiguration(
+    tmp_path: Path,
 ) -> None:
-    controller, _runtime = _controller(tmp_path)
-    controller.start(load_config(directory=tmp_path))
-    FakeJavaMcpClient.calls.clear()
-    missing = load_config(directory=tmp_path, project="missing-project-1")
+    controller, runtime, paths = _controller(tmp_path)
+    original = _config(tmp_path, paths=paths)
+    runtime.record = _record(
+        original,
+        origin="attached",
+        ownership={
+            "container": "attached",
+            "network": "attached",
+            "data_volume": "attached",
+        },
+    )
+    changed = _config(tmp_path, paths=paths, yaml="memory: 8g\n")
+
+    result = controller.start(changed)
+
+    assert result["status"] == "already_running"
+    assert result["origin"] == "attached"
+    assert result["container"]["id"] == "container-existing"
+    assert runtime.removes == []
+    assert runtime.creates == 0
+
+
+def test_start_does_not_restart_running_unhealthy_attached_container(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(
+        config,
+        origin="attached",
+        ownership={
+            "container": "attached",
+            "network": "attached",
+            "data_volume": "attached",
+        },
+    )
+    runtime.ready = False
 
     with pytest.raises(HostError) as caught:
-        if operation == "target":
-            controller.target(missing.instance, missing.project, missing.user)
-        else:
-            getattr(controller, operation)(missing)
+        controller.start(config)
 
-    assert caught.value.code == "unknown_project"
-    assert not any(call[0] == "create_project" for call in FakeJavaMcpClient.calls)
+    assert caught.value.code == "attached_runtime_unhealthy"
+    assert runtime.restarts == 0
 
 
-def test_project_creation_failure_leaves_instance_running(tmp_path: Path) -> None:
-    controller, runtime = _controller(tmp_path)
-    FakeJavaMcpClient.fail_create = True
+
+def test_reconfiguration_preflight_preserves_current_runtime_on_failure(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    original = _config(tmp_path, paths=paths)
+    runtime.record = _record(original)
+    runtime.preflight_error = HostError(
+        "managed_image_capability_missing", "replacement is incompatible"
+    )
+    changed = _config(tmp_path, paths=paths, yaml="memory: 8g\n")
 
     with pytest.raises(HostError) as caught:
-        controller.start(load_config(directory=tmp_path, project="other-project-1"))
+        controller.start(changed)
 
-    assert caught.value.code == "project_create_failed"
+    assert caught.value.code == "managed_image_capability_missing"
+    assert runtime.removes == []
     assert runtime.record is not None
-    assert runtime.removes == []
 
 
-def test_project_reset_preserves_instance_and_peers(tmp_path: Path) -> None:
-    FakeJavaMcpClient.projects.update({"agent-project-1", "peer-project-1"})
-    controller, runtime = _controller(tmp_path)
-    controller.start(load_config(directory=tmp_path))
-    FakeJavaMcpClient.calls.clear()
 
-    result = controller.reset(load_config(directory=tmp_path, project="agent-project-1", user="alice"))
+def test_managed_container_on_attached_volume_can_be_reconfigured(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    original = _config(tmp_path, paths=paths)
+    runtime.record = _record(
+        original,
+        origin="attached",
+        ownership={
+            "container": "managed",
+            "network": "managed",
+            "data_volume": "attached",
+        },
+    )
+    changed = _config(tmp_path, paths=paths, yaml="memory: 8g\n")
 
-    assert result["reset_scope"] == "project"
-    assert runtime.removes == []
-    assert ("reset_project", "agent-project-1", "alice") in FakeJavaMcpClient.calls
-    assert "peer-project-1" in FakeJavaMcpClient.projects
-
-
-def test_all_projects_reset_recreates_volume(tmp_path: Path) -> None:
-    controller, runtime = _controller(tmp_path)
-    config = load_config(directory=tmp_path)
-    controller.start(config)
-
-    result = controller.reset(config, all_projects=True)
-
-    assert result["reset_scope"] == "all_projects"
-    assert runtime.removes == [True]
-    assert runtime.creates == 2
-    assert not any(call[0] == "reset_project" for call in FakeJavaMcpClient.calls)
-
-
-def test_restart_reapplies_only_volatile_seed(tmp_path: Path) -> None:
-    (tmp_path / "seed.yaml").write_text("projects: []\n", encoding="utf-8")
-    controller, _runtime = _controller(tmp_path)
-    config = load_config(directory=tmp_path)
-    controller.start(config)
-    FakeJavaMcpClient.calls.clear()
-
-    controller.restart(config)
-
-    assert ("seed_project", DEFAULT_PROJECT, "local-developer", "projects: []\n", True) in FakeJavaMcpClient.calls
-
-
-def test_reconfiguration_preserves_volume_and_reports_fields(tmp_path: Path) -> None:
-    controller, runtime = _controller(tmp_path)
-    controller.start(load_config(directory=tmp_path))
-    (tmp_path / "localcloud.yaml").write_text("memory: 8g\n", encoding="utf-8")
-
-    result = controller.start(load_config(directory=tmp_path))
+    result = controller.start(changed)
 
     assert result["status"] == "reconfigured"
     assert result["changed_fields"] == ["memory"]
     assert runtime.removes == [False]
+    assert runtime.creates == 1
 
-def test_image_reconfiguration_preserves_persistent_volume(tmp_path: Path) -> None:
-    config_path = tmp_path / "localcloud.yaml"
-    config_path.write_text(
-        "image: jaysen2apache/localcloud:0.0.9\n",
-        encoding="utf-8",
+
+def test_restart_never_replaces_attached_container(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    original = _config(tmp_path, paths=paths)
+    runtime.record = _record(
+        original,
+        origin="attached",
+        ownership={
+            "container": "attached",
+            "network": "attached",
+            "data_volume": "attached",
+        },
     )
-    controller, runtime = _controller(tmp_path)
-    controller.start(load_config(directory=tmp_path))
-    config_path.unlink()
+    changed = _config(tmp_path, paths=paths, yaml="memory: 8g\n")
 
-    current = load_config(directory=tmp_path)
-    result = controller.start(current)
+    result = controller.restart(changed)
 
-    assert current.image == DEFAULT_IMAGE
-    assert result["status"] == "reconfigured"
-    assert result["changed_fields"] == ["image"]
-    assert runtime.removes == [False]
-    assert runtime.record is not None
-    assert runtime.record["instance_config"]["image"] == DEFAULT_IMAGE
+    assert result["status"] == "restarted"
+    assert result["container"]["id"] == "container-existing"
+    assert runtime.restarts == 1
+    assert runtime.removes == []
 
 
-def test_doctor_reports_cli_and_default_image_metadata(tmp_path: Path) -> None:
-    controller, _runtime = _controller(tmp_path)
+def test_stop_preserves_attached_ephemeral_runtime(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, yaml="data: ephemeral\n")
+    runtime.record = _record(
+        config,
+        origin="attached",
+        ownership={
+            "container": "attached",
+            "network": "attached",
+            "data_volume": "attached",
+        },
+    )
+
+    result = controller.stop(config)
+
+    assert result["status"] == "stopped"
+    assert runtime.stops == 1
+    assert runtime.removes == []
+
+
+def test_stop_removes_fully_managed_ephemeral_runtime(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, yaml="data: ephemeral\n")
+    runtime.record = _record(config)
+
+    result = controller.stop(config)
+
+    assert result["status"] == "stopped"
+    assert result["container"]["state"] == "removed"
+    assert runtime.removes == [True]
+
+
+def test_reset_all_rejects_attached_resources_before_mutation(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.recreation["data_volume"] = "attached"
+
+    with pytest.raises(HostError) as caught:
+        controller.reset(config, all_projects=True)
+
+    assert caught.value.code == "ownership_forbidden"
+    assert runtime.purges == 0
+    assert runtime.creates == 0
+
+
+def test_reset_all_recreates_fully_managed_runtime(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+
+    result = controller.reset(config, all_projects=True)
+
+    assert result["status"] == "reset"
+    assert result["reset_scope"] == "all_projects"
+    assert runtime.purges == 1
+    assert runtime.creates == 1
+
+
+def test_selected_project_reset_uses_attached_runtime(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(
+        config,
+        origin="attached",
+        ownership={
+            "container": "attached",
+            "network": "attached",
+            "data_volume": "attached",
+        },
+    )
+
+    result = controller.reset(config)
+
+    assert result["reset_scope"] == "project"
+    assert FakeJavaClient.reset_projects == [config.project]
+    assert runtime.removes == []
+
+
+def test_status_uses_active_container_as_tie_break_hint(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config, container_id="preferred-id")
+    controller.start(config)
+
+    controller.status(config)
+
+    assert runtime.preferred[-1] == "preferred-id"
+
+
+def test_status_reports_runtime_identity_and_image(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, data_volume="team-data")
+    runtime.record = _record(config)
+
+    result = controller.status(config)
+
+    assert result["status"] == "running"
+    assert result["data_volume"] == "team-data"
+    assert result["container"]["configured_image"] == config.image
+    assert result["container"]["actual_image"] == config.image
+    assert result["mount"]["source"] == "team-data"
+
+
+def test_target_returns_only_connection_context(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+
+    result = controller.target(config)
+
+    assert result == {
+        "url": "http://127.0.0.1:49080",
+        "endpoint_map": {"24080": 49080},
+    }
+
+
+def test_target_requires_existing_project(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, project="missing")
+    runtime.record = _record(config)
+
+    with pytest.raises(HostError) as caught:
+        controller.target(config)
+
+    assert caught.value.code == "unknown_project"
+    assert "--data-volume localcloud-data" in caught.value.message
+
+
+def test_logs_and_remembered_config_use_resolved_runtime(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, yaml="memory: 6g\n")
+    runtime.record = _record(config)
+
+    assert controller.remembered_config(config) == str(
+        (tmp_path / "localcloud.yaml").resolve()
+    )
+    assert controller.logs(config, tail=17)["logs"] == "tail=17"
+
+
+def test_failed_seed_does_not_update_active_runtime(tmp_path: Path) -> None:
+    controller, _runtime, paths = _controller(tmp_path)
+    (tmp_path / "seed.yaml").write_text(
+        "projects:\n  - projectId: local-gcp-project\n", encoding="utf-8"
+    )
+    config = _config(
+        tmp_path, paths=paths, yaml="seed: seed.yaml\n"
+    )
+    FakeJavaClient.fail_seed = True
+
+    with pytest.raises(HostError) as caught:
+        controller.start(config)
+
+    assert caught.value.code == "seed_failed"
+    assert load_active_runtime(paths) is None
+
+
+def test_doctor_reports_malformed_active_state_without_failing(
+    tmp_path: Path,
+) -> None:
+    controller, _runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+    (paths.home / "active-runtime.json").write_text(
+        json.dumps({"schema_version": 999}), encoding="utf-8"
+    )
 
     result = controller.doctor()
 
-    assert result["cli_version"] == __version__
-    assert result["default_image"] == "jaysen2apache/localcloud:latest"
-
-
-def test_status_logs_stop_and_target_are_instance_scoped(tmp_path: Path) -> None:
-    controller, runtime = _controller(tmp_path)
-    controller.start(load_config(directory=tmp_path, instance="team-a"))
-
-    assert controller.status("team-a")["status"] == "running"
-    assert "project" not in controller.status("team-a")
-    assert controller.logs("team-a", tail=17)["logs"] == "tail=17"
-    assert controller.target("team-a")["instance"] == "team-a"
-    assert controller.stop("team-a")["status"] == "stopped"
-    assert runtime.stops == 1
-
-
-def test_remembered_config_comes_from_instance_record(tmp_path: Path) -> None:
-    config_path = tmp_path / "alternate.yaml"
-    config_path.write_text("memory: 6g\n", encoding="utf-8")
-    controller, _runtime = _controller(tmp_path)
-    assert controller.remembered_config("default") is None
-
-    controller.start(load_config(explicit=config_path, directory=tmp_path))
-    assert controller.remembered_config("default") == str(config_path.resolve())
+    assert result["status"] == "ok"
+    assert result["active_runtime"] is None
+    assert result["active_runtime_diagnostics"][0]["code"] == "invalid_active_runtime"
+    assert "malformed" in result["warning"]

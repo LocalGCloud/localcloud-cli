@@ -54,18 +54,21 @@ Prerequisites
 - Run commands from the directory that contains `localcloud.yaml`, when using
   configuration. The directory is only a configuration source, not identity.
 
-Identity defaults
+Runtime and request identity
 
-- The default instance is one shared Docker stack: container and network
-  `localcloud`, with volume `localcloud-data`.
+- Durable runtime identity is the named Docker volume mounted at
+  `/var/lib/localcloud`. The default is `localcloud-data`.
+- `--data-volume NAME` selects a different runtime. The CLI discovers the
+  unique compatible LocalCloud container using that volume, even when another
+  tool created the container.
 - The default project is `local-gcp-project`.
 - The default caller is `local-developer`, normalized to
   `local-developer@localcloud.invalid` where an email principal is required.
-- `--project-id ID` selects logical data without creating another Docker stack.
-  Only `start` creates a missing project; other context-selecting commands fail
-  with recovery guidance when the project is unknown.
-- `--user NAME` selects the attributed caller. Use `--instance NAME` only when
-  a separate deterministic Docker stack is intentional.
+- `--project-id ID` selects logical data inside the runtime. Only `start`
+  creates a missing project; other context-selecting commands fail with
+  recovery guidance when the project is unknown.
+- `--user NAME` selects the attributed caller and never changes Docker
+  identity.
 
 Copy-paste first run
 
@@ -77,19 +80,21 @@ Copy-paste first run
    Review any legacy-resource warning separately; LocalCloud never removes those
    resources automatically.
 
-2. Start the shared default instance and configure the current shell:
+2. Start the runtime on the default data volume and configure the current
+   shell:
 
    localcloud start
    eval "$(localcloud env)"
 
-   `start` returns JSON containing the ready container, selected project and
-   caller, loopback SDK endpoints, and an `mcp` object. Repeating it is safe.
+   `start` returns JSON containing `data_volume`, the selected container,
+   runtime origin and per-resource ownership, selected project and caller,
+   loopback SDK endpoints, and an `mcp` object. Repeating it is safe.
 
 3. Copy the returned `mcp.command` and `mcp.args` into a stdio-only MCP client.
    For a Streamable HTTP client, use `mcp.direct_url` together with every
    returned `mcp.headers` entry so the selected project and caller are carried
-   on each request. Reconnect after `restart` or `reset`; the stdio bridge binds
-   to one running instance.
+   on each request. Generated MCP arguments always pin `--data-volume`, so a
+   long-lived bridge cannot silently switch to a later active runtime.
 
 MCP API-catalog-first workflow
 
@@ -109,6 +114,7 @@ entries are default-enabled. Commented entries are available but deactivated by
 default; uncomment one to include it in an explicit service set.
 
 cat > localcloud.yaml <<'YAML'
+data_volume: localcloud-data
 services:
 {_service_inventory()}
 seed: auto
@@ -124,22 +130,29 @@ eval "$(localcloud env)"
 
 Every field is optional. Omit `services`, or set it to `default`, to use image
 defaults. An explicit non-empty list is the complete enabled set; unknown IDs
-fail startup. `project:` and `user:` select invocation context and may be
-overridden with `--project-id` and `--user`. They never affect Docker identity.
-If `image` is omitted, `LOCALCLOUD_IMAGE` wins before the default image.
+fail startup. `data_volume:` selects durable runtime identity and may be
+overridden with `--data-volume`. `project:` and `user:` select invocation
+context and may be overridden with `--project-id` and `--user`; they never
+affect Docker identity. If `image` is omitted, `LOCALCLOUD_IMAGE` wins; if that
+is also unset, the selected active runtime's recorded image wins, then default.
 
 `seed: auto` loads `seed.yaml` beside the selected config when it exists and is
 otherwise a no-op. Set `seed: null` to disable seeding, or provide an existing
 path relative to the config file.
 
-Project and instance lifecycle
+Project and runtime lifecycle
 
 `localcloud reset` resets only the selected project and reapplies its configured
-seed, preserving every other project in the shared instance. Use
-`localcloud reset --all-projects` only for an intentional instance-wide data
-reset. Persistent data survives stop/start and safe configuration replacement.
-With `data: ephemeral`, `stop` removes that instance's container, network, and
-volume.
+seed, preserving every other project on the selected data volume. Use
+`localcloud reset --all-projects` only for an intentional full reset of a
+fully CLI-managed runtime; attached containers, networks, or volumes are
+rejected before Docker mutation. Persistent data survives stop/start and safe
+managed configuration replacement. `stop` may stop an attached runtime but
+never removes Docker resources the CLI does not own.
+
+Legacy `instance:` and `volume_name:` configuration fields are rejected with a
+`data_volume:` migration value. Legacy CLI flags such as `--instance` and
+`--volume-name` are not accepted.
 
 Useful commands
 
@@ -148,7 +161,7 @@ Useful commands
    localcloud console --project-id another-project --user build-agent
    localcloud restart
    localcloud stop
-   localcloud start --instance isolated --project-id another-project
+   localcloud start --data-volume isolated-data --project-id another-project
 
 Develop and test only against the loopback endpoints returned by LocalCloud.
 Public Google endpoints are never a fallback. If an SDK cannot use the returned

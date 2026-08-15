@@ -30,32 +30,34 @@ class TtyBuffer(io.StringIO):
 
 PAYLOAD: dict[str, Any] = {
     "status": "started",
-    "instance": "default",
+    "data_volume": "localcloud-data",
+    "origin": "managed",
     "project": "local-gcp-project",
     "user": "local-developer",
     "container": {
-        "name": "localcloud-default",
+        "name": "localcloud",
         "state": "running",
         "url": "http://127.0.0.1:49080",
     },
     "services": "default",
     "data": "persistent",
-    "network": "localcloud-default",
-    "volume": "localcloud-data",
+    "network": {"name": "localcloud"},
+    "mount": {"source": "localcloud-data"},
     "mcp": {"direct_url": "http://127.0.0.1:49080/mcp"},
 }
 
 
 def test_summary_uses_relevant_fields_in_stable_order() -> None:
     assert render_summary("start", PAYLOAD).splitlines() == [
-        "Status    started",
-        "Instance  default",
-        "Project   local-gcp-project",
-        "User      local-developer",
-        "State     running",
-        "URL       http://127.0.0.1:49080",
-        "Services  default",
-        "Data      persistent",
+        "Status       started",
+        "Data volume  localcloud-data",
+        "Origin       managed",
+        "Project      local-gcp-project",
+        "User         local-developer",
+        "State        running",
+        "URL          http://127.0.0.1:49080",
+        "Services     default",
+        "Data         persistent",
     ]
 
 
@@ -63,8 +65,8 @@ def test_summary_adds_nested_fields_in_requested_order_and_deduplicates() -> Non
     requested = parse_fields(["container.name,mcp.direct_url", "container.name"])
     lines = render_summary("start", PAYLOAD, requested).splitlines()
     assert lines[-2:] == [
-        "Container  localcloud-default",
-        "MCP URL    http://127.0.0.1:49080/mcp",
+        "Container    localcloud",
+        "MCP URL      http://127.0.0.1:49080/mcp",
     ]
 
 
@@ -95,9 +97,9 @@ def test_json_color_preserves_parseable_payload_after_stripping() -> None:
 
 def test_error_is_concise_and_keeps_scalar_details() -> None:
     rendered = render_error(
-        HostError("instance_not_running", "Start it first", {"instance": "team-a"})
+        HostError("runtime_not_running", "Start it first", {"data_volume": "team-data"})
     )
-    assert rendered == "Error [instance_not_running] Start it first\nInstance: team-a"
+    assert rendered == "Error [runtime_not_running] Start it first\nData Volume: team-data"
 
 
 def test_error_omits_verbose_logs_and_nested_diagnostics() -> None:
@@ -106,27 +108,36 @@ def test_error_omits_verbose_logs_and_nested_diagnostics() -> None:
             "container_start_failed",
             "Container failed",
             {
-                "instance": "team-a",
+                "data_volume": "team-data",
                 "logs": "very long\ncontainer logs",
                 "rollback_failures": [{"resource": "volume"}],
             },
         )
     )
-    assert rendered == "Error [container_start_failed] Container failed\nInstance: team-a"
+    assert rendered == "Error [container_start_failed] Container failed\nData Volume: team-data"
 
 
 def test_cloud_has_equal_visible_width_and_animation_changes_color() -> None:
+    expected = (
+        "       ╭────╮       ",
+        "   ╭───╯    ╰───╮   ",
+        " ╭──╯          ╰──╮ ",
+        "╭╯                ╰╮",
+        "╰──────────────────╯",
+    )
     resting = render_cloud(phase=0.0, progress=1.0, color=ColorMode.TRUECOLOR)
     moving = render_cloud(phase=0.0, progress=0.25, color=ColorMode.TRUECOLOR)
+    assert render_cloud(color=ColorMode.NONE) == expected
     assert {visible_width(line) for line in resting} == {20}
-    assert tuple(strip_ansi(line) for line in resting) == tuple(strip_ansi(line) for line in moving)
+    assert tuple(strip_ansi(line) for line in resting) == expected
+    assert tuple(strip_ansi(line) for line in moving) == expected
     assert resting != moving
 
 
 @pytest.mark.parametrize("width", [42, 60, 100])
 def test_panel_rows_are_aligned_at_all_breakpoints(width: int) -> None:
     context = PanelContext(
-        instance="instance-with-a-name-that-must-be-truncated",
+        data_volume="volume-with-a-name-that-must-be-truncated",
         project="local-gcp-project-with-extra-content",
         user="local-developer",
         services=("storage", "bigquery", "pubsub"),
@@ -140,7 +151,7 @@ def test_panel_rows_are_aligned_at_all_breakpoints(width: int) -> None:
 
 def test_unicode_width_and_truncation_keep_panel_aligned() -> None:
     context = PanelContext(
-        instance="团队-instance",
+        data_volume="团队-data-volume",
         project="本地-cloud-project-with-extra-content",
         user="local-developer",
         services="default",
@@ -154,7 +165,7 @@ def test_unicode_width_and_truncation_keep_panel_aligned() -> None:
 
 def test_panel_stays_within_very_narrow_terminal() -> None:
     context = PanelContext(
-        instance="default",
+        data_volume="localcloud-data",
         project="local-gcp-project",
         user="local-developer",
         services="default",
@@ -205,18 +216,18 @@ def test_non_tty_reporter_emits_stable_lifecycle_lines() -> None:
     stream = io.StringIO()
     times = iter([10.0, 12.5])
     reporter = LifecycleReporter(stream=stream, clock=lambda: next(times))
-    reporter.start("Inspecting instance 'default'…")
-    reporter.succeed("LocalCloud instance is running")
+    reporter.start("Inspecting data volume 'localcloud-data'…")
+    reporter.succeed("LocalCloud runtime is running")
     assert stream.getvalue().splitlines() == [
-        "ProcessingInspecting instance 'default'…",
-        "Done      LocalCloud instance is running  2.5s",
+        "ProcessingInspecting data volume 'localcloud-data'…",
+        "Done      LocalCloud runtime is running  2.5s",
     ]
 
 
 def test_verbose_non_tty_reporter_is_silent_for_json_errors() -> None:
     stream = io.StringIO()
     reporter = LifecycleReporter(stream=stream, verbose=True)
-    reporter.start("Inspecting instance…")
+    reporter.start("Inspecting runtime…")
     reporter.fail("not running")
     assert stream.getvalue() == ""
 

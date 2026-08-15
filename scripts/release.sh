@@ -1,0 +1,358 @@
+#!/bin/sh
+set -eu
+
+SOURCE_REPO="LocalGCloud/localcloud-cli"
+SOURCE_OWNER=${SOURCE_REPO%%/*}
+SOURCE_NAME=${SOURCE_REPO#*/}
+TAP_REPO="LocalGCloud/homebrew-tap"
+SOURCE_REMOTE="origin"
+SOURCE_BRANCH="main"
+RELEASE_WORKFLOW="cli-release.yml"
+TAP_WORKFLOW="publish-formula.yml"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  ./scripts/release.sh
+  ./scripts/release.sh --build-only
+  ./scripts/release.sh --release VERSION
+
+Modes:
+  --build-only       Build and smoke-test for the current platform.
+  --release VERSION  Publish a prepared X.Y.Z version through GitHub Actions.
+
+With no arguments, the default: build for the current platform.
+EOF
+}
+
+usage_error() {
+    printf 'error: %s\n\n' "$1" >&2
+    usage >&2
+    exit 2
+}
+
+fail() {
+    printf 'error: %s\n' "$1" >&2
+    exit 1
+}
+
+stage() {
+    printf '\n==> %s\n' "$1"
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
+}
+
+is_version() {
+    case $1 in
+        '' | *[!0-9.]* | .* | *. | *..* | *.*.*.*)
+            return 1
+            ;;
+        *.*.*)
+            version_major=${1%%.*}
+            version_remainder=${1#*.}
+            version_minor=${version_remainder%%.*}
+            version_patch=${version_remainder#*.}
+            for version_part in \
+                "$version_major" "$version_minor" "$version_patch"; do
+                case $version_part in
+                    0 | [1-9]*) ;;
+                    *) return 1 ;;
+                esac
+            done
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+MODE="build"
+VERSION=""
+
+case $# in
+    0)
+        ;;
+    1)
+        case $1 in
+            --build-only)
+                ;;
+            -h | --help)
+                usage
+                exit 0
+                ;;
+            --release)
+                usage_error "--release requires VERSION"
+                ;;
+            *)
+                usage_error "unknown argument: $1"
+                ;;
+        esac
+        ;;
+    2)
+        [ "$1" = "--release" ] || usage_error "unexpected arguments"
+        is_version "$2" || usage_error "release version must have the form X.Y.Z"
+        MODE="release"
+        VERSION=$2
+        ;;
+    *)
+        usage_error "unexpected arguments"
+        ;;
+esac
+
+SCRIPT_DIR=$(CDPATH='' cd "$(dirname "$0")" && pwd)
+PROJECT_ROOT=$(CDPATH='' cd "$SCRIPT_DIR/.." && pwd)
+cd "$PROJECT_ROOT"
+
+TEMP_DIR=""
+cleanup() {
+    if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
+        rm -rf "$TEMP_DIR"
+    fi
+}
+trap cleanup 0 1 2 15
+
+validate_locked_inputs() {
+    stage "Validate locked release inputs"
+    uv lock --check
+
+    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/localcloud-release.XXXXXX")
+    notice_output="$TEMP_DIR/THIRD_PARTY_NOTICES"
+    uv run --frozen --extra release python scripts/generate-third-party-notices.py \
+        --output "$notice_output"
+    if ! cmp -s THIRD_PARTY_NOTICES "$notice_output"; then
+        fail "THIRD_PARTY_NOTICES is stale; regenerate and commit it"
+    fi
+}
+
+require_build_commands() {
+    require_command uv
+    require_command cmp
+    require_command mktemp
+}
+
+build_native_executable() {
+    stage "Build native one-file executable"
+    uv run --frozen --extra release python -m PyInstaller \
+        --clean --noconfirm localcloud.spec
+}
+
+smoke_native_executable() {
+    expected_version=$1
+
+    stage "Smoke native executable"
+    actual_version=$(./dist/localcloud --version)
+    printf '%s\n' "$actual_version"
+    if [ -n "$expected_version" ] &&
+        [ "$actual_version" != "localcloud $expected_version" ]; then
+        fail "frozen CLI version '$actual_version' does not match $expected_version"
+    fi
+    ./dist/localcloud --help >/dev/null
+    ./dist/localcloud guide >/dev/null
+}
+
+build_native() {
+    require_build_commands
+    validate_locked_inputs
+    build_native_executable
+    smoke_native_executable ""
+
+    printf '\nBuilt native executable: %s/dist/localcloud\n' "$PROJECT_ROOT"
+}
+
+require_clean_tree() {
+    if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+        fail "working tree must be clean before release"
+    fi
+}
+
+remote_tag_commit() {
+    remote_tag=$1
+    remote_tag_line=$(
+        git ls-remote --tags "$SOURCE_REMOTE" "refs/tags/$remote_tag^{}"
+    )
+    if [ -z "$remote_tag_line" ]; then
+        remote_tag_line=$(
+            git ls-remote --tags "$SOURCE_REMOTE" "refs/tags/$remote_tag"
+        )
+    fi
+    if [ -n "$remote_tag_line" ]; then
+        printf '%s\n' "$remote_tag_line" | cut -f 1
+    fi
+}
+
+prepare_tag() {
+    head_commit=$1
+    local_tag_commit=$(
+        git rev-parse -q --verify "refs/tags/$TAG^{}" 2>/dev/null || :
+    )
+    published_tag_commit=$(remote_tag_commit "$TAG")
+
+    if [ -n "$local_tag_commit" ] && [ "$local_tag_commit" != "$head_commit" ]; then
+        fail "local tag $TAG does not point to the release commit"
+    fi
+    if [ -n "$published_tag_commit" ] &&
+        [ "$published_tag_commit" != "$head_commit" ]; then
+        fail "remote tag $TAG does not point to the release commit"
+    fi
+    if [ -z "$local_tag_commit" ] && [ -n "$published_tag_commit" ]; then
+        fail "remote tag $TAG could not be resolved locally"
+    fi
+
+    if [ -z "$local_tag_commit" ]; then
+        stage "Create annotated tag $TAG"
+        git tag -a "$TAG" -m "Release LocalCloud CLI $VERSION"
+    else
+        printf '\nReusing tag %s at %s\n' "$TAG" "$head_commit"
+    fi
+}
+
+dispatch_and_watch() {
+    workflow_label=$1
+    workflow_file=$2
+    workflow_repo=$3
+    shift 3
+
+    stage "$workflow_label"
+    WORKFLOW_RUN_URL=$(
+        gh workflow run "$workflow_file" --repo "$workflow_repo" "$@"
+    )
+    [ -n "$WORKFLOW_RUN_URL" ] ||
+        fail "$workflow_file dispatch did not return a workflow run URL"
+    WORKFLOW_RUN_ID=${WORKFLOW_RUN_URL##*/}
+    case $WORKFLOW_RUN_ID in
+        '' | *[!0-9]*)
+            fail "invalid workflow run URL returned: $WORKFLOW_RUN_URL"
+            ;;
+    esac
+
+    printf 'Workflow run: %s\n' "$WORKFLOW_RUN_URL"
+    gh run watch "$WORKFLOW_RUN_ID" --repo "$workflow_repo" --exit-status
+}
+
+expected_release_assets() {
+    cat <<'EOF'
+SHA256SUMS
+SHA256SUMS.sigstore.json
+localcloud-darwin-amd64.tar.gz
+localcloud-darwin-amd64.tar.gz.sigstore.json
+localcloud-darwin-arm64.tar.gz
+localcloud-darwin-arm64.tar.gz.sigstore.json
+localcloud-linux-amd64.tar.gz
+localcloud-linux-amd64.tar.gz.sigstore.json
+localcloud-linux-arm64.tar.gz
+localcloud-linux-arm64.tar.gz.sigstore.json
+localcloud.rb
+EOF
+}
+
+verify_release_assets() {
+    stage "Verify published release assets"
+    actual_asset_file="$TEMP_DIR/actual-assets.txt"
+    expected_asset_file="$TEMP_DIR/expected-assets.txt"
+    gh release view "$TAG" --repo "$SOURCE_REPO" \
+        --json assets --jq '.assets[].name' >"$actual_asset_file"
+    expected_release_assets >"$expected_asset_file"
+
+    actual_assets=$(LC_ALL=C sort "$actual_asset_file")
+    expected_assets=$(LC_ALL=C sort "$expected_asset_file")
+    if [ "$actual_assets" != "$expected_assets" ]; then
+        printf 'Expected assets:\n%s\n\nActual assets:\n%s\n' \
+            "$expected_assets" "$actual_assets" >&2
+        fail "GitHub release asset set is incomplete or unexpected"
+    fi
+
+    RELEASE_URL=$(
+        gh release view "$TAG" --repo "$SOURCE_REPO" --json url --jq '.url'
+    )
+    [ -n "$RELEASE_URL" ] || fail "GitHub release URL is missing"
+}
+
+published_release_tag() {
+    gh api graphql \
+        -f "owner=$SOURCE_OWNER" \
+        -f "name=$SOURCE_NAME" \
+        -f "tag=$TAG" \
+        -f "query=query(\$owner:String!,\$name:String!,\$tag:String!){repository(owner:\$owner,name:\$name){release(tagName:\$tag){tagName}}}" \
+        --jq '.data.repository.release.tagName // ""'
+}
+
+release_version() {
+    require_command git
+    require_command gh
+    require_command sort
+    require_build_commands
+
+    TAG="v$VERSION"
+
+    stage "Validate prepared release source"
+    current_branch=$(git branch --show-current)
+    [ "$current_branch" = "$SOURCE_BRANCH" ] ||
+        fail "release must run from branch $SOURCE_BRANCH"
+    require_clean_tree
+
+    gh auth status --hostname github.com >/dev/null
+    git fetch "$SOURCE_REMOTE" "$SOURCE_BRANCH" --tags
+    head_commit=$(git rev-parse HEAD)
+    remote_commit=$(git rev-parse "$SOURCE_REMOTE/$SOURCE_BRANCH")
+    [ "$head_commit" = "$remote_commit" ] ||
+        fail "HEAD must equal $SOURCE_REMOTE/$SOURCE_BRANCH before release"
+
+    source_version=$(
+        sed -n 's/^__version__ = "\([^"]*\)"$/\1/p' \
+            src/localcloud_cli/__init__.py
+    )
+    [ -n "$source_version" ] ||
+        fail "source version is missing from src/localcloud_cli/__init__.py"
+    [ "$source_version" = "$VERSION" ] ||
+        fail "source version $source_version does not match $VERSION"
+
+    validate_locked_inputs
+
+    stage "Run release tests"
+    uv run --frozen --extra test python -m pytest -q
+
+    build_native_executable
+    smoke_native_executable "$VERSION"
+    require_clean_tree
+
+    existing_release=$(published_release_tag)
+    [ -z "$existing_release" ] ||
+        fail "GitHub release $TAG already exists; refusing to overwrite it"
+
+    prepare_tag "$head_commit"
+
+    stage "Push prepared source and tag"
+    git push "$SOURCE_REMOTE" "$SOURCE_BRANCH"
+    git push "$SOURCE_REMOTE" "refs/tags/$TAG"
+
+    dispatch_and_watch \
+        "Build and publish four native CLI archives" \
+        "$RELEASE_WORKFLOW" "$SOURCE_REPO" --ref "$TAG"
+    CLI_RUN_URL=$WORKFLOW_RUN_URL
+
+    verify_release_assets
+
+    dispatch_and_watch \
+        "Publish Homebrew formula" \
+        "$TAP_WORKFLOW" "$TAP_REPO" -f "version=$VERSION"
+    TAP_RUN_URL=$WORKFLOW_RUN_URL
+
+    printf '\nRelease %s completed.\n' "$VERSION"
+    printf 'CLI release: %s\n' "$RELEASE_URL"
+    printf 'CLI workflow: %s\n' "$CLI_RUN_URL"
+    printf 'Tap workflow: %s\n' "$TAP_RUN_URL"
+    printf '\nPublic-channel checks:\n'
+    printf '  gh release view %s --repo %s\n' "$TAG" "$SOURCE_REPO"
+    printf '  brew update\n'
+    printf '  brew info LocalGCloud/tap/localcloud\n'
+    printf '  brew test LocalGCloud/tap/localcloud\n'
+}
+
+if [ "$MODE" = "build" ]; then
+    build_native
+else
+    release_version
+fi

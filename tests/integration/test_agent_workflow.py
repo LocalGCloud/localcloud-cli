@@ -9,7 +9,11 @@ import pytest
 
 from integration._support import assert_loopback_url, controller_for, write_config
 from localcloud_cli.cli import main
-from localcloud_cli.docker_runtime import MANAGED_LABEL, resource_names
+from localcloud_cli.config import DEFAULT_PROJECT, default_resource_names
+from localcloud_cli.docker_runtime import (
+    MANAGED_LABEL,
+    _container_environment,
+)
 from localcloud_cli.java_client import JavaMcpClient
 from localcloud_cli.mcp_stdio import McpAdapter
 
@@ -24,7 +28,7 @@ USER = "integration-agent"
 def _invoke(
     capsys: pytest.CaptureFixture[str], *arguments: str
 ) -> dict[str, Any]:
-    code = main(list(arguments))
+    code = main([*arguments, "--verbose"])
     captured = capsys.readouterr()
     assert code == 0, captured.err
     assert not captured.err
@@ -34,7 +38,7 @@ def _invoke(
 def _invoke_error(
     capsys: pytest.CaptureFixture[str], *arguments: str
 ) -> dict[str, Any]:
-    code = main(list(arguments))
+    code = main([*arguments, "--verbose"])
     captured = capsys.readouterr()
     assert code == 2, captured.out
     return json.loads(captured.err)
@@ -47,13 +51,13 @@ def _resource_inventory(java: JavaMcpClient, service: str) -> str:
     )
 
 
-def test_shared_instance_projects_seed_persistence_mcp_and_ownership(
+def test_shared_volume_projects_seed_persistence_mcp_and_ownership(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     config_dir = tmp_path / "config"
-    instance = f"integration-{uuid4().hex[:12]}"
+    data_volume = f"integration-{uuid4().hex[:12]}"
     config_dir.mkdir()
     _controller, runtime, image = controller_for(tmp_path)
     monkeypatch.setenv("LOCALCLOUD_HOME", str(tmp_path / "cli-home"))
@@ -76,7 +80,7 @@ def test_shared_instance_projects_seed_persistence_mcp_and_ownership(
         config_dir,
         image,
         services=["secretmanager", "pubsub"],
-        instance=instance,
+        data_volume=data_volume,
         project=PROJECT,
         user=USER,
     )
@@ -88,7 +92,7 @@ def test_shared_instance_projects_seed_persistence_mcp_and_ownership(
     try:
         started = _invoke(capsys, "start", str(config.config_path))
         assert started["status"] == "started"
-        assert started["instance"] == config.instance
+        assert started["data_volume"] == config.data_volume
         assert started["project"] == PROJECT
         assert started["user"] == USER
         assert started["services"] == ["secretmanager", "pubsub"]
@@ -105,11 +109,7 @@ def test_shared_instance_projects_seed_persistence_mcp_and_ownership(
             "X-LocalCloud-User": USER,
         }
 
-        adapter = McpAdapter(
-            instance=config.instance,
-            project=config.project,
-            user=config.user,
-        )
+        adapter = McpAdapter(config)
         initialized = adapter.handle(
             {
                 "jsonrpc": "2.0",
@@ -150,7 +150,6 @@ def test_shared_instance_projects_seed_persistence_mcp_and_ownership(
             "localcloud_list_environments",
         }.intersection(tool_names)
         assert listed["result"].get("isError") is not True
-        adapter.close()
 
         java = JavaMcpClient(
             started["container"]["url"], started["project"], started["user"]
@@ -179,8 +178,8 @@ def test_shared_instance_projects_seed_persistence_mcp_and_ownership(
             "second-agent",
         )
         assert second["container"]["name"] == started["container"]["name"]
-        assert second["network"] == started["network"]
-        assert second["volume"] == started["volume"]
+        assert second["network"]["name"] == started["network"]["name"]
+        assert second["mount"]["source"] == started["mount"]["source"]
         assert second["project"] == SECOND_PROJECT
         assert second["user"] == "second-agent"
         assert second["mcp"]["headers"] == {
@@ -204,7 +203,7 @@ def test_shared_instance_projects_seed_persistence_mcp_and_ownership(
 """
         )
 
-        _invoke(capsys, "stop", "--instance", config.instance)
+        _invoke(capsys, "stop", "--data-volume", config.data_volume)
         restarted = _invoke(capsys, "start", str(config.config_path))
         java = JavaMcpClient(
             restarted["container"]["url"],
@@ -234,7 +233,7 @@ def test_shared_instance_projects_seed_persistence_mcp_and_ownership(
             config_dir,
             image,
             services=["secretmanager"],
-            instance=config.instance,
+            data_volume=config.data_volume,
             project=PROJECT,
             user=USER,
             data="ephemeral",
@@ -245,12 +244,12 @@ def test_shared_instance_projects_seed_persistence_mcp_and_ownership(
         assert replacement["container"]["name"] == started["container"]["name"]
         assert replacement["services"] == ["secretmanager"]
         assert replacement["data"] == "ephemeral"
-        _invoke(capsys, "stop", "--instance", config.instance)
-        assert runtime.inspect(changed.instance) is None
-        names = resource_names(changed.instance)
+        _invoke(capsys, "stop", "--data-volume", config.data_volume)
+        assert runtime.resolve(changed) is None
+        names = default_resource_names(changed.data_volume)
         for collection, name in (
             (runtime.client.networks, names["network"]),
-            (runtime.client.volumes, names["volume"]),
+            (runtime.client.volumes, changed.data_volume),
         ):
             with pytest.raises(Exception):
                 collection.get(name)
@@ -260,7 +259,7 @@ def test_shared_instance_projects_seed_persistence_mcp_and_ownership(
             config_dir,
             image,
             services=["not-a-localcloud-service"],
-            instance=config.instance,
+            data_volume=config.data_volume,
             project=PROJECT,
             user=USER,
             data="ephemeral",
@@ -271,7 +270,7 @@ def test_shared_instance_projects_seed_persistence_mcp_and_ownership(
         assert unknown["code"] == "container_start_failed"
         assert "Unknown service" in unknown["details"]["logs"]
 
-        collision_name = resource_names(config.instance)["container"]
+        collision_name = default_resource_names(config.data_volume)["container"]
         collision = runtime.client.containers.create(
             image,
             name=collision_name,
@@ -290,7 +289,101 @@ def test_shared_instance_projects_seed_persistence_mcp_and_ownership(
         unrelated_volume.reload()
         assert unrelated_volume.attrs.get("Labels") == {MANAGED_LABEL: "true"}
     finally:
-        current = runtime.inspect(config.instance)
+        current = runtime.resolve(config)
         if current is not None:
-            runtime.remove(current, remove_volume=True)
+            runtime.remove(config, current, remove_volume=True)
         unrelated_volume.remove(force=True)
+
+
+def test_cli_adopts_external_container_by_named_data_volume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "external-config"
+    config_dir.mkdir()
+    _controller, runtime, image = controller_for(tmp_path)
+    data_volume = f"external-{uuid4().hex[:12]}"
+    network_name = f"external-network-{uuid4().hex[:12]}"
+    container_name = f"external-runtime-{uuid4().hex[:12]}"
+    config = write_config(
+        config_dir,
+        image,
+        services=["secretmanager"],
+        data_volume=data_volume,
+        project=DEFAULT_PROJECT,
+        user=USER,
+        seed=None,
+    )
+    monkeypatch.chdir(config_dir)
+    monkeypatch.setenv("LOCALCLOUD_HOME", str(tmp_path / "external-cli-home"))
+    monkeypatch.setenv("LOCALCLOUD_IMAGE", image)
+
+    volume = runtime.client.volumes.create(name=data_volume, labels={})
+    network = runtime.client.networks.create(network_name, labels={})
+    image_record = runtime.client.images.get(image)
+    container = runtime.client.containers.run(
+        image,
+        detach=True,
+        name=container_name,
+        labels={},
+        environment=_container_environment(config, network_name),
+        mem_limit=config.memory,
+        network=network_name,
+        ports=runtime._port_bindings(config, image_record),
+        volumes={
+            data_volume: {
+                "bind": "/var/lib/localcloud",
+                "mode": "rw",
+            }
+        },
+    )
+    try:
+        current = runtime.resolve(
+            config, preferred_container_id=container.id, require=True
+        )
+        assert current is not None
+        runtime.wait_ready(current.url, container=container)
+
+        status = _invoke(
+            capsys, "status", "--data-volume", data_volume
+        )
+        assert status["origin"] == "attached"
+        assert status["ownership"] == {
+            "container": "attached",
+            "network": "attached",
+            "data_volume": "attached",
+        }
+        assert status["container"]["id"] == container.id
+
+        started = _invoke(capsys, "start", str(config.config_path))
+        assert started["status"] == "already_running"
+        assert started["container"]["id"] == container.id
+
+        restarted = _invoke(capsys, "restart", str(config.config_path))
+        assert restarted["status"] == "restarted"
+        assert restarted["container"]["id"] == container.id
+
+        stopped = _invoke(
+            capsys, "stop", "--data-volume", data_volume
+        )
+        assert stopped["status"] == "stopped"
+        container.reload()
+        assert container.status == "exited"
+
+        resumed = _invoke(capsys, "start", str(config.config_path))
+        assert resumed["container"]["id"] == container.id
+
+        rejected = _invoke_error(
+            capsys,
+            "reset",
+            str(config.config_path),
+            "--all-projects",
+        )
+        assert rejected["code"] == "ownership_forbidden"
+        container.reload()
+        assert container.status == "running"
+    finally:
+        container.remove(force=True)
+        network.remove()
+        volume.remove(force=True)

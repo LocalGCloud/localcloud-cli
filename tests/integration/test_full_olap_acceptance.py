@@ -30,8 +30,13 @@ from integration._support import (
     put_bytes,
     write_config,
 )
+from integration.scenario_support import (
+    apply_scenario,
+    checkpoint_project,
+    verify_scenario,
+)
 from localcloud_cli.java_client import JavaMcpClient
-from localcloud_cli.docker_runtime import INSTANCE_LABEL
+from localcloud_cli.docker_runtime import VOLUME_NAME_LABEL
 
 
 pytestmark = pytest.mark.docker
@@ -108,7 +113,7 @@ def test_full_olap_sdk_fault_checkpoint_restore_and_cleanup(tmp_path: Path) -> N
         pytest.skip("set LOCALCLOUD_RUN_FULL_OLAP=1 to run the 4 GiB Docker acceptance path")
     controller, runtime, image = controller_for(tmp_path)
     _require_full_olap_prerequisites(runtime, image)
-    instance = f"olap-{uuid4().hex[:12]}"
+    data_volume = f"olap-{uuid4().hex[:12]}"
     config = write_config(
         tmp_path,
         image,
@@ -123,13 +128,13 @@ def test_full_olap_sdk_fault_checkpoint_restore_and_cleanup(tmp_path: Path) -> N
             "cloudscheduler",
             "dataproc",
         ],
-        instance=instance,
+        data_volume=data_volume,
         data="ephemeral",
         docker_socket=True,
         seed=None,
     )
     started = controller.start(config)
-    target = controller.target(config.instance, config.project, config.user)
+    target = controller.target(config)
     project = started["project"]
     user = started["user"]
     endpoint_map = target["endpoint_map"]
@@ -138,10 +143,10 @@ def test_full_olap_sdk_fault_checkpoint_restore_and_cleanup(tmp_path: Path) -> N
 
     try:
         scenario_java = JavaMcpClient(gateway, project, user)
-        applied = scenario_java.apply_scenario("olap-application", project)
+        applied = apply_scenario(scenario_java, "olap-application", project)
         assert applied["project"] == project
-        scenario_java.verify_scenario(
-            "olap-application", project, endpoint_map
+        verify_scenario(
+            scenario_java, "olap-application", project, endpoint_map
         )
         assert_loopback_url(gateway)
         parent = parent_container(runtime, config)
@@ -328,7 +333,7 @@ def test_full_olap_sdk_fault_checkpoint_restore_and_cleanup(tmp_path: Path) -> N
         ]
 
         java = JavaMcpClient(gateway, project, user)
-        checkpoint = java.checkpoint_project(project, "olap-baseline")
+        checkpoint = checkpoint_project(java, project, "olap-baseline")
         expected_checkpoint_services = {"gcs", "pubsub", "bigquery", "cloudsql"}
         if not expected_checkpoint_services.issubset(set(checkpoint["services"])):
             server_log = parent.exec_run(
@@ -421,12 +426,12 @@ def test_full_olap_sdk_fault_checkpoint_restore_and_cleanup(tmp_path: Path) -> N
                 )
             except Exception:
                 pass
-        controller.stop(config.instance)
+        controller.stop(config)
 
-    assert runtime.inspect(config.instance) is None
+    assert runtime.resolve(config) is None
     assert runtime.client.containers.list(
         all=True,
         filters={
-            "label": f"{INSTANCE_LABEL}={config.instance}"
+            "label": f"{VOLUME_NAME_LABEL}={config.data_volume}"
         },
     ) == []
