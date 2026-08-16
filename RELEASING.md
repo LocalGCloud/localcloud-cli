@@ -88,6 +88,8 @@ The script:
 
 - validates the clean branch, remote revision, version, lockfile, and notices;
 - runs the complete test suite and a native frozen-binary smoke test;
+
+  Because this local preflight includes tests marked `docker`, Docker must be reachable and the qualified runtime image from section 1 must be present locally.
 - creates and pushes the annotated `v${VERSION}` tag;
 - dispatches and watches `cli-release.yml` for that tag;
 - verifies the exact archive, checksum, formula, and Sigstore asset set; and
@@ -135,11 +137,14 @@ gh run watch "${tap_run_url##*/}" \
   --exit-status
 ```
 
-`cli-release.yml` verifies the selected tag and runtime image, runs the tests,
-builds all four native archives, exercises the Linux AMD64 Docker lifecycle,
-signs the release files, and creates the GitHub release. The tap workflow then
-downloads, installs, tests, and commits the published formula. Do not recreate
-or overwrite an existing CLI release.
+`cli-release.yml` verifies the selected tag and runtime image, runs source
+validation with `pytest -m "not docker"`, builds all four native archives, and
+creates the GitHub release. The hosted source-validation job does not assume a
+pre-existing LocalCloud runtime; the Linux AMD64 build job pulls the qualified
+image and exercises the frozen binary through `doctor`, `start`, `status`, `env`,
+and `stop` before publication. The tap workflow then downloads, installs, tests,
+and commits the published formula. Do not recreate or overwrite an existing CLI
+release.
 
 ## 5. Verify public channels
 

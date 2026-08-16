@@ -74,8 +74,8 @@ jobs:
           enable-cache: true
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Test release source
-        run: uv run --frozen --extra test python -m pytest -q
+      - name: Test release source without Docker integration
+        run: uv run --frozen --extra test python -m pytest -q -m "not docker"
 
       - name: Verify generated notices
         run: |
