@@ -137,7 +137,7 @@ jobs:
           install -m 0755 dist/localcloud "$stage/localcloud"
           install -m 0644 LICENSE THIRD_PARTY_NOTICES "$stage/"
           tar -C "$stage" -czf "$ASSET" localcloud LICENSE THIRD_PARTY_NOTICES
-          test "$(tar -tzf "$ASSET" | sort | tr '\n' ' ')" = "LICENSE THIRD_PARTY_NOTICES localcloud "
+          test "$(tar -tzf "$ASSET" | LC_ALL=C sort | tr '\n' ' ')" = "LICENSE THIRD_PARTY_NOTICES localcloud "
 
       - name: Upload native archive
         uses: actions/upload-artifact@v4
@@ -171,7 +171,7 @@ jobs:
         working-directory: release-assets
         run: |
           expected="localcloud-darwin-amd64.tar.gz localcloud-darwin-arm64.tar.gz localcloud-linux-amd64.tar.gz localcloud-linux-arm64.tar.gz"
-          actual=$(printf '%s\n' localcloud-*.tar.gz | sort | tr '\n' ' ' | sed 's/ $//')
+          actual=$(printf '%s\n' localcloud-*.tar.gz | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
           test "$actual" = "$expected"
           sha256sum localcloud-darwin-amd64.tar.gz localcloud-darwin-arm64.tar.gz localcloud-linux-amd64.tar.gz localcloud-linux-arm64.tar.gz > SHA256SUMS
 
