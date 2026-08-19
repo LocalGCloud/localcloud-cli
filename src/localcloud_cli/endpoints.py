@@ -179,6 +179,12 @@ def _is_endpoint_record(value: dict[Any, Any]) -> bool:
     )
 
 
+def _rewrite_and_check_stale(value: Any, endpoint_map: dict[str, Any]) -> Any:
+    rewritten = rewrite_endpoints(value, endpoint_map)
+    _validate_no_stale_canonical_endpoints(rewritten, endpoint_map)
+    return rewritten
+
+
 def _rewrite_endpoint_value(
     value: Any,
     endpoint_map: dict[str, Any],
@@ -190,9 +196,13 @@ def _rewrite_endpoint_value(
         mapped = endpoint_map.get(str(value))
         if mapped is not None:
             rewritten = str(mapped) if isinstance(value, str) else int(mapped)
-    rewritten = rewrite_endpoints(rewritten, endpoint_map)
+    rewritten = _rewrite_and_check_stale(rewritten, endpoint_map)
+    # Only values from keys already identified as endpoint fields go through
+    # this path, so validating against real/non-loopback endpoints here is
+    # safe; `_rewrite_nested_generated_value` below deliberately skips this
+    # check since it runs on generic nested strings that could false-positive
+    # (e.g. descriptive text mentioning a real hostname).
     validate_local_endpoints(rewritten)
-    _validate_no_stale_canonical_endpoints(rewritten, endpoint_map)
     return rewritten
 
 
@@ -200,9 +210,7 @@ def _rewrite_nested_generated_value(
     value: Any,
     endpoint_map: dict[str, Any],
 ) -> Any:
-    rewritten = rewrite_endpoints(value, endpoint_map)
-    _validate_no_stale_canonical_endpoints(rewritten, endpoint_map)
-    return rewritten
+    return _rewrite_and_check_stale(value, endpoint_map)
 
 
 def _rewrite_endpoint_config(value: str, endpoint_map: dict[str, Any]) -> str:

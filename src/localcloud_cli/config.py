@@ -25,6 +25,8 @@ DEFAULT_PROJECT = "local-gcp-project"
 DEFAULT_USER = "local-developer"
 ACTIVE_RUNTIME_SCHEMA_VERSION = 1
 ACTIVE_RUNTIME_FILE = "active-runtime.json"
+LEGACY_LOCK_PATTERN = re.compile(r"^[0-9a-f]{64}\.lock$")
+LEGACY_HOST_FILES = ("state.db", "daemon.sock", "daemon.pid", "daemon.lock", "daemon.log")
 DATA_VOLUME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
 DOCKER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 PROJECT_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
@@ -134,17 +136,34 @@ def _file_lock(paths: HostPaths, key: str, lock_name: str) -> Iterator[None]:
         process_lock = _PROCESS_LOCKS.setdefault(lock_key, threading.Lock())
 
     with process_lock:
-        paths.locks.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(paths.home, 0o700)
-        os.chmod(paths.locks, 0o700)
-        lock_path = paths.locks / lock_name
-        with lock_path.open("a+b") as lock_file:
+        try:
+            paths.locks.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chmod(paths.home, 0o700)
+            os.chmod(paths.locks, 0o700)
+            lock_path = paths.locks / lock_name
+            lock_file = lock_path.open("a+b")
             os.chmod(lock_path, 0o600)
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        except OSError as error:
+            raise HostError(
+                "host_lock_failed",
+                f"Could not prepare LocalCloud lock state under {paths.home}",
+                {"path": str(paths.home), "cause": str(error)},
+            ) from error
+        try:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            except OSError as error:
+                raise HostError(
+                    "host_lock_failed",
+                    f"Could not acquire LocalCloud host lock: {lock_path}",
+                    {"path": str(lock_path), "cause": str(error)},
+                ) from error
             try:
                 yield
             finally:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        finally:
+            lock_file.close()
 
 
 @contextmanager
@@ -258,28 +277,75 @@ def save_active_runtime(paths: HostPaths, runtime: ActiveRuntime) -> None:
         "container_id": _non_blank_string("container_id", runtime.container_id),
     }
     with _active_runtime_lock(paths):
-        paths.home.mkdir(mode=0o700, parents=True, exist_ok=True)
-        descriptor, temporary_name = tempfile.mkstemp(
-            dir=paths.home,
-            prefix=f".{ACTIVE_RUNTIME_FILE}.",
-            suffix=".tmp",
-        )
+        try:
+            paths.home.mkdir(mode=0o700, parents=True, exist_ok=True)
+            descriptor, temporary_name = tempfile.mkstemp(
+                dir=paths.home,
+                prefix=f".{ACTIVE_RUNTIME_FILE}.",
+                suffix=".tmp",
+            )
+        except OSError as error:
+            raise HostError(
+                "active_runtime_write_failed",
+                f"Could not prepare LocalCloud active runtime state under {paths.home}",
+                {"path": str(paths.home), "cause": str(error)},
+            ) from error
         temporary = Path(temporary_name)
         try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as state_file:
-                os.chmod(temporary, 0o600)
-                json.dump(payload, state_file, sort_keys=True, separators=(",", ":"))
-                state_file.write("\n")
-                state_file.flush()
-                os.fsync(state_file.fileno())
-            os.replace(temporary, paths.active_runtime)
-            directory_fd = os.open(paths.home, os.O_RDONLY)
             try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as state_file:
+                    os.chmod(temporary, 0o600)
+                    json.dump(payload, state_file, sort_keys=True, separators=(",", ":"))
+                    state_file.write("\n")
+                    state_file.flush()
+                    os.fsync(state_file.fileno())
+                os.replace(temporary, paths.active_runtime)
+                directory_fd = os.open(paths.home, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except OSError as error:
+                raise HostError(
+                    "active_runtime_write_failed",
+                    f"Could not persist LocalCloud active runtime state: {paths.active_runtime}",
+                    {"path": str(paths.active_runtime), "cause": str(error)},
+                ) from error
         finally:
             temporary.unlink(missing_ok=True)
+
+
+def clear_active_runtime(paths: HostPaths) -> None:
+    with _active_runtime_lock(paths):
+        try:
+            paths.active_runtime.unlink(missing_ok=True)
+        except OSError as error:
+            raise HostError(
+                "active_runtime_write_failed",
+                f"Could not clear LocalCloud active runtime state: {paths.active_runtime}",
+                {"path": str(paths.active_runtime), "cause": str(error)},
+            ) from error
+
+
+def clear_legacy_host_state(paths: HostPaths) -> dict[str, list[str]]:
+    removed_files: list[str] = []
+    for name in LEGACY_HOST_FILES:
+        try:
+            (paths.home / name).unlink()
+            removed_files.append(name)
+        except (FileNotFoundError, OSError):
+            continue
+    removed_locks: list[str] = []
+    if paths.locks.is_dir():
+        for entry in paths.locks.iterdir():
+            if not entry.is_file() or not LEGACY_LOCK_PATTERN.fullmatch(entry.name):
+                continue
+            try:
+                entry.unlink()
+                removed_locks.append(entry.name)
+            except (FileNotFoundError, OSError):
+                continue
+    return {"files": removed_files, "locks": removed_locks}
 
 
 def _record_active_diagnostic(

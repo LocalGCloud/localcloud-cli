@@ -4,7 +4,7 @@ import io
 import json
 from typing import Any
 
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
 
 from localcloud_cli.errors import HostError
 from localcloud_cli.output import (
@@ -30,6 +30,7 @@ class TtyBuffer(io.StringIO):
 
 PAYLOAD: dict[str, Any] = {
     "status": "started",
+    "config": "localcloud.yaml",
     "data_volume": "localcloud-data",
     "origin": "managed",
     "project": "local-gcp-project",
@@ -49,16 +50,27 @@ PAYLOAD: dict[str, Any] = {
 
 def test_summary_uses_relevant_fields_in_stable_order() -> None:
     assert render_summary("start", PAYLOAD).splitlines() == [
-        "Status       started",
+        "Status       Running",
+        "Config       localcloud.yaml",
         "Data volume  localcloud-data",
         "Origin       managed",
         "Project      local-gcp-project",
         "User         local-developer",
-        "State        running",
         "URL          http://127.0.0.1:49080",
         "Services     default",
-        "Data         persistent",
     ]
+
+
+def test_summary_humanizes_runtime_status_values() -> None:
+    payload = {
+        "status": "not_running",
+        "data_volume": "localcloud-data",
+        "config": "localcloud.yaml",
+        "container": {"state": "stopped", "url": "http://127.0.0.1:49080"},
+    }
+    lines = render_summary("status", payload).splitlines()
+    assert lines[0] == "Status       Not Running"
+    assert "State" not in lines
 
 
 def test_summary_adds_nested_fields_in_requested_order_and_deduplicates() -> None:
@@ -219,8 +231,8 @@ def test_non_tty_reporter_emits_stable_lifecycle_lines() -> None:
     reporter.start("Inspecting data volume 'localcloud-data'…")
     reporter.succeed("LocalCloud runtime is running")
     assert stream.getvalue().splitlines() == [
-        "ProcessingInspecting data volume 'localcloud-data'…",
-        "Done      LocalCloud runtime is running  2.5s",
+        "Processing   Inspecting data volume 'localcloud-data'…",
+        "Done         LocalCloud runtime is running  2.5s",
     ]
 
 
@@ -283,3 +295,156 @@ def test_no_color_reporter_keeps_panel_static() -> None:
     output = stream.getvalue()
     assert "\x1b[38;" not in output
     assert strip_ansi(output).count("LocalCloud v") == 1
+
+
+def test_wide_panel_structure_and_color_coding() -> None:
+    context = PanelContext(
+        data_volume="localcloud-data",
+        project="local-gcp-project",
+        user="local-developer",
+        services="default",
+        data="persistent",
+        config=None,
+    )
+    lines = render_panel(context, 100, color=ColorMode.TRUECOLOR)
+    plain_text = "\n".join(strip_ansi(line) for line in lines)
+    assert "Welcome back!" in plain_text
+    assert "Tips & Commands" in plain_text
+    assert "localcloud start" in plain_text
+    assert "localcloud stop" in plain_text
+    assert "localcloud status" in plain_text
+    assert "eval $(lc env)" in plain_text
+    assert "Google Cloud Services" in plain_text
+    assert "● Storage" in plain_text
+    assert "● Firestore" in plain_text
+    assert "● Pub/Sub" in plain_text
+    assert "● BigQuery" in plain_text
+    assert "● Secrets" in plain_text
+    assert "Active Context" in plain_text
+    assert "Data Volume:" in plain_text
+    assert "localcloud-data" in plain_text
+    assert "Project:" in plain_text
+    assert "local-gcp-project" in plain_text
+    assert "Tip: Run localcloud guide" in plain_text
+    assert all(visible_width(line) == 98 for line in lines)
+
+
+def test_custom_services_rendering_in_panel() -> None:
+    context = PanelContext(
+        data_volume="localcloud-data",
+        project="local-gcp-project",
+        user="local-developer",
+        services=("storage", "bigquery", "pubsub"),
+        data="persistent",
+        config=None,
+    )
+    lines = render_panel(context, 100, color=ColorMode.TRUECOLOR)
+    plain_text = "\n".join(strip_ansi(line) for line in lines)
+    assert "● Storage" in plain_text
+    assert "● BigQuery" in plain_text
+    assert "● Pub/Sub" in plain_text
+    assert all(visible_width(line) == 98 for line in lines)
+
+
+def test_cloud_color_modes_emit_appropriate_escape_codes() -> None:
+    tc = render_cloud(color=ColorMode.TRUECOLOR)
+    ansi256 = render_cloud(color=ColorMode.ANSI256)
+    ansi16 = render_cloud(color=ColorMode.ANSI16)
+    none = render_cloud(color=ColorMode.NONE)
+
+    assert all("\x1b[38;2;" in line for line in tc)
+    assert all("\x1b[38;5;" in line for line in ansi256)
+    assert all("\x1b[" in line for line in ansi16)
+    assert all("\x1b[" not in line for line in none)
+
+    assert tuple(strip_ansi(line) for line in tc) == none
+    assert tuple(strip_ansi(line) for line in ansi256) == none
+    assert tuple(strip_ansi(line) for line in ansi16) == none
+
+
+@pytest.mark.parametrize("width", [120, 100, 80, 70, 50, 42, 20])
+def test_all_breakpoints_have_uniform_line_widths(width: int) -> None:
+    context = PanelContext(
+        data_volume="my-volume-data",
+        project="my-gcp-project",
+        user="developer",
+        services="default",
+        data="persistent",
+        config="/tmp/localcloud.yaml",
+    )
+    for mode in (ColorMode.NONE, ColorMode.TRUECOLOR, ColorMode.ANSI256, ColorMode.ANSI16):
+        lines = render_panel(context, width, color=mode)
+        widths = {visible_width(line) for line in lines}
+        assert len(widths) == 1
+        expected_box_width = min(100, max(4, width - 2))
+        assert next(iter(widths)) == expected_box_width
+
+def test_reporter_write_line_emits_lines_in_plain_and_interactive_mode() -> None:
+    plain_stream = io.StringIO()
+    plain_reporter = LifecycleReporter(stream=plain_stream, environ={"TERM": "dumb"})
+    plain_reporter.start("Starting LocalCloud…")
+    plain_reporter.write_line("2026-08-18T10:00:00Z [INFO] Service starting")
+    plain_reporter.write_line("2026-08-18T10:00:01Z [INFO] Ready")
+    plain_reporter.succeed("LocalCloud is ready")
+    plain_output = plain_stream.getvalue()
+    assert "2026-08-18T10:00:00Z [INFO] Service starting\n" in plain_output
+    assert "2026-08-18T10:00:01Z [INFO] Ready\n" in plain_output
+    assert "Done" in plain_output
+
+    interactive_stream = TtyBuffer()
+    times = iter([0.0, 0.1, 0.2, 0.3])
+    interactive_reporter = LifecycleReporter(
+        stream=interactive_stream,
+        environ={"TERM": "xterm-256color"},
+        clock=lambda: next(times),
+        width=80,
+        fps=1,
+    )
+    interactive_reporter.start("Starting LocalCloud…")
+    interactive_reporter.write_line("Log line 1")
+    interactive_reporter.write_line("Log line 2")
+    interactive_reporter.succeed("LocalCloud is ready")
+    interactive_output = interactive_stream.getvalue()
+    assert "Log line 1" in interactive_output
+    assert "Log line 2" in interactive_output
+    assert "Done" in strip_ansi(interactive_output)
+    assert interactive_output.endswith("\x1b[?25h")
+
+
+def test_reporter_panel_settles_above_log_stream() -> None:
+    stream = TtyBuffer()
+    times = iter([0.0, 0.1, 0.2, 0.3, 0.4])
+    reporter = LifecycleReporter(
+        stream=stream,
+        environ={"TERM": "xterm-256color"},
+        clock=lambda: next(times),
+        width=80,
+        fps=1,
+    )
+    panel = PanelContext(
+        data_volume="localcloud-data",
+        project="local-gcp-project",
+        user="local-developer",
+        services="default",
+        data="persistent",
+        config=None,
+    )
+    reporter.start("Starting LocalCloud…")
+    reporter.update("Starting…", panel)
+    reporter.write_line("2026-08-18T14:30:01Z [INFO] Service starting")
+    reporter.write_line("2026-08-18T14:30:02Z [INFO] Ready")
+    reporter.succeed("LocalCloud is ready")
+    output = stream.getvalue()
+    plain = strip_ansi(output)
+
+    assert "LocalCloud v" in plain
+    # Panel is printed exactly once
+    assert plain.count("LocalCloud v") == 1
+    # Log lines appear after the panel
+    panel_pos = plain.find("LocalCloud v")
+    log1_pos = plain.find("2026-08-18T14:30:01Z [INFO] Service starting")
+    log2_pos = plain.find("2026-08-18T14:30:02Z [INFO] Ready")
+    done_pos = plain.find("Done")
+
+    assert panel_pos < log1_pos < log2_pos < done_pos
+

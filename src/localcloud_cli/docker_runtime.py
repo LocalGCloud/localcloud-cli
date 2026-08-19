@@ -4,9 +4,10 @@ import ipaddress
 import json
 import os
 import socket
+import shlex
 import time
-from dataclasses import dataclass, replace
-from typing import Any
+from dataclasses import dataclass, field, replace
+from typing import Any, Mapping
 from urllib.parse import urlparse
 
 import httpx
@@ -34,6 +35,7 @@ RUNTIME_OWNERSHIP_LABEL = "com.localcloud.runtime-ownership"
 RUNTIME_OWNERSHIP_CAPABILITY = "data-volume-v1"
 DATA_MOUNT_DESTINATION = "/var/lib/localcloud"
 GATEWAY_PORT = "24080"
+_DEFAULT_READINESS_TIMEOUT = 120.0
 _CHILD_MANAGED_LABEL = "localcloud.managed"
 _LEGACY_LABELS = {
     "com.localcloud." + "work" + "space",
@@ -80,15 +82,17 @@ class RuntimeRecord:
     configured_image: str
     actual_image: str | None
     image_id: str | None
-    config_hash: str | None
-    config_path: str | None
-    runtime_settings: dict[str, Any] | None
-    services: str
-    data: str
-    labels: dict[str, str]
-    drift: dict[str, dict[str, Any]]
+    configured_image_id: str | None = None
+    config_hash: str | None = None
+    config_path: str | None = None
+    runtime_settings: dict[str, Any] | None = None
+    services: str = ""
+    data: str = ""
+    labels: dict[str, str] = field(default_factory=dict)
+    drift: dict[str, dict[str, Any]] = field(default_factory=dict)
     volume_created: bool = False
     network_created: bool = False
+    image_status: str = ""
 
 
 class DockerRuntime:
@@ -254,12 +258,12 @@ class DockerRuntime:
             network_name=network_name,
             mount=mount,
             configured_image=config.image,
+            configured_image_id=image.get("configured_id"),
             actual_image=image["declared"],
             image_id=image["container_id"],
             config_hash=metadata.get("config_hash"),
             config_path=metadata.get("config_path"),
             runtime_settings=runtime_config,
-            services=metadata["services"],
             data=metadata["data"],
             labels=labels,
             drift=drift,
@@ -269,8 +273,10 @@ class DockerRuntime:
         self,
         config: LocalCloudConfig,
         replacing: RuntimeRecord | None = None,
-    ) -> None:
-        image = self._image_for_create(config.image)
+        *,
+        pull: bool = False,
+    ) -> tuple[Any, bool]:
+        image, was_pulled = self._image_for_create(config.image, pull=pull)
         self._require_runtime_ownership_capability(config.image, image)
         allowed_transparent_ports: set[tuple[int, str]] = set()
         if replacing is not None:
@@ -287,7 +293,6 @@ class DockerRuntime:
             image,
             allowed_transparent_ports=allowed_transparent_ports,
         )
-
         replacing_id = replacing.container_id if replacing is not None else ""
         name_collision = self._get_optional(
             self.client.containers, config.container_name, "container"
@@ -327,9 +332,17 @@ class DockerRuntime:
                     "Configured network name is already used by an attached resource",
                     {"network": config.network_name},
                 )
+        return image, was_pulled
 
-
-    def create(self, config: LocalCloudConfig) -> RuntimeRecord:
+    def create(
+        self,
+        config: LocalCloudConfig,
+        *,
+        pull: bool = False,
+        readiness_deadline: float | None = None,
+        observer: Any | None = None,
+    ) -> RuntimeRecord:
+        deadline = _resolve_readiness_deadline(readiness_deadline)
         current = self.resolve(config)
         if current is not None:
             raise HostError(
@@ -340,8 +353,7 @@ class DockerRuntime:
                     "container_id": current.container_id,
                 },
             )
-        self.preflight_create(config)
-
+        image, was_pulled = self.preflight_create(config, pull=pull)
 
         metadata = _config_labels(config)
         container_labels = {
@@ -353,7 +365,6 @@ class DockerRuntime:
             **_base_labels(config.data_volume, "network"),
         }
         volume_labels = _base_labels(config.data_volume, "volume")
-        image = self._image_for_create(config.image)
         self._require_runtime_ownership_capability(config.image, image)
         ports = self._port_bindings(config, image)
 
@@ -378,6 +389,19 @@ class DockerRuntime:
                     "bind": "/var/run/docker.sock",
                     "mode": "rw",
                 }
+            if observer is not None and hasattr(observer, "debug"):
+                observer.debug(
+                    _format_docker_run(
+                        config.image,
+                        config.container_name,
+                        network.name if network else None,
+                        config.memory,
+                        volumes,
+                        ports,
+                        _container_environment(config, network.name if network else config.network_name),
+                        container_labels,
+                    )
+                )
             container = self.client.containers.run(
                 config.image,
                 detach=True,
@@ -390,19 +414,42 @@ class DockerRuntime:
                 volumes=volumes,
             )
             container.reload()
+            container_id = _resource_identity(container)
             record = self.resolve(
                 config,
-                preferred_container_id=_resource_identity(container),
+                preferred_container_id=container_id,
                 require=True,
             )
             if record is None:  # pragma: no cover - require=True is exhaustive.
                 raise AssertionError("created runtime was not resolved")
-            self._require_gateway(record)
-            self.wait_ready(record.url, container=container)
-            return replace(
+            record = self._require_container_identity(
+                config,
+                container_id,
                 record,
+            )
+            self._require_gateway(record)
+            self.wait_ready(
+                record.url,
+                deadline=deadline,
+                container=container,
+                observer=observer,
+            )
+            ready = self.resolve(
+                config,
+                preferred_container_id=container_id,
+                require=True,
+            )
+            assert ready is not None
+            ready = self._require_container_identity(
+                config,
+                container_id,
+                ready,
+            )
+            return replace(
+                ready,
                 volume_created=volume_created,
                 network_created=network_created,
+                image_status="pulled from registry" if was_pulled else "available locally",
             )
         except Exception as error:
             failures = self._rollback_create(
@@ -417,6 +464,23 @@ class DockerRuntime:
                 if failures:
                     error.details["rollback_failures"] = failures
                 raise
+            if _is_port_conflict(error):
+                # `_port_bindings` only checks port availability at preflight
+                # time; another process can still claim the port before
+                # `containers.run()` actually binds it. Surface that race as
+                # a specific, actionable error instead of the generic
+                # environment_create_failed catch-all.
+                raise HostError(
+                    "port_no_longer_available",
+                    "A required host port became unavailable between "
+                    "preflight checks and container start; retry the command",
+                    {
+                        "data_volume": config.data_volume,
+                        "cause": str(error),
+                        "image": config.image,
+                        "rollback_failures": failures,
+                    },
+                ) from error
             raise HostError(
                 "environment_create_failed",
                 "Managed LocalCloud runtime could not be created",
@@ -429,10 +493,19 @@ class DockerRuntime:
             ) from error
 
     def start(
-        self, config: LocalCloudConfig, runtime: RuntimeRecord
+        self,
+        config: LocalCloudConfig,
+        runtime: RuntimeRecord,
+        *,
+        readiness_deadline: float | None = None,
+        observer: Any | None = None,
     ) -> RuntimeRecord:
+        deadline = _resolve_readiness_deadline(readiness_deadline)
         container, current = self._mutation_target(config, runtime)
         if current.state != "running":
+            if observer is not None and hasattr(observer, "debug"):
+                target_name = _resource_name(container) or current.container_id
+                observer.debug(f"docker start {target_name}")
             try:
                 container.start()
             except Exception as error:
@@ -452,14 +525,46 @@ class DockerRuntime:
             require=True,
         )
         assert updated is not None
+        updated = self._require_container_identity(
+            config,
+            current.container_id,
+            updated,
+        )
         self._require_gateway(updated)
-        self.wait_ready(updated.url, container=container)
-        return updated
+        self.wait_ready(
+            updated.url,
+            deadline=deadline,
+            container=container,
+            observer=observer,
+        )
+        ready = self.resolve(
+            config,
+            preferred_container_id=current.container_id,
+            require=True,
+        )
+        assert ready is not None
+        return replace(
+            self._require_container_identity(
+                config,
+                current.container_id,
+                ready,
+            ),
+            image_status="available locally",
+        )
 
     def restart(
-        self, config: LocalCloudConfig, runtime: RuntimeRecord
+        self,
+        config: LocalCloudConfig,
+        runtime: RuntimeRecord,
+        *,
+        readiness_deadline: float | None = None,
+        observer: Any | None = None,
     ) -> RuntimeRecord:
+        deadline = _resolve_readiness_deadline(readiness_deadline)
         container, current = self._mutation_target(config, runtime)
+        if observer is not None and hasattr(observer, "debug"):
+            target_name = _resource_name(container) or current.container_id
+            observer.debug(f"docker restart -t 20 {target_name}")
         try:
             container.restart(timeout=20)
         except Exception as error:
@@ -479,9 +584,32 @@ class DockerRuntime:
             require=True,
         )
         assert updated is not None
+        updated = self._require_container_identity(
+            config,
+            current.container_id,
+            updated,
+        )
         self._require_gateway(updated)
-        self.wait_ready(updated.url, container=container)
-        return updated
+        self.wait_ready(
+            updated.url,
+            deadline=deadline,
+            container=container,
+            observer=observer,
+        )
+        ready = self.resolve(
+            config,
+            preferred_container_id=current.container_id,
+            require=True,
+        )
+        assert ready is not None
+        return replace(
+            self._require_container_identity(
+                config,
+                current.container_id,
+                ready,
+            ),
+            image_status="available locally",
+        )
 
     def stop(
         self, config: LocalCloudConfig, runtime: RuntimeRecord
@@ -550,33 +678,80 @@ class DockerRuntime:
             network = self._get_optional(
                 self.client.networks, current.network_name, "network"
             )
-            if network is not None:
-                _remove_verified(
-                    network,
-                    "network",
-                    _base_labels(config.data_volume, "network"),
-                    failures,
-                )
+            self._teardown_network_if_owned(
+                config, network, failures, ownership="managed"
+            )
         if remove_volume and current.ownership["data_volume"] == "managed":
             volume = self._get_optional(
                 self.client.volumes, config.data_volume, "volume"
             )
-            if volume is not None:
-                _remove_verified(
-                    volume,
-                    "volume",
-                    _removal_base_labels(
-                        volume, "volume", config.data_volume
-                    ),
-                    failures,
-                    force=True,
-                )
+            self._teardown_volume_if_owned(
+                config, volume, failures, ownership="managed"
+            )
         if failures:
             raise HostError(
                 "cleanup_failed",
                 "Managed LocalCloud runtime cleanup was incomplete",
                 {"data_volume": config.data_volume, "failures": failures},
             )
+
+    def _teardown_network_if_owned(
+        self,
+        config: LocalCloudConfig,
+        network: Any | None,
+        failures: list[dict[str, Any]],
+        *,
+        ownership: str | None = None,
+    ) -> None:
+        """Remove `network` if it is (or, when `ownership` is omitted, turns
+        out to be) managed by this LocalCloud instance. Shared by `remove()`
+        (which already knows the ownership from a resolved RuntimeRecord) and
+        `purge()`'s orphan-cleanup path (which has to classify on the fly)."""
+        if network is None:
+            return
+        resolved_ownership = (
+            ownership
+            if ownership is not None
+            else self._classify_resource(network, "network", config.data_volume)
+        )
+        if resolved_ownership != "managed":
+            return
+        _remove_verified(
+            network,
+            "network",
+            _base_labels(config.data_volume, "network"),
+            failures,
+        )
+
+    def _teardown_volume_if_owned(
+        self,
+        config: LocalCloudConfig,
+        volume: Any | None,
+        failures: list[dict[str, Any]],
+        *,
+        ownership: str | None = None,
+    ) -> None:
+        """Remove `volume` if it is (or, when `ownership` is omitted, turns
+        out to be) managed by this LocalCloud instance. See
+        `_teardown_network_if_owned` for why this is shared."""
+        if volume is None:
+            return
+        resolved_ownership = (
+            ownership
+            if ownership is not None
+            else self._classify_resource(
+                volume, "volume", config.data_volume, allow_legacy_volume=True
+            )
+        )
+        if resolved_ownership != "managed":
+            return
+        _remove_verified(
+            volume,
+            "volume",
+            _removal_base_labels(volume, "volume", config.data_volume),
+            failures,
+            force=True,
+        )
 
     def recreation_ownership(
         self, config: LocalCloudConfig
@@ -635,33 +810,11 @@ class DockerRuntime:
         network = self._get_optional(
             self.client.networks, config.network_name, "network"
         )
-        if network is not None:
-            ownership = self._classify_resource(network, "network", config.data_volume)
-            if ownership == "managed":
-                _remove_verified(
-                    network,
-                    "network",
-                    _base_labels(config.data_volume, "network"),
-                    failures,
-                )
+        self._teardown_network_if_owned(config, network, failures)
         volume = self._get_optional(
             self.client.volumes, config.data_volume, "volume"
         )
-        if volume is not None:
-            ownership = self._classify_resource(volume,
-            "volume",
-            config.data_volume,
-            allow_legacy_volume=True,)
-            if ownership == "managed":
-                _remove_verified(
-                    volume,
-                    "volume",
-                    _removal_base_labels(
-                        volume, "volume", config.data_volume
-                    ),
-                    failures,
-                    force=True,
-                )
+        self._teardown_volume_if_owned(config, volume, failures)
         if failures:
             raise HostError(
                 "cleanup_failed",
@@ -674,12 +827,17 @@ class DockerRuntime:
         config: LocalCloudConfig,
         runtime: RuntimeRecord,
         tail: int = 200,
+        *,
+        since: float | None = None,
     ) -> str:
         if tail < 0:
             raise HostError("invalid_tail", "Log tail must be zero or greater")
         container, current = self._mutation_target(config, runtime)
         try:
-            output = container.logs(tail=tail, timestamps=True)
+            kwargs: dict[str, Any] = {"tail": tail, "timestamps": True}
+            if since is not None:
+                kwargs["since"] = since
+            output = container.logs(**kwargs)
         except Exception as error:
             raise HostError(
                 "logs_failed",
@@ -803,16 +961,142 @@ class DockerRuntime:
             result["warning"] = " ".join(warnings)
         return result
 
+    def cleanup_resources(
+        self, invalid: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        removed: list[dict[str, str]] = []
+        failures: list[dict[str, Any]] = []
+        for entry in invalid:
+            kind = entry["kind"]
+            name = entry.get("name")
+            if not name:
+                continue
+            if kind == "container":
+                collection = self.client.containers
+            elif kind == "network":
+                collection = self.client.networks
+            elif kind == "volume":
+                collection = self.client.volumes
+            else:
+                continue
+            resource = self._get_optional(collection, name, kind)
+            if resource is None:
+                continue
+            try:
+                if kind == "container":
+                    resource.remove(force=True, v=True)
+                elif kind == "volume":
+                    resource.remove(force=True)
+                else:
+                    resource.remove()
+            except Exception as error:  # noqa: BLE001
+                failures.append(
+                    {"kind": kind, "name": name, "cause": str(error)}
+                )
+                continue
+            removed.append({"kind": kind, "name": name})
+        return {"removed": removed, "failures": failures}
+
+    def image_status(self, image_name: str) -> str:
+        try:
+            self.client.images.get(image_name)
+            return "available locally"
+        except Exception:
+            return "not present"
+
+    @staticmethod
+    def _short_id_from_raw(raw_id: Any) -> str:
+        if not raw_id:
+            return "unknown"
+        return str(raw_id).removeprefix("sha256:")[:12]
+
+    @staticmethod
+    def _normalize_sha(sha: str | None, raw_id: Any) -> str:
+        if not sha:
+            sha = str(raw_id) if raw_id else "unknown"
+        if sha != "unknown" and not sha.startswith("sha256:"):
+            sha = f"sha256:{sha}"
+        return sha
+
+    @staticmethod
+    def _image_details_result(
+        location: str, short_id: str, sha: str
+    ) -> dict[str, Any]:
+        return {
+            "location": location,
+            "image_id": short_id,
+            "sha": sha,
+            "formatted": f"({location}: ID: {short_id} , {sha})",
+        }
+
+    def image_details(self, image_name: str) -> dict[str, Any]:
+        try:
+            image = self.client.images.get(image_name)
+            attrs = getattr(image, "attrs", None)
+            raw_id = getattr(image, "id", None) or (
+                attrs.get("Id") if isinstance(attrs, dict) else None
+            )
+            short_id = self._short_id_from_raw(raw_id)
+            sha = None
+            if isinstance(attrs, dict):
+                repo_digests = attrs.get("RepoDigests") or []
+                if isinstance(repo_digests, list):
+                    for rd in repo_digests:
+                        if "@" in str(rd):
+                            sha = str(rd).split("@", 1)[1]
+                            break
+                if not sha:
+                    desc_digest = attrs.get("Descriptor", {}).get("digest")
+                    if desc_digest:
+                        sha = str(desc_digest)
+            sha = self._normalize_sha(sha, raw_id)
+            return self._image_details_result("Local", short_id, sha)
+        except Exception:
+            try:
+                reg_data = self.client.images.get_registry_data(image_name)
+                attrs = getattr(reg_data, "attrs", None)
+                raw_id = getattr(reg_data, "id", None) or (
+                    attrs.get("Descriptor", {}).get("digest")
+                    if isinstance(attrs, dict)
+                    else None
+                )
+                short_id = self._short_id_from_raw(raw_id)
+                reg_sha = (
+                    attrs.get("Descriptor", {}).get("digest")
+                    if isinstance(attrs, dict)
+                    else None
+                )
+                reg_sha = self._normalize_sha(reg_sha, raw_id)
+                return self._image_details_result("Remote", short_id, reg_sha)
+            except Exception:
+                return self._image_details_result("Remote", "unknown", "unknown")
+
     @staticmethod
     def wait_ready(
         url: str,
-        timeout: float = 120.0,
+        *,
+        deadline: float,
         container: Any | None = None,
+        observer: Any | None = None,
     ) -> dict[str, Any]:
         normalized = _validate_base_url(url)
-        deadline = time.monotonic() + timeout
+        timeout = max(0.0, deadline - time.monotonic())
         last_error = "not attempted"
-        while time.monotonic() < deadline:
+
+        def _emit_logs() -> None:
+            if container is not None and observer is not None and hasattr(observer, "runtime_logs"):
+                try:
+                    logs = _container_logs(container, tail=12)
+                    if logs and not logs.startswith("<logs unavailable"):
+                        observer.runtime_logs(logs)
+                except Exception:
+                    pass
+
+        _emit_logs()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             if container is not None:
                 try:
                     container.reload()
@@ -830,18 +1114,29 @@ class DockerRuntime:
                             "logs": _container_logs(container),
                         },
                     )
+            _emit_logs()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             try:
-                response = httpx.get(f"{normalized}/health", timeout=3.0)
+                response = httpx.get(
+                    f"{normalized}/health",
+                    timeout=min(3.0, remaining),
+                )
                 if response.status_code == 200:
                     payload = response.json()
                     if payload.get("status") in {"healthy", "ok", "ready"}:
+                        _emit_logs()
                         return payload
                     last_error = f"health returned {payload}"
                 else:
                     last_error = f"HTTP {response.status_code}"
             except Exception as error:
                 last_error = str(error)
-            time.sleep(1.0)
+            _emit_logs()
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(1.0, remaining))
         raise HostError(
             "health_timeout",
             "LocalCloud did not become healthy",
@@ -1117,12 +1412,38 @@ class DockerRuntime:
         non_default = [name for name in networks if name not in {"bridge", "host", "none"}]
         return non_default[0] if non_default else (networks[0] if networks else None)
 
-    def _image_for_create(self, image_name: str) -> Any:
-        try:
-            return self.client.images.get(image_name)
-        except Exception as first_error:
+    def _image_for_create(
+        self, image_name: str, *, pull: bool = False
+    ) -> tuple[Any, bool]:
+        if pull:
             try:
-                return self.client.images.pull(image_name)
+                return self.client.images.pull(image_name), True
+            except Exception as error:
+                raise HostError(
+                    "invalid_image",
+                    "Selected LocalCloud image could not be pulled",
+                    {
+                        "image": image_name,
+                        "cause": str(error),
+                    },
+                ) from error
+        try:
+            return self.client.images.get(image_name), False
+        except Exception as first_error:
+            if not _is_not_found(first_error):
+                # Anything other than "image doesn't exist locally" (auth
+                # failure, daemon error, ...) isn't fixed by pulling and
+                # would just trigger a confusing, unrequested network pull.
+                raise HostError(
+                    "invalid_image",
+                    "Selected LocalCloud image could not be inspected",
+                    {
+                        "image": image_name,
+                        "cause": str(first_error),
+                    },
+                ) from first_error
+            try:
+                return self.client.images.pull(image_name), True
             except Exception as error:
                 raise HostError(
                     "invalid_image",
@@ -1254,6 +1575,25 @@ class DockerRuntime:
             ),
             True,
         )
+
+    @staticmethod
+    def _require_container_identity(
+        config: LocalCloudConfig,
+        expected_container_id: str | None,
+        current: RuntimeRecord,
+    ) -> RuntimeRecord:
+        if current.container_id != expected_container_id:
+            raise HostError(
+                "container_changed",
+                "The selected data volume now resolves to a different container",
+                {
+                    "data_volume": config.data_volume,
+                    "expected_container_id": expected_container_id,
+                    "actual_container_id": current.container_id,
+                },
+            )
+        return current
+
 
     def _mutation_target(
         self, config: LocalCloudConfig, runtime: RuntimeRecord
@@ -1538,6 +1878,45 @@ def _container_environment(
     environment.pop("LOCALCLOUD_INSTANCE", None)
     return environment
 
+def _format_docker_run(
+    image: str,
+    name: str,
+    network_name: str | None,
+    mem_limit: str | None,
+    volumes: Mapping[str, Any] | None,
+    ports: Mapping[str, Any] | None,
+    environment: Mapping[str, str] | None,
+    labels: Mapping[str, str] | None,
+) -> str:
+    args = ["docker", "run", "-d", "--name", name]
+    if network_name:
+        args.extend(["--network", network_name])
+    if mem_limit:
+        args.extend(["-m", str(mem_limit)])
+    if volumes:
+        for host_source, mount in sorted(volumes.items()):
+            bind = mount.get("bind", "") if isinstance(mount, dict) else str(mount)
+            mode = mount.get("mode", "rw") if isinstance(mount, dict) else "rw"
+            args.extend(["-v", f"{host_source}:{bind}:{mode}"])
+    if ports:
+        for container_port, binding in sorted(ports.items()):
+            if isinstance(binding, (tuple, list)):
+                host_ip, host_port = binding[0], binding[1]
+                if host_port is not None:
+                    args.extend(["-p", f"{host_ip}:{host_port}:{container_port}"])
+                else:
+                    args.extend(["-p", f"{host_ip}::{container_port}"])
+            else:
+                args.extend(["-p", str(binding)])
+    if environment:
+        for k, v in sorted(environment.items()):
+            args.extend(["-e", f"{k}={v}"])
+    if labels:
+        for k, v in sorted(labels.items()):
+            args.extend(["-l", f"{k}={v}"])
+    args.append(image)
+    return shlex.join(args)
+
 
 def _runtime_drift(
     actual: dict[str, Any] | None, config: LocalCloudConfig
@@ -1692,11 +2071,11 @@ def _container_environment_values(container: Any) -> dict[str, str]:
     return environment
 
 
-def _container_logs(container: Any) -> str:
+def _container_logs(container: Any, *, tail: int = 200) -> str:
     if container is None:
         return ""
     try:
-        output = container.logs(tail=200, timestamps=True)
+        output = container.logs(tail=tail, timestamps=True)
         return (
             output.decode("utf-8", errors="replace")
             if isinstance(output, bytes)
@@ -1704,7 +2083,6 @@ def _container_logs(container: Any) -> str:
         )
     except Exception as error:
         return f"<logs unavailable: {error}>"
-
 
 def _image_id(image: Any) -> str | None:
     value = getattr(image, "id", None) or getattr(image, "attrs", {}).get("Id")
@@ -1752,9 +2130,14 @@ def _normalize_image_reference(value: str) -> str:
     return f"{repository.lower()}{suffix}"
 
 
+def _resolve_readiness_deadline(deadline: float | None) -> float:
+    if deadline is not None:
+        return deadline
+    return time.monotonic() + _DEFAULT_READINESS_TIMEOUT
+
+
 def _port_is_free(port: int, kind: int = socket.SOCK_STREAM) -> bool:
     with socket.socket(socket.AF_INET, kind) as probe:
-        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind(("127.0.0.1", port))
             return True
@@ -1816,3 +2199,15 @@ def _is_not_found(error: Exception) -> bool:
         "NotFound",
         "ImageNotFound",
     }
+
+
+def _is_port_conflict(error: Exception) -> bool:
+    message = str(error).lower()
+    return any(
+        phrase in message
+        for phrase in (
+            "port is already allocated",
+            "address already in use",
+            "bind for",
+        )
+    )

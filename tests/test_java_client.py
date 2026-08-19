@@ -81,6 +81,187 @@ def test_rpc_transport_sends_selected_project_and_caller_headers(
     assert calls[0]["headers"]["X-LocalCloud-User"] == USER
 
 
+
+def test_tool_error_with_empty_content_list_raises_clean_host_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def post(url: str, **kwargs: Any) -> FakeResponse:
+        return FakeResponse(
+            {"result": {"isError": True, "content": []}}
+        )
+
+    monkeypatch.setattr(java_client_module.httpx, "post", post)
+
+    client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
+    with pytest.raises(HostError) as caught:
+        client.tool("localcloud_seed_project", {})
+
+    assert caught.value.code == "java_tool_error"
+    assert caught.value.message == "Java MCP tool failed"
+
+
+def test_missing_tool_detection_tolerates_wording_drift_and_json_rpc_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
+    projects = [{"project_id": PROJECT}]
+
+    def request(method: str, url: str, **kwargs: Any) -> FakeResponse:
+        payload = projects if method == "GET" else projects[0]
+        return FakeResponse(payload)
+
+    monkeypatch.setattr(java_client_module.httpx, "request", request)
+
+    def worded_differently(
+        name: str, arguments: dict[str, Any] | None = None
+    ) -> Any:
+        raise HostError(
+            "java_tool_error", f"Tool '{name}' Not Found", {"tool": name}
+        )
+
+    monkeypatch.setattr(client, "tool", worded_differently)
+    assert client.list_projects() == projects
+
+    def json_rpc_not_found(
+        name: str, arguments: dict[str, Any] | None = None
+    ) -> Any:
+        raise HostError(
+            "java_mcp_error",
+            "unregistered capability",
+            {
+                "method": "tools/call",
+                "tool": name,
+                "error": {"code": -32601, "message": "unregistered capability"},
+            },
+        )
+
+    monkeypatch.setattr(client, "tool", json_rpc_not_found)
+    assert client.list_projects() == projects
+
+    def unrelated_tool_failure(
+        name: str, arguments: dict[str, Any] | None = None
+    ) -> Any:
+        raise HostError("java_tool_error", "Invalid arguments", {"tool": name})
+
+    monkeypatch.setattr(client, "tool", unrelated_tool_failure)
+    with pytest.raises(HostError, match="Invalid arguments"):
+        client.list_projects()
+
+
+@pytest.mark.parametrize(
+    ("status_code", "retryable"),
+    [(403, False), (408, True), (429, True), (503, True)],
+)
+def test_mcp_transport_preserves_http_failure_details(
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+    retryable: bool,
+) -> None:
+    url = "http://127.0.0.1:49080/mcp"
+    request = java_client_module.httpx.Request("POST", url)
+    response = java_client_module.httpx.Response(
+        status_code, request=request
+    )
+
+    def post(*_args: Any, **_kwargs: Any) -> FakeResponse:
+        raise java_client_module.httpx.HTTPStatusError(
+            f"HTTP {status_code}",
+            request=request,
+            response=response,
+        )
+
+    monkeypatch.setattr(java_client_module.httpx, "post", post)
+
+    with pytest.raises(HostError) as caught:
+        JavaMcpClient(
+            "http://127.0.0.1:49080", PROJECT, USER
+        ).rpc("tools/list")
+
+    assert caught.value.code == "java_mcp_unavailable"
+    assert caught.value.details == {
+        "url": url,
+        "method": "tools/list",
+        "cause": f"HTTP {status_code}",
+        "retryable": retryable,
+        "status_code": status_code,
+    }
+    assert (
+        java_client_module.is_retryable_java_error(caught.value)
+        is retryable
+    )
+
+
+def test_mcp_transport_marks_connection_failure_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "http://127.0.0.1:49080/mcp"
+    request = java_client_module.httpx.Request("POST", url)
+
+    def post(*_args: Any, **_kwargs: Any) -> FakeResponse:
+        raise java_client_module.httpx.ConnectError(
+            "connection refused", request=request
+        )
+
+    monkeypatch.setattr(java_client_module.httpx, "post", post)
+
+    with pytest.raises(HostError) as caught:
+        JavaMcpClient(
+            "http://127.0.0.1:49080", PROJECT, USER
+        ).rpc("tools/list")
+
+    assert caught.value.details["retryable"] is True
+    assert "status_code" not in caught.value.details
+
+
+def test_mcp_transport_marks_remote_disconnect_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "http://127.0.0.1:49080/mcp"
+    request = java_client_module.httpx.Request("POST", url)
+
+    def post(*_args: Any, **_kwargs: Any) -> FakeResponse:
+        raise java_client_module.httpx.RemoteProtocolError(
+            "server disconnected",
+            request=request,
+        )
+
+    monkeypatch.setattr(java_client_module.httpx, "post", post)
+
+    with pytest.raises(HostError) as caught:
+        JavaMcpClient(
+            "http://127.0.0.1:49080", PROJECT, USER
+        ).rpc("tools/list")
+
+    assert caught.value.details["retryable"] is True
+
+
+def test_project_api_transport_preserves_http_failure_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "http://127.0.0.1:49080/projects"
+    request = java_client_module.httpx.Request("GET", url)
+    response = java_client_module.httpx.Response(503, request=request)
+
+    def request_call(*_args: Any, **_kwargs: Any) -> FakeResponse:
+        raise java_client_module.httpx.HTTPStatusError(
+            "HTTP 503", request=request, response=response
+        )
+
+    monkeypatch.setattr(
+        java_client_module.httpx, "request", request_call
+    )
+
+    with pytest.raises(HostError) as caught:
+        JavaMcpClient(
+            "http://127.0.0.1:49080", PROJECT, USER
+        )._project_api("GET")
+
+    assert caught.value.code == "java_project_api_unavailable"
+    assert caught.value.details["url"] == url
+    assert caught.value.details["method"] == "GET"
+    assert caught.value.details["status_code"] == 503
+    assert caught.value.details["retryable"] is True
+
 @pytest.mark.parametrize("operation", ["rpc", "forward"])
 def test_mcp_transports_reject_non_object_responses(
     monkeypatch: pytest.MonkeyPatch,

@@ -34,13 +34,19 @@ class McpAdapter:
                     "user": config.user,
                 },
             ) from error
-        self.endpoint_map = {
-            str(canonical): int(host_port)
-            for canonical, host_port in target["endpoint_map"].items()
-        }
-        self.java = JavaMcpClient(
-            target["url"], project=config.project, user=config.user
-        )
+        try:
+            self.endpoint_map = {
+                str(canonical): int(host_port)
+                for canonical, host_port in target["endpoint_map"].items()
+            }
+            url = target["url"]
+        except (KeyError, TypeError, ValueError, AttributeError) as error:
+            raise HostError(
+                "runtime_target_invalid",
+                "LocalCloud runtime target could not be resolved for MCP",
+                {"data_volume": config.data_volume, "cause": str(error)},
+            ) from error
+        self.java = JavaMcpClient(url, project=config.project, user=config.user)
 
     def handle(self, message: dict[str, Any]) -> dict[str, Any] | None:
         request_id = message.get("id")
@@ -71,7 +77,11 @@ class McpAdapter:
                 "error": {
                     "code": -32000,
                     "message": error.message,
-                    "data": error.to_dict(),
+                    # Only the error code crosses the wire - `details` may
+                    # carry upstream RPC bodies, container ids, or other
+                    # internals that shouldn't be forwarded to MCP clients
+                    # verbatim.
+                    "data": {"code": error.code},
                 },
             }
         except Exception as error:
@@ -119,5 +129,32 @@ async def _run_sdk(config: LocalCloudConfig) -> None:
                     )
                     response = adapter.handle(message)
                 if response is not None:
-                    parsed = types.jsonrpc_message_adapter.validate_python(response)
+                    try:
+                        parsed = types.jsonrpc_message_adapter.validate_python(
+                            response
+                        )
+                    except Exception as error:
+                        # A malformed response (e.g. an upstream Java MCP
+                        # payload forwarded verbatim that doesn't match the
+                        # local schema) must not kill the whole stdio bridge
+                        # for every subsequent request - degrade to a clean
+                        # error for this one message instead.
+                        fallback = {
+                            "jsonrpc": "2.0",
+                            "id": response.get("id"),
+                            "error": {
+                                "code": -32603,
+                                "message": (
+                                    "LocalCloud MCP adapter produced an "
+                                    "invalid response"
+                                ),
+                                "data": str(error),
+                            },
+                        }
+                        try:
+                            parsed = types.jsonrpc_message_adapter.validate_python(
+                                fallback
+                            )
+                        except Exception:
+                            continue
                     await write_stream.send(SessionMessage(parsed))

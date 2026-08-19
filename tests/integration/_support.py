@@ -13,6 +13,7 @@ from localcloud_cli.controller import Controller
 from localcloud_cli.docker_runtime import (
     VOLUME_NAME_LABEL,
     DockerRuntime,
+    RuntimeRecord,
 )
 
 
@@ -31,6 +32,41 @@ def controller_for(
         tmp_path / "localcloud-home" / "locks",
     )
     return Controller(runtime=runtime, paths=paths), runtime, image
+
+
+def default_runtime_for(
+    tmp_path: Path,
+) -> tuple[Controller, DockerRuntime, LocalCloudConfig, RuntimeRecord]:
+    controller, runtime, _image = controller_for(tmp_path)
+    config = load_config(directory=tmp_path, paths=controller.paths)
+    try:
+        current = runtime.resolve(config, require=True)
+    except Exception as error:
+        pytest.fail(f"default_runtime_prerequisite_unavailable: {error}")
+    if current is None:  # pragma: no cover - require=True is exhaustive.
+        raise AssertionError("default runtime resolution returned no record")
+    if current.state != "running":
+        pytest.fail(
+            "default_runtime_prerequisite_unavailable: "
+            f"{config.data_volume} container {current.container_id} "
+            f"is {current.state}, not running"
+        )
+    if (
+        current.ownership.get("container") == "managed"
+        and current.config_hash != config.config_hash
+    ):
+        pytest.fail(
+            "default_runtime_prerequisite_unavailable: "
+            f"{config.data_volume} container {current.container_id} has "
+            "configuration drift that would make `localcloud start` replace it"
+        )
+    if current.url is None:
+        pytest.fail(
+            "default_runtime_prerequisite_unavailable: "
+            f"{config.data_volume} container {current.container_id} "
+            "does not publish the LocalCloud gateway"
+        )
+    return controller, runtime, config, current
 
 
 def write_config(

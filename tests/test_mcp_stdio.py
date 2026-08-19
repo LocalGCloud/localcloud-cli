@@ -101,6 +101,41 @@ def test_unknown_project_error_is_not_rewritten_as_runtime_failure() -> None:
     )
 
 
+def test_host_error_details_are_not_forwarded_to_mcp_client() -> None:
+    class FailingJava(FakeJava):
+        def forward(self, message: dict[str, Any]) -> dict[str, Any] | None:
+            raise HostError(
+                "java_mcp_unavailable",
+                "Java LocalCloud MCP request failed",
+                {
+                    "url": "http://127.0.0.1:49080/mcp",
+                    "cause": "connection reset by internal-host-1.local",
+                },
+            )
+
+    adapter = McpAdapter(CONFIG, controller=RunningController())
+    adapter.java = FailingJava("http://127.0.0.1:49080", PROJECT, USER)
+
+    response = adapter.handle(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {}}
+    )
+
+    assert response is not None
+    assert response["error"]["data"] == {"code": "java_mcp_unavailable"}
+    assert "internal-host-1.local" not in str(response)
+
+
+def test_malformed_target_raises_clean_host_error_not_key_error() -> None:
+    class MalformedController:
+        def target(self, _config: LocalCloudConfig) -> dict[str, Any]:
+            return {"url": "http://127.0.0.1:49080"}  # missing endpoint_map
+
+    with pytest.raises(HostError) as caught:
+        McpAdapter(CONFIG, controller=MalformedController())
+
+    assert caught.value.code == "runtime_target_invalid"
+
+
 def test_running_bridge_lists_only_java_tools_and_preserves_initialize() -> None:
     FakeJava.responses = {
         "initialize": {

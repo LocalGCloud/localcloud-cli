@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from pathlib import Path
 from typing import Any
 
@@ -186,6 +187,8 @@ class Images:
 
     def pull(self, name: str) -> Image:
         self.pulls.append(name)
+        if name not in self.by_name:
+            self.add(name, Image(f"sha256:{name}"))
         return self.get(name)
 
 
@@ -314,7 +317,9 @@ def ready_runtime(monkeypatch: pytest.MonkeyPatch) -> tuple[DockerRuntime, Clien
     monkeypatch.setattr(
         DockerRuntime,
         "wait_ready",
-        staticmethod(lambda _url, timeout=120.0, container=None: {"status": "healthy"}),
+        staticmethod(
+            lambda _url, *, deadline, container=None, **_kwargs: {"status": "healthy"}
+        ),
     )
     return runtime, client
 
@@ -357,6 +362,37 @@ def test_managed_create_uses_data_volume_ownership_and_fixed_bootstrap_project(
         "localcloud-data"
     )
 
+
+
+def test_port_probe_rejects_occupied_tcp_port() -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = int(listener.getsockname()[1])
+
+        assert runtime_module._port_is_free(port) is False
+
+
+def test_occupied_canonical_port_requests_dynamic_complete_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = Client()
+    runtime = DockerRuntime(client=client)
+    config = _config(tmp_path)
+    image = client.images.get(config.image)
+    monkeypatch.setattr(
+        runtime_module,
+        "_port_is_free",
+        lambda port, *_args: port != 24080,
+    )
+
+    bindings = runtime._port_bindings(config, image)
+
+    assert bindings == {
+        "24080/tcp": ("127.0.0.1", None),
+        "24081/tcp": ("127.0.0.1", None),
+    }
 
 def test_managed_create_rejects_image_without_runtime_ownership_capability(
     tmp_path: Path,
@@ -465,6 +501,95 @@ def test_external_stopped_container_start_stop_restart_preserve_every_resource(
     assert network.removed == []
     assert volume.removed == []
     assert external.labels == {}
+
+
+def test_start_waits_without_restarting_and_returns_refreshed_health(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime, client = ready_runtime
+    external = _add_external(client)
+    external.attrs["State"]["Health"]["Status"] = "starting"
+    config = _config(tmp_path)
+    record = runtime.resolve(config)
+    assert record is not None
+    assert record.health == "starting"
+
+    def mark_ready(
+        _url: str,
+        *,
+        deadline: float,
+        container: Resource | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, str]:
+        assert 0 < deadline - runtime_module.time.monotonic() <= 60.0
+        assert container is external
+        external.attrs["State"]["Health"]["Status"] = "healthy"
+        return {"status": "healthy"}
+
+    monkeypatch.setattr(
+        DockerRuntime,
+        "wait_ready",
+        staticmethod(mark_ready),
+    )
+
+    started = runtime.start(
+        config,
+        record,
+        readiness_deadline=runtime_module.time.monotonic() + 60.0,
+    )
+
+    assert started.container_id == external.id
+    assert started.health == "healthy"
+    assert external.started == 0
+    assert external.restarted == 0
+
+
+def test_start_rejects_container_replacement_during_readiness(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime, client = ready_runtime
+    selected = _add_external(client)
+    config = _config(tmp_path)
+    record = runtime.resolve(config)
+    assert record is not None
+
+    def replace_selected(
+        _url: str,
+        *,
+        deadline: float,
+        container: Resource | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, str]:
+        assert deadline > runtime_module.time.monotonic()
+        assert container is selected
+        client.containers.values.pop(selected.name)
+        _add_external(client, name="replacement-localcloud")
+        return {"status": "healthy"}
+
+    monkeypatch.setattr(
+        DockerRuntime,
+        "wait_ready",
+        staticmethod(replace_selected),
+    )
+
+    with pytest.raises(HostError) as caught:
+        runtime.start(
+            config,
+            record,
+            readiness_deadline=runtime_module.time.monotonic() + 60.0,
+        )
+
+    assert caught.value.code == "container_changed"
+    assert caught.value.details["expected_container_id"] == selected.id
+    assert caught.value.details["actual_container_id"] == (
+        "id-replacement-localcloud"
+    )
+    assert selected.started == 0
+    assert selected.restarted == 0
 
 
 @pytest.mark.parametrize(
@@ -863,11 +988,88 @@ def test_wait_ready_uses_health_and_fails_immediately_when_container_exits(
 
     with pytest.raises(HostError) as caught:
         DockerRuntime.wait_ready(
-            "http://127.0.0.1:24080", timeout=1.0, container=container
+            "http://127.0.0.1:24080",
+            deadline=1.0,
+            container=container,
         )
 
     assert caught.value.code == "container_start_failed"
     assert caught.value.details["state"] == "exited"
+
+
+def test_wait_ready_streams_logs_to_observer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    container = Resource("localcloud", state="running")
+
+    class MockObserver:
+        def __init__(self) -> None:
+            self.emitted: list[str] = []
+
+        def runtime_logs(self, logs: str) -> None:
+            self.emitted.append(logs)
+
+    observer = MockObserver()
+    class MockResponse:
+        status_code = 200
+        def json(self) -> dict[str, str]:
+            return {"status": "healthy"}
+
+    monkeypatch.setattr(
+        runtime_module.httpx,
+        "get",
+        lambda _url, **_kwargs: MockResponse(),
+    )
+    result = DockerRuntime.wait_ready(
+        "http://127.0.0.1:24080",
+        deadline=runtime_module.time.monotonic() + 5.0,
+        container=container,
+        observer=observer,
+    )
+
+    assert result == {"status": "healthy"}
+    assert observer.emitted
+    assert "container log" in observer.emitted[0]
+
+def test_wait_ready_bounds_requests_and_sleep_by_absolute_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [0.0]
+    request_timeouts: list[float] = []
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        runtime_module.time,
+        "monotonic",
+        lambda: now[0],
+    )
+
+    def fail_after_timeout(
+        _url: str,
+        *,
+        timeout: float,
+    ) -> None:
+        request_timeouts.append(timeout)
+        now[0] += timeout
+        raise TimeoutError("health request timed out")
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr(runtime_module.httpx, "get", fail_after_timeout)
+    monkeypatch.setattr(runtime_module.time, "sleep", sleep)
+
+    with pytest.raises(HostError) as caught:
+        DockerRuntime.wait_ready(
+            "http://127.0.0.1:24080",
+            deadline=5.0,
+        )
+
+    assert caught.value.code == "health_timeout"
+    assert caught.value.details["timeout_seconds"] == 5.0
+    assert now[0] == 5.0
+    assert request_timeouts == [3.0, 1.0]
+    assert sleeps == [1.0]
 
 
 @pytest.mark.parametrize(
@@ -881,7 +1083,10 @@ def test_wait_ready_uses_health_and_fails_immediately_when_container_exits(
 )
 def test_wait_ready_rejects_nonlocal_or_unsafe_urls(url: str) -> None:
     with pytest.raises(HostError) as caught:
-        DockerRuntime.wait_ready(url, timeout=0)
+        DockerRuntime.wait_ready(
+            url,
+            deadline=runtime_module.time.monotonic(),
+        )
     assert caught.value.code in {"invalid_endpoint", "nonlocal_endpoint"}
 
 
@@ -903,3 +1108,218 @@ def test_doctor_reports_collisions_invalid_ownership_and_legacy_resources(
     assert result["volume_collisions"][0]["data_volume"] == "shared-data"
     assert result["invalid_ownership"][0]["name"] == "broken-network"
     assert "will not be mutated" in result["warning"]
+
+
+def test_cleanup_resources_removes_invalid_ownership(
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    client.networks.add(
+        Resource("broken-network", {MANAGED_LABEL: "true"})
+    )
+
+    report = runtime.doctor()
+    invalid_ownership = report["invalid_ownership"]
+    assert invalid_ownership[0]["name"] == "broken-network"
+
+    result = runtime.cleanup_resources(invalid_ownership)
+
+    assert result["removed"] == [{"kind": "network", "name": "broken-network"}]
+    assert result["failures"] == []
+    assert "broken-network" not in client.networks.values
+
+
+def test_image_status_reports_local_and_missing(
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    client.images.add("present:latest", Image("sha256:present"))
+
+    assert runtime.image_status("present:latest") == "available locally"
+    assert runtime.image_status("absent:latest") == "not present"
+
+
+def test_image_details_reports_local_and_remote(
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    client.images.add("present:latest", Image("sha256:present_qualified_id_1234567890"))
+
+    local_details = runtime.image_details("present:latest")
+    assert local_details["location"] == "Local"
+    assert local_details["image_id"] == "present_qual"
+    assert local_details["sha"] == "sha256:present_qualified_id_1234567890"
+    assert local_details["formatted"] == "(Local: ID: present_qual , sha256:present_qualified_id_1234567890)"
+
+    remote_details = runtime.image_details("absent:latest")
+    assert remote_details["location"] == "Remote"
+    assert remote_details["formatted"] == "(Remote: ID: unknown , unknown)"
+
+def test_create_sets_image_status_from_pull(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    record = runtime.create(config)
+
+    assert record.image_status == "available locally"
+    assert client.images.pulls == []
+
+    # Now test the pull path by removing the image name.
+    client.images.by_name.pop(config.image, None)
+    runtime.remove(config, record, remove_volume=True)
+    record2 = runtime.create(config)
+
+    assert record2.image_status == "pulled from registry"
+    assert client.images.pulls == [config.image]
+
+def test_create_with_explicit_pull_forces_images_pull(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    record = runtime.create(config, pull=True)
+
+    assert record.image_status == "pulled from registry"
+    assert client.images.pulls == [config.image]
+
+
+def test_preflight_create_pull_failure_raises_host_error(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+
+    def failing_pull(_name: str) -> None:
+        raise RuntimeError("network down")
+
+    client.images.pull = failing_pull  # type: ignore[assignment]
+    with pytest.raises(HostError) as caught:
+        runtime.preflight_create(config, pull=True)
+    assert caught.value.code == "invalid_image"
+
+
+def test_preflight_create_non_missing_image_error_does_not_attempt_pull(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+
+    class DaemonError(Exception):
+        status_code = 500
+
+    def failing_get(_name: str) -> None:
+        raise DaemonError("daemon overloaded")
+
+    client.images.get = failing_get  # type: ignore[assignment]
+    with pytest.raises(HostError) as caught:
+        runtime.preflight_create(config, pull=False)
+
+    assert caught.value.code == "invalid_image"
+    assert client.images.pulls == []
+
+
+def test_create_reports_port_conflict_when_bind_races_preflight(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+
+    def racing_run(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError(
+            "driver failed programming external connectivity on endpoint "
+            "localcloud: Bind for 0.0.0.0:24080 failed: port is already "
+            "allocated"
+        )
+
+    client.containers.run = racing_run  # type: ignore[assignment]
+    with pytest.raises(HostError) as caught:
+        runtime.create(config)
+
+    assert caught.value.code == "port_no_longer_available"
+
+
+def test_resolve_records_configured_image_id_when_local_image_differs(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    record = runtime.create(config)
+    original_image_id = record.image_id
+    assert record.configured_image_id == original_image_id
+
+    # Simulate pulling/building a new image with the same tag name locally
+    new_image = Image("sha256:newer-image-id")
+    client.images.add(config.image, new_image)
+
+    resolved = runtime.resolve(config)
+    assert resolved is not None
+    assert resolved.image_id == original_image_id
+    assert resolved.configured_image_id == "sha256:newer-image-id"
+    assert resolved.image_id != resolved.configured_image_id
+
+def test_format_docker_run_produces_valid_command_string() -> None:
+    from localcloud_cli.docker_runtime import _format_docker_run
+
+    cmd = _format_docker_run(
+        image="jaysen2apache/localcloud:latest",
+        name="localcloud",
+        network_name="localcloud-net",
+        mem_limit="4g",
+        volumes={"localcloud-data": {"bind": "/var/lib/localcloud", "mode": "rw"}},
+        ports={"24080/tcp": ("127.0.0.1", 24080), "24081/tcp": ("127.0.0.1", None)},
+        environment={"LOCALCLOUD_PROJECT": "default"},
+        labels={"managed": "true"},
+    )
+    assert cmd.startswith("docker run -d --name localcloud")
+    assert "--network localcloud-net" in cmd
+    assert "-m 4g" in cmd
+    assert "-v localcloud-data:/var/lib/localcloud:rw" in cmd
+    assert "-p 127.0.0.1:24080:24080/tcp" in cmd
+    assert "-p 127.0.0.1::24081/tcp" in cmd
+    assert "-e LOCALCLOUD_PROJECT=default" in cmd
+    assert "-l managed=true" in cmd
+    assert cmd.endswith("jaysen2apache/localcloud:latest")
+
+
+def test_docker_runtime_emits_debug_commands_to_observer(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+
+    class DebugObserver:
+        def __init__(self) -> None:
+            self.debug_messages: list[str] = []
+            self.emitted_logs: list[str] = []
+
+        def debug(self, msg: str) -> None:
+            self.debug_messages.append(msg)
+
+        def runtime_logs(self, logs: str) -> None:
+            self.emitted_logs.append(logs)
+
+    observer = DebugObserver()
+    runtime.create(config, observer=observer)
+    assert len(observer.debug_messages) == 1
+    assert observer.debug_messages[0].startswith("docker run -d --name localcloud")
+
+    # Start stopped container
+    record = runtime.resolve(config)
+    assert record is not None
+    container = client.containers.get(record.container_id)
+    container.attrs["State"]["Status"] = "exited"
+    runtime.start(config, record, observer=observer)
+    assert any(msg.startswith("docker start") for msg in observer.debug_messages)
+
+    # Restart container
+    runtime.restart(config, record, observer=observer)
+    assert any(msg.startswith("docker restart -t 20") for msg in observer.debug_messages)
+

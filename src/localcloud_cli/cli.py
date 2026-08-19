@@ -6,10 +6,13 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
+import inspect
 
 from . import __version__
 from .config import (
     DEFAULT_DATA_VOLUME,
+    DEFAULT_PROJECT,
+    DEFAULT_USER,
     HostPaths,
     LocalCloudConfig,
     load_active_runtime,
@@ -33,16 +36,27 @@ _RUNTIME_COMMANDS = {
     "start", "restart", "reset", "stop", "status", "logs", "console", "env", "mcp"
 }
 _PROGRESS_COMMANDS = {
-    "doctor", "start", "restart", "reset", "stop", "status", "logs", "console", "env"
+    "doctor", "cleanup", "start", "restart", "reset", "stop", "status", "logs", "console", "env"
 }
 
 
 class _ExecutionObserver:
-    def __init__(self, reporter: LifecycleReporter):
+    def __init__(self, reporter: LifecycleReporter, *, debug: bool = False):
         self.reporter = reporter
+        self.debug_enabled = debug
+        self._seen_lines: set[str] = set()
+        self._emitted_history: list[str] = []
 
+    def debug(self, message: str) -> None:
+        if self.debug_enabled:
+            self.reporter.write_line(f"[debug] {message}")
     def config(self, command: str, config: LocalCloudConfig, args: argparse.Namespace) -> None:
-        if command not in {"start", "restart", "reset"}:
+        if command not in {"start", "restart", "reset", "stop", "status"}:
+            return
+        if command == "start":
+            self.reporter.update(
+                f"Checking data volume {config.data_volume!r} for project {config.project!r}…"
+            )
             return
         if command == "reset":
             action = (
@@ -50,15 +64,16 @@ class _ExecutionObserver:
                 if args.all_projects
                 else "Resetting project data in"
             )
+        elif command == "stop":
+            action = "Stopping"
+        elif command == "status":
+            action = "Inspecting"
         else:
-            action = "Starting" if command == "start" else "Restarting"
+            action = "Restarting"
         message = (
             f"{action} data volume {config.data_volume!r} "
             f"for project {config.project!r}…"
         )
-        if command == "reset":
-            self.reporter.update(message)
-            return
         services: str | tuple[str, ...] = config.services or "default"
         panel = PanelContext(
             data_volume=config.data_volume,
@@ -69,6 +84,59 @@ class _ExecutionObserver:
             config=str(config.config_path) if config.config_path is not None else None,
         )
         self.reporter.update(message, panel)
+
+    def starting(self, config: LocalCloudConfig) -> None:
+        message = (
+            f"Starting data volume {config.data_volume!r} "
+            f"for project {config.project!r}…"
+        )
+        services: str | tuple[str, ...] = config.services or "default"
+        panel = PanelContext(
+            data_volume=config.data_volume,
+            project=config.project,
+            user=config.user,
+            services=services,
+            data=config.data,
+            config=str(config.config_path) if config.config_path is not None else None,
+        )
+        self.reporter.update(message, panel)
+
+    def doctor(self, args: argparse.Namespace) -> None:
+        data_volume = getattr(args, "data_volume", None) or DEFAULT_DATA_VOLUME
+        project = getattr(args, "project_id", None) or DEFAULT_PROJECT
+        user = getattr(args, "user", None) or DEFAULT_USER
+        panel = PanelContext(
+            data_volume=data_volume,
+            project=project,
+            user=user,
+            services="default",
+            data="persistent",
+            config=None,
+        )
+        self.reporter.update("Inspecting Docker and legacy LocalCloud state…", panel)
+
+    def runtime_logs(self, logs: str) -> None:
+        if not logs or logs.startswith("<logs unavailable"):
+            return
+        batch = [line.rstrip("\r\n") for line in logs.splitlines() if line.rstrip("\r\n")]
+        if not batch:
+            return
+        if not self._emitted_history:
+            new_lines = batch
+        else:
+            max_k = min(len(self._emitted_history), len(batch))
+            matched = False
+            for k in range(max_k, 0, -1):
+                if self._emitted_history[-k:] == batch[:k]:
+                    new_lines = batch[k:]
+                    matched = True
+                    break
+            if not matched:
+                new_lines = [l for l in batch if l not in self._seen_lines]
+        for line in new_lines:
+            self._seen_lines.add(line)
+            self._emitted_history.append(line)
+            self.reporter.write_line(line)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -87,12 +155,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     verbose = bool(getattr(args, "verbose", False))
+    debug = bool(getattr(args, "debug", False))
     reporter = LifecycleReporter(verbose=verbose)
     reports_progress = args.command in _PROGRESS_COMMANDS
     if reports_progress:
         reporter.start(_initial_task(args))
     try:
-        result = _execute(args, observer=_ExecutionObserver(reporter))
+        result = _execute(args, observer=_ExecutionObserver(reporter, debug=debug))
         if reports_progress:
             reporter.succeed(_success_message(args, result))
         _print_result(args, result, fields)
@@ -102,10 +171,28 @@ def main(argv: list[str] | None = None) -> int:
             reporter.fail(error.message)
         _print_error(args, error)
         return 2
-    except BaseException:
+    except (KeyboardInterrupt, SystemExit):
         if reports_progress:
             reporter.fail("LocalCloud command interrupted")
         raise
+    except Exception as error:
+        # Anything that isn't a KeyboardInterrupt/SystemExit and wasn't
+        # already raised as a HostError is an unexpected bug, not a user
+        # interruption - give it the same clean-error treatment instead of a
+        # raw traceback, and only surface the traceback when --debug is set.
+        if reports_progress:
+            reporter.fail("LocalCloud command failed unexpectedly")
+        _print_error(
+            args,
+            HostError(
+                "unexpected_error",
+                f"LocalCloud command failed unexpectedly: {error}",
+                {"type": type(error).__name__, "cause": str(error)},
+            ),
+        )
+        if debug:
+            raise
+        return 1
     finally:
         reporter.close()
 
@@ -120,14 +207,27 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
 
     controller = Controller()
     if args.command == "doctor":
+        if observer is not None:
+            observer.doctor(args)
         return controller.doctor()
+    if args.command == "cleanup":
+        return controller.cleanup(dry_run=args.dry_run)
 
     if args.command in _RUNTIME_COMMANDS:
         config = _command_config(controller, args)
         if observer is not None:
             observer.config(args.command, config, args)
         if args.command in {"start", "restart"}:
-            return getattr(controller, args.command)(config)
+            command = getattr(controller, args.command)
+            kwargs: dict[str, Any] = {}
+            signature = inspect.signature(command)
+            if "pull" in signature.parameters and getattr(args, "pull", False):
+                kwargs["pull"] = True
+            if "tail" in signature.parameters and hasattr(args, "tail"):
+                kwargs["tail"] = args.tail
+            if observer is not None and "observer" in signature.parameters:
+                kwargs["observer"] = observer
+            return command(config, **kwargs)
         if args.command == "reset":
             return controller.reset(config, all_projects=args.all_projects)
         if args.command == "stop":
@@ -245,6 +345,8 @@ def _initial_task(args: argparse.Namespace) -> str:
     command = args.command
     if command == "doctor":
         return "Inspecting Docker and legacy LocalCloud state…"
+    if command == "cleanup":
+        return "Checking for cleanup candidates…" if args.dry_run else "Cleaning up LocalCloud state…"
     if command in {"start", "restart"}:
         return f"Preparing LocalCloud {command}…"
     if command == "reset":
@@ -266,10 +368,23 @@ def _initial_task(args: argparse.Namespace) -> str:
 def _success_message(args: argparse.Namespace, result: Any) -> str:
     command = args.command
     status = result.get("status") if isinstance(result, dict) else None
-    if command in {"start", "restart"}:
+    if command == "start":
+        if status == "already_running":
+            return (
+                "LocalCloud runtime is already running; run 'localcloud stop' "
+                "first if you want to start again, or 'localcloud restart' to restart"
+            )
+        return "LocalCloud is ready"
+    if command == "restart":
         return "LocalCloud is ready"
     if command == "doctor":
         return "LocalCloud checks completed"
+    if command == "cleanup":
+        return (
+            "LocalCloud cleanup dry-run completed"
+            if result.get("dry_run")
+            else "LocalCloud cleanup completed"
+        )
     if command == "reset":
         return "LocalCloud data reset completed"
     if command == "stop":
@@ -312,6 +427,21 @@ def _parser() -> argparse.ArgumentParser:
         description="Check Docker access and detect legacy LocalCloud state.",
     )
     _add_output_options(doctor, fields=True)
+    cleanup = commands.add_parser(
+        "cleanup",
+        help="Remove malformed LocalCloud Docker resources, stale runtime state, and legacy host files",
+        description=(
+            "Remove malformed LocalCloud Docker resources, stale runtime state, "
+            "and legacy host files. Performs removal by default; use --dry-run "
+            "to inspect without removing."
+        ),
+    )
+    cleanup.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Inspect what would be removed without deleting resources",
+    )
+    _add_output_options(cleanup, fields=True)
 
     lifecycle_help = {
         "start": "Start the runtime selected by data volume and prepare a project",
@@ -332,6 +462,30 @@ def _parser() -> argparse.ArgumentParser:
         _add_context(command)
         _add_resource_names(command)
         _add_output_options(command, fields=True)
+        if name in {"start", "restart"}:
+            command.add_argument(
+                "--pull",
+                action=argparse.BooleanOptionalAction,
+                default=False,
+                help=(
+                    "Pull the latest image from the registry before running (default: --no-pull)"
+                    if name == "start"
+                    else "Pull the latest image from the registry before restarting (default: --no-pull)"
+                ),
+            )
+            command.add_argument(
+                "--tail",
+                nargs="?",
+                const=-1.0,
+                default=5.0,
+                type=_tail_seconds,
+                metavar="SECONDS",
+                help=(
+                    "Duration in seconds to tail logs after start (default: 5; omit value for continuous streaming)"
+                    if name == "start"
+                    else "Duration in seconds to tail logs after restart (default: 5; omit value for continuous streaming)"
+                ),
+            )
         if name == "reset":
             command.add_argument(
                 "--all-projects",
@@ -390,6 +544,7 @@ def _parser() -> argparse.ArgumentParser:
         default="shell",
         help="Output format (default: shell)",
     )
+    _add_output_options(env_command, fields=True)
 
     mcp = commands.add_parser(
         "mcp",
@@ -397,6 +552,7 @@ def _parser() -> argparse.ArgumentParser:
         description="Run the stdio MCP bridge for the selected runtime.",
     )
     _add_context(mcp)
+    _add_output_options(mcp, fields=False)
     return parser
 
 
@@ -420,6 +576,11 @@ def _add_output_options(parser: argparse.ArgumentParser, *, fields: bool) -> Non
             action="store_true",
             help="Print the complete JSON result instead of the command payload",
         )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print debug information including Docker commands executed",
+    )
 
 
 def _add_data_volume(parser: argparse.ArgumentParser) -> None:
@@ -464,9 +625,23 @@ def _add_resource_names(parser: argparse.ArgumentParser) -> None:
         help="Override the managed Docker network name",
     )
 
+def _tail_seconds(value: str) -> float:
+    try:
+        val = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            f"Tail duration must be a valid number of seconds: {value!r}"
+        ) from error
+    if val < 0:
+        raise argparse.ArgumentTypeError("Tail duration in seconds must be zero or greater")
+    return val
+
 
 def _non_negative_int(value: str) -> int:
-    parsed = int(value)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("must be an integer") from None
     if parsed < 0:
         raise argparse.ArgumentTypeError("must be zero or greater")
     return parsed

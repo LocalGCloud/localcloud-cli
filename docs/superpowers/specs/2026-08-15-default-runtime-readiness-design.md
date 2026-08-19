@@ -55,9 +55,9 @@ Reuse the same immutable container ID. Do not create, replace, restart, relabel,
 
 Retain the existing managed-replacement rules. Replacement is allowed only when current ownership validation permits it. Attached runtime drift remains diagnostic and never causes replacement.
 
-### Selected runtime is unhealthy
+### Selected runtime is not yet ready
 
-Retain the existing ownership boundary. A managed runtime may use the existing recovery path. An attached runtime is not restarted implicitly and fails with actionable diagnostics.
+Keep the same immutable container ID and wait within the shared readiness deadline without restarting it, regardless of ownership. If readiness does not recover, fail with the existing actionable health diagnostics. An explicit `restart` command retains its separate lifecycle semantics.
 
 ## Operational Readiness
 
@@ -112,7 +112,7 @@ Every normal Docker-marked CLI integration test uses the default values:
 
 The normal Docker CLI suite requires one compatible default-volume container to be running. An absent, stopped, incompatible, or colliding default runtime is a failed prerequisite with a specific diagnostic. Unit tests and the Linux release-artifact lifecycle job retain creation and stopped-container coverage.
 
-Before invoking `start`, the integration prerequisite helper performs only read-only polling until the default project and the `analytics-smoke` seeded resources are visible, then snapshots the selected Docker identities. If that prerequisite does not become ready within 60 seconds, the test fails without invoking a command that could create project or seed data. Production `start` readiness is covered independently by focused controller tests.
+Before invoking `start`, the integration prerequisite helper performs only read-only polling until the default CLI project and the built-in `local-project` seed data are visible, then snapshots the selected Docker identities. If that prerequisite does not become ready within 60 seconds, the test fails without invoking a command that could create project or seed data. Production `start` readiness is covered independently by focused controller tests.
 
 The suite waits for up to 60 seconds using read-only checks and then verifies:
 
@@ -121,7 +121,7 @@ The suite waits for up to 60 seconds using read-only checks and then verifies:
 3. `env` and generated MCP configuration target that same runtime and default project context.
 4. The Java MCP project catalog is readable and contains the default project.
 5. Read-only service inventory calls succeed.
-6. The deterministic pre-seeded `analytics-smoke` resources pass the existing concrete inventory and HTTP verification declarations.
+6. The deterministic pre-seeded GCS buckets and BigQuery datasets in `local-project` pass concrete inventory and data-plane HTTP checks.
 7. Docker container, network, and volume identities are unchanged before and after the checks.
 
 The normal Docker CLI suite must not invoke:

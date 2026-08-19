@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 from importlib.metadata import distribution
 from pathlib import Path
@@ -18,20 +19,43 @@ class FakeController:
     def __init__(self) -> None:
         type(self).instance = self
         self.calls: list[tuple[str, Any]] = []
+        self.pull_calls: list[tuple[str, bool]] = []
+        self.tail_calls: list[tuple[str, float | None]] = []
         self.remembered: str | None = None
 
     def remembered_config(self, config: Any) -> str | None:
         self.calls.append(("remembered_config", config))
         return self.remembered
 
-    def start(self, config: Any) -> dict[str, Any]:
+    def start(
+        self,
+        config: Any,
+        *,
+        pull: bool = False,
+        tail: float | None = None,
+        observer: Any | None = None,
+    ) -> dict[str, Any]:
         self.calls.append(("start", config))
+        self.pull_calls.append(("start", pull))
+        self.tail_calls.append(("start", tail))
+        if observer is not None and hasattr(observer, "debug"):
+            observer.debug("docker run -d --name localcloud ...")
         return {"status": "started", "data_volume": config.data_volume}
 
-    def restart(self, config: Any) -> dict[str, Any]:
+    def restart(
+        self,
+        config: Any,
+        *,
+        pull: bool = False,
+        tail: float | None = None,
+        observer: Any | None = None,
+    ) -> dict[str, Any]:
         self.calls.append(("restart", config))
+        self.pull_calls.append(("restart", pull))
+        self.tail_calls.append(("restart", tail))
+        if observer is not None and hasattr(observer, "debug"):
+            observer.debug("docker restart -t 20 localcloud")
         return {"status": "restarted", "data_volume": config.data_volume}
-
     def reset(self, config: Any, *, all_projects: bool = False) -> dict[str, Any]:
         self.calls.append(("reset", (config, all_projects)))
         return {
@@ -64,7 +88,15 @@ class FakeController:
 
     def doctor(self) -> dict[str, Any]:
         self.calls.append(("doctor", None))
-        return {"status": "ok"}
+        return {
+            "status": "ok",
+            "default_image": "jaysen2apache/localcloud:latest (Local: ID: qualified , sha256:qualified)",
+        }
+
+    def cleanup(self, *, confirm: bool | None = None, dry_run: bool = False) -> dict[str, Any]:
+        is_dry_run = not confirm if confirm is not None else dry_run
+        self.calls.append(("cleanup", not is_dry_run))
+        return {"status": "ok", "dry_run": is_dry_run}
 
 
 @pytest.fixture(autouse=True)
@@ -372,3 +404,182 @@ def test_main_returns_structured_host_error_when_verbose(
     error = json.loads(capsys.readouterr().err)
     assert error["error"] is True
     assert error["code"] == "runtime_not_running"
+
+
+def test_main_reports_unexpected_exception_as_clean_error(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(_self: FakeController, _config: Any) -> dict[str, Any]:
+        raise ValueError("boom")
+
+    monkeypatch.setattr(FakeController, "status", fail)
+    assert main(["status"]) == 1
+    captured = capsys.readouterr()
+    assert "Error [unexpected_error]" in captured.err
+    assert "boom" in captured.err
+
+
+def test_main_reraises_unexpected_exception_when_debug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(_self: FakeController, _config: Any) -> dict[str, Any]:
+        raise ValueError("boom")
+
+    monkeypatch.setattr(FakeController, "status", fail)
+    with pytest.raises(ValueError, match="boom"):
+        main(["status", "--debug"])
+
+
+@pytest.mark.parametrize("command", ["env", "mcp"])
+def test_env_and_mcp_accept_debug_and_verbose_flags(command: str) -> None:
+    args = _parser().parse_args([command, "--debug", "--verbose"])
+    assert args.debug is True
+    assert args.verbose is True
+
+
+def test_cleanup_dispatches_to_controller() -> None:
+    result = _execute(_parser().parse_args(["cleanup"]))
+    assert result == {"status": "ok", "dry_run": False}
+    call, confirm = FakeController.instance.calls[-1]
+    assert call == "cleanup"
+    assert confirm is True
+
+    result = _execute(_parser().parse_args(["cleanup", "--dry-run"]))
+    assert result == {"status": "ok", "dry_run": True}
+    call, confirm = FakeController.instance.calls[-1]
+    assert call == "cleanup"
+    assert confirm is False
+
+def test_restart_and_start_pull_flags() -> None:
+    parser = _parser()
+    assert parser.parse_args(["restart"]).pull is False
+    assert parser.parse_args(["restart", "--no-pull"]).pull is False
+    assert parser.parse_args(["restart", "--pull"]).pull is True
+    assert parser.parse_args(["start"]).pull is False
+    assert parser.parse_args(["start", "--no-pull"]).pull is False
+    assert parser.parse_args(["start", "--pull"]).pull is True
+
+
+def test_restart_dispatch_passes_pull_flag() -> None:
+    _execute(_parser().parse_args(["restart", "--pull"]))
+    assert FakeController.instance.pull_calls[-1] == ("restart", True)
+
+    _execute(_parser().parse_args(["restart", "--no-pull"]))
+    assert FakeController.instance.pull_calls[-1] == ("restart", False)
+
+    _execute(_parser().parse_args(["restart"]))
+    assert FakeController.instance.pull_calls[-1] == ("restart", False)
+
+    _execute(_parser().parse_args(["start", "--pull"]))
+    assert FakeController.instance.pull_calls[-1] == ("start", True)
+
+    _execute(_parser().parse_args(["start"]))
+    assert FakeController.instance.pull_calls[-1] == ("start", False)
+
+def test_start_and_restart_tail_flags() -> None:
+    parser = _parser()
+    assert parser.parse_args(["start"]).tail == 5.0
+    assert parser.parse_args(["start", "--tail"]).tail == -1.0
+    assert parser.parse_args(["start", "--tail", "10"]).tail == 10.0
+    assert parser.parse_args(["start", "--tail", "0"]).tail == 0.0
+    assert parser.parse_args(["restart"]).tail == 5.0
+    assert parser.parse_args(["restart", "--tail"]).tail == -1.0
+    assert parser.parse_args(["restart", "--tail", "15.5"]).tail == 15.5
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["start", "--tail", "-5"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["start", "--tail", "invalid"])
+
+
+def test_debug_flag_parsing() -> None:
+    parser = _parser()
+    assert parser.parse_args(["start", "--debug"]).debug is True
+    assert parser.parse_args(["start"]).debug is False
+    assert parser.parse_args(["restart", "--debug"]).debug is True
+    assert parser.parse_args(["status", "--debug"]).debug is True
+
+
+def test_start_dispatch_passes_tail_flag() -> None:
+    _execute(_parser().parse_args(["start", "--tail", "10"]))
+    assert FakeController.instance.tail_calls[-1] == ("start", 10.0)
+
+    _execute(_parser().parse_args(["start", "--tail"]))
+    assert FakeController.instance.tail_calls[-1] == ("start", -1.0)
+
+    _execute(_parser().parse_args(["start"]))
+    assert FakeController.instance.tail_calls[-1] == ("start", 5.0)
+
+
+def test_observer_runtime_logs_deduplication_and_line_streaming() -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    stream = io.StringIO()
+    reporter = LifecycleReporter(stream=stream, environ={"TERM": "dumb"})
+    reporter.start("Starting LocalCloud…")
+    observer = _ExecutionObserver(reporter, debug=True)
+
+    observer.runtime_logs("line 1\nline 2\n")
+    observer.runtime_logs("line 2\nline 3\nline 4\n")
+    observer.runtime_logs("line 3\nline 4\n")
+    observer.runtime_logs("2026-08-18T10:00:00Z unique log\n")
+
+    reporter.succeed("Done")
+    output = stream.getvalue()
+    assert "line 1\n" in output
+    assert "line 2\n" in output
+    assert "line 3\n" in output
+    assert "line 4\n" in output
+    assert "2026-08-18T10:00:00Z unique log\n" in output
+    assert output.count("line 2\n") == 1
+    assert output.count("line 3\n") == 1
+
+
+def test_observer_debug_mode_writes_debug_lines() -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    # Debug enabled
+    stream_enabled = io.StringIO()
+    rep_enabled = LifecycleReporter(stream=stream_enabled, environ={"TERM": "dumb"})
+    rep_enabled.start("Starting…")
+    obs_enabled = _ExecutionObserver(rep_enabled, debug=True)
+    obs_enabled.debug("docker run -d --name localcloud")
+    assert "[debug] docker run -d --name localcloud\n" in stream_enabled.getvalue()
+
+    # Debug disabled
+    stream_disabled = io.StringIO()
+    rep_disabled = LifecycleReporter(stream=stream_disabled, environ={"TERM": "dumb"})
+    rep_disabled.start("Starting…")
+    obs_disabled = _ExecutionObserver(rep_disabled, debug=False)
+    obs_disabled.debug("docker run -d --name localcloud")
+    assert "[debug]" not in stream_disabled.getvalue()
+
+
+def test_main_start_debug_prints_docker_command(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert main(["start", "--debug"]) == 0
+    captured = capsys.readouterr()
+    assert "[debug] docker run -d --name localcloud ..." in captured.err
+
+def test_main_start_when_already_running_reports_guidance_and_skips_panel(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        FakeController,
+        "start",
+        lambda _self, config, **_kwargs: {
+            "status": "already_running",
+            "data_volume": config.data_volume,
+        },
+    )
+    assert main(["start"]) == 0
+    captured = capsys.readouterr()
+    assert "LocalCloud runtime is already running" in captured.err
+    assert "LocalCloud v" not in captured.err
+
+

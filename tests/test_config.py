@@ -331,6 +331,33 @@ def test_data_volume_lock_uses_digest_and_serializes(tmp_path: Path) -> None:
     }
 
 
+def test_data_volume_lock_wraps_filesystem_errors_as_host_error(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    home.write_text("occupies the path LocalCloud wants as its home directory")
+    paths = HostPaths(home=home, locks=home / "locks")
+
+    with pytest.raises(HostError) as caught:
+        with data_volume_lock(paths, "localcloud-data-team-a"):
+            pass
+
+    assert caught.value.code == "host_lock_failed"
+
+
+def test_save_active_runtime_wraps_filesystem_errors_as_host_error(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    home.write_text("occupies the path LocalCloud wants as its home directory")
+    paths = HostPaths(home=home, locks=tmp_path / "locks")
+
+    with pytest.raises(HostError) as caught:
+        save_active_runtime(paths, _active())
+
+    assert caught.value.code in {"host_lock_failed", "active_runtime_write_failed"}
+
+
 def test_active_runtime_missing_round_trip_and_atomic_replace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

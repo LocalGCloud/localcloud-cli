@@ -9,6 +9,54 @@ from .config import DEFAULT_PROJECT, DEFAULT_USER
 from .errors import HostError
 
 
+# JSON-RPC 2.0 standard "method not found" code; MCP servers use it for an
+# unregistered tool name. Checked in addition to the response message text so
+# tool-not-found detection isn't solely dependent on the upstream server's
+# exact wording.
+_JSONRPC_METHOD_NOT_FOUND = -32601
+
+
+def is_retryable_java_error(error: BaseException) -> bool:
+    return (
+        isinstance(error, HostError)
+        and error.details.get("retryable") is True
+    )
+
+
+def _transport_error(
+    code: str,
+    message: str,
+    error: Exception,
+    *,
+    url: str,
+    method: str,
+) -> HostError:
+    response = getattr(error, "response", None)
+    status_code = getattr(response, "status_code", None)
+    retryable = isinstance(
+        error,
+        (
+            httpx.NetworkError,
+            httpx.TimeoutException,
+            httpx.RemoteProtocolError,
+        ),
+    )
+    if isinstance(status_code, int):
+        retryable = (
+            status_code in {408, 429}
+            or 500 <= status_code < 600
+        )
+    details: dict[str, Any] = {
+        "url": url,
+        "method": method,
+        "cause": str(error),
+        "retryable": retryable,
+    }
+    if isinstance(status_code, int):
+        details["status_code"] = status_code
+    return HostError(code, message, details)
+
+
 class JavaMcpClient:
     """Thin HTTP client for lifecycle calls delegated to the authoritative Java MCP."""
 
@@ -45,10 +93,15 @@ class JavaMcpClient:
                     "Java LocalCloud MCP returned a malformed error response",
                     {"method": method},
                 )
+            details: dict[str, Any] = {"method": method, "error": rpc_error}
+            if method == "tools/call" and isinstance(params, dict):
+                tool_name = params.get("name")
+                if isinstance(tool_name, str):
+                    details["tool"] = tool_name
             raise HostError(
                 "java_mcp_error",
                 str(rpc_error.get("message") or "Java MCP error"),
-                {"method": method, "error": rpc_error},
+                details,
             )
         if "result" not in body:
             raise HostError(
@@ -74,10 +127,12 @@ class JavaMcpClient:
             )
             response.raise_for_status()
         except Exception as error:
-            raise HostError(
+            raise _transport_error(
                 "java_mcp_unavailable",
                 "Java LocalCloud MCP request failed",
-                {"url": self.url, "method": method, "cause": str(error)},
+                error,
+                url=f"{self.url}/mcp",
+                method=method,
             ) from error
         if response.status_code == 202 or not response.content:
             if allow_empty:
@@ -122,7 +177,9 @@ class JavaMcpClient:
                 {"tool": name},
             )
         if result.get("isError"):
-            text = result.get("content", [{}])[0].get("text", "Java MCP tool failed")
+            content = result.get("content") or []
+            first = content[0] if content and isinstance(content[0], dict) else {}
+            text = first.get("text", "Java MCP tool failed")
             raise HostError("java_tool_error", text, {"tool": name})
         structured = result.get("structuredContent")
         if isinstance(structured, dict) and "result" in structured:
@@ -132,11 +189,15 @@ class JavaMcpClient:
 
     @staticmethod
     def _is_missing_tool(error: HostError, name: str) -> bool:
-        if error.message != "Tool not found":
+        rpc_error = error.details.get("error")
+        is_not_found = "not found" in error.message.lower() or (
+            isinstance(rpc_error, dict)
+            and rpc_error.get("code") == _JSONRPC_METHOD_NOT_FOUND
+        )
+        if not is_not_found:
             return False
         if error.details.get("tool") == name:
             return True
-        rpc_error = error.details.get("error")
         return isinstance(rpc_error, dict) and rpc_error.get("data") == name
 
     def _project_api(
@@ -156,10 +217,12 @@ class JavaMcpClient:
             response.raise_for_status()
             return response.json()
         except Exception as error:
-            raise HostError(
+            raise _transport_error(
                 "java_project_api_unavailable",
                 "Java LocalCloud project API request failed",
-                {"url": url, "method": method, "cause": str(error)},
+                error,
+                url=url,
+                method=method,
             ) from error
 
     def list_projects(self) -> list[dict[str, Any]]:

@@ -89,7 +89,12 @@ The script:
 - validates the clean branch, remote revision, version, lockfile, and notices;
 - runs the complete test suite and a native frozen-binary smoke test;
 
-  Because this local preflight includes tests marked `docker`, Docker must be reachable and the qualified runtime image from section 1 must be present locally.
+  Because this local preflight includes tests marked `docker`, Docker must be
+  reachable, the qualified runtime image from section 1 must be present locally,
+  and a compatible `localcloud-data` runtime must already be running and
+  operational. Its built-in `local-project` fixture must retain the seeded GCS
+  buckets and BigQuery datasets. The release tests attach to that runtime and
+  perform only read-only operational and seeded-data checks.
 - creates and pushes the annotated `v${VERSION}` tag;
 - dispatches and watches `cli-release.yml` for that tag;
 - verifies the exact archive, checksum, formula, and Sigstore asset set; and

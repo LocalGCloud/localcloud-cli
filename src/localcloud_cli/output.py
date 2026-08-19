@@ -27,6 +27,25 @@ _CLOUD = (
     "╭╯                ╰╮",
     "╰──────────────────╯",
 )
+_CLOUD_PERIMETER_COORDS = (
+    # Top arch (center to right)
+    (9, 0), (10, 0), (11, 0), (12, 0),
+    # Right curve
+    (12, 1), (13, 1), (14, 1), (15, 1), (16, 1),
+    (15, 2), (16, 2), (17, 2), (18, 2),
+    (18, 3), (19, 3),
+    # Bottom right
+    (19, 4), (18, 4), (17, 4), (16, 4), (15, 4), (14, 4), (13, 4), (12, 4), (11, 4), (10, 4),
+    # Bottom left
+    (9, 4), (8, 4), (7, 4), (6, 4), (5, 4), (4, 4), (3, 4), (2, 4), (1, 4), (0, 4),
+    # Left curve
+    (0, 3), (1, 3),
+    (1, 2), (2, 2), (3, 2), (4, 2),
+    (3, 1), (4, 1), (5, 1), (6, 1), (7, 1),
+    # Top arch (left to center)
+    (7, 0), (8, 0),
+)
+_CLOUD_COORD_INDEX = {coord: idx for idx, coord in enumerate(_CLOUD_PERIMETER_COORDS)}
 _GRADIENT_STOPS = (
     (66, 133, 244),
     (234, 67, 53),
@@ -35,7 +54,7 @@ _GRADIENT_STOPS = (
     (66, 133, 244),
 )
 _PHASES = (0.0, 0.25, 0.5, 0.75)
-_ANSI_256_RAMP = (33, 196, 226, 34, 33)
+_ANSI_256_RAMP = (33, 196, 220, 34, 33)
 _ANSI_16_RAMP = (94, 91, 93, 92, 94)
 _TRUECOLOR_SEMANTICS = {
     "processing": (34, 211, 238),
@@ -44,8 +63,16 @@ _TRUECOLOR_SEMANTICS = {
     "warning": (251, 191, 36),
     "label": (96, 165, 250),
     "url": (34, 211, 238),
-    "muted": (156, 163, 175),
+    "muted": (107, 114, 128),
     "primary": (243, 244, 246),
+    "g_blue": (66, 133, 244),
+    "g_red": (234, 67, 53),
+    "g_yellow": (251, 188, 4),
+    "g_green": (52, 168, 83),
+    "welcome": (255, 255, 255),
+    "section_header": (34, 211, 238),
+    "cmd_desc": (209, 213, 219),
+    "ctx_config": (192, 132, 252),
 }
 _ANSI256_SEMANTICS = {
     "processing": 45,
@@ -56,6 +83,14 @@ _ANSI256_SEMANTICS = {
     "url": 45,
     "muted": 245,
     "primary": 255,
+    "g_blue": 33,
+    "g_red": 196,
+    "g_yellow": 220,
+    "g_green": 34,
+    "welcome": 255,
+    "section_header": 45,
+    "cmd_desc": 250,
+    "ctx_config": 141,
 }
 _ANSI16_SEMANTICS = {
     "processing": 96,
@@ -66,8 +101,15 @@ _ANSI16_SEMANTICS = {
     "url": 96,
     "muted": 90,
     "primary": 97,
+    "g_blue": 94,
+    "g_red": 91,
+    "g_yellow": 93,
+    "g_green": 92,
+    "welcome": 97,
+    "section_header": 96,
+    "cmd_desc": 97,
+    "ctx_config": 95,
 }
-
 
 class ColorMode(Enum):
     NONE = "none"
@@ -102,16 +144,18 @@ class PanelContext:
 
 _COMMON_FIELDS = (
     FieldSpec("status", "Status", "status"),
+    FieldSpec("config", "Config", "muted"),
     FieldSpec("data_volume", "Data volume"),
     FieldSpec("origin", "Origin"),
     FieldSpec("project", "Project"),
     FieldSpec("user", "User"),
-    FieldSpec("container.state", "State", "status"),
+    FieldSpec("container.configured_image", "Image", "muted"),
+    FieldSpec("container.image_status", "Image status", "status"),
     FieldSpec("container.url", "URL", "url"),
     FieldSpec("services", "Services"),
-    FieldSpec("data", "Data"),
     FieldSpec("changed_fields", "Changed", "warning"),
     FieldSpec("reset_scope", "Reset scope", "warning"),
+    FieldSpec("logs", "Logs", "muted"),
 )
 _DOCTOR_FIELDS = (
     FieldSpec("status", "Status", "status"),
@@ -122,6 +166,15 @@ _DOCTOR_FIELDS = (
     FieldSpec("legacy_host_state", "Legacy host state", "warning"),
     FieldSpec("legacy_locks", "Legacy locks", "warning"),
     FieldSpec("warning", "Warning", "warning"),
+)
+_CLEANUP_FIELDS = (
+    FieldSpec("status", "Status", "status"),
+    FieldSpec("dry_run", "Dry run", "muted"),
+    FieldSpec("docker_resources", "Docker resources", "warning"),
+    FieldSpec("active_runtime_stale", "Active runtime stale", "warning"),
+    FieldSpec("legacy_host_state", "Legacy host state", "warning"),
+    FieldSpec("legacy_locks", "Legacy locks", "warning"),
+    FieldSpec("failures", "Failures", "error"),
 )
 _CONSOLE_FIELDS = (
     FieldSpec("status", "Status", "status"),
@@ -134,8 +187,9 @@ _EXTRA_COMMON = (
     FieldSpec("config", "Config", "muted"),
     FieldSpec("container.name", "Container", "muted"),
     FieldSpec("container.id", "Container ID", "muted"),
-    FieldSpec("container.configured_image", "Configured image", "muted"),
+    FieldSpec("container.state", "State", "status"),
     FieldSpec("container.actual_image", "Actual image", "muted"),
+    FieldSpec("data", "Data", "muted"),
     FieldSpec("network.name", "Network", "muted"),
     FieldSpec("mount.source", "Mounted volume", "muted"),
     FieldSpec("ownership", "Ownership", "muted"),
@@ -150,16 +204,17 @@ _EXTRA_COMMON = (
 DEFAULT_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
     "start": _COMMON_FIELDS,
     "restart": _COMMON_FIELDS,
-    "reset": _COMMON_FIELDS,
-    "stop": tuple(field for field in _COMMON_FIELDS if field.path not in {"project", "user", "changed_fields", "reset_scope"}),
-    "status": tuple(field for field in _COMMON_FIELDS if field.path not in {"project", "user", "changed_fields", "reset_scope"}),
+    "reset": tuple(field for field in _COMMON_FIELDS if field.path != "logs"),
+    "stop": tuple(field for field in _COMMON_FIELDS if field.path not in {"project", "user", "changed_fields", "reset_scope", "logs"}),
+    "status": tuple(field for field in _COMMON_FIELDS if field.path not in {"project", "user", "changed_fields", "reset_scope", "logs"}),
     "doctor": _DOCTOR_FIELDS,
+    "cleanup": _CLEANUP_FIELDS,
     "console": _CONSOLE_FIELDS,
 }
 ALLOWED_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
     command: (
         defaults
-        if command == "doctor"
+        if command in ("doctor", "cleanup")
         else tuple(dict.fromkeys((*defaults, *_EXTRA_COMMON)))
     )
     for command, defaults in DEFAULT_FIELDS.items()
@@ -180,6 +235,15 @@ def _character_width(char: str) -> int:
     if unicodedata.category(char) in {"Cf", "Cc"}:
         return 0
     return 2 if unicodedata.east_asian_width(char) in {"F", "W"} else 1
+
+
+def _centered(text: str, width: int) -> str:
+    """Pad `text` with spaces to center it within `width` visible columns.
+    ANSI styling on `text` doesn't affect the padding math since
+    `visible_width` already strips it."""
+    slack = width - visible_width(text)
+    pad = slack // 2
+    return " " * pad + text + " " * (slack - pad)
 
 
 def truncate_visible(value: str, width: int) -> str:
@@ -289,6 +353,8 @@ def render_summary(
         value = _resolve_path(payload, field.path)
         if value is _MISSING or value is None or value == [] or value == {}:
             continue
+        if field.style == "status":
+            value = _human_status(value)
         resolved.append((field, value))
     if not resolved:
         return ""
@@ -323,16 +389,49 @@ def _format_value(value: Any) -> str:
     return str(value)
 
 
+def _human_status(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    normalized = value.strip().lower().replace("_", " ")
+    if normalized in {
+        "running",
+        "ready",
+        "started",
+        "already running",
+        "restarted",
+        "reconfigured",
+        "opened",
+    }:
+        return "Running"
+    if normalized in {
+        "stopped",
+        "not running",
+        "not created",
+        "unhealthy",
+        "absent",
+        "not_created",
+        "not_running",
+    }:
+        return "Not Running"
+    return value
+
+
 def _value_role(field: FieldSpec, value: Any) -> str:
     if field.style != "status":
         return field.style
-    normalized = str(value).lower()
-    if normalized in {"ok", "started", "restarted", "reset", "opened", "running", "ready", "already_running"}:
+    normalized = str(value).strip().lower().replace("_", " ")
+    if normalized in {"running", "ready", "started", "already running", "restarted", "reconfigured", "opened", "ok"}:
         return "success"
-    if normalized in {"unhealthy", "failed", "error"}:
-        return "error"
-    if normalized in {"stopped", "not_running", "not_created", "reconfigured"}:
+    if normalized in {
+        "stopped",
+        "not running",
+        "not created",
+        "absent",
+        "unhealthy",
+    }:
         return "warning"
+    if normalized in {"error", "failed"}:
+        return "error"
     return "primary"
 
 
@@ -403,8 +502,7 @@ def render_cloud(
 ) -> tuple[str, ...]:
     if color is ColorMode.NONE:
         return _CLOUD
-    rows = len(_CLOUD)
-    cols = max(len(line) for line in _CLOUD)
+    total_coords = len(_CLOUD_PERIMETER_COORDS)
     eased = 1 - (1 - min(1.0, max(0.0, progress))) ** 3
     sweep = (1 - eased) * 2.5
     shine_pos = (progress * 2.0) % 1.0
@@ -416,7 +514,8 @@ def render_cloud(
             if char == " ":
                 pieces.append(char)
                 continue
-            base = (x + rows - 1 - y) / max(1, cols + rows - 1)
+            idx = _CLOUD_COORD_INDEX.get((x, y), 0)
+            base = idx / max(1, total_coords)
             position = (base + phase + sweep) % 1.0
             rgb = _gradient_rgb(position)
             distance = abs(position - shine_pos)
@@ -430,12 +529,30 @@ def render_cloud(
 
 
 def _gradient_rgb(position: float) -> tuple[int, int, int]:
-    scaled = (position % 1.0) * (len(_GRADIENT_STOPS) - 1)
-    index = min(len(_GRADIENT_STOPS) - 2, int(scaled))
+    if not _GRADIENT_STOPS:
+        return (0, 0, 0)
+    last_index = max(0, len(_GRADIENT_STOPS) - 2)
+    try:
+        scaled = (position % 1.0) * (len(_GRADIENT_STOPS) - 1)
+        index = min(last_index, int(scaled))
+    except (TypeError, OverflowError, ValueError):
+        index = 0
+        fraction = 0.0
+        left = _GRADIENT_STOPS[index]
+        right = _GRADIENT_STOPS[index + 1]
+        return (
+            round((left[0] + right[0]) / 2),
+            round((left[1] + right[1]) / 2),
+            round((left[2] + right[2]) / 2),
+        )
     fraction = scaled - index
     left = _GRADIENT_STOPS[index]
     right = _GRADIENT_STOPS[index + 1]
-    return tuple(round(a + (b - a) * fraction) for a, b in zip(left, right))
+    return (
+        round(left[0] + (right[0] - left[0]) * fraction),
+        round(left[1] + (right[1] - left[1]) * fraction),
+        round(left[2] + (right[2] - left[2]) * fraction),
+    )
 
 
 def _gradient_escape(position: float, rgb: tuple[int, int, int], color: ColorMode) -> str:
@@ -444,6 +561,164 @@ def _gradient_escape(position: float, rgb: tuple[int, int, int], color: ColorMod
     ramp = _ANSI_256_RAMP if color is ColorMode.ANSI256 else _ANSI_16_RAMP
     index = min(len(ramp) - 1, round((position % 1.0) * (len(ramp) - 1)))
     return f"\x1b[38;5;{ramp[index]}m" if color is ColorMode.ANSI256 else f"\x1b[{ramp[index]}m"
+
+
+_DEFAULT_SERVICES_ROW1 = (
+    ("Storage", "g_blue"),
+    ("Firestore", "g_blue"),
+    ("Pub/Sub", "g_red"),
+    ("BigQuery", "g_yellow"),
+    ("Secrets", "g_green"),
+)
+_DEFAULT_SERVICES_ROW2 = (
+    ("Spanner", "g_blue"),
+    ("Cloud SQL", "g_blue"),
+    ("Tasks", "g_red"),
+    ("Logging", "g_green"),
+    ("Dataproc", "g_yellow"),
+)
+_KNOWN_SERVICES: Mapping[str, tuple[str, str]] = {
+    "storage": ("Storage", "g_blue"),
+    "firestore": ("Firestore", "g_blue"),
+    "spanner": ("Spanner", "g_blue"),
+    "cloudsql": ("Cloud SQL", "g_blue"),
+    "sql": ("Cloud SQL", "g_blue"),
+    "pubsub": ("Pub/Sub", "g_red"),
+    "tasks": ("Tasks", "g_red"),
+    "bigquery": ("BigQuery", "g_yellow"),
+    "dataproc": ("Dataproc", "g_yellow"),
+    "secrets": ("Secrets", "g_green"),
+    "secretmanager": ("Secrets", "g_green"),
+    "logging": ("Logging", "g_green"),
+}
+
+
+def _resolve_services_rows(services: str | Sequence[str]) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    if isinstance(services, str):
+        if services in {"default", "all", ""}:
+            return list(_DEFAULT_SERVICES_ROW1), list(_DEFAULT_SERVICES_ROW2)
+        service_list = [s.strip() for s in services.split(",") if s.strip()]
+    else:
+        service_list = list(services)
+    if not service_list or service_list == ["default"]:
+        return list(_DEFAULT_SERVICES_ROW1), list(_DEFAULT_SERVICES_ROW2)
+    resolved: list[tuple[str, str]] = []
+    for s in service_list:
+        normalized = s.lower().replace("-", "").replace("_", "").replace(" ", "")
+        display_name, role = _KNOWN_SERVICES.get(normalized, (s.title(), "g_blue"))
+        resolved.append((display_name, role))
+    mid = (len(resolved) + 1) // 2
+    return resolved[:mid], resolved[mid:]
+
+
+def _format_services_row(services: Sequence[tuple[str, str]], width: int, color: ColorMode) -> str:
+    if not services:
+        return " " * width
+    items_plain = [f"● {name}" for name, _ in services]
+    items_styled = [f"{style_text('●', role, color)} {name}" for name, role in services]
+    total_plain_len = sum(len(item) for item in items_plain)
+    num_items = len(services)
+    prefix = "  "
+    available = width - len(prefix)
+    if available >= total_plain_len + (num_items - 1) * 2:
+        gap_size = (available - total_plain_len) // (num_items - 1) if num_items > 1 else 1
+        rem = (available - total_plain_len) % (num_items - 1) if num_items > 1 else 0
+        row_styled = prefix
+        row_plain = prefix
+        for i, (p, s) in enumerate(zip(items_plain, items_styled)):
+            row_styled += s
+            row_plain += p
+            if i < num_items - 1:
+                cur_gap = " " * (gap_size + (1 if i < rem else 0))
+                row_styled += cur_gap
+                row_plain += cur_gap
+        pad = " " * max(0, width - visible_width(row_plain))
+        return row_styled + pad
+    elif available >= total_plain_len + (num_items - 1):
+        row_styled = prefix
+        row_plain = prefix
+        for i, (p, s) in enumerate(zip(items_plain, items_styled)):
+            row_styled += s
+            row_plain += p
+            if i < num_items - 1:
+                row_styled += " "
+                row_plain += " "
+        pad = " " * max(0, width - visible_width(row_plain))
+        return row_styled + pad
+    else:
+        fit_items_plain: list[str] = []
+        fit_items_styled: list[str] = []
+        cur_len = len(prefix)
+        for p, s in zip(items_plain, items_styled):
+            needed = len(p) + (1 if fit_items_plain else 0)
+            if cur_len + needed <= width:
+                fit_items_plain.append(p)
+                fit_items_styled.append(s)
+                cur_len += needed
+            else:
+                break
+        row_styled = prefix + " ".join(fit_items_styled)
+        row_plain = prefix + " ".join(fit_items_plain)
+        pad = " " * max(0, width - visible_width(row_plain))
+        return row_styled + pad
+
+
+def _format_context_pair(
+    label1: str,
+    val1: str,
+    role1: str,
+    label2: str,
+    val2: str,
+    role2: str,
+    width: int,
+    color: ColorMode,
+) -> str:
+    part1_lbl = f"  {label1}: "
+    part2_lbl = f" {label2}: "
+    full_needed = visible_width(part1_lbl) + visible_width(val1) + visible_width(part2_lbl) + visible_width(val2)
+    if width >= full_needed:
+        gap = " " * (width - full_needed)
+        return (
+            style_text(part1_lbl, "muted", color)
+            + style_text(val1, role1, color)
+            + gap
+            + style_text(part2_lbl, "muted", color)
+            + style_text(val2, role2, color)
+        )
+    half1 = (width - 1) // 2
+    half2 = width - half1
+    v1_budget = max(1, half1 - visible_width(part1_lbl))
+    v1_trunc = truncate_visible(val1, v1_budget)
+    p1_plain = part1_lbl + v1_trunc
+    p1_pad = " " * max(0, half1 - visible_width(p1_plain))
+    p1_styled = style_text(part1_lbl, "muted", color) + style_text(v1_trunc, role1, color) + p1_pad
+    v2_budget = max(1, half2 - visible_width(part2_lbl))
+    v2_trunc = truncate_visible(val2, v2_budget)
+    p2_plain = part2_lbl + v2_trunc
+    p2_pad = " " * max(0, half2 - visible_width(p2_plain))
+    p2_styled = style_text(part2_lbl, "muted", color) + style_text(v2_trunc, role2, color) + p2_pad
+    return p1_styled + p2_styled
+
+
+def _footer_tip(box_width: int, color: ColorMode) -> str:
+    full_plain = " Tip: Run localcloud guide for AI agent workflows, or lc for the fast alias."
+    if box_width >= visible_width(full_plain):
+        pad = " " * (box_width - visible_width(full_plain))
+        tip_lbl = style_text("Tip:", "section_header", color, bold=True)
+        cmd1 = style_text("localcloud guide", "g_blue", color)
+        cmd2 = style_text("lc", "g_yellow", color)
+        return f" {tip_lbl} Run {cmd1} for AI agent workflows, or {cmd2} for the fast alias.{pad}"
+    short_plain = " Tip: Run localcloud guide or lc"
+    if box_width >= visible_width(short_plain):
+        pad = " " * (box_width - visible_width(short_plain))
+        tip_lbl = style_text("Tip:", "section_header", color, bold=True)
+        cmd1 = style_text("localcloud guide", "g_blue", color)
+        cmd2 = style_text("lc", "g_yellow", color)
+        return f" {tip_lbl} Run {cmd1} or {cmd2}{pad}"
+    tip_lbl = style_text("Tip:", "section_header", color, bold=True)
+    body = truncate_visible("Run localcloud guide or lc", max(1, box_width - 6))
+    pad = " " * max(0, box_width - 6 - visible_width(body))
+    return f" {tip_lbl} {body}{pad}"
 
 
 def render_panel(
@@ -463,6 +738,7 @@ def render_panel(
         return _stacked_panel(context, box_width, phase, progress, color)
     return _compact_panel(context, box_width, phase, progress, color)
 
+
 def _border_title(box_width: int, color: ColorMode) -> str:
     title = f"── LocalCloud v{__version__} "
     inside = truncate_visible(title, box_width - 2)
@@ -472,49 +748,86 @@ def _border_title(box_width: int, color: ColorMode) -> str:
 
 def _border_bottom(box_width: int, color: ColorMode, split: int | None = None) -> str:
     if split is None:
-        plain = "╰" + "─" * (box_width - 2) + "╯"
+        plain = "╰" + "─" * max(0, box_width - 2) + "╯"
     else:
-        plain = "╰" + "─" * split + "┴" + "─" * (box_width - split - 3) + "╯"
+        plain = "╰" + "─" * split + "┴" + "─" * max(0, box_width - split - 3) + "╯"
     return style_text(plain, "muted", color)
 
 
-def _context_rows(context: PanelContext) -> list[tuple[str, str, str]]:
-    services = context.services if isinstance(context.services, str) else ", ".join(context.services)
-    config = Path(context.config).name if context.config else "defaults"
-    return [
-        ("Data volume", context.data_volume, "primary"),
-        ("Project", context.project, "primary"),
-        ("User", context.user, "primary"),
-        ("Services", services or "default", "primary"),
-        ("Data", context.data, "primary"),
-        ("Config", config, "muted"),
-    ]
-
-
-def _styled_context(label: str, value: str, width: int, color: ColorMode, role: str) -> str:
-    label_width = 12
-    plain_value = truncate_visible(value, max(1, width - label_width))
-    plain = label.ljust(label_width) + plain_value
-    styled = style_text(label.ljust(label_width), "label", color, bold=True) + style_text(plain_value, role, color)
-    return styled + " " * max(0, width - visible_width(plain))
-
-
 def _wide_panel(context: PanelContext, box_width: int, phase: float, progress: float, color: ColorMode) -> list[str]:
-    inside = box_width - 3
-    left_width = max(24, min(30, inside // 3))
-    right_width = inside - left_width
+    split_width = 26
+    right_width = box_width - split_width - 3
+
+    left_rows: list[str] = []
+    left_rows.append(" " * split_width)
+    left_rows.append(
+        _centered(style_text("Welcome back!", "welcome", color, bold=True), split_width)
+    )
+    left_rows.append(" " * split_width)
     cloud = render_cloud(phase=phase, progress=progress, color=color)
-    left = ["", *cloud, ""]
-    right = [_styled_context(label, value, right_width, color, role) for label, value, role in _context_rows(context)]
-    lines = [_border_title(box_width, color)]
+    for line in cloud:
+        left_rows.append(_centered(line, split_width))
+    left_rows.append(" " * split_width)
+    left_rows.append(
+        _centered(
+            style_text(truncate_visible(context.project, split_width - 2), "g_blue", color),
+            split_width,
+        )
+    )
+    left_rows.append(
+        _centered(
+            style_text(truncate_visible(context.data_volume, split_width - 2), "g_yellow", color),
+            split_width,
+        )
+    )
+    left_rows.append(
+        _centered(
+            style_text(truncate_visible(context.user, split_width - 2), "g_green", color),
+            split_width,
+        )
+    )
+    left_rows.append(" " * split_width)
+
+    right_rows: list[str] = []
+    s1_hdr = " Tips & Commands"
+    right_rows.append(style_text(s1_hdr, "section_header", color, bold=True) + " " * max(0, right_width - visible_width(s1_hdr)))
+    cmds = (
+        ("localcloud start", "g_blue", "Start local GCP emulators"),
+        ("localcloud stop", "g_red", "Stop container runtime"),
+        ("localcloud status", "g_green", "Health & service readiness"),
+        ("eval $(lc env)", "g_yellow", "Export emulator env vars"),
+    )
+    for cmd, role, desc in cmds:
+        cmd_col_width = 21
+        cmd_prefix = f"  {cmd}"
+        pad_len = max(1, cmd_col_width - visible_width(cmd_prefix))
+        cmd_col_plain = cmd_prefix + " " * pad_len
+        desc_budget = max(1, right_width - visible_width(cmd_col_plain))
+        desc_trunc = truncate_visible(desc, desc_budget)
+        total_plain = cmd_col_plain + desc_trunc
+        row_pad = " " * max(0, right_width - visible_width(total_plain))
+        cmd_styled = f"  {style_text(cmd, role, color)}" + " " * pad_len
+        desc_styled = style_text(desc_trunc, "cmd_desc", color)
+        right_rows.append(cmd_styled + desc_styled + row_pad)
+    right_rows.append(style_text("─" * right_width, "muted", color))
+    s2_hdr = " Google Cloud Services"
+    right_rows.append(style_text(s2_hdr, "section_header", color, bold=True) + " " * max(0, right_width - visible_width(s2_hdr)))
+    srv_r1, srv_r2 = _resolve_services_rows(context.services)
+    right_rows.append(_format_services_row(srv_r1, right_width, color))
+    right_rows.append(_format_services_row(srv_r2, right_width, color))
+    right_rows.append(style_text("─" * right_width, "muted", color))
+    s3_hdr = " Active Context"
+    right_rows.append(style_text(s3_hdr, "section_header", color, bold=True) + " " * max(0, right_width - visible_width(s3_hdr)))
+    config_name = Path(context.config).name if context.config else "built-in defaults"
+    right_rows.append(_format_context_pair("Data Volume", context.data_volume, "g_yellow", "Project", context.project, "g_blue", right_width, color))
+    right_rows.append(_format_context_pair("Caller", context.user, "g_green", "Config", config_name, "ctx_config", right_width, color))
+
     border = style_text("│", "muted", color)
-    for index in range(max(len(left), len(right))):
-        left_value = left[index] if index < len(left) else ""
-        left_pad = max(0, left_width - visible_width(left_value))
-        left_cell = " " * (left_pad // 2) + left_value + " " * (left_pad - left_pad // 2)
-        right_cell = right[index] if index < len(right) else " " * right_width
-        lines.append(f"{border}{left_cell}{border}{right_cell}{border}")
-    lines.append(_border_bottom(box_width, color, left_width))
+    lines = [_border_title(box_width, color)]
+    for l, r in zip(left_rows, right_rows):
+        lines.append(f"{border}{l}{border}{r}{border}")
+    lines.append(_border_bottom(box_width, color, split_width))
+    lines.append(_footer_tip(box_width, color))
     return lines
 
 
@@ -522,13 +835,17 @@ def _stacked_panel(context: PanelContext, box_width: int, phase: float, progress
     inside = box_width - 2
     border = style_text("│", "muted", color)
     lines = [_border_title(box_width, color)]
+    lines.append(
+        f"{border}{_centered(style_text('Welcome back!', 'welcome', color, bold=True), inside)}{border}"
+    )
     for line in render_cloud(phase=phase, progress=progress, color=color):
-        pad = inside - visible_width(line)
-        lines.append(f"{border}{' ' * (pad // 2)}{line}{' ' * (pad - pad // 2)}{border}")
-    lines.append(f"{border}{' ' * inside}{border}")
-    for label, value, role in _context_rows(context):
-        lines.append(f"{border}{_styled_context(label, value, inside, color, role)}{border}")
+        lines.append(f"{border}{_centered(line, inside)}{border}")
+    lines.append(f"{border}{style_text('─' * inside, 'muted', color)}{border}")
+    config_name = Path(context.config).name if context.config else "built-in defaults"
+    lines.append(f"{border}{_format_context_pair('Data Volume', context.data_volume, 'g_yellow', 'Project', context.project, 'g_blue', inside, color)}{border}")
+    lines.append(f"{border}{_format_context_pair('Caller', context.user, 'g_green', 'Config', config_name, 'ctx_config', inside, color)}{border}")
     lines.append(_border_bottom(box_width, color))
+    lines.append(_footer_tip(box_width, color))
     return lines
 
 
@@ -537,10 +854,15 @@ def _compact_panel(context: PanelContext, box_width: int, phase: float, progress
     border = style_text("│", "muted", color)
     lines = [_border_title(box_width, color)]
     for line in render_cloud(phase=phase, progress=progress, color=color):
-        pad = inside - visible_width(line)
-        lines.append(f"{border}{' ' * (pad // 2)}{line}{' ' * (pad - pad // 2)}{border}")
-    for label, value, role in _context_rows(context)[:2]:
-        lines.append(f"{border}{_styled_context(label, value, inside, color, role)}{border}")
+        lines.append(f"{border}{_centered(line, inside)}{border}")
+    v_trunc = truncate_visible(context.data_volume, max(1, inside - 12))
+    v_plain = f"  Volume: {v_trunc}"
+    v_pad = " " * max(0, inside - visible_width(v_plain))
+    lines.append(f"{border}  {style_text('Volume:', 'muted', color)} {style_text(v_trunc, 'g_yellow', color)}{v_pad}{border}")
+    p_trunc = truncate_visible(context.project, max(1, inside - 13))
+    p_plain = f"  Project: {p_trunc}"
+    p_pad = " " * max(0, inside - visible_width(p_plain))
+    lines.append(f"{border}  {style_text('Project:', 'muted', color)} {style_text(p_trunc, 'g_blue', color)}{p_pad}{border}")
     lines.append(_border_bottom(box_width, color))
     return lines
 
@@ -560,7 +882,7 @@ def _minimal_panel(
     )
     title += " " * max(0, inside - visible_width(title))
     data_volume = truncate_visible(context.data_volume, inside)
-    data_volume = style_text(data_volume, "primary", color)
+    data_volume = style_text(data_volume, "g_yellow", color)
     data_volume += " " * max(0, inside - visible_width(data_volume))
     return [
         _border_title(box_width, color),
@@ -568,7 +890,6 @@ def _minimal_panel(
         f"{border}{data_volume}{border}",
         _border_bottom(box_width, color),
     ]
-
 
 class LifecycleReporter:
     def __init__(
@@ -629,11 +950,42 @@ class LifecycleReporter:
             self._message = message
             if panel is not None:
                 self._panel = panel
-                self._panel_settled = False
                 self._phase = self.phase_selector(_PHASES)
+                if self.capabilities.cursor and not self._panel_settled:
+                    if self._rows:
+                        self._clear_frame()
+                    for line in render_panel(
+                        self._panel,
+                        self.width,
+                        phase=self._phase,
+                        progress=1.0,
+                        color=self.capabilities.color,
+                    ):
+                        self.stream.write(line + "\n")
+                    self._panel_settled = True
+                    self.stream.flush()
         if not self.capabilities.cursor:
             self._write_plain("Processing", message)
 
+    def write_line(self, line: str) -> None:
+        if not self.enabled:
+            return
+        trimmed = line.rstrip("\r\n")
+        with self._lock:
+            if self.capabilities.cursor and self._rows:
+                self._clear_frame()
+            if self.capabilities.cursor and self._panel is not None and not self._panel_settled:
+                for p_line in render_panel(
+                    self._panel,
+                    self.width,
+                    phase=self._phase,
+                    progress=1.0,
+                    color=self.capabilities.color,
+                ):
+                    self.stream.write(p_line + "\n")
+                self._panel_settled = True
+            self.stream.write(f"{trimmed}\n")
+            self.stream.flush()
     def succeed(self, message: str) -> None:
         self._finish("Done", message, "success")
 
@@ -679,35 +1031,40 @@ class LifecycleReporter:
         interval = 1.0 / self.fps
         while not self._stop.is_set():
             with self._lock:
-                elapsed = self._elapsed()
-                progress = min(1.0, elapsed / self.intro_seconds) if self.intro_seconds > 0 else 1.0
-                if self.capabilities.color is ColorMode.NONE:
-                    progress = 1.0
-                lines = self._frame(
-                    progress,
-                    elapsed,
-                    include_panel=not self._panel_settled,
-                )
+                lines = self._frame()
                 self._draw_frame(lines)
-                if self._panel is not None and progress >= 1.0:
-                    self._panel_settled = True
-                    self._rows = 1
             self._stop.wait(interval)
 
     def _frame(
         self,
-        progress: float,
-        elapsed: float,
+        progress: float = 1.0,
+        elapsed: float | None = None,
         *,
-        include_panel: bool = True,
+        include_panel: bool = False,
     ) -> list[str]:
+        effective_elapsed = self._elapsed() if elapsed is None else elapsed
         lines: list[str] = []
         if include_panel and self._panel is not None:
-            lines.extend(render_panel(self._panel, self.width, phase=self._phase, progress=progress, color=self.capabilities.color))
-        spinner = _SPINNERS[int(elapsed * 10) % len(_SPINNERS)]
+            lines.extend(
+                render_panel(
+                    self._panel,
+                    self.width,
+                    phase=self._phase,
+                    progress=progress,
+                    color=self.capabilities.color,
+                )
+            )
+        spinner = ""
+        if _SPINNERS:
+            try:
+                spinner_index = int(effective_elapsed * 10) % len(_SPINNERS)
+            except (TypeError, OverflowError, ValueError, ZeroDivisionError):
+                spinner_index = 0
+            if spinner_index < len(_SPINNERS):
+                spinner = _SPINNERS[spinner_index]
         processing = style_text("Processing", "processing", self.capabilities.color, bold=True)
         spinner = style_text(spinner, "processing", self.capabilities.color)
-        elapsed_text = style_text(f"{elapsed:.1f}s", "muted", self.capabilities.color)
+        elapsed_text = style_text(f"{effective_elapsed:.1f}s", "muted", self.capabilities.color)
         overhead = (
             visible_width(spinner)
             + visible_width(processing)
@@ -755,14 +1112,20 @@ class LifecycleReporter:
         return 0.0 if self._started is None else max(0.0, self.clock() - self._started)
 
     def _status_line(self, status: str, message: str, role: str, elapsed: float) -> str:
-        styled = style_text(status.ljust(10), role, self.capabilities.color, bold=True)
+        styled = style_text(status.ljust(13), role, self.capabilities.color, bold=True)
         elapsed_text = style_text(f"{elapsed:.1f}s", "muted", self.capabilities.color)
         overhead = visible_width(styled) + visible_width(elapsed_text) + 2
-        available = max(1, self.width - overhead)
-        return f"{styled}{truncate_visible(message, available)}  {elapsed_text}"
+        available = max(0, self.width - overhead)
+        if available > 0:
+            truncated = truncate_visible(message, available)
+            return f"{styled}{truncated}  {elapsed_text}"
+        if self.width >= visible_width(styled) + visible_width(elapsed_text):
+            gap = " " * (self.width - visible_width(styled) - visible_width(elapsed_text))
+            return f"{styled}{gap}{elapsed_text}"
+        return truncate_visible(styled, self.width)
 
     def _write_plain(self, status: str, message: str, *, role: str | None = None) -> None:
         selected_role = role or ("processing" if status == "Processing" else "primary")
-        label = style_text(status.ljust(10), selected_role, self.capabilities.color, bold=True)
+        label = style_text(status.ljust(13), selected_role, self.capabilities.color, bold=True)
         self.stream.write(f"{label}{message}\n")
         self.stream.flush()

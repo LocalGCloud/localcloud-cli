@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .config import DEFAULT_IMAGE
+from .config import DEFAULT_IMAGE, DEFAULT_PROJECT, DEFAULT_USER
 
 
 _SERVICE_INVENTORY = (
@@ -61,9 +61,9 @@ Runtime and request identity
 - `--data-volume NAME` selects a different runtime. The CLI discovers the
   unique compatible LocalCloud container using that volume, even when another
   tool created the container.
-- The default project is `local-gcp-project`.
-- The default caller is `local-developer`, normalized to
-  `local-developer@localcloud.invalid` where an email principal is required.
+- The default project is `{DEFAULT_PROJECT}`.
+- The default caller is `{DEFAULT_USER}`, normalized to
+  `{DEFAULT_USER}@localcloud.invalid` where an email principal is required.
 - `--project-id ID` selects logical data inside the runtime. Only `start`
   creates a missing project; other context-selecting commands fail with
   recovery guidance when the project is unknown.

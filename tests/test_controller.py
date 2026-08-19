@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
 
 import localcloud_cli.controller as controller_module
 import localcloud_cli.endpoints as endpoints_module
@@ -38,8 +38,13 @@ class FakeRuntime:
         }
         self.preferred: list[str | None] = []
         self.preflights: list[str | None] = []
+        self.preflight_pulls: list[bool] = []
+        self.create_pulls: list[bool] = []
         self.preflight_error: HostError | None = None
-
+        self.readiness_deadlines: list[float | None] = []
+        self.wait_error: HostError | None = None
+        self.log_calls: list[tuple[LocalCloudConfig, RuntimeRecord, int]] = []
+        self.doctor_report: dict[str, Any] = {"status": "ok", "warning": "runtime warning"}
 
 
 
@@ -60,18 +65,30 @@ class FakeRuntime:
         self,
         _config: LocalCloudConfig,
         replacing: RuntimeRecord | None = None,
-    ) -> None:
+        *,
+        pull: bool = False,
+    ) -> tuple[Any, bool]:
         self.preflights.append(
             None if replacing is None else str(replacing.container_id)
         )
+        self.preflight_pulls.append(pull)
         if self.preflight_error is not None:
             raise self.preflight_error
+        return None, False
 
 
 
-
-    def create(self, config: LocalCloudConfig) -> RuntimeRecord:
+    def create(
+        self,
+        config: LocalCloudConfig,
+        *,
+        pull: bool = False,
+        readiness_deadline: float | None = None,
+        observer: Any | None = None,
+    ) -> RuntimeRecord:
         self.creates += 1
+        self.create_pulls.append(pull)
+        self.readiness_deadlines.append(readiness_deadline)
         self.record = replace(
             _record(config, container_id=f"container-{self.creates}"),
             volume_created=self.creates == 1,
@@ -79,16 +96,32 @@ class FakeRuntime:
         return self.record
 
     def start(
-        self, _config: LocalCloudConfig, current: RuntimeRecord
+        self,
+        _config: LocalCloudConfig,
+        current: RuntimeRecord,
+        *,
+        readiness_deadline: float | None = None,
+        observer: Any | None = None,
     ) -> RuntimeRecord:
-        self.starts += 1
+        self.readiness_deadlines.append(readiness_deadline)
+        if current.state != "running":
+            self.starts += 1
+        if self.wait_error is not None:
+            raise self.wait_error
+        self.ready = True
         self.record = replace(current, state="running", health="healthy")
         return self.record
 
     def restart(
-        self, _config: LocalCloudConfig, current: RuntimeRecord
+        self,
+        _config: LocalCloudConfig,
+        current: RuntimeRecord,
+        *,
+        readiness_deadline: float | None = None,
+        observer: Any | None = None,
     ) -> RuntimeRecord:
         self.restarts += 1
+        self.readiness_deadlines.append(readiness_deadline)
         self.record = replace(current, state="running", health="healthy")
         return self.record
 
@@ -120,18 +153,39 @@ class FakeRuntime:
 
     def logs(
         self,
-        _config: LocalCloudConfig,
-        _current: RuntimeRecord,
+        config: LocalCloudConfig,
+        current: RuntimeRecord,
         *,
         tail: int,
+        since: float | None = None,
     ) -> str:
+        self.log_calls.append((config, current, tail))
         return f"tail={tail}"
 
     def is_ready(self, _current: RuntimeRecord) -> bool:
         return self.ready
 
     def doctor(self) -> dict[str, Any]:
-        return {"status": "ok", "warning": "runtime warning"}
+        return dict(self.doctor_report)
+
+    def image_status(self, _image_name: str) -> str:
+        return "available locally"
+
+    def image_details(self, _image_name: str) -> dict[str, Any]:
+        return {
+            "location": "Local",
+            "image_id": "qualified",
+            "sha": "sha256:qualified",
+            "formatted": "(Local: ID: qualified , sha256:qualified)",
+        }
+
+    def cleanup_resources(
+        self, invalid: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        return {
+            "removed": [{"kind": e["kind"], "name": e["name"]} for e in invalid],
+            "failures": [],
+        }
 
 
 class FakeJavaClient:
@@ -139,21 +193,56 @@ class FakeJavaClient:
     reset_projects: list[str] = []
     seeds: list[tuple[str, str, bool]] = []
     fail_seed = False
+    seed_attempts = 0
+    create_calls = 0
+    catalog_failures: list[Exception] = []
+    catalog_error: Exception | None = None
+    timeouts: list[float] = []
+    create_error: Exception | None = None
+    create_commits_before_error = False
 
-    def __init__(self, _url: str, project: str, user: str):
+    def __init__(
+        self,
+        _url: str,
+        project: str,
+        user: str,
+        timeout: float = 60.0,
+    ):
         self.project = project
         self.user = user
+        type(self).timeouts.append(timeout)
+
+    def list_projects(self) -> list[dict[str, str]]:
+        if type(self).catalog_failures:
+            raise type(self).catalog_failures.pop(0)
+        error = type(self).catalog_error
+        if error is not None:
+            raise error
+        return [
+            {"project_id": project}
+            for project in sorted(type(self).projects)
+        ]
 
     def project_exists(self) -> bool:
-        return self.project in type(self).projects
+        return any(
+            item["project_id"] == self.project
+            for item in self.list_projects()
+        )
 
     def create_project(self) -> None:
+        type(self).create_calls += 1
+        error = type(self).create_error
+        if error is not None:
+            if type(self).create_commits_before_error:
+                type(self).projects.add(self.project)
+            raise error
         type(self).projects.add(self.project)
 
     def reset_project(self) -> None:
         type(self).reset_projects.append(self.project)
 
     def seed_project(self, yaml: str, *, volatile_only: bool) -> None:
+        type(self).seed_attempts += 1
         if type(self).fail_seed:
             raise RuntimeError("seed failed")
         type(self).seeds.append((self.project, yaml, volatile_only))
@@ -165,6 +254,13 @@ def fake_java(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeJavaClient.reset_projects = []
     FakeJavaClient.seeds = []
     FakeJavaClient.fail_seed = False
+    FakeJavaClient.seed_attempts = 0
+    FakeJavaClient.create_calls = 0
+    FakeJavaClient.catalog_failures = []
+    FakeJavaClient.catalog_error = None
+    FakeJavaClient.create_error = None
+    FakeJavaClient.create_commits_before_error = False
+    FakeJavaClient.timeouts = []
     monkeypatch.setattr(controller_module, "JavaMcpClient", FakeJavaClient)
     monkeypatch.setattr(
         endpoints_module,
@@ -172,6 +268,35 @@ def fake_java(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda _environment, project, user, output_format: {
             "GOOGLE_CLOUD_PROJECT": project,
             "LOCALCLOUD_USER": user,
+        },
+    )
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _java_transport_error(
+    *,
+    status_code: int = 503,
+    retryable: bool = True,
+) -> HostError:
+    return HostError(
+        "java_mcp_unavailable",
+        "Java LocalCloud MCP request failed",
+        {
+            "url": "http://127.0.0.1:49080/mcp",
+            "method": "tools/call",
+            "cause": f"HTTP {status_code}",
+            "retryable": retryable,
+            "status_code": status_code,
         },
     )
 
@@ -199,6 +324,8 @@ def _record(
     origin: str = "managed",
     ownership: dict[str, str] | None = None,
     state: str = "running",
+    image_id: str = "sha256:image",
+    configured_image_id: str | None = "sha256:image",
 ) -> RuntimeRecord:
     return RuntimeRecord(
         data_volume=config.data_volume,
@@ -224,8 +351,9 @@ def _record(
             "read_write": True,
         },
         configured_image=config.image,
+        configured_image_id=configured_image_id,
         actual_image=config.image,
-        image_id="sha256:image",
+        image_id=image_id,
         config_hash=config.config_hash,
         config_path=str(config.config_path) if config.config_path else "<defaults>",
         runtime_settings=runtime_settings(config),
@@ -243,7 +371,15 @@ def _record(
 def _controller(tmp_path: Path) -> tuple[Controller, FakeRuntime, HostPaths]:
     paths = _paths(tmp_path)
     runtime = FakeRuntime()
-    return Controller(runtime=runtime, paths=paths), runtime, paths
+    return Controller(runtime=cast(Any, runtime), paths=paths), runtime, paths
+
+
+class _RuntimeObserver:
+    def __init__(self) -> None:
+        self.logs: list[str] = []
+
+    def runtime_logs(self, value: str) -> None:
+        self.logs.append(value)
 
 
 def test_start_creates_runtime_project_and_active_record(tmp_path: Path) -> None:
@@ -280,6 +416,41 @@ def test_start_creates_runtime_project_and_active_record(tmp_path: Path) -> None
     assert active.container_id == "container-1"
 
 
+def test_start_reports_docker_logs_to_observer(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    _ = paths
+    config = _config(tmp_path, paths=paths)
+    observer = _RuntimeObserver()
+
+    result = controller.start(config, observer=observer)
+
+    assert result["status"] == "started"
+    assert runtime.log_calls
+    # _emit_runtime_logs uses tail=12 for the progress excerpt.
+    assert any(call[2] == 12 for call in runtime.log_calls)
+    assert observer.logs == ["tail=12"]
+    # _runtime_logs uses tail=20 for the result dict.
+    assert result["logs"] == "tail=20"
+
+
+def test_restart_reports_docker_logs_to_observer(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    _ = paths
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config, state="exited")
+    observer = _RuntimeObserver()
+
+    result = controller.restart(config, observer=observer)
+
+    assert result["status"] == "restarted"
+    assert runtime.log_calls
+    # _emit_runtime_logs uses tail=12 for the progress excerpt.
+    assert any(call[2] == 12 for call in runtime.log_calls)
+    assert observer.logs == ["tail=12"]
+    # _runtime_logs uses tail=20 for the result dict.
+    assert result["logs"] == "tail=20"
+
+
 def test_start_adopts_attached_container_without_reconfiguration(
     tmp_path: Path,
 ) -> None:
@@ -305,7 +476,184 @@ def test_start_adopts_attached_container_without_reconfiguration(
     assert runtime.creates == 0
 
 
-def test_start_does_not_restart_running_unhealthy_attached_container(
+def test_start_reuses_stopped_same_volume_container(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config, state="exited")
+
+    result = controller.start(config)
+
+    assert result["status"] == "started"
+    assert result["container"]["id"] == "container-existing"
+    assert runtime.starts == 1
+    assert runtime.creates == 0
+    assert runtime.removes == []
+    assert runtime.readiness_deadlines
+    assert runtime.readiness_deadlines[0] is not None
+
+
+def test_start_retries_transient_project_catalog_readiness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    transient = _java_transport_error()
+    FakeJavaClient.catalog_failures = [transient, transient]
+    clock = FakeClock()
+    monkeypatch.setattr(controller_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
+
+    result = controller.start(config)
+
+    assert result["status"] == "already_running"
+    assert result["container"]["id"] == "container-existing"
+    assert clock.now == 2.0
+    assert runtime.creates == 0
+    assert runtime.starts == 0
+    assert runtime.restarts == 0
+    assert all(0 < timeout <= 5 for timeout in FakeJavaClient.timeouts)
+
+
+def test_start_fails_immediately_for_permanent_project_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    FakeJavaClient.catalog_error = _java_transport_error(
+        status_code=403,
+        retryable=False,
+    )
+    monkeypatch.setattr(
+        controller_module.time,
+        "sleep",
+        lambda _seconds: pytest.fail("permanent errors must not be retried"),
+    )
+
+    with pytest.raises(HostError) as caught:
+        controller.start(config)
+
+    assert caught.value.code == "project_create_failed"
+    cause = caught.value.details["cause"]
+    assert cause["details"]["status_code"] == 403
+    assert cause["details"]["retryable"] is False
+    assert runtime.creates == 0
+    assert runtime.starts == 0
+    assert runtime.restarts == 0
+
+
+def test_start_project_readiness_uses_one_shared_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    FakeJavaClient.catalog_error = _java_transport_error()
+    clock = FakeClock()
+    monkeypatch.setattr(controller_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
+
+    with pytest.raises(HostError) as caught:
+        controller.start(config)
+
+    assert caught.value.code == "runtime_readiness_timeout"
+    assert caught.value.details["phase"] == "project_catalog"
+    assert caught.value.details["timeout_seconds"] == 60.0
+    assert (
+        caught.value.details["last_error"]["details"]["status_code"]
+        == 503
+    )
+    assert clock.now == 60.0
+
+
+def test_start_creates_project_and_applies_seed_once(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    (tmp_path / "seed.yaml").write_text(
+        "projects:\n  - projectId: new-project\n",
+        encoding="utf-8",
+    )
+    config = _config(
+        tmp_path,
+        paths=paths,
+        yaml="project: new-project\nseed: seed.yaml\n",
+    )
+    runtime.record = _record(config)
+
+    result = controller.start(config)
+
+    assert result["status"] == "already_running"
+    assert FakeJavaClient.create_calls == 1
+    assert FakeJavaClient.seed_attempts == 1
+    assert FakeJavaClient.seeds == [
+        ("new-project", config.seed_yaml, False)
+    ]
+    assert runtime.creates == 0
+    assert runtime.starts == 0
+    assert runtime.restarts == 0
+
+
+def test_start_observes_project_after_transient_create_response_failure(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    (tmp_path / "seed.yaml").write_text(
+        "projects:\n  - projectId: new-project\n",
+        encoding="utf-8",
+    )
+    config = _config(
+        tmp_path,
+        paths=paths,
+        yaml="project: new-project\nseed: seed.yaml\n",
+    )
+    runtime.record = _record(config)
+    FakeJavaClient.create_error = _java_transport_error()
+    FakeJavaClient.create_commits_before_error = True
+
+    result = controller.start(config)
+
+    assert result["status"] == "already_running"
+    assert FakeJavaClient.create_calls == 1
+    assert FakeJavaClient.seed_attempts == 1
+    assert FakeJavaClient.seeds == [
+        ("new-project", config.seed_yaml, False)
+    ]
+
+
+def test_start_preserves_transient_create_failure_at_visibility_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(
+        tmp_path,
+        paths=paths,
+        yaml="project: new-project\n",
+    )
+    runtime.record = _record(config)
+    FakeJavaClient.create_error = _java_transport_error()
+    clock = FakeClock()
+    monkeypatch.setattr(controller_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
+
+    with pytest.raises(HostError) as caught:
+        controller.start(config)
+
+    assert caught.value.code == "runtime_readiness_timeout"
+    assert caught.value.details["phase"] == "project_visibility"
+    last_error = caught.value.details["last_error"]
+    assert last_error["details"]["status_code"] == 503
+    assert last_error["details"]["retryable"] is True
+    assert FakeJavaClient.create_calls == 1
+    assert clock.now == 60.0
+
+
+def test_start_waits_for_running_same_volume_container_without_restart(
     tmp_path: Path,
 ) -> None:
     controller, runtime, paths = _controller(tmp_path)
@@ -321,11 +669,44 @@ def test_start_does_not_restart_running_unhealthy_attached_container(
     )
     runtime.ready = False
 
+    result = controller.start(config)
+
+    assert result["status"] == "already_running"
+    assert result["container"]["id"] == "container-existing"
+    assert runtime.starts == 0
+    assert runtime.restarts == 0
+    assert runtime.creates == 0
+    assert runtime.readiness_deadlines
+    assert runtime.readiness_deadlines[0] is not None
+
+
+def test_start_does_not_restart_running_attached_container_when_wait_fails(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(
+        config,
+        origin="attached",
+        ownership={
+            "container": "attached",
+            "network": "attached",
+            "data_volume": "attached",
+        },
+    )
+    runtime.ready = False
+    runtime.wait_error = HostError(
+        "health_timeout",
+        "LocalCloud did not become healthy",
+    )
+
     with pytest.raises(HostError) as caught:
         controller.start(config)
 
-    assert caught.value.code == "attached_runtime_unhealthy"
+    assert caught.value is runtime.wait_error
+    assert runtime.starts == 0
     assert runtime.restarts == 0
+    assert runtime.creates == 0
 
 
 
@@ -373,6 +754,26 @@ def test_managed_container_on_attached_volume_can_be_reconfigured(
     assert runtime.creates == 1
 
 
+def test_reconfigure_to_ephemeral_preserves_existing_persistent_volume(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    original = _config(tmp_path, paths=paths)
+    assert original.data == "persistent"
+    runtime.record = _record(original)
+    changed = _config(tmp_path, paths=paths, yaml="data: ephemeral\n")
+
+    result = controller.start(changed)
+
+    assert result["status"] == "reconfigured"
+    # The existing volume already holds persistent data; an implicit
+    # reconfigure must never discard it just because the new config no
+    # longer requests persistence, since `remove()` runs before `create()`
+    # can prove the replacement will actually succeed.
+    assert runtime.removes == [False]
+    assert runtime.creates == 1
+
+
 def test_restart_never_replaces_attached_container(tmp_path: Path) -> None:
     controller, runtime, paths = _controller(tmp_path)
     original = _config(tmp_path, paths=paths)
@@ -394,6 +795,89 @@ def test_restart_never_replaces_attached_container(tmp_path: Path) -> None:
     assert runtime.restarts == 1
     assert runtime.removes == []
 
+
+def test_restart_with_pull_replaces_runtime_and_requests_image_pull(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+
+    result = controller.restart(config, pull=True)
+
+    assert result["status"] == "restarted"
+    assert runtime.preflight_pulls == [True]
+    assert runtime.removes == [False]
+    assert runtime.creates == 1
+    assert runtime.restarts == 0
+
+
+def test_restart_without_pull_restarts_existing_container(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+
+    result = controller.restart(config, pull=False)
+
+    assert result["status"] == "restarted"
+    assert runtime.preflight_pulls == []
+    assert runtime.removes == []
+    assert runtime.creates == 0
+    assert runtime.restarts == 1
+
+
+def test_start_with_pull_replaces_running_runtime(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+
+    result = controller.start(config, pull=True)
+
+    assert result["status"] == "started"
+    assert runtime.preflight_pulls == [True]
+    assert runtime.removes == [False]
+    assert runtime.creates == 1
+
+def test_restart_replaces_container_when_local_image_id_is_updated(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(
+        config,
+        image_id="sha256:old-image",
+        configured_image_id="sha256:new-image",
+    )
+
+    result = controller.restart(config)
+
+    assert result["status"] == "reconfigured"
+    assert result["changed_fields"] == ["image"]
+    assert runtime.removes == [False]
+    assert runtime.creates == 1
+    assert runtime.restarts == 0
+
+
+def test_start_attaches_to_running_runtime_without_replacing_when_local_image_differs(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(
+        config,
+        image_id="sha256:old-image",
+        configured_image_id="sha256:new-image",
+    )
+
+    result = controller.start(config)
+
+    assert result["status"] == "already_running"
+    assert runtime.removes == []
+    assert runtime.creates == 0
 
 def test_stop_preserves_attached_ephemeral_runtime(tmp_path: Path) -> None:
     controller, runtime, paths = _controller(tmp_path)
@@ -550,6 +1034,7 @@ def test_failed_seed_does_not_update_active_runtime(tmp_path: Path) -> None:
         controller.start(config)
 
     assert caught.value.code == "seed_failed"
+    assert FakeJavaClient.seed_attempts == 1
     assert load_active_runtime(paths) is None
 
 
@@ -568,3 +1053,185 @@ def test_doctor_reports_malformed_active_state_without_failing(
     assert result["active_runtime"] is None
     assert result["active_runtime_diagnostics"][0]["code"] == "invalid_active_runtime"
     assert "malformed" in result["warning"]
+
+
+def _seed_cleanup_state(paths: HostPaths, runtime: FakeRuntime) -> None:
+    paths.home.mkdir(parents=True, exist_ok=True)
+    paths.locks.mkdir(parents=True, exist_ok=True)
+    (paths.home / "active-runtime.json").write_text(
+        json.dumps({"schema_version": 999}), encoding="utf-8"
+    )
+    (paths.home / "state.db").touch()
+    (paths.home / "daemon.lock").touch()
+    lock_name = "a" * 64 + ".lock"
+    (paths.locks / lock_name).touch()
+    (paths.locks / "active-runtime.lock").touch()
+    runtime.doctor_report = {
+        "status": "ok",
+        "invalid_ownership": [
+            {"kind": "container", "name": "broken", "error": {}}
+        ],
+    }
+
+
+def test_cleanup_dry_run_reports_candidates_without_removing(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    _seed_cleanup_state(paths, runtime)
+
+    result = controller.cleanup(dry_run=True)
+
+    assert result["dry_run"] is True
+    assert result["docker_resources"] == [
+        {"kind": "container", "name": "broken", "error": {}}
+    ]
+    assert result["active_runtime_stale"] is True
+    assert "state.db" in result["legacy_host_state"]
+    assert "daemon.lock" in result["legacy_host_state"]
+    assert any(name.endswith(".lock") and len(name) == 69 for name in result["legacy_locks"])
+    # Files preserved in dry-run mode.
+    assert (paths.home / "active-runtime.json").exists()
+    assert (paths.home / "state.db").exists()
+    assert (paths.home / "daemon.lock").exists()
+    assert (paths.locks / ("a" * 64 + ".lock")).exists()
+
+
+def test_cleanup_defaults_to_removing_state(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    _seed_cleanup_state(paths, runtime)
+
+    result = controller.cleanup()
+
+    assert result["dry_run"] is False
+    assert result["docker_resources"] == [
+        {"kind": "container", "name": "broken"}
+    ]
+    assert not (paths.home / "active-runtime.json").exists()
+    assert not (paths.home / "state.db").exists()
+    assert not (paths.home / "daemon.lock").exists()
+    assert not (paths.locks / ("a" * 64 + ".lock")).exists()
+    # active-runtime.lock is not a hash lock and must survive.
+    assert (paths.locks / "active-runtime.lock").exists()
+
+
+def test_cleanup_with_nothing_to_clean(tmp_path: Path) -> None:
+    controller, _runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+
+    result = controller.cleanup()
+
+    assert result["status"] == "ok"
+    assert result["docker_resources"] == []
+    assert result["active_runtime_stale"] is False
+    assert result["legacy_host_state"] == []
+    assert result["legacy_locks"] == []
+    assert result["failures"] == []
+
+
+def test_start_includes_image_status_and_logs(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+
+    result = controller.start(config)
+
+    assert result["container"]["image_status"] == "available locally"
+    assert "logs" in result
+    assert isinstance(result["logs"], str)
+
+
+def test_doctor_includes_image_details(tmp_path: Path) -> None:
+    controller, _runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+
+    result = controller.doctor()
+
+    assert "(Local: ID: qualified , sha256:qualified)" in result["default_image"]
+    assert result["image_details"]["location"] == "Local"
+    assert "image_status" not in result
+
+
+def test_status_includes_image_status_for_absent_runtime(tmp_path: Path) -> None:
+    controller, _runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+
+    result = controller.status(config)
+
+    assert result["status"] == "not_created"
+    assert result["container"]["image_status"] == "available locally"
+
+def test_start_tails_runtime_logs_with_specified_duration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    observer = _RuntimeObserver()
+
+    time_seq = [100.0, 100.2, 100.5, 101.1]
+    monkeypatch.setattr(
+        controller_module.time,
+        "monotonic",
+        lambda: time_seq.pop(0) if time_seq else 102.0,
+    )
+    monkeypatch.setattr(controller_module.time, "sleep", lambda _s: None)
+
+    result = controller.start(config, observer=observer, tail=1.0)
+    assert result["status"] == "started"
+    assert any(call[2] == 100 for call in runtime.log_calls)
+
+
+def test_start_with_zero_tail_does_not_tail_after_readiness(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    observer = _RuntimeObserver()
+
+    result = controller.start(config, observer=observer, tail=0.0)
+    assert result["status"] == "started"
+    # tail=100 is used for post-readiness tailing; tail=0 means no post-readiness calls
+    assert not any(call[2] == 100 for call in runtime.log_calls)
+
+
+def test_tail_runtime_logs_handles_continuous_mode_on_interrupt(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    observer = _RuntimeObserver()
+
+    runtime.record = _record(config)
+    calls = [0]
+
+    def interrupting_logs(*args: Any, **kwargs: Any) -> str:
+        calls[0] += 1
+        if calls[0] > 1:
+            raise KeyboardInterrupt()
+        return "log line"
+
+    runtime.logs = interrupting_logs  # type: ignore[assignment]
+    controller._tail_runtime_logs(observer, config, runtime.record, tail=-1.0)
+    assert observer.logs == ["log line"]
+
+
+def test_start_when_already_running_skips_tailing_and_observer_starting(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+
+    class CustomObserver:
+        def __init__(self) -> None:
+            self.started_calls = 0
+            self.logs: list[str] = []
+
+        def starting(self, _cfg: Any) -> None:
+            self.started_calls += 1
+
+        def runtime_logs(self, value: str) -> None:
+            self.logs.append(value)
+
+    observer = CustomObserver()
+    result = controller.start(config, observer=observer, tail=5.0)
+    assert result["status"] == "already_running"
+    assert observer.started_calls == 0
+    assert observer.logs == []
+    assert result.get("logs") is None
+

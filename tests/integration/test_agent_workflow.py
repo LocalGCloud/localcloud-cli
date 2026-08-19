@@ -1,389 +1,343 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
+import httpx
 import pytest
 
-from integration._support import assert_loopback_url, controller_for, write_config
+from integration._support import assert_loopback_url, default_runtime_for
 from localcloud_cli.cli import main
-from localcloud_cli.config import DEFAULT_PROJECT, default_resource_names
-from localcloud_cli.docker_runtime import (
-    MANAGED_LABEL,
-    _container_environment,
-)
-from localcloud_cli.java_client import JavaMcpClient
-from localcloud_cli.mcp_stdio import McpAdapter
+from localcloud_cli.config import DEFAULT_DATA_VOLUME, DEFAULT_PROJECT, DEFAULT_USER
+from localcloud_cli.docker_runtime import DockerRuntime, RuntimeRecord
+from localcloud_cli.errors import HostError
+from localcloud_cli.java_client import JavaMcpClient, is_retryable_java_error
 
 
 pytestmark = pytest.mark.docker
 
-PROJECT = "agent-project-1"
-SECOND_PROJECT = "agent-project-2"
-USER = "integration-agent"
+_READINESS_TIMEOUT = 60.0
+_READINESS_POLL_INTERVAL = 1.0
+_READINESS_REQUEST_TIMEOUT = 10.0
+_SEEDED_PROJECT = "local-project"
+_SEEDED_GCS_BUCKETS = {"app-assets", "demo-bucket", "user-profiles"}
+_SEEDED_BIGQUERY_DATASETS = {"app_analytics", "dataset"}
 
 
 def _invoke(
-    capsys: pytest.CaptureFixture[str], *arguments: str
+    capsys: pytest.CaptureFixture[str],
+    *arguments: str,
+    verbose: bool = True,
 ) -> dict[str, Any]:
-    code = main([*arguments, "--verbose"])
+    argv = [*arguments]
+    if verbose:
+        argv.append("--verbose")
+    code = main(argv)
     captured = capsys.readouterr()
     assert code == 0, captured.err
-    assert not captured.err
     return json.loads(captured.out)
 
 
-def _invoke_error(
-    capsys: pytest.CaptureFixture[str], *arguments: str
+def _error_text(error: Exception) -> str:
+    if isinstance(error, HostError):
+        return json.dumps(error.to_dict(), sort_keys=True)
+    return f"{type(error).__name__}: {error}"
+
+
+def _request_timeout(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("default runtime readiness deadline elapsed")
+    return min(_READINESS_REQUEST_TIMEOUT, remaining)
+
+
+def _read_seeded_data(
+    current: RuntimeRecord,
+    *,
+    deadline: float,
 ) -> dict[str, Any]:
-    code = main([*arguments, "--verbose"])
-    captured = capsys.readouterr()
-    assert code == 2, captured.out
-    return json.loads(captured.err)
-
-
-def _resource_inventory(java: JavaMcpClient, service: str) -> str:
-    return json.dumps(
-        java.tool("localcloud_browse_resources", {"service": service}),
-        sort_keys=True,
+    gcs = JavaMcpClient(
+        current.url,
+        _SEEDED_PROJECT,
+        DEFAULT_USER,
+        timeout=_request_timeout(deadline),
+    ).tool(
+        "localcloud_browse_resources",
+        {"service": "gcs", "project": _SEEDED_PROJECT},
     )
-
-
-def test_shared_volume_projects_seed_persistence_mcp_and_ownership(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    config_dir = tmp_path / "config"
-    data_volume = f"integration-{uuid4().hex[:12]}"
-    config_dir.mkdir()
-    _controller, runtime, image = controller_for(tmp_path)
-    monkeypatch.setenv("LOCALCLOUD_HOME", str(tmp_path / "cli-home"))
-    monkeypatch.setenv("LOCALCLOUD_IMAGE", image)
-    (config_dir / "seed.yaml").write_text(
-        """services:
-  secretmanager:
-    secrets:
-      - name: configured-secret
-        versions:
-          - data: configured-value
-            state: ENABLED
-  pubsub:
-    topics:
-      - name: configured-topic
-""",
-        encoding="utf-8",
+    bigquery = JavaMcpClient(
+        current.url,
+        _SEEDED_PROJECT,
+        DEFAULT_USER,
+        timeout=_request_timeout(deadline),
+    ).tool(
+        "localcloud_browse_resources",
+        {"service": "bigquery", "project": _SEEDED_PROJECT},
     )
-    config = write_config(
-        config_dir,
-        image,
-        services=["secretmanager", "pubsub"],
-        data_volume=data_volume,
-        project=PROJECT,
-        user=USER,
+    buckets = {
+        str(bucket.get("name"))
+        for bucket in gcs.get("buckets", [])
+        if isinstance(bucket, dict)
+    }
+    datasets = {
+        str(dataset.get("datasetReference", {}).get("datasetId"))
+        for dataset in bigquery.get("datasets", [])
+        if isinstance(dataset, dict)
+    }
+    missing_buckets = _SEEDED_GCS_BUCKETS - buckets
+    missing_datasets = _SEEDED_BIGQUERY_DATASETS - datasets
+    if missing_buckets or missing_datasets:
+        raise RuntimeError(
+            "seeded data is incomplete: "
+            f"missing_buckets={sorted(missing_buckets)!r}, "
+            f"missing_datasets={sorted(missing_datasets)!r}"
+        )
+
+    headers = {
+        "X-LocalCloud-Project": _SEEDED_PROJECT,
+        "X-LocalCloud-User": DEFAULT_USER,
+    }
+    gcs_url = (
+        f"http://127.0.0.1:{int(current.endpoint_map['24081'])}"
+        "/storage/v1/b/demo-bucket"
     )
-    unrelated_volume = runtime.client.volumes.create(
-        name=f"localcloud-unrelated-{uuid4().hex[:12]}",
-        labels={MANAGED_LABEL: "true"},
+    bigquery_url = (
+        f"http://127.0.0.1:{int(current.endpoint_map['24087'])}"
+        f"/bigquery/v2/projects/{_SEEDED_PROJECT}/datasets/app_analytics"
     )
+    with httpx.Client(headers=headers) as client:
+        gcs_response = client.get(
+            gcs_url,
+            timeout=_request_timeout(deadline),
+        )
+        gcs_response.raise_for_status()
+        bigquery_response = client.get(
+            bigquery_url,
+            timeout=_request_timeout(deadline),
+        )
+        bigquery_response.raise_for_status()
+    gcs_payload = gcs_response.json()
+    bigquery_payload = bigquery_response.json()
+    if gcs_payload.get("name") != "demo-bucket":
+        raise RuntimeError("seeded GCS bucket payload is invalid")
+    dataset_reference = bigquery_payload.get("datasetReference", {})
+    if dataset_reference.get("projectId") != _SEEDED_PROJECT:
+        raise RuntimeError("seeded BigQuery dataset project is invalid")
+    if dataset_reference.get("datasetId") != "app_analytics":
+        raise RuntimeError("seeded BigQuery dataset payload is invalid")
+    return {
+        "project": _SEEDED_PROJECT,
+        "gcs_buckets": sorted(buckets),
+        "bigquery_datasets": sorted(datasets),
+    }
 
-    try:
-        started = _invoke(capsys, "start", str(config.config_path))
-        assert started["status"] == "started"
-        assert started["data_volume"] == config.data_volume
-        assert started["project"] == PROJECT
-        assert started["user"] == USER
-        assert started["services"] == ["secretmanager", "pubsub"]
-        assert "id" not in started
-        assert_loopback_url(started["container"]["url"])
-        assert started["sdk_env"]["LOCALCLOUD_USER"] == USER
-        assert (
-            started["sdk_env"]["LOCALCLOUD_PRINCIPAL"]
-            == "integration-agent@localcloud.invalid"
-        )
-        assert started["mcp"]["direct_url"].endswith("/mcp")
-        assert started["mcp"]["headers"] == {
-            "X-LocalCloud-Project": PROJECT,
-            "X-LocalCloud-User": USER,
-        }
 
-        adapter = McpAdapter(config)
-        initialized = adapter.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-11-25",
-                    "capabilities": {},
-                    "clientInfo": {"name": "integration", "version": "1"},
-                },
-            }
-        )
-        tools = adapter.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/list",
-                "params": {},
-            }
-        )
-        listed = adapter.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {
-                    "name": "localcloud_list_services",
-                    "arguments": {},
-                },
-            }
-        )
-        assert initialized["result"]["serverInfo"]["name"] == "localcloud"
-        tool_names = {tool["name"] for tool in tools["result"]["tools"]}
-        assert "localcloud_list_services" in tool_names
-        assert not {
-            "localcloud_plan_environment",
-            "localcloud_acquire_environment",
-            "localcloud_list_environments",
-        }.intersection(tool_names)
-        assert listed["result"].get("isError") is not True
-
+def _wait_for_default_seeded_runtime(
+    current: RuntimeRecord,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + _READINESS_TIMEOUT
+    last_error: Exception | None = None
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            pytest.fail(
+                "default_runtime_prerequisite_unavailable: "
+                f"runtime health, default project {DEFAULT_PROJECT!r}, or "
+                f"built-in seed data for {_SEEDED_PROJECT!r} did not become "
+                f"readable within {_READINESS_TIMEOUT:.0f}s; "
+                f"last_error={_error_text(last_error) if last_error else 'none'}"
+            )
         java = JavaMcpClient(
-            started["container"]["url"], started["project"], started["user"]
-        )
-        assert "configured-secret" in _resource_inventory(java, "secretmanager")
-        assert "configured-topic" in _resource_inventory(java, "pubsub")
-        java.seed_project(
-            """services:
-  secretmanager:
-    secrets:
-      - name: persistent-extra
-        versions:
-          - data: extra-value
-            state: ENABLED
-"""
-        )
-        assert "persistent-extra" in _resource_inventory(java, "secretmanager")
-
-        second = _invoke(
-            capsys,
-            "start",
-            str(config.config_path),
-            "--project-id",
-            SECOND_PROJECT,
-            "--user",
-            "second-agent",
-        )
-        assert second["container"]["name"] == started["container"]["name"]
-        assert second["network"]["name"] == started["network"]["name"]
-        assert second["mount"]["source"] == started["mount"]["source"]
-        assert second["project"] == SECOND_PROJECT
-        assert second["user"] == "second-agent"
-        assert second["mcp"]["headers"] == {
-            "X-LocalCloud-Project": SECOND_PROJECT,
-            "X-LocalCloud-User": "second-agent",
-        }
-        second_java = JavaMcpClient(
-            second["container"]["url"], second["project"], second["user"]
-        )
-        assert "configured-secret" in _resource_inventory(
-            second_java, "secretmanager"
-        )
-        second_java.seed_project(
-            """services:
-  secretmanager:
-    secrets:
-      - name: second-project-extra
-        versions:
-          - data: other-value
-            state: ENABLED
-"""
-        )
-
-        _invoke(capsys, "stop", "--data-volume", config.data_volume)
-        restarted = _invoke(capsys, "start", str(config.config_path))
-        java = JavaMcpClient(
-            restarted["container"]["url"],
-            restarted["project"],
-            restarted["user"],
-        )
-        secrets = _resource_inventory(java, "secretmanager")
-        assert "configured-secret" in secrets
-        assert "persistent-extra" in secrets
-
-        reset = _invoke(capsys, "reset", str(config.config_path))
-        java = JavaMcpClient(
-            reset["container"]["url"], reset["project"], reset["user"]
-        )
-        secrets = _resource_inventory(java, "secretmanager")
-        assert "configured-secret" in secrets
-        assert "persistent-extra" not in secrets
-        second_java = JavaMcpClient(
-            reset["container"]["url"], SECOND_PROJECT, "second-agent"
-        )
-        assert "second-project-extra" in _resource_inventory(
-            second_java, "secretmanager"
-        )
-
-        changed_path = config_dir / "ephemeral.yaml"
-        changed = write_config(
-            config_dir,
-            image,
-            services=["secretmanager"],
-            data_volume=config.data_volume,
-            project=PROJECT,
-            user=USER,
-            data="ephemeral",
-            seed=None,
-            name=changed_path.name,
-        )
-        replacement = _invoke(capsys, "start", str(changed_path))
-        assert replacement["container"]["name"] == started["container"]["name"]
-        assert replacement["services"] == ["secretmanager"]
-        assert replacement["data"] == "ephemeral"
-        _invoke(capsys, "stop", "--data-volume", config.data_volume)
-        assert runtime.resolve(changed) is None
-        names = default_resource_names(changed.data_volume)
-        for collection, name in (
-            (runtime.client.networks, names["network"]),
-            (runtime.client.volumes, changed.data_volume),
-        ):
-            with pytest.raises(Exception):
-                collection.get(name)
-
-        unknown_path = config_dir / "unknown.yaml"
-        write_config(
-            config_dir,
-            image,
-            services=["not-a-localcloud-service"],
-            data_volume=config.data_volume,
-            project=PROJECT,
-            user=USER,
-            data="ephemeral",
-            seed=None,
-            name=unknown_path.name,
-        )
-        unknown = _invoke_error(capsys, "start", str(unknown_path))
-        assert unknown["code"] == "container_start_failed"
-        assert "Unknown service" in unknown["details"]["logs"]
-
-        collision_name = default_resource_names(config.data_volume)["container"]
-        collision = runtime.client.containers.create(
-            image,
-            name=collision_name,
-            command=["sleep", "300"],
-            labels={},
+            current.url,
+            DEFAULT_PROJECT,
+            DEFAULT_USER,
+            timeout=_request_timeout(deadline),
         )
         try:
-            ownership = _invoke_error(
-                capsys, "start", str(config.config_path)
+            health = httpx.get(
+                f"{current.url}/health",
+                timeout=_request_timeout(deadline),
             )
-            assert ownership["code"] == "ownership_mismatch"
-            collision.reload()
-        finally:
-            collision.remove(force=True)
+            health.raise_for_status()
+            health_payload = health.json()
+            if health_payload.get("status") not in {"healthy", "ok", "ready"}:
+                raise RuntimeError(
+                    f"default runtime health returned {health_payload!r}"
+                )
+            if not java.project_exists():
+                last_error = RuntimeError(
+                    f"default project {DEFAULT_PROJECT!r} is not visible"
+                )
+            else:
+                return _read_seeded_data(current, deadline=deadline)
+        except Exception as error:
+            if isinstance(error, HostError) and not is_retryable_java_error(error):
+                pytest.fail(
+                    "default_runtime_prerequisite_unavailable: "
+                    f"{_error_text(error)}"
+                )
+            last_error = error
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(_READINESS_POLL_INTERVAL, remaining))
 
-        unrelated_volume.reload()
-        assert unrelated_volume.attrs.get("Labels") == {MANAGED_LABEL: "true"}
-    finally:
-        current = runtime.resolve(config)
-        if current is not None:
-            runtime.remove(config, current, remove_volume=True)
-        unrelated_volume.remove(force=True)
+
+def _resource_identity(resource: Any) -> str:
+    return str(
+        getattr(resource, "id", None)
+        or getattr(resource, "name", None)
+        or ""
+    )
 
 
-def test_cli_adopts_external_container_by_named_data_volume(
+def _runtime_identity_snapshot(
+    runtime: DockerRuntime,
+    current: RuntimeRecord,
+) -> dict[str, Any]:
+    container = runtime.client.containers.get(current.container_id)
+    container.reload()
+    volume = runtime.client.volumes.get(current.data_volume)
+    volume.reload()
+    network = (
+        runtime.client.networks.get(current.network_name)
+        if current.network_name
+        else None
+    )
+    if network is not None:
+        network.reload()
+    container_state = container.attrs.get("State", {})
+    return {
+        "data_volume": current.data_volume,
+        "container_id": _resource_identity(container),
+        "container_name": current.name,
+        "container_state": current.state,
+        "container_created_at": container.attrs.get("Created"),
+        "container_started_at": container_state.get("StartedAt"),
+        "container_finished_at": container_state.get("FinishedAt"),
+        "container_restart_count": container.attrs.get("RestartCount"),
+        "container_labels": dict(getattr(container, "labels", {}) or {}),
+        "network_name": current.network_name,
+        "network_id": _resource_identity(network) if network is not None else None,
+        "network_labels": (
+            dict(getattr(network, "labels", {}) or {})
+            if network is not None
+            else None
+        ),
+        "volume_id": _resource_identity(volume),
+        "volume_labels": dict(getattr(volume, "labels", {}) or {}),
+        "mount": dict(current.mount),
+        "image_id": current.image_id,
+        "actual_image": current.actual_image,
+        "endpoint_map": dict(current.endpoint_map),
+        "ownership": dict(current.ownership),
+    }
+
+
+def _guard_against_runtime_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(operation: str):
+        def fail(*_args: Any, **_kwargs: Any) -> None:
+            pytest.fail(f"read-only integration path invoked {operation}")
+
+        return fail
+
+    for method in ("create", "start", "restart", "stop", "remove", "purge"):
+        monkeypatch.setattr(
+            DockerRuntime,
+            method,
+            forbidden(f"DockerRuntime.{method}"),
+        )
+    for method in ("create_project", "seed_project", "reset_project"):
+        monkeypatch.setattr(
+            JavaMcpClient,
+            method,
+            forbidden(f"JavaMcpClient.{method}"),
+        )
+
+
+def test_default_start_attaches_without_runtime_or_data_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    config_dir = tmp_path / "external-config"
-    config_dir.mkdir()
-    _controller, runtime, image = controller_for(tmp_path)
-    data_volume = f"external-{uuid4().hex[:12]}"
-    network_name = f"external-network-{uuid4().hex[:12]}"
-    container_name = f"external-runtime-{uuid4().hex[:12]}"
-    config = write_config(
-        config_dir,
-        image,
-        services=["secretmanager"],
-        data_volume=data_volume,
-        project=DEFAULT_PROJECT,
-        user=USER,
-        seed=None,
+    controller, runtime, config, current = default_runtime_for(tmp_path)
+    assert config.data_volume == DEFAULT_DATA_VOLUME
+    _wait_for_default_seeded_runtime(current)
+    before = _runtime_identity_snapshot(runtime, current)
+    _guard_against_runtime_mutation(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LOCALCLOUD_HOME", str(controller.paths.home))
+
+    started = _invoke(capsys, "start")
+    status = _invoke(capsys, "status")
+    environment = _invoke(capsys, "env", "--format", "json", verbose=False)
+
+    resolved = runtime.resolve(
+        config,
+        preferred_container_id=current.container_id,
+        require=True,
     )
-    monkeypatch.chdir(config_dir)
-    monkeypatch.setenv("LOCALCLOUD_HOME", str(tmp_path / "external-cli-home"))
-    monkeypatch.setenv("LOCALCLOUD_IMAGE", image)
+    assert resolved is not None
+    after = _runtime_identity_snapshot(runtime, resolved)
 
-    volume = runtime.client.volumes.create(name=data_volume, labels={})
-    network = runtime.client.networks.create(network_name, labels={})
-    image_record = runtime.client.images.get(image)
-    container = runtime.client.containers.run(
-        image,
-        detach=True,
-        name=container_name,
-        labels={},
-        environment=_container_environment(config, network_name),
-        mem_limit=config.memory,
-        network=network_name,
-        ports=runtime._port_bindings(config, image_record),
-        volumes={
-            data_volume: {
-                "bind": "/var/lib/localcloud",
-                "mode": "rw",
-            }
-        },
+    assert started["status"] == "already_running"
+    assert started["data_volume"] == DEFAULT_DATA_VOLUME
+    assert started["container"]["id"] == current.container_id
+    assert_loopback_url(started["container"]["url"])
+    assert started["mcp"]["args"] == [
+        "mcp",
+        "--data-volume",
+        DEFAULT_DATA_VOLUME,
+        "--project-id",
+        DEFAULT_PROJECT,
+        "--user",
+        DEFAULT_USER,
+    ]
+    assert started["mcp"]["headers"] == {
+        "X-LocalCloud-Project": DEFAULT_PROJECT,
+        "X-LocalCloud-User": DEFAULT_USER,
+    }
+    assert status["status"] == "running"
+    assert status["container"]["id"] == current.container_id
+    assert environment["GOOGLE_CLOUD_PROJECT"] == DEFAULT_PROJECT
+    assert before == after
+
+
+def test_default_seeded_runtime_passes_read_only_operational_checks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _controller, runtime, config, current = default_runtime_for(tmp_path)
+    assert config.data_volume == DEFAULT_DATA_VOLUME
+    before = _runtime_identity_snapshot(runtime, current)
+    _guard_against_runtime_mutation(monkeypatch)
+
+    verification = _wait_for_default_seeded_runtime(current)
+    java = JavaMcpClient(
+        current.url,
+        DEFAULT_PROJECT,
+        DEFAULT_USER,
+        timeout=_READINESS_REQUEST_TIMEOUT,
     )
-    try:
-        current = runtime.resolve(
-            config, preferred_container_id=container.id, require=True
-        )
-        assert current is not None
-        runtime.wait_ready(current.url, container=container)
+    projects = java.list_projects()
+    services = java.tool("localcloud_list_services")
 
-        status = _invoke(
-            capsys, "status", "--data-volume", data_volume
-        )
-        assert status["origin"] == "attached"
-        assert status["ownership"] == {
-            "container": "attached",
-            "network": "attached",
-            "data_volume": "attached",
-        }
-        assert status["container"]["id"] == container.id
+    resolved = runtime.resolve(
+        config,
+        preferred_container_id=current.container_id,
+        require=True,
+    )
+    assert resolved is not None
+    after = _runtime_identity_snapshot(runtime, resolved)
 
-        started = _invoke(capsys, "start", str(config.config_path))
-        assert started["status"] == "already_running"
-        assert started["container"]["id"] == container.id
-
-        restarted = _invoke(capsys, "restart", str(config.config_path))
-        assert restarted["status"] == "restarted"
-        assert restarted["container"]["id"] == container.id
-
-        stopped = _invoke(
-            capsys, "stop", "--data-volume", data_volume
-        )
-        assert stopped["status"] == "stopped"
-        container.reload()
-        assert container.status == "exited"
-
-        resumed = _invoke(capsys, "start", str(config.config_path))
-        assert resumed["container"]["id"] == container.id
-
-        rejected = _invoke_error(
-            capsys,
-            "reset",
-            str(config.config_path),
-            "--all-projects",
-        )
-        assert rejected["code"] == "ownership_forbidden"
-        container.reload()
-        assert container.status == "running"
-    finally:
-        container.remove(force=True)
-        network.remove()
-        volume.remove(force=True)
+    assert any(project.get("project_id") == DEFAULT_PROJECT for project in projects)
+    assert services
+    assert verification["project"] == _SEEDED_PROJECT
+    assert _SEEDED_GCS_BUCKETS <= set(verification["gcs_buckets"])
+    assert _SEEDED_BIGQUERY_DATASETS <= set(
+        verification["bigquery_datasets"]
+    )
+    assert before == after

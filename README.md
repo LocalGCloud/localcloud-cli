@@ -1,101 +1,544 @@
 # LocalCloud CLI
 
-The official host CLI for [LocalCloud](https://local.cloud), a local Google Cloud emulator for development, testing, learning, and evaluation. The CLI manages the Docker-backed LocalCloud lifecycle, project context, SDK environment, and MCP bridge.
+[![LocalCloud](https://img.shields.io/badge/LocalCloud-local.cloud-4285F4?style=flat-square)](https://local.cloud)
+[![CLI](https://img.shields.io/badge/CLI-localcloud%20%7C%20lc-34A853?style=flat-square)](https://local.cloud)
+[![Docker](https://img.shields.io/badge/Runtime-Docker-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com)
+[![MCP](https://img.shields.io/badge/Protocol-MCP-FBBC04?style=flat-square)](https://modelcontextprotocol.io)
+
+The official host CLI for [LocalCloud](https://local.cloud) — a local, Docker-backed Google Cloud emulator platform for rapid development, testing, learning, and AI coding agent workflows.
+
+LocalCloud CLI manages the entire emulator lifecycle, multi-project context, SDK environment variables, Docker volume persistence, and Model Context Protocol (MCP) bridge.
+
+---
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Install](#install)
+- [Quick Start](#quick-start)
+- [CLI Command Reference](#cli-command-reference)
+- [Connecting Your Apps & SDKs](#connecting-your-apps--sdks)
+- [Configuration Reference (`localcloud.yaml`)](#configuration-reference-localcloudyaml)
+- [Runtime Identity & Multi-Project Context](#runtime-identity--multi-project-context)
+- [AI Coding Agents & MCP Integration](#ai-coding-agents--mcp-integration)
+- [Output Formatting & Automation](#output-formatting--automation)
+- [Development & Testing](#development--testing)
+- [License & Support](#license--support)
+
+---
+
+## Overview
+
+LocalCloud runs Google Cloud-compatible services locally inside Docker containers without hitting real cloud endpoints or incurring billing:
+
+- **25+ Local Google Cloud Services**: Cloud Storage, Firestore, Pub/Sub, BigQuery, Secret Manager, Cloud SQL, Spanner, Bigtable, Cloud Tasks, Cloud Logging, Dataproc, and more.
+- **Zero Cloud Bills & Offline Speed**: Develop and run full test suites completely offline with zero latency and instant teardown.
+- **Fast CLI & Dual Alias**: Use either `localcloud` or the fast alias `lc` interchangeably.
+- **Multi-Project Isolation**: Run multiple isolated GCP project contexts (`--project-id`) on a single durable runtime.
+- **Automatic SDK Configuration**: Generate environment variables for Google Cloud client libraries across Shell, JSON, Terraform, and Docker Compose formats.
+- **AI-Native MCP Bridge**: Built-in Model Context Protocol (MCP) server enabling AI coding assistants (Claude Desktop, Cursor, Windsurf) to inspect and manage local cloud resources.
+- **Interactive Terminal UI**: OMP-inspired startup banner with 4-color Google branding and clean machine-readable fallbacks for CI/CD.
+
+---
 
 ## Install
 
-Docker Desktop, Colima, or Docker Engine must already be running.
+### Prerequisites
 
-`lc` is an alias for `localcloud`; both commands behave identically. Official
-installers create the alias when that name is available. If another program
-already owns `lc`, it is preserved and `localcloud` remains available.
+Docker Desktop, Colima, or Docker Engine must be installed and running on your system.
+
+### One-line installer (macOS & Linux)
 
 ```sh
 curl -fsSL https://local.cloud/install.sh | sh
-lc doctor
-lc start
 ```
 
-Or install with Homebrew:
+The installer installs `localcloud` and creates the `lc` alias when available.
+
+### Homebrew (macOS & Linux)
 
 ```sh
 brew install LocalGCloud/tap/localcloud
 ```
 
-Release archives are checksummed and include Sigstore verification bundles.
-
-Supported standalone archives target macOS 13 or newer and Linux distributions
-with glibc 2.35 or newer (Ubuntu 22.04 equivalent). Windows users should follow
-the manual Docker instructions at <https://local.cloud/docs/getting-started/>.
-
-Upgrade or remove the Homebrew package with:
+To upgrade or uninstall via Homebrew:
 
 ```sh
 brew upgrade localcloud
 brew uninstall localcloud
 ```
 
-Removing the CLI does not stop containers or delete the managed
-`localcloud-data` volume.
+### Standalone Release Binaries
 
-## Output
+Signed release archives with Sigstore verification bundles are published for:
+- **macOS** 13+ (Apple Silicon & Intel)
+- **Linux** (x86_64 & aarch64, glibc 2.35+ / Ubuntu 22.04+)
 
-Commands show their current task on stderr and print a concise result on stdout.
-Use `--verbose` for the complete JSON result, or add selected JSON paths to the
-default summary with `--fields`:
+*Windows users: Follow the Docker setup instructions at <https://local.cloud/docs/getting-started/>.*
+
+---
+
+## Quick Start
+
+Get a fully functional local Google Cloud environment running in 3 steps:
+
+### 1. Check prerequisites
+
+```sh
+lc doctor
+```
+
+Confirms Docker engine connectivity and verifies environment readiness.
+
+### 2. Start LocalCloud
+
+```sh
+lc start
+```
+
+Starts the local emulator container on the default `localcloud-data` volume and prepares the `local-gcp-project` project context.
+
+### 3. Configure your shell & connect
+
+```sh
+eval "$(lc env)"
+```
+
+Exports local Google Cloud SDK emulator environment variables (`STORAGE_EMULATOR_HOST`, `PUBSUB_EMULATOR_HOST`, `FIRESTORE_EMULATOR_HOST`, `BIGQUERY_EMULATOR_HOST`, etc.) directly into your current terminal.
+
+Open the web management console in your default browser:
+
+```sh
+lc console
+```
+
+---
+
+## CLI Command Reference
+
+`lc` and `localcloud` share the exact same commands, flags, and behaviors.
+
+### `start`
+
+Starts the container runtime on the selected data volume and initializes the project context.
+
+```sh
+lc start
+lc start --project-id my-project
+lc start --data-volume isolated-data --user alice
+lc start ./custom-config.yaml
+```
+
+- Reuses existing running containers attached to the same volume.
+- Automatically creates project contexts if they do not exist yet.
+- Waits up to 60 seconds for container health and service readiness before returning.
+
+### `status`
+
+Inspects runtime health, Docker container state, endpoints, and active context.
 
 ```sh
 lc status
 lc status --verbose
+lc status --data-volume isolated-data
+```
+
+### `env`
+
+Generates Google Cloud SDK configuration for the active project context.
+
+```sh
+# Export directly into current shell
+eval "$(lc env)"
+
+# Output as JSON payload
+lc env --format json
+
+# Generate Terraform/OpenTofu provider endpoint configuration
+lc env --format terraform
+
+# Generate Docker Compose environment variables
+lc env --format docker-compose
+```
+
+### `console`
+
+Opens the LocalCloud browser-based web console for the selected project and user.
+
+```sh
+lc console
+lc console --project-id my-project --user alice
+```
+
+### `logs`
+
+Prints recent logs from the active LocalCloud container runtime.
+
+```sh
+lc logs
+lc logs --tail 500
+```
+
+### `restart`
+
+Gracefully restarts the LocalCloud container runtime and reapplies volatile seed data without deleting persistent volume state.
+
+```sh
+# Fast in-place restart of existing container (default: --no-pull)
+lc restart
+
+# Pull the latest container image from registry and restart with updated image
+lc restart --pull
+```
+### `reset`
+
+Resets emulator data and reapplies initial seed state.
+
+```sh
+# Reset only the selected project's data (default)
+lc reset
+
+# Reset all projects and recreate the managed data volume
+lc reset --all-projects
+```
+
+### `stop`
+
+Stops the container runtime without deleting persistent volume data.
+
+```sh
+lc stop
+lc stop --data-volume isolated-data
+```
+
+### `doctor`
+
+Diagnoses Docker daemon access, permissions, and inspects legacy LocalCloud host files.
+
+```sh
+lc doctor
+```
+
+### `cleanup`
+
+Finds and removes malformed Docker resources, stale runtime state, and legacy lock files.
+
+```sh
+# Remove malformed resources, stale runtime state, and legacy host files (default)
+lc cleanup
+
+# Inspect what would be removed without deleting resources
+lc cleanup --dry-run
+```
+
+### `guide`
+
+Prints authoritative guidance and workflow instructions for AI coding agents and automated developer scripts.
+
+```sh
+lc guide
+```
+
+### `mcp`
+
+Runs the stdio Model Context Protocol (MCP) bridge for AI tools and coding environments.
+
+```sh
+lc mcp
+lc mcp --project-id my-project
+```
+
+---
+
+## Connecting Your Apps & SDKs
+
+After running `eval "$(lc env)"`, official Google Cloud client libraries automatically detect loopback emulator endpoints.
+
+### Python
+
+```python
+from google.cloud import storage, firestore, pubsub_v1
+
+# Storage (connects automatically to STORAGE_EMULATOR_HOST)
+storage_client = storage.Client(project="local-gcp-project")
+bucket = storage_client.create_bucket("my-bucket")
+blob = bucket.blob("test.txt")
+blob.upload_from_string("Hello from LocalCloud!")
+
+# Firestore (connects automatically to FIRESTORE_EMULATOR_HOST)
+db = firestore.Client(project="local-gcp-project")
+doc_ref = db.collection("users").document("alice")
+doc_ref.set({"name": "Alice", "role": "developer"})
+
+# Pub/Sub (connects automatically to PUBSUB_EMULATOR_HOST)
+publisher = pubsub_v1.PublisherClient()
+topic_path = publisher.topic_path("local-gcp-project", "my-topic")
+publisher.create_topic(request={"name": topic_path})
+```
+
+### Node.js / TypeScript
+
+```typescript
+import { Storage } from "@google-cloud/storage";
+import { Firestore } from "@google-cloud/firestore";
+import { PubSub } from "@google-cloud/pubsub";
+
+const storage = new Storage({ projectId: "local-gcp-project" });
+await storage.createBucket("my-bucket");
+
+const firestore = new Firestore({ projectId: "local-gcp-project" });
+await firestore.collection("users").doc("alice").set({ name: "Alice" });
+
+const pubsub = new PubSub({ projectId: "local-gcp-project" });
+await pubsub.createTopic("my-topic");
+```
+
+### Go
+
+```go
+package main
+
+import (
+	"context"
+	"cloud.google.com/go/storage"
+)
+
+func main() {
+	ctx := context.Background()
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		panic(err)
+	}
+	defer client.Close()
+
+	bucket := client.Bucket("my-bucket")
+	_ = bucket.Create(ctx, "local-gcp-project", nil)
+}
+```
+
+### Terraform / OpenTofu
+
+Generate LocalCloud provider endpoint bindings:
+
+```sh
+lc env --format terraform > localcloud.tf
+```
+
+Produces provider block configurations pointing Google Cloud resources to LocalCloud loopback ports:
+
+```hcl
+provider "google" {
+  project      = "local-gcp-project"
+  access_token = "localcloud-emulator-token"
+
+  storage_custom_endpoint   = "http://127.0.0.1:49080/storage/v1/"
+  pubsub_custom_endpoint    = "http://127.0.0.1:49085/"
+  firestore_custom_endpoint = "http://127.0.0.1:49084/"
+}
+```
+
+---
+
+## Configuration Reference (`localcloud.yaml`)
+
+You can place a `localcloud.yaml` file in your repository root to declare services, memory limits, and seed data.
+
+```yaml
+# localcloud.yaml
+data_volume: localcloud-data
+project: local-gcp-project
+user: local-developer
+
+# Explicit list of enabled GCP services (or 'default' for standard services)
+services:
+  - gcs                  # Cloud Storage
+  - firestore            # Cloud Firestore
+  - pubsub               # Cloud Pub/Sub
+  - bigquery             # Cloud BigQuery
+  - secretmanager        # Secret Manager
+  - spanner              # Cloud Spanner
+  - cloudsql             # Cloud SQL
+  - cloudtasks           # Cloud Tasks
+  - logging              # Cloud Logging
+  - dataproc             # Cloud Dataproc
+
+# Seed initial data (loads ./seed.yaml when present)
+seed: auto
+
+# Persistence mode ('persistent' or 'in-memory')
+data: persistent
+
+# Container resource limits
+memory: 4g
+
+# Optional custom environment variables passed to container
+environment:
+  LOCALCLOUD_LOG_LEVEL: INFO
+```
+
+### Available Services Inventory
+
+| Service ID | Google Cloud Service | Default Status |
+| :--- | :--- | :--- |
+| `gcs` | Cloud Storage | Enabled |
+| `firestore` | Cloud Firestore | Enabled |
+| `pubsub` | Cloud Pub/Sub | Enabled |
+| `bigquery` | Cloud BigQuery | Enabled |
+| `secretmanager` | Secret Manager | Enabled |
+| `spanner` | Cloud Spanner | Enabled |
+| `cloudsql` | Cloud SQL | Enabled |
+| `cloudtasks` | Cloud Tasks | Enabled |
+| `cloudscheduler` | Cloud Scheduler | Enabled |
+| `cloudfunctions` | Cloud Functions (2nd Gen) | Enabled |
+| `logging` | Cloud Logging | Enabled |
+| `monitoring` | Cloud Monitoring | Enabled |
+| `dataproc` | Cloud Dataproc | Enabled |
+| `bigtable` | Cloud Bigtable | Enabled |
+| `alloydb` | AlloyDB | Enabled |
+| `cloudiam` | Cloud IAM | Enabled |
+| `cloudresourcemanager` | Cloud Resource Manager | Enabled |
+| `serviceusage` | Service Usage | Enabled |
+| `cloudbilling` | Cloud Billing | Enabled |
+| `memorystore` | Memorystore (Redis/Valkey) | Enabled |
+| `workflows` | Cloud Workflows | Enabled |
+
+---
+
+## Runtime Identity & Multi-Project Context
+
+LocalCloud cleanly separates durable container storage from logical GCP project contexts:
+
+### 1. Data Volumes (`--data-volume`)
+- Durable identity is backed by a named Docker volume (default: `localcloud-data`) mounted at `/var/lib/localcloud`.
+- Multiple isolated environments (e.g. `team-data`, `ci-volume`, `test-e2e`) can run concurrently on dynamic loopback ports without collision:
+  ```sh
+  lc start --data-volume test-e2e
+  lc status --data-volume test-e2e
+  ```
+
+### 2. Multi-Project Context (`--project-id`)
+- A single data volume can host multiple logical GCP projects simultaneously.
+- Switching project context is instantaneous:
+  ```sh
+  lc start --project-id project-alpha
+  eval "$(lc env --project-id project-alpha)"
+
+  lc start --project-id project-beta
+  eval "$(lc env --project-id project-beta)"
+  ```
+
+### 3. Caller Identity (`--user`)
+- Attributed caller identity sent to LocalCloud services (default: `local-developer`).
+- Normalizes to `local-developer@localcloud.invalid` where an email principal is required.
+
+---
+
+## AI Coding Agents & MCP Integration
+
+LocalCloud features first-class support for the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). AI agents can programmatically inspect, seed, test, and manage local cloud resources.
+
+### Claude Desktop / Cursor / Windsurf Configuration
+
+Add LocalCloud as an MCP server in your `claude_desktop_config.json` or `cursor.json`:
+
+```json
+{
+  "mcpServers": {
+    "localcloud": {
+      "command": "localcloud",
+      "args": ["mcp", "--data-volume", "localcloud-data", "--project-id", "local-gcp-project"]
+    }
+  }
+}
+```
+
+### Agent Instruction Prompt
+
+When using coding agents (such as Claude Code, Cursor, Copilot Workspace, Codex), run:
+
+```sh
+lc guide
+```
+
+or instruct your agent:
+> *"Before interacting with local cloud services, run `localcloud guide` to inspect available MCP tools and emulator endpoints."*
+
+---
+
+## Output Formatting & Automation
+
+### Interactive Terminals
+
+On interactive TTYs, LocalCloud displays structured 2-column OMP banners with 4-color Google Cloud artwork, active context details, and lifecycle spinners.
+
+### Machine-Readable JSON (`--verbose`)
+
+For CI/CD pipelines and scripts, pass `--verbose` to obtain complete structured JSON outputs:
+
+```sh
+lc status --verbose
+```
+
+```json
+{
+  "status": "running",
+  "data_volume": "localcloud-data",
+  "project": "local-gcp-project",
+  "user": "local-developer",
+  "container": {
+    "id": "7a8b9c0d1e2f",
+    "name": "localcloud",
+    "state": "running",
+    "url": "http://127.0.0.1:49080"
+  },
+  "services": "default",
+  "mcp": {
+    "command": "localcloud",
+    "args": ["mcp", "--data-volume", "localcloud-data"],
+    "direct_url": "http://127.0.0.1:49080/mcp"
+  }
+}
+```
+
+### Selective Fields (`--fields`)
+
+Extract specific fields directly into standard tabular summary format:
+
+```sh
 lc start --fields container.name,mcp.direct_url
 ```
 
-Colors and animation are enabled only on interactive terminals. Set `NO_COLOR=1`
-to disable color; redirected output remains plain.
+### Color Mode Control
 
-## Runtime identity and ownership
+- `NO_COLOR=1` or dumb terminals disable all ANSI color escapes.
+- TrueColor (24-bit) and ANSI-256 color palettes degrade gracefully according to terminal capabilities.
 
-LocalCloud selects a runtime by the named Docker volume mounted at
-`/var/lib/localcloud`; the default is `localcloud-data`. One volume can contain
-multiple project contexts. Select another runtime with `--data-volume`:
+---
 
-```sh
-localcloud start --data-volume team-localcloud-data
-localcloud status --data-volume team-localcloud-data --verbose
-```
+## Development & Testing
 
-The CLI discovers the unique compatible LocalCloud container using the selected
-volume, including containers created by another tool. Verbose output reports
-`origin`, per-resource `ownership`, the immutable container ID, configured and
-actual image identity, mount details, and configuration drift. Lifecycle
-commands may safely start, stop, or restart an attached container, but never
-remove or relabel Docker resources the CLI does not own. A full
-`reset --all-projects` requires fully CLI-managed container, network, and
-volume resources.
-
-Successful `start` and `restart` commands record the active data volume,
-configured image, and container ID under `LOCALCLOUD_HOME`. Commands without
-`--data-volume` use that record as a default hint and always revalidate live
-Docker state.
-
-Configuration uses `data_volume:`. Legacy `instance:` and `volume_name:` fields
-are rejected with an exact migration value, and the former `--instance` and
-`--volume-name` flags are no longer accepted.
-
-## Develop
-
-LocalCloud CLI requires Python 3.11 or newer and uses [uv](https://docs.astral.sh/uv/).
+LocalCloud CLI is developed in Python 3.11+ using [uv](https://docs.astral.sh/uv/).
 
 ```sh
+# Install dependencies
 uv sync --extra test
+
+# Run full test suite
 uv run --extra test python -m pytest -q
+
+# Run non-docker unit tests
+uv run --extra test python -m pytest -q -m "not docker"
+
+# Test CLI locally
 uv run lc --help
 ```
 
-Release operators should follow [RELEASING.md](RELEASING.md). The release workflow is manual-only and does not build the LocalCloud Docker image.
+---
 
-## Source and license
+## License & Support
 
-This repository contains the CLI source. The LocalCloud server and Docker image implementation are maintained separately.
+LocalCloud is proprietary software. Individual developers receive the rights outlined in [LICENSE](LICENSE).
 
-LocalCloud is proprietary software, not open source. Public source availability does not grant open-source rights. Individual developers receive only the rights described in [LICENSE](LICENSE). GitHub's autogenerated source archives are not supported installation artifacts; use the signed release archives instead.
+- **Website**: [local.cloud](https://local.cloud)
+- **Documentation**: [local.cloud/docs](https://local.cloud/docs)
+- **Support & Issues**: Open an issue on GitHub or contact support@local.cloud.
