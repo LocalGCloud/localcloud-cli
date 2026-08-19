@@ -20,8 +20,6 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       version: ${{ steps.version.outputs.version }}
-      image_digest: ${{ steps.image.outputs.digest }}
-      image: ${{ steps.image.outputs.image }}
     steps:
       - uses: actions/checkout@v4
 
@@ -53,21 +51,6 @@ jobs:
               output.write(f"version={version}\n")
           PY
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Resolve runtime Docker image
-        id: image
-        shell: bash
-        run: |
-          image="${RUNTIME_IMAGE}"
-          raw=$(docker buildx imagetools inspect --raw "$image")
-          python3 -c 'import json,sys; data=json.load(sys.stdin); actual={(item.get("platform", {}).get("os"), item.get("platform", {}).get("architecture")) for item in data.get("manifests", [])}; required={("linux", "amd64"), ("linux", "arm64")}; missing=sorted(required-actual); missing and sys.exit("runtime Docker image is missing: " + ", ".join("/".join(platform) for platform in missing))' <<<"$raw"
-          inspection=$(docker buildx imagetools inspect "$image")
-          digest=$(python3 -c 'import re,sys; text=sys.stdin.read(); match=re.search(r"(?m)^Digest:\s+(sha256:[0-9a-f]{64})\s*$", text); match or sys.exit("runtime Docker index digest is missing"); print(match.group(1))' <<<"$inspection")
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "image=$image@$digest" >> "$GITHUB_OUTPUT"
-
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -92,19 +75,15 @@ jobs:
           - runner: macos-15
             expected_machine: arm64
             asset: localcloud-darwin-arm64.tar.gz
-            linux_smoke: false
           - runner: macos-15-intel
             expected_machine: x86_64
             asset: localcloud-darwin-amd64.tar.gz
-            linux_smoke: false
           - runner: ubuntu-22.04-arm
             expected_machine: aarch64
             asset: localcloud-linux-arm64.tar.gz
-            linux_smoke: false
           - runner: ubuntu-22.04
             expected_machine: x86_64
             asset: localcloud-linux-amd64.tar.gz
-            linux_smoke: true
     runs-on: ${{ matrix.runner }}
     env:
       MACOSX_DEPLOYMENT_TARGET: "13.0"
@@ -147,42 +126,6 @@ jobs:
           test "$(./dist/localcloud --version)" = "localcloud ${VERSION}"
           ./dist/localcloud --help >/dev/null
           ./dist/localcloud guide >/dev/null
-
-      - name: Exercise Docker lifecycle
-        if: matrix.linux_smoke
-        shell: bash
-        env:
-          LOCALCLOUD_HOME: ${{ runner.temp }}/localcloud-home
-          VERSION: ${{ needs.validate-release.outputs.version }}
-        run: |
-          docker pull "${RUNTIME_IMAGE}"
-          test "$(docker image inspect --format '{{ index .Config.Labels "com.localcloud.runtime-ownership" }}' "${RUNTIME_IMAGE}")" = "data-volume-v1"
-          cat > release-smoke.yaml <<YAML
-          data_volume: release-smoke-data
-          data: ephemeral
-          image: ${RUNTIME_IMAGE}
-          YAML
-          ./dist/localcloud doctor --verbose > doctor.json
-          python3 -c 'import json,os; data=json.load(open("doctor.json")); assert data["status"] == "ok"; assert data["cli_version"] == os.environ["VERSION"]; assert data["default_image"].startswith(os.environ["RUNTIME_IMAGE"])'
-          ./dist/localcloud start release-smoke.yaml --verbose > start.json
-          python3 -c 'import json; data=json.load(open("start.json")); assert data["status"] in {"started", "already_running"}; assert data["data_volume"] == "release-smoke-data"; assert data["origin"] == "managed"; assert all(value == "managed" for value in data["ownership"].values()); assert data["container"]["state"] == "running"; assert "--data-volume" in data["mcp"]["args"]'
-          ./dist/localcloud status --data-volume release-smoke-data --verbose > status.json
-          python3 -c 'import json; data=json.load(open("status.json")); assert data["status"] == "running"; assert data["data_volume"] == "release-smoke-data"; assert data["container"]["id"]'
-          ./dist/localcloud env --data-volume release-smoke-data > env.txt
-          test -s env.txt
-          ./dist/localcloud stop --data-volume release-smoke-data --verbose > stop.json
-          python3 -c 'import json; data=json.load(open("stop.json")); assert data["status"] == "stopped"; assert data["container"]["state"] == "removed"'
-
-      - name: Clean Docker smoke resources
-        if: always() && matrix.linux_smoke
-        shell: bash
-        env:
-          LOCALCLOUD_HOME: ${{ runner.temp }}/localcloud-home
-        run: |
-          ./dist/localcloud stop --data-volume release-smoke-data || true
-          docker ps -aq --filter "label=com.localcloud.volume-name=release-smoke-data" | xargs -r docker rm -f
-          docker network ls -q --filter "label=com.localcloud.volume-name=release-smoke-data" | xargs -r docker network rm
-          docker volume rm release-smoke-data || true
 
       - name: Package stable archive
         shell: bash
@@ -258,7 +201,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.validate-release.outputs.version }}
-          IMAGE: ${{ needs.validate-release.outputs.image }}
+          IMAGE: ${{ env.RUNTIME_IMAGE }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME already exists; refusing to overwrite it." >&2

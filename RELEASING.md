@@ -1,6 +1,6 @@
 # Release LocalCloud CLI
 
-This is the operator runbook for publishing a LocalCloud CLI release. The release workflow is manual-only. It does not build or publish the LocalCloud Docker image; it pulls and tests the existing `jaysen2apache/localcloud:latest` image.
+This is the operator runbook for publishing a LocalCloud CLI release. The release workflow is manual-only. It does not build, publish, or depend on the LocalCloud Docker image being present on Docker Hub. The CLI always resolves the runtime image by the mutable `jaysen2apache/localcloud:latest` tag at run time (see `DEFAULT_IMAGE` in `src/localcloud_cli/config.py`), never a pinned digest, so users always get the newest qualified image without needing to update the CLI itself.
 
 ## Access required
 
@@ -11,11 +11,13 @@ You need admin access to:
 
 No cross-repository token is required. Each manual workflow writes only to its own repository using that repository's `GITHUB_TOKEN`.
 
-## 1. Prepare the Docker runtime
+## 1. Publish the Docker runtime (independent of CLI releases)
 
-Publish and qualify `jaysen2apache/localcloud:latest` using the private LocalCloud repository before releasing the CLI. This CLI workflow will not trigger that build.
-
-The private `.github/workflows/docker-publish.yml` workflow is manual-only and is currently disabled. After the reviewed LocalCloud source and release tag are pushed, enable and dispatch it yourself:
+Publishing and qualifying `jaysen2apache/localcloud:latest` is managed entirely
+through the private LocalCloud repository, on its own schedule. It is not a
+prerequisite for a CLI release: the CLI release workflow no longer inspects or
+requires Docker Hub state, because the shipped CLI always pulls the runtime
+image by the mutable `:latest` tag rather than a pinned digest.
 
 ```sh
 VERSION=0.1.0
@@ -25,31 +27,26 @@ gh workflow run docker-publish.yml \
   --ref "v${VERSION}"
 ```
 
-Do not enable the workflow until its manual-only trigger is present on the private repository's default branch.
+Do not enable the workflow until its manual-only trigger is present on the
+private repository's default branch. Let the run finish to completion (do not
+cancel it) so `docker-publish.yml`'s own platform qualification gate promotes
+`latest` atomically as a multi-arch (`linux/amd64` + `linux/arm64`) image.
 
-Confirm that the public image has both supported Linux architectures:
+You can independently confirm the public image's architecture coverage and
+ownership label at any time:
 
 ```sh
 docker buildx imagetools inspect jaysen2apache/localcloud:latest
-```
-
-The output must include `linux/amd64` and `linux/arm64` manifests.
-
-Confirm that the image advertises the data-volume ownership contract required
-for managed runtime creation:
-
-```sh
 test "$(docker image inspect \
   --format '{{ index .Config.Labels "com.localcloud.runtime-ownership" }}' \
   jaysen2apache/localcloud:latest)" = "data-volume-v1"
 ```
 
-Release order is strict: publish the server image with data-volume child
-ownership first, then publish the CLI that consumes that contract, then
-regenerate and deploy the public website documentation. An older CLI can ignore
-the new labels; the new CLI may attach to a compatible older container but must
-not create or replace a managed runtime from an image without the capability
-label.
+An older CLI can ignore new labels; a new CLI may attach to a compatible older
+container but must not create or replace a managed runtime from an image
+without the capability label. Because the CLI resolves `latest` at run time,
+keep the published image itself backward compatible with CLI versions still in
+the field.
 
 ## 2. Prepare the CLI source
 
@@ -76,8 +73,7 @@ AMD64 artifacts.
 
 ## 3. Run the automated release
 
-After the runtime image from section 1 is available and the prepared CLI source
-is committed and pushed:
+After the prepared CLI source is committed and pushed:
 
 ```sh
 VERSION=0.1.0
@@ -90,7 +86,7 @@ The script:
 - runs the complete test suite and a native frozen-binary smoke test;
 
   Because this local preflight includes tests marked `docker`, Docker must be
-  reachable, the qualified runtime image from section 1 must be present locally,
+  reachable, a `jaysen2apache/localcloud:latest` image must be present locally,
   and a compatible `localcloud-data` runtime must already be running and
   operational. Its built-in `local-project` fixture must retain the seeded GCS
   buckets and BigQuery datasets. The release tests attach to that runtime and
@@ -142,14 +138,13 @@ gh run watch "${tap_run_url##*/}" \
   --exit-status
 ```
 
-`cli-release.yml` verifies the selected tag and runtime image, runs source
-validation with `pytest -m "not docker"`, builds all four native archives, and
-creates the GitHub release. The hosted source-validation job does not assume a
-pre-existing LocalCloud runtime; the Linux AMD64 build job pulls the qualified
-image and exercises the frozen binary through `doctor`, `start`, `status`, `env`,
-and `stop` before publication. The tap workflow then downloads, installs, tests,
-and commits the published formula. Do not recreate or overwrite an existing CLI
-release.
+`cli-release.yml` verifies the selected tag, runs source validation with
+`pytest -m "not docker"`, builds all four native archives, and creates the
+GitHub release. It does not pull or otherwise depend on Docker Hub state — the
+release notes cite the runtime image by its mutable `:latest` tag, and no job
+in the workflow requires Docker. The tap workflow then downloads, installs,
+tests, and commits the published formula. Do not recreate or overwrite an
+existing CLI release.
 
 ## 5. Verify public channels
 
