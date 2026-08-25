@@ -320,11 +320,13 @@ def test_wide_panel_structure_and_color_coding() -> None:
     assert "● Pub/Sub" in plain_text
     assert "● BigQuery" in plain_text
     assert "● Secrets" in plain_text
-    assert "Active Context" in plain_text
+    assert "Config" in plain_text
     assert "Data Volume:" in plain_text
     assert "localcloud-data" in plain_text
     assert "Project:" in plain_text
     assert "local-gcp-project" in plain_text
+    assert "User:" in plain_text
+    assert "local-developer" in plain_text
     assert "Tip: Run localcloud guide" in plain_text
     assert all(visible_width(line) == 98 for line in lines)
 

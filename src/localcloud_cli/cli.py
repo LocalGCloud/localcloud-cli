@@ -105,13 +105,25 @@ class _ExecutionObserver:
         data_volume = getattr(args, "data_volume", None) or DEFAULT_DATA_VOLUME
         project = getattr(args, "project_id", None) or DEFAULT_PROJECT
         user = getattr(args, "user", None) or DEFAULT_USER
+        services: str | tuple[str, ...] = "default"
+        config_path: str | None = None
+        try:
+            local_config = load_config(directory=Path.cwd())
+        except HostError:
+            local_config = None
+        if local_config is not None and local_config.config_path is not None:
+            data_volume = local_config.data_volume
+            project = local_config.project
+            user = local_config.user
+            services = local_config.services or "default"
+            config_path = str(local_config.config_path)
         panel = PanelContext(
             data_volume=data_volume,
             project=project,
             user=user,
-            services="default",
+            services=services,
             data="persistent",
-            config=None,
+            config=config_path,
         )
         self.reporter.update("Inspecting Docker and legacy LocalCloud state…", panel)
 

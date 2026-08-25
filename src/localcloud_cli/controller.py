@@ -940,11 +940,15 @@ class Controller:
                 data_volume=config.data_volume,
                 image=config.image,
                 container_id=_active_container_id(environment),
+                container_name=environment.name,
+                network_name=environment.network_name,
             ),
         )
 
     def _preferred_container_id(self, config: LocalCloudConfig) -> str | None:
-        active = load_active_runtime(self.paths)
+        active = load_active_runtime(
+            self.paths, data_volume=config.data_volume
+        )
         if active is None or active.data_volume != config.data_volume:
             return None
         return active.container_id

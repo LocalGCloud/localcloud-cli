@@ -37,12 +37,17 @@ def _active(
     data_volume: str = "localcloud-data-active",
     image: str = "registry.example/localcloud:active",
     container_id: str = "container-active",
+    container_name: str | None = None,
+    network_name: str | None = None,
 ) -> ActiveRuntime:
+    names = default_resource_names(data_volume)
     return ActiveRuntime(
         schema_version=ACTIVE_RUNTIME_SCHEMA_VERSION,
         data_volume=data_volume,
         image=image,
         container_id=container_id,
+        container_name=container_name or names["container"],
+        network_name=network_name or names["network"],
     )
 
 
@@ -106,6 +111,25 @@ def test_resource_creation_overrides_do_not_change_data_volume(
     assert selected.network_name == "custom-network"
 
 
+
+def test_active_runtime_restores_managed_resource_names(tmp_path: Path) -> None:
+    active = ActiveRuntime(
+        schema_version=ACTIVE_RUNTIME_SCHEMA_VERSION,
+        data_volume="lc-pr-run-c0-data",
+        image="registry.example/localcloud@sha256:" + "a" * 64,
+        container_id="container-id",
+        container_name="lc-pr-run-c0",
+        network_name="lc-pr-run-c0",
+    )
+
+    selected = load_config(
+        directory=tmp_path,
+        paths=_paths(tmp_path),
+        active_runtime=active,
+    )
+
+    assert selected.container_name == "lc-pr-run-c0"
+    assert selected.network_name == "lc-pr-run-c0"
 def test_data_volume_precedence_is_cli_yaml_active_then_default(
     tmp_path: Path,
 ) -> None:
@@ -384,10 +408,48 @@ def test_active_runtime_missing_round_trip_and_atomic_replace(
     assert replacements[0][1] == paths.active_runtime
     assert json.loads(paths.active_runtime.read_text(encoding="utf-8")) == {
         "schema_version": ACTIVE_RUNTIME_SCHEMA_VERSION,
-        "data_volume": runtime.data_volume,
-        "image": runtime.image,
-        "container_id": runtime.container_id,
+        "last_active": runtime.data_volume,
+        "runtimes": {
+            runtime.data_volume: {
+                "data_volume": runtime.data_volume,
+                "image": runtime.image,
+                "container_id": runtime.container_id,
+                "container_name": runtime.container_name,
+                "network_name": runtime.network_name,
+            }
+        },
     }
+
+
+def test_active_runtime_names_are_persisted_per_data_volume(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    first = _active(
+        data_volume="lc-pr-run-a-data",
+        container_id="container-a",
+        container_name="lc-pr-run-a",
+        network_name="lc-pr-run-a",
+    )
+    second = _active(
+        data_volume="lc-pr-run-b-data",
+        container_id="container-b",
+        container_name="lc-pr-run-b",
+        network_name="lc-pr-run-b",
+    )
+    save_active_runtime(paths, first)
+    save_active_runtime(paths, second)
+    assert load_active_runtime(
+        paths, data_volume=first.data_volume
+    ) == first
+    assert load_active_runtime(
+        paths, data_volume=second.data_volume
+    ) == second
+    assert load_config(
+        directory=tmp_path,
+        paths=paths,
+        data_volume=first.data_volume,
+    ).container_name == first.container_name
 
 
 @pytest.mark.parametrize(

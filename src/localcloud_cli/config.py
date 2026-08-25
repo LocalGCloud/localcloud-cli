@@ -23,7 +23,7 @@ DEFAULTS_CONFIG_LABEL = "<defaults>"
 DEFAULT_DATA_VOLUME = "localcloud-data"
 DEFAULT_PROJECT = "local-gcp-project"
 DEFAULT_USER = "local-developer"
-ACTIVE_RUNTIME_SCHEMA_VERSION = 1
+ACTIVE_RUNTIME_SCHEMA_VERSION = 3
 ACTIVE_RUNTIME_FILE = "active-runtime.json"
 LEGACY_LOCK_PATTERN = re.compile(r"^[0-9a-f]{64}\.lock$")
 LEGACY_HOST_FILES = ("state.db", "daemon.sock", "daemon.pid", "daemon.lock", "daemon.log")
@@ -57,6 +57,8 @@ class ActiveRuntime:
     data_volume: str
     image: str
     container_id: str
+    container_name: str | None = None
+    network_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -213,9 +215,99 @@ def _hashed_resource_name(data_volume: str) -> str:
     return f"localcloud-volume-{digest}"
 
 
+def _decode_runtime_entry(raw: dict[str, Any]) -> ActiveRuntime:
+    expected = {
+        "data_volume",
+        "image",
+        "container_id",
+        "container_name",
+        "network_name",
+    }
+    if set(raw) != expected:
+        raise ValueError(
+            f"runtime fields must be exactly {', '.join(sorted(expected))}"
+        )
+    return ActiveRuntime(
+        schema_version=ACTIVE_RUNTIME_SCHEMA_VERSION,
+        data_volume=validate_data_volume(raw["data_volume"]),
+        image=_non_blank_string("image", raw["image"]),
+        container_id=_non_blank_string("container_id", raw["container_id"]),
+        container_name=_docker_name(
+            "container_name", raw["container_name"]
+        ),
+        network_name=_docker_name("network_name", raw["network_name"]),
+    )
+
+
+def _decode_active_state(
+    raw: Any,
+) -> tuple[dict[str, ActiveRuntime], str]:
+    if not isinstance(raw, dict):
+        raise ValueError("state must be a JSON object")
+    schema_version = raw.get("schema_version")
+    if schema_version in {1, 2}:
+        expected = {
+            "schema_version",
+            "data_volume",
+            "image",
+            "container_id",
+        }
+        if schema_version == 2:
+            expected.update({"container_name", "network_name"})
+        if set(raw) != expected:
+            raise ValueError(
+                f"state fields must be exactly {', '.join(sorted(expected))}"
+            )
+        volume = validate_data_volume(raw["data_volume"])
+        names = default_resource_names(volume)
+        runtime = ActiveRuntime(
+            schema_version=ACTIVE_RUNTIME_SCHEMA_VERSION,
+            data_volume=volume,
+            image=_non_blank_string("image", raw["image"]),
+            container_id=_non_blank_string(
+                "container_id", raw["container_id"]
+            ),
+            container_name=_docker_name(
+                "container_name",
+                raw.get("container_name") or names["container"],
+            ),
+            network_name=_docker_name(
+                "network_name",
+                raw.get("network_name") or names["network"],
+            ),
+        )
+        return {volume: runtime}, volume
+    if schema_version != ACTIVE_RUNTIME_SCHEMA_VERSION:
+        raise ValueError(f"unsupported schema version {schema_version!r}")
+    if set(raw) != {"schema_version", "last_active", "runtimes"}:
+        raise ValueError(
+            "state fields must be exactly last_active, runtimes, schema_version"
+        )
+    runtimes_raw = raw["runtimes"]
+    if not isinstance(runtimes_raw, dict) or not runtimes_raw:
+        raise ValueError("runtimes must be a non-empty object")
+    runtimes: dict[str, ActiveRuntime] = {}
+    for volume, value in runtimes_raw.items():
+        validated_volume = validate_data_volume(volume)
+        if not isinstance(value, dict):
+            raise ValueError(f"runtime {validated_volume} must be an object")
+        runtime = _decode_runtime_entry(value)
+        if runtime.data_volume != validated_volume:
+            raise ValueError(
+                f"runtime key does not match data_volume: {validated_volume}"
+            )
+        runtimes[validated_volume] = runtime
+    last_active = validate_data_volume(raw["last_active"])
+    if last_active not in runtimes:
+        raise ValueError("last_active must identify a persisted runtime")
+    return runtimes, last_active
+
+
 def load_active_runtime(
     paths: HostPaths,
     diagnostics: list[dict[str, Any]] | None = None,
+    *,
+    data_volume: str | None = None,
 ) -> ActiveRuntime | None:
     try:
         encoded = paths.active_runtime.read_text(encoding="utf-8")
@@ -231,26 +323,14 @@ def load_active_runtime(
             ),
         )
         return None
-
     try:
-        raw = json.loads(encoded)
-        if not isinstance(raw, dict):
-            raise ValueError("state must be a JSON object")
-        expected = {"schema_version", "data_volume", "image", "container_id"}
-        if set(raw) != expected:
-            raise ValueError(
-                f"state fields must be exactly {', '.join(sorted(expected))}"
-            )
-        if raw["schema_version"] != ACTIVE_RUNTIME_SCHEMA_VERSION:
-            raise ValueError(
-                f"unsupported schema version {raw['schema_version']!r}"
-            )
-        return ActiveRuntime(
-            schema_version=ACTIVE_RUNTIME_SCHEMA_VERSION,
-            data_volume=validate_data_volume(raw["data_volume"]),
-            image=_non_blank_string("image", raw["image"]),
-            container_id=_non_blank_string("container_id", raw["container_id"]),
+        runtimes, last_active = _decode_active_state(json.loads(encoded))
+        selected = (
+            validate_data_volume(data_volume)
+            if data_volume is not None
+            else last_active
         )
+        return runtimes.get(selected)
     except (HostError, TypeError, ValueError, json.JSONDecodeError) as exc:
         _record_active_diagnostic(
             diagnostics,
@@ -270,13 +350,58 @@ def save_active_runtime(paths: HostPaths, runtime: ActiveRuntime) -> None:
             f"Unsupported active runtime schema: {runtime.schema_version}",
             {"schema_version": runtime.schema_version},
         )
-    payload = {
-        "schema_version": ACTIVE_RUNTIME_SCHEMA_VERSION,
-        "data_volume": validate_data_volume(runtime.data_volume),
-        "image": _non_blank_string("image", runtime.image),
-        "container_id": _non_blank_string("container_id", runtime.container_id),
-    }
+    volume = validate_data_volume(runtime.data_volume)
+    names = default_resource_names(volume)
+    selected = ActiveRuntime(
+        schema_version=ACTIVE_RUNTIME_SCHEMA_VERSION,
+        data_volume=volume,
+        image=_non_blank_string("image", runtime.image),
+        container_id=_non_blank_string(
+            "container_id", runtime.container_id
+        ),
+        container_name=_docker_name(
+            "container_name", runtime.container_name or names["container"]
+        ),
+        network_name=_docker_name(
+            "network_name", runtime.network_name or names["network"]
+        ),
+    )
     with _active_runtime_lock(paths):
+        runtimes: dict[str, ActiveRuntime] = {}
+        try:
+            existing = json.loads(
+                paths.active_runtime.read_text(encoding="utf-8")
+            )
+            runtimes, _last_active = _decode_active_state(existing)
+        except FileNotFoundError:
+            pass
+        except (OSError, UnicodeError) as error:
+            raise HostError(
+                "active_runtime_write_failed",
+                f"Could not read active runtime state: {paths.active_runtime}",
+                {"path": str(paths.active_runtime), "cause": str(error)},
+            ) from error
+        except (json.JSONDecodeError, ValueError) as error:
+            raise HostError(
+                "invalid_active_runtime",
+                f"Existing active runtime state is invalid: {paths.active_runtime}",
+                {"path": str(paths.active_runtime), "cause": str(error)},
+            ) from error
+        runtimes[volume] = selected
+        payload = {
+            "schema_version": ACTIVE_RUNTIME_SCHEMA_VERSION,
+            "last_active": volume,
+            "runtimes": {
+                key: {
+                    "data_volume": value.data_volume,
+                    "image": value.image,
+                    "container_id": value.container_id,
+                    "container_name": value.container_name,
+                    "network_name": value.network_name,
+                }
+                for key, value in sorted(runtimes.items())
+            },
+        }
         try:
             paths.home.mkdir(mode=0o700, parents=True, exist_ok=True)
             descriptor, temporary_name = tempfile.mkstemp(
@@ -295,7 +420,12 @@ def save_active_runtime(paths: HostPaths, runtime: ActiveRuntime) -> None:
             try:
                 with os.fdopen(descriptor, "w", encoding="utf-8") as state_file:
                     os.chmod(temporary, 0o600)
-                    json.dump(payload, state_file, sort_keys=True, separators=(",", ":"))
+                    json.dump(
+                        payload,
+                        state_file,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
                     state_file.write("\n")
                     state_file.flush()
                     os.fsync(state_file.fileno())
@@ -385,7 +515,18 @@ def load_config(
     diagnostics = list(active_diagnostics)
     host_paths = paths if paths is not None else HostPaths.from_environment()
     if active_runtime is _ACTIVE_RUNTIME_UNSET:
-        active = load_active_runtime(host_paths, diagnostics)
+        requested_runtime_volume = (
+            data_volume
+            if data_volume is not None
+            else raw.get("data_volume")
+            if isinstance(raw.get("data_volume"), str)
+            else None
+        )
+        active = load_active_runtime(
+            host_paths,
+            diagnostics,
+            data_volume=requested_runtime_volume,
+        )
     else:
         active = active_runtime
         if active is not None and not isinstance(active, ActiveRuntime):
@@ -436,17 +577,32 @@ def load_config(
     environment = _environment(raw.get("environment", {}))
 
     defaults = default_resource_names(selected_data_volume)
+    active_for_volume = (
+        active
+        if active is not None and active.data_volume == selected_data_volume
+        else None
+    )
     selected_container = _docker_name(
         "container_name",
         container_name
         if container_name is not None
-        else raw.get("container_name", defaults["container"]),
+        else raw.get(
+            "container_name",
+            active_for_volume.container_name
+            if active_for_volume and active_for_volume.container_name
+            else defaults["container"],
+        ),
     )
     selected_network = _docker_name(
         "network_name",
         network_name
         if network_name is not None
-        else raw.get("network_name", defaults["network"]),
+        else raw.get(
+            "network_name",
+            active_for_volume.network_name
+            if active_for_volume and active_for_volume.network_name
+            else defaults["network"],
+        ),
     )
 
     return LocalCloudConfig(

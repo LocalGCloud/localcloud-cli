@@ -161,7 +161,7 @@ _DOCTOR_FIELDS = (
     FieldSpec("status", "Status", "status"),
     FieldSpec("docker", "Docker"),
     FieldSpec("cli_version", "CLI version", "muted"),
-    FieldSpec("default_image", "Image", "muted"),
+    FieldSpec("default_image", "Image", "image"),
     FieldSpec("legacy_resources", "Legacy resources", "warning"),
     FieldSpec("legacy_host_state", "Legacy host state", "warning"),
     FieldSpec("legacy_locks", "Legacy locks", "warning"),
@@ -363,9 +363,21 @@ def render_summary(
     for field, value in resolved:
         label = style_text(field.label.ljust(label_width), "label", color, bold=True)
         value_text = _format_value(value)
-        role = _value_role(field, value)
-        lines.append(f"{label}  {style_text(value_text, role, color)}")
+        if field.style == "image":
+            rendered_value = _render_image_value(value_text, color)
+        else:
+            role = _value_role(field, value)
+            rendered_value = style_text(value_text, role, color)
+        lines.append(f"{label}  {rendered_value}")
     return "\n".join(lines)
+
+
+def _render_image_value(value: str, color: ColorMode) -> str:
+    split = value.find(" (")
+    if split == -1:
+        return style_text(value, "primary", color)
+    name, suffix = value[:split], value[split:]
+    return style_text(name, "primary", color) + style_text(suffix, "muted", color)
 
 
 def _resolve_path(payload: Mapping[str, Any], path: str) -> Any:
@@ -563,59 +575,64 @@ def _gradient_escape(position: float, rgb: tuple[int, int, int], color: ColorMod
     return f"\x1b[38;5;{ramp[index]}m" if color is ColorMode.ANSI256 else f"\x1b[{ramp[index]}m"
 
 
-_DEFAULT_SERVICES_ROW1 = (
-    ("Storage", "g_blue"),
-    ("Firestore", "g_blue"),
-    ("Pub/Sub", "g_red"),
-    ("BigQuery", "g_yellow"),
-    ("Secrets", "g_green"),
+_ALL_SERVICES_ROW1 = (
+    ("storage", "Storage", "g_blue"),
+    ("firestore", "Firestore", "g_blue"),
+    ("pubsub", "Pub/Sub", "g_red"),
+    ("bigquery", "BigQuery", "g_yellow"),
+    ("secrets", "Secrets", "g_green"),
 )
-_DEFAULT_SERVICES_ROW2 = (
-    ("Spanner", "g_blue"),
-    ("Cloud SQL", "g_blue"),
-    ("Tasks", "g_red"),
-    ("Logging", "g_green"),
-    ("Dataproc", "g_yellow"),
+_ALL_SERVICES_ROW2 = (
+    ("spanner", "Spanner", "g_blue"),
+    ("cloudsql", "Cloud SQL", "g_blue"),
+    ("tasks", "Tasks", "g_red"),
+    ("logging", "Logging", "g_green"),
+    ("dataproc", "Dataproc", "g_yellow"),
 )
-_KNOWN_SERVICES: Mapping[str, tuple[str, str]] = {
-    "storage": ("Storage", "g_blue"),
-    "firestore": ("Firestore", "g_blue"),
-    "spanner": ("Spanner", "g_blue"),
-    "cloudsql": ("Cloud SQL", "g_blue"),
-    "sql": ("Cloud SQL", "g_blue"),
-    "pubsub": ("Pub/Sub", "g_red"),
-    "tasks": ("Tasks", "g_red"),
-    "bigquery": ("BigQuery", "g_yellow"),
-    "dataproc": ("Dataproc", "g_yellow"),
-    "secrets": ("Secrets", "g_green"),
-    "secretmanager": ("Secrets", "g_green"),
-    "logging": ("Logging", "g_green"),
-}
 
 
-def _resolve_services_rows(services: str | Sequence[str]) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+def _normalize_service(value: str) -> str:
+    return value.strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+
+
+def _resolve_services_rows(
+    services: str | Sequence[str],
+) -> tuple[list[tuple[str, str, bool]], list[tuple[str, str, bool]]]:
+    enabled: set[str] | None
     if isinstance(services, str):
         if services in {"default", "all", ""}:
-            return list(_DEFAULT_SERVICES_ROW1), list(_DEFAULT_SERVICES_ROW2)
-        service_list = [s.strip() for s in services.split(",") if s.strip()]
+            enabled = None
+        else:
+            enabled = {_normalize_service(s) for s in services.split(",") if s.strip()}
     else:
         service_list = list(services)
-    if not service_list or service_list == ["default"]:
-        return list(_DEFAULT_SERVICES_ROW1), list(_DEFAULT_SERVICES_ROW2)
-    resolved: list[tuple[str, str]] = []
-    for s in service_list:
-        normalized = s.lower().replace("-", "").replace("_", "").replace(" ", "")
-        display_name, role = _KNOWN_SERVICES.get(normalized, (s.title(), "g_blue"))
-        resolved.append((display_name, role))
-    mid = (len(resolved) + 1) // 2
-    return resolved[:mid], resolved[mid:]
+        if not service_list or service_list == ["default"]:
+            enabled = None
+        else:
+            enabled = {_normalize_service(s) for s in service_list}
+    if enabled is not None and "sql" in enabled:
+        enabled = {"cloudsql" if item == "sql" else item for item in enabled}
+    if enabled is not None and "secretmanager" in enabled:
+        enabled = {"secrets" if item == "secretmanager" else item for item in enabled}
+
+    def build_row(row: Sequence[tuple[str, str, str]]) -> list[tuple[str, str, bool]]:
+        return [
+            (name, role, enabled is None or key in enabled)
+            for key, name, role in row
+        ]
+
+    return build_row(_ALL_SERVICES_ROW1), build_row(_ALL_SERVICES_ROW2)
 
 
-def _format_services_row(services: Sequence[tuple[str, str]], width: int, color: ColorMode) -> str:
+def _format_services_row(services: Sequence[tuple[str, str, bool]], width: int, color: ColorMode) -> str:
     if not services:
         return " " * width
-    items_plain = [f"● {name}" for name, _ in services]
-    items_styled = [f"{style_text('●', role, color)} {name}" for name, role in services]
+    items_plain = [f"● {name}" for name, _, _ in services]
+    items_styled = [
+        f"{style_text('●', role if enabled else 'muted', color)} "
+        f"{name if enabled else style_text(name, 'muted', color)}"
+        for name, role, enabled in services
+    ]
     total_plain_len = sum(len(item) for item in items_plain)
     num_items = len(services)
     prefix = "  "
@@ -792,10 +809,10 @@ def _wide_panel(context: PanelContext, box_width: int, phase: float, progress: f
     s1_hdr = " Tips & Commands"
     right_rows.append(style_text(s1_hdr, "section_header", color, bold=True) + " " * max(0, right_width - visible_width(s1_hdr)))
     cmds = (
-        ("localcloud start", "g_blue", "Start local GCP emulators"),
-        ("localcloud stop", "g_red", "Stop container runtime"),
-        ("localcloud status", "g_green", "Health & service readiness"),
-        ("eval $(lc env)", "g_yellow", "Export emulator env vars"),
+        ("localcloud start", "g_blue", "Start localcloud container."),
+        ("localcloud stop", "g_red", "Stop localcloud container."),
+        ("localcloud status", "g_green", "Health & Running status of localcloud"),
+        ("eval $(lc env)", "g_yellow", "Export env. vars to redirect cloud service calls to localcloud."),
     )
     for cmd, role, desc in cmds:
         cmd_col_width = 21
@@ -816,11 +833,11 @@ def _wide_panel(context: PanelContext, box_width: int, phase: float, progress: f
     right_rows.append(_format_services_row(srv_r1, right_width, color))
     right_rows.append(_format_services_row(srv_r2, right_width, color))
     right_rows.append(style_text("─" * right_width, "muted", color))
-    s3_hdr = " Active Context"
+    s3_hdr = "Config"
     right_rows.append(style_text(s3_hdr, "section_header", color, bold=True) + " " * max(0, right_width - visible_width(s3_hdr)))
     config_name = Path(context.config).name if context.config else "built-in defaults"
     right_rows.append(_format_context_pair("Data Volume", context.data_volume, "g_yellow", "Project", context.project, "g_blue", right_width, color))
-    right_rows.append(_format_context_pair("Caller", context.user, "g_green", "Config", config_name, "ctx_config", right_width, color))
+    right_rows.append(_format_context_pair("User", context.user, "g_green", "Config", config_name, "ctx_config", right_width, color))
 
     border = style_text("│", "muted", color)
     lines = [_border_title(box_width, color)]
@@ -843,7 +860,7 @@ def _stacked_panel(context: PanelContext, box_width: int, phase: float, progress
     lines.append(f"{border}{style_text('─' * inside, 'muted', color)}{border}")
     config_name = Path(context.config).name if context.config else "built-in defaults"
     lines.append(f"{border}{_format_context_pair('Data Volume', context.data_volume, 'g_yellow', 'Project', context.project, 'g_blue', inside, color)}{border}")
-    lines.append(f"{border}{_format_context_pair('Caller', context.user, 'g_green', 'Config', config_name, 'ctx_config', inside, color)}{border}")
+    lines.append(f"{border}{_format_context_pair('User', context.user, 'g_green', 'Config', config_name, 'ctx_config', inside, color)}{border}")
     lines.append(_border_bottom(box_width, color))
     lines.append(_footer_tip(box_width, color))
     return lines
