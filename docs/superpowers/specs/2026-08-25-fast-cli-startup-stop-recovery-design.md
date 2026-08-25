@@ -58,6 +58,8 @@ The generated formula will install `localcloud` and `localcloud-runtime` into th
 
 `localcloud-site/public/install.sh` will treat the launcher and runtime directory as one managed installation.
 
+During the cross-repository rollout it will also accept the current three-file one-file archive. It will place that legacy executable into the same version-owned runtime layout and generate the new launcher, so deploying the installer before the next CLI release does not break installation of the current release.
+
 For a new version it will:
 
 1. Verify the archive checksum and safe tree shape before installation.
@@ -70,7 +72,7 @@ For a new version it will:
 
 A failure before the launcher switch leaves the previous installation usable and removes only newly staged files. Uninstall removes the launcher, managed `lc` alias, marker, and only the runtime directory recorded by a valid marker. Unrelated files and unowned runtime directories remain untouched.
 
-The installer fixture will model the new archive tree and cover clean install, same-version behavior, upgrade, rollback, alias ownership, and uninstall cleanup.
+The installer fixture will model both the current one-file archive and the new one-folder archive and cover migration, clean install, same-version behavior, upgrade, rollback, alias ownership, and uninstall cleanup.
 
 ## Runtime Selection Repair
 
