@@ -275,9 +275,12 @@ class DockerRuntime:
         replacing: RuntimeRecord | None = None,
         *,
         pull: bool = False,
+        observer: Any | None = None,
     ) -> tuple[Any, bool]:
-        image, was_pulled = self._image_for_create(config.image, pull=pull)
-        self._require_runtime_ownership_capability(config.image, image)
+        image, was_pulled = self._image_for_create(
+            config.image, pull=pull, observer=observer
+        )
+        self._require_runtime_ownership_capability(config, image)
         allowed_transparent_ports: set[tuple[int, str]] = set()
         if replacing is not None:
             endpoint_map = replacing.endpoint_map
@@ -353,7 +356,11 @@ class DockerRuntime:
                     "container_id": current.container_id,
                 },
             )
-        image, was_pulled = self.preflight_create(config, pull=pull)
+        image, was_pulled = self.preflight_create(
+            config, pull=pull, observer=observer
+        )
+        if was_pulled and observer is not None and hasattr(observer, "starting"):
+            observer.starting(config)
 
         metadata = _config_labels(config)
         container_labels = {
@@ -365,7 +372,7 @@ class DockerRuntime:
             **_base_labels(config.data_volume, "network"),
         }
         volume_labels = _base_labels(config.data_volume, "volume")
-        self._require_runtime_ownership_capability(config.image, image)
+        self._require_runtime_ownership_capability(config, image)
         ports = self._port_bindings(config, image)
 
         container = network = volume = None
@@ -1034,7 +1041,7 @@ class DockerRuntime:
             self.client.images.get(image_name)
             return "available locally"
         except Exception:
-            return "not present"
+            return "not available locally"
 
     @staticmethod
     def _short_id_from_raw(raw_id: Any) -> str:
@@ -1054,11 +1061,17 @@ class DockerRuntime:
     def _image_details_result(
         location: str, short_id: str, sha: str
     ) -> dict[str, Any]:
+        if location == "Local":
+            formatted = f"({location}: ID: {short_id} , {sha})"
+        elif sha == "unknown":
+            formatted = "(not available locally)"
+        else:
+            formatted = f"(not available locally · registry digest: {sha})"
         return {
             "location": location,
             "image_id": short_id,
             "sha": sha,
-            "formatted": f"({location}: ID: {short_id} , {sha})",
+            "formatted": formatted,
         }
 
     def image_details(self, image_name: str) -> dict[str, Any]:
@@ -1092,16 +1105,19 @@ class DockerRuntime:
                     if isinstance(attrs, dict)
                     else None
                 )
-                short_id = self._short_id_from_raw(raw_id)
                 reg_sha = (
                     attrs.get("Descriptor", {}).get("digest")
                     if isinstance(attrs, dict)
                     else None
                 )
                 reg_sha = self._normalize_sha(reg_sha, raw_id)
-                return self._image_details_result("Remote", short_id, reg_sha)
+                return self._image_details_result(
+                    "Remote", "not available locally", reg_sha
+                )
             except Exception:
-                return self._image_details_result("Remote", "unknown", "unknown")
+                return self._image_details_result(
+                    "Remote", "not available locally", "unknown"
+                )
 
     @staticmethod
     def wait_ready(
@@ -1448,11 +1464,15 @@ class DockerRuntime:
         return non_default[0] if non_default else (networks[0] if networks else None)
 
     def _image_for_create(
-        self, image_name: str, *, pull: bool = False
+        self,
+        image_name: str,
+        *,
+        pull: bool = False,
+        observer: Any | None = None,
     ) -> tuple[Any, bool]:
         if pull:
             try:
-                return self.client.images.pull(image_name), True
+                return self._pull_image(image_name, observer=observer), True
             except Exception as error:
                 raise HostError(
                     "invalid_image",
@@ -1478,11 +1498,11 @@ class DockerRuntime:
                     },
                 ) from first_error
             try:
-                return self.client.images.pull(image_name), True
+                return self._pull_image(image_name, observer=observer), True
             except Exception as error:
                 raise HostError(
                     "invalid_image",
-                    "Selected LocalCloud image could not be inspected",
+                    "Selected LocalCloud image could not be pulled",
                     {
                         "image": image_name,
                         "cause": str(error),
@@ -1490,8 +1510,82 @@ class DockerRuntime:
                     },
                 ) from error
 
+    def _pull_image(self, image_name: str, *, observer: Any | None = None) -> Any:
+        def emit(
+            status: str,
+            *,
+            layer: str | None = None,
+            current: int | None = None,
+            total: int | None = None,
+        ) -> None:
+            if observer is not None and hasattr(observer, "image_pull"):
+                observer.image_pull(
+                    image_name,
+                    status=status,
+                    layer=layer,
+                    current=current,
+                    total=total,
+                )
+
+        emit("Contacting registry")
+        api = getattr(self.client, "api", None)
+        pull_stream = getattr(api, "pull", None)
+        progress_enabled = observer is not None and hasattr(observer, "image_pull")
+        if not progress_enabled or not callable(pull_stream):
+            image = self.client.images.pull(image_name)
+            emit("Pull complete")
+            return image
+
+        seen_statuses: set[tuple[str, str]] = set()
+        progress_buckets: dict[tuple[str, str], int] = {}
+        events = pull_stream(image_name, stream=True, decode=True)
+        for event in events:
+            if not isinstance(event, Mapping):
+                continue
+            error_detail = event.get("errorDetail")
+            error_message = event.get("error")
+            if isinstance(error_detail, Mapping):
+                error_message = error_detail.get("message") or error_message
+            if error_message:
+                raise RuntimeError(str(error_message))
+
+            status = str(event.get("status") or "Fetching")
+            layer_value = event.get("id")
+            layer = str(layer_value) if layer_value else None
+            detail = event.get("progressDetail")
+            current = total = None
+            if isinstance(detail, Mapping):
+                raw_current = detail.get("current")
+                raw_total = detail.get("total")
+                if isinstance(raw_current, (int, float)):
+                    current = max(0, int(raw_current))
+                if isinstance(raw_total, (int, float)) and raw_total > 0:
+                    total = int(raw_total)
+
+            key = (layer or "", status)
+            if current is not None and total:
+                bucket = min(20, int(current / total * 20))
+                if progress_buckets.get(key) == bucket and current < total:
+                    continue
+                progress_buckets[key] = bucket
+            elif key in seen_statuses:
+                continue
+            seen_statuses.add(key)
+            emit(
+                status,
+                layer=layer,
+                current=current,
+                total=total,
+            )
+
+        image = self.client.images.get(image_name)
+        emit("Pull complete")
+        return image
+
     @staticmethod
-    def _require_runtime_ownership_capability(image_name: str, image: Any) -> None:
+    def _require_runtime_ownership_capability(
+        config: LocalCloudConfig, image: Any
+    ) -> None:
         labels = _image_labels(image)
         actual_ownership = labels.get(RUNTIME_OWNERSHIP_LABEL)
         actual_schema = labels.get(CONFIG_SCHEMA_LABEL)
@@ -1501,7 +1595,10 @@ class DockerRuntime:
                 "expected": RUNTIME_OWNERSHIP_CAPABILITY,
                 "actual": actual_ownership,
             }
-        if actual_schema != CONFIG_SCHEMA_CAPABILITY:
+        if (
+            config.config_path is not None
+            and actual_schema != CONFIG_SCHEMA_CAPABILITY
+        ):
             missing[CONFIG_SCHEMA_LABEL] = {
                 "expected": CONFIG_SCHEMA_CAPABILITY,
                 "actual": actual_schema,
@@ -1510,8 +1607,9 @@ class DockerRuntime:
             raise HostError(
                 "managed_image_capability_missing",
                 "The configured image does not support this LocalCloud CLI",
-                {"image": image_name, "capabilities": missing},
+                {"image": config.image, "capabilities": missing},
             )
+
     def _port_bindings(
         self,
         config: LocalCloudConfig,

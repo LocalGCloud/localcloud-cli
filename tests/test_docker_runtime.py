@@ -490,6 +490,20 @@ def test_managed_create_rejects_image_without_config_schema_capability(
     assert client.containers.run_calls == []
 
 
+def test_zero_config_create_accepts_runtime_image_without_config_schema_label(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    image = client.images.get(DEFAULT_IMAGE)
+    image.attrs["Config"]["Labels"].pop(CONFIG_SCHEMA_LABEL)
+
+    record = runtime.create(_config(tmp_path))
+
+    assert record.state == "running"
+    assert client.containers.run_calls
+
+
 def test_manual_container_is_adopted_by_exact_mount_and_id(
     tmp_path: Path,
     ready_runtime: tuple[DockerRuntime, Client],
@@ -1215,7 +1229,7 @@ def test_image_status_reports_local_and_missing(
     client.images.add("present:latest", Image("sha256:present"))
 
     assert runtime.image_status("present:latest") == "available locally"
-    assert runtime.image_status("absent:latest") == "not present"
+    assert runtime.image_status("absent:latest") == "not available locally"
 
 
 def test_image_details_reports_local_and_remote(
@@ -1232,7 +1246,102 @@ def test_image_details_reports_local_and_remote(
 
     remote_details = runtime.image_details("absent:latest")
     assert remote_details["location"] == "Remote"
-    assert remote_details["formatted"] == "(Remote: ID: unknown , unknown)"
+    assert remote_details["image_id"] == "not available locally"
+    assert remote_details["formatted"] == "(not available locally)"
+
+
+def test_missing_image_pull_streams_layer_progress_to_observer(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    client.images.by_name.pop(config.image)
+
+    class Api:
+        def pull(
+            self, image_name: str, *, stream: bool, decode: bool
+        ) -> Any:
+            assert image_name == config.image
+            assert stream is True
+            assert decode is True
+
+            def events() -> Any:
+                yield {
+                    "status": "Downloading",
+                    "id": "layer-1234567890",
+                    "progressDetail": {"current": 512, "total": 1024},
+                }
+                yield {
+                    "status": "Pull complete",
+                    "id": "layer-1234567890",
+                    "progressDetail": {},
+                }
+                client.images.add(config.image, Image("sha256:streamed"))
+
+            return events()
+
+    class Observer:
+        def __init__(self) -> None:
+            self.updates: list[dict[str, Any]] = []
+
+        def image_pull(self, image: str, **progress: Any) -> None:
+            self.updates.append({"image": image, **progress})
+
+    client.api = Api()  # type: ignore[attr-defined]
+    observer = Observer()
+
+    image, was_pulled = runtime.preflight_create(config, observer=observer)
+
+    assert was_pulled is True
+    assert image.id == "sha256:streamed"
+    assert observer.updates[0]["status"] == "Contacting registry"
+    assert {
+        "image": config.image,
+        "status": "Downloading",
+        "layer": "layer-1234567890",
+        "current": 512,
+        "total": 1024,
+    } in observer.updates
+    assert observer.updates[-1]["status"] == "Pull complete"
+
+
+def test_streamed_image_pull_error_is_reported_as_invalid_image(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    client.images.by_name.pop(config.image)
+
+    class Api:
+        @staticmethod
+        def pull(_image_name: str, *, stream: bool, decode: bool) -> Any:
+            assert stream is True
+            assert decode is True
+            return iter(
+                [
+                    {
+                        "error": "pull access denied",
+                        "errorDetail": {"message": "registry authentication failed"},
+                    }
+                ]
+            )
+
+    class Observer:
+        @staticmethod
+        def image_pull(_image: str, **_progress: Any) -> None:
+            return None
+
+    client.api = Api()  # type: ignore[attr-defined]
+
+    with pytest.raises(HostError) as caught:
+        runtime.preflight_create(config, observer=Observer())
+
+    assert caught.value.code == "invalid_image"
+    assert caught.value.message == "Selected LocalCloud image could not be pulled"
+    assert caught.value.details["cause"] == "registry authentication failed"
+    assert client.images.pulls == []
 
 def test_create_sets_image_status_from_pull(
     tmp_path: Path,
@@ -1401,4 +1510,3 @@ def test_docker_runtime_emits_debug_commands_to_observer(
     # Restart container
     runtime.restart(config, record, observer=observer)
     assert any(msg.startswith("docker restart -t 20") for msg in observer.debug_messages)
-

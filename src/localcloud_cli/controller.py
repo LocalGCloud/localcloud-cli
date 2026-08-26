@@ -659,7 +659,15 @@ class Controller:
             current.data == "persistent"
             or current.ownership["data_volume"] == "attached"
         )
-        self.runtime.preflight_create(config, current, pull=pull)
+        _, was_pulled = self.runtime.preflight_create(
+            config, current, pull=pull, observer=observer
+        )
+        if (
+            was_pulled
+            and observer is not None
+            and hasattr(observer, "starting")
+        ):
+            observer.starting(config)
         self.runtime.remove(
             config, current, remove_volume=not preserve_volume
         )

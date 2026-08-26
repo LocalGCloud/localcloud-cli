@@ -69,6 +69,7 @@ class FakeRuntime:
         replacing: RuntimeRecord | None = None,
         *,
         pull: bool = False,
+        observer: Any | None = None,
     ) -> tuple[Any, bool]:
         self.preflights.append(
             None if replacing is None else str(replacing.container_id)
@@ -76,7 +77,7 @@ class FakeRuntime:
         self.preflight_pulls.append(pull)
         if self.preflight_error is not None:
             raise self.preflight_error
-        return None, False
+        return None, pull
 
 
 

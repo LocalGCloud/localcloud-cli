@@ -38,6 +38,7 @@ _RUNTIME_COMMANDS = {
 _PROGRESS_COMMANDS = {
     "doctor", "cleanup", "start", "restart", "reset", "stop", "status", "logs", "console", "env"
 }
+_PLAIN_PULL_UPDATE_INTERVAL = 2.0
 
 
 class _ExecutionObserver:
@@ -46,10 +47,50 @@ class _ExecutionObserver:
         self.debug_enabled = debug
         self._seen_lines: set[str] = set()
         self._emitted_history: list[str] = []
+        self._plain_pull_image: str | None = None
+        self._plain_pull_update_at: float | None = None
 
     def debug(self, message: str) -> None:
         if self.debug_enabled:
             self.reporter.write_line(f"[debug] {message}")
+
+    def image_pull(
+        self,
+        image: str,
+        *,
+        status: str,
+        layer: str | None = None,
+        current: int | None = None,
+        total: int | None = None,
+    ) -> None:
+        if not self.reporter.capabilities.cursor and layer is not None:
+            now = self.reporter.clock()
+            if image != self._plain_pull_image:
+                self._plain_pull_image = image
+                self._plain_pull_update_at = None
+            if (
+                self._plain_pull_update_at is not None
+                and now - self._plain_pull_update_at < _PLAIN_PULL_UPDATE_INTERVAL
+            ):
+                return
+            self._plain_pull_update_at = now
+
+        parts = ["Fetching"]
+        if status:
+            parts.append(status)
+        if current is not None and total:
+            percent = max(0, min(100, round(current / total * 100)))
+            parts.extend(
+                (
+                    f"{percent}%",
+                    f"{_format_bytes(current)} / {_format_bytes(total)}",
+                )
+            )
+        if layer:
+            parts.append(f"layer {layer[:12]}")
+        parts.append(f"image {image!r}")
+        self.reporter.update(f"{' · '.join(parts)}…")
+
     def config(self, command: str, config: LocalCloudConfig, args: argparse.Namespace) -> None:
         if command not in {"start", "restart", "reset", "stop", "status"}:
             return
@@ -149,6 +190,18 @@ class _ExecutionObserver:
             self._seen_lines.add(line)
             self._emitted_history.append(line)
             self.reporter.write_line(line)
+
+
+def _format_bytes(value: int) -> str:
+    amount = float(max(0, value))
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    unit = units[0]
+    for unit in units:
+        if amount < 1024 or unit == units[-1]:
+            break
+        amount /= 1024
+    precision = 0 if unit == "B" else 1
+    return f"{amount:.{precision}f} {unit}"
 
 
 def main(argv: list[str] | None = None) -> int:

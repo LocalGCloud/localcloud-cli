@@ -681,6 +681,101 @@ def test_observer_debug_mode_writes_debug_lines() -> None:
     assert "[debug]" not in stream_disabled.getvalue()
 
 
+def test_observer_renders_image_pull_layer_progress() -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    stream = io.StringIO()
+    reporter = LifecycleReporter(stream=stream, environ={"TERM": "dumb"})
+    reporter.start("Starting LocalCloud…")
+    observer = _ExecutionObserver(reporter)
+
+    observer.image_pull(
+        "example/localcloud:latest",
+        status="Downloading",
+        layer="abcdef1234567890",
+        current=5 * 1024 * 1024,
+        total=10 * 1024 * 1024,
+    )
+    reporter.succeed("Done")
+
+    output = stream.getvalue()
+    assert "Fetching · Downloading · 50%" in output
+    assert "5.0 MiB / 10.0 MiB" in output
+    assert "layer abcdef123456 · image 'example/localcloud:latest'" in output
+
+    class TtyBuffer(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    tty_reporter = LifecycleReporter(
+        stream=TtyBuffer(),
+        environ={"TERM": "xterm", "NO_COLOR": "1"},
+        width=80,
+    )
+    tty_observer = _ExecutionObserver(tty_reporter)
+    tty_observer.image_pull(
+        "registry.example.com/organization/localcloud:latest",
+        status="Downloading",
+        layer="abcdef1234567890",
+        current=5 * 1024 * 1024,
+        total=10 * 1024 * 1024,
+    )
+
+    frame = tty_reporter._frame(elapsed=1.0)[0]
+    assert "50%" in frame
+    assert "5.0 MiB / 10.0 MiB" in frame
+
+
+def test_observer_throttles_plain_image_pull_updates() -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    now = [0.0]
+    stream = io.StringIO()
+    reporter = LifecycleReporter(
+        stream=stream,
+        environ={"TERM": "dumb"},
+        clock=lambda: now[0],
+    )
+    reporter.start("Starting LocalCloud…")
+    observer = _ExecutionObserver(reporter)
+
+    observer.image_pull("example/image:latest", status="Contacting registry")
+    observer.image_pull(
+        "example/image:latest",
+        status="Downloading",
+        layer="layer-a",
+        current=1,
+        total=100,
+    )
+    now[0] = 0.5
+    observer.image_pull(
+        "example/image:latest",
+        status="Downloading",
+        layer="layer-b",
+        current=50,
+        total=100,
+    )
+    now[0] = 2.1
+    observer.image_pull(
+        "example/image:latest",
+        status="Downloading",
+        layer="layer-b",
+        current=75,
+        total=100,
+    )
+    observer.image_pull("example/image:latest", status="Pull complete")
+    reporter.succeed("Done")
+
+    output = stream.getvalue()
+    assert "layer layer-a" in output
+    assert "layer layer-b" in output
+    assert "50%" not in output
+    assert "75%" in output
+    assert output.count("Fetching") == 4
+
+
 def test_main_start_debug_prints_docker_command(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
