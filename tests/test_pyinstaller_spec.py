@@ -23,7 +23,7 @@ def test_spec_trims_build_only_payloads(monkeypatch: Any) -> None:
 
     def copy_metadata(distribution: str, **kwargs: Any) -> list[Any]:
         calls["copy_metadata"] = (distribution, kwargs)
-        return localcloud_metadata
+        return list(localcloud_metadata)
 
     hooks = types.ModuleType("PyInstaller.utils.hooks")
     hooks.collect_all = collect_all  # type: ignore[attr-defined]
@@ -56,8 +56,28 @@ def test_spec_trims_build_only_payloads(monkeypatch: Any) -> None:
     package, collect_kwargs = calls["collect_all"]
     assert package == "mcp"
     module_filter = collect_kwargs["filter_submodules"]
-    assert module_filter("mcp.server.stdio")
-    assert not module_filter("mcp.client")
+    accepted_modules = (
+        "mcp",
+        "mcp.server",
+        "mcp.server.stdio",
+        "mcp.server.stdio.transport",
+        "mcp.shared",
+        "mcp.shared.message",
+        "mcp.shared.message.session",
+        "mcp.types",
+        "mcp.types.utilities",
+    )
+    rejected_modules = (
+        "mcp.client",
+        "mcp.server.auth",
+        "mcp.serverx",
+        "mcp.shared.auth",
+        "mcp.sharedx",
+        "mcp.type",
+        "other",
+    )
+    assert all(module_filter(name) for name in accepted_modules)
+    assert not any(module_filter(name) for name in rejected_modules)
 
     assert calls["copy_metadata"] == ("localcloud-cli", {"recursive": False})
 
