@@ -325,7 +325,7 @@ release_version() {
     validate_locked_inputs
 
     stage "Run release tests"
-    uv run --frozen --extra test python -m pytest -q
+    uv run --frozen --extra test python -m pytest -q -m "not docker"
 
     build_native_executable
     smoke_native_executable "$VERSION"

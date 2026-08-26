@@ -826,19 +826,21 @@ def _wide_panel(context: PanelContext, box_width: int, phase: float, progress: f
     s1_hdr = " Tips & Commands"
     right_rows.append(style_text(s1_hdr, "section_header", color, bold=True) + " " * max(0, right_width - visible_width(s1_hdr)))
     cmds = (
-        ("localcloud (or lc) status | start | stop | restart", "g_blue", "Manage localcloud container lifecycle."),
-        ("eval $(lc env)", "g_yellow", "Exports env. vars that redirects cloud service calls to localcloud."),
+        ("localcloud (or lc)", "g_blue", "status | start | stop | restart"),
+        ("eval $(lc env)", "g_yellow", "Exports env vars that redirect cloud service calls to localcloud."),
     )
+    cmd_col_width = 24
     for cmd, role, desc in cmds:
-        cmd_col_width = 21
-        cmd_prefix = f"  {cmd}"
+        cmd_budget = max(1, cmd_col_width - 2)
+        cmd_trunc = truncate_visible(cmd, cmd_budget)
+        cmd_prefix = f"  {cmd_trunc}"
         pad_len = max(1, cmd_col_width - visible_width(cmd_prefix))
         cmd_col_plain = cmd_prefix + " " * pad_len
         desc_budget = max(1, right_width - visible_width(cmd_col_plain))
         desc_trunc = truncate_visible(desc, desc_budget)
         total_plain = cmd_col_plain + desc_trunc
         row_pad = " " * max(0, right_width - visible_width(total_plain))
-        cmd_styled = f"  {style_text(cmd, role, color)}" + " " * pad_len
+        cmd_styled = f"  {style_text(cmd_trunc, role, color)}" + " " * pad_len
         desc_styled = style_text(desc_trunc, "cmd_desc", color)
         right_rows.append(cmd_styled + desc_styled + row_pad)
     right_rows.append(style_text("─" * right_width, "muted", color))

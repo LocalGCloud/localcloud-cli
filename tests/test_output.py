@@ -344,9 +344,8 @@ def test_wide_panel_structure_and_color_coding() -> None:
     plain_text = "\n".join(strip_ansi(line) for line in lines)
     assert "Welcome back!" in plain_text
     assert "Tips & Commands" in plain_text
-    assert "localcloud start" in plain_text
-    assert "localcloud stop" in plain_text
-    assert "localcloud status" in plain_text
+    assert "localcloud (or lc)" in plain_text
+    assert "status | start | stop | restart" in plain_text
     assert "eval $(lc env)" in plain_text
     assert "Google Cloud Services" in plain_text
     assert "● Storage" in plain_text
