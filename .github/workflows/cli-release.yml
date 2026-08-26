@@ -115,8 +115,10 @@ jobs:
           test "$canonical_version" = "localcloud ${VERSION}"
           test "$alias_version" = "$canonical_version"
 
-      - name: Build one-file executable
-        run: uv run --frozen --extra release python -m PyInstaller --clean --noconfirm localcloud.spec
+      - name: Build one-folder executable bundle
+        run: |
+          uv run --frozen --extra release python -m PyInstaller --clean --noconfirm localcloud.spec
+          install -m 0755 scripts/localcloud-launcher.sh dist/localcloud
 
       - name: Smoke frozen executable
         shell: bash
@@ -127,6 +129,11 @@ jobs:
           ./dist/localcloud --help >/dev/null
           ./dist/localcloud guide >/dev/null
 
+      - name: Verify prompt startup latency
+        run: >-
+          uv run --frozen python scripts/check-startup-feedback.py
+          dist/localcloud --timeout 2.0
+
       - name: Package stable archive
         shell: bash
         env:
@@ -135,9 +142,15 @@ jobs:
           stage="${RUNNER_TEMP}/localcloud-archive"
           mkdir -p "$stage"
           install -m 0755 dist/localcloud "$stage/localcloud"
+          cp -RL dist/localcloud-runtime "$stage/localcloud-runtime"
           install -m 0644 LICENSE THIRD_PARTY_NOTICES "$stage/"
-          tar -C "$stage" -czf "$ASSET" localcloud LICENSE THIRD_PARTY_NOTICES
-          test "$(tar -tzf "$ASSET" | LC_ALL=C sort | tr '\n' ' ')" = "LICENSE THIRD_PARTY_NOTICES localcloud "
+          test -x "$stage/localcloud-runtime/localcloud"
+          test -z "$(find "$stage" -type l -print -quit)"
+          test -z "$(find "$stage" -type f -links +1 -print -quit)"
+          tar -C "$stage" -czf "$ASSET" \
+            localcloud localcloud-runtime LICENSE THIRD_PARTY_NOTICES
+          top_level=$(tar -tzf "$ASSET" | cut -d/ -f1 | LC_ALL=C sort -u | tr '\n' ' ')
+          test "$top_level" = "LICENSE THIRD_PARTY_NOTICES localcloud localcloud-runtime "
 
       - name: Upload native archive
         uses: actions/upload-artifact@v4
