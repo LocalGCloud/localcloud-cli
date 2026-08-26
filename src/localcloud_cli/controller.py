@@ -73,6 +73,12 @@ class Controller:
             if current is None:
                 if observer is not None and hasattr(observer, "starting"):
                     observer.starting(config)
+                prepared_image = self.runtime.preflight_create(
+                    config,
+                    pull=pull,
+                    observer=observer,
+                )
+                deadline = time.monotonic() + _START_READINESS_TIMEOUT
                 self._remaining_readiness(
                     deadline,
                     config,
@@ -81,9 +87,9 @@ class Controller:
                 )
                 environment = self.runtime.create(
                     config,
-                    pull=pull,
                     readiness_deadline=deadline,
                     observer=observer,
+                    prepared_image=prepared_image,
                 )
                 self._emit_runtime_logs(observer, config, environment)
                 fresh_data = environment.volume_created
@@ -92,6 +98,18 @@ class Controller:
                 if observer is not None and hasattr(observer, "starting"):
                     observer.starting(config)
                 changed_fields = _changed_fields(current, config)
+                prepared_image = None
+                if (
+                    current.ownership["container"] == "managed"
+                    and current.ownership["network"] == "managed"
+                ):
+                    prepared_image = self.runtime.preflight_create(
+                        config,
+                        current,
+                        pull=pull,
+                        observer=observer,
+                    )
+                    deadline = time.monotonic() + _START_READINESS_TIMEOUT
                 self._remaining_readiness(
                     deadline,
                     config,
@@ -104,6 +122,7 @@ class Controller:
                     pull=pull,
                     readiness_deadline=deadline,
                     observer=observer,
+                    prepared_image=prepared_image,
                 )
                 fresh_data = environment.volume_created
                 status = "reconfigured" if self._requires_managed_replacement(current, config) else "started"
@@ -326,12 +345,17 @@ class Controller:
             config, preferred_container_id=self._preferred_container_id(config)
         )
         if current is None:
-            return self._absent_payload("not_created", config)
-        if current.state != "running":
-            return self._payload("stopped", current, config, include_sdk=False)
-        if not self.runtime.is_ready(current):
-            return self._payload("unhealthy", current, config, include_sdk=False)
-        return self._payload("running", current, config, include_sdk=False)
+            result = self._absent_payload("not_created", config)
+        elif current.state != "running":
+            result = self._payload("stopped", current, config, include_sdk=False)
+        elif not self.runtime.is_ready(current):
+            result = self._payload("unhealthy", current, config, include_sdk=False)
+        else:
+            result = self._payload("running", current, config, include_sdk=False)
+
+        image_name = str(result["container"]["configured_image"])
+        result["container"]["image_details"] = self.runtime.image_details(image_name)
+        return result
 
     def logs(self, config: LocalCloudConfig, tail: int = 200) -> dict[str, Any]:
         current = self.runtime.resolve(
@@ -628,6 +652,7 @@ class Controller:
         pull: bool = False,
         readiness_deadline: float | None = None,
         observer: Any | None = None,
+        prepared_image: tuple[Any, bool] | None = None,
     ) -> RuntimeRecord:
         if current.ownership["container"] != "managed":
             raise HostError(
@@ -659,9 +684,17 @@ class Controller:
             current.data == "persistent"
             or current.ownership["data_volume"] == "attached"
         )
-        _, was_pulled = self.runtime.preflight_create(
-            config, current, pull=pull, observer=observer
+        prepared_image = (
+            prepared_image
+            if prepared_image is not None
+            else self.runtime.preflight_create(
+                config,
+                current,
+                pull=pull,
+                observer=observer,
+            )
         )
+        _, was_pulled = prepared_image
         if (
             was_pulled
             and observer is not None
@@ -676,6 +709,7 @@ class Controller:
                 config,
                 readiness_deadline=readiness_deadline,
                 observer=observer,
+                prepared_image=prepared_image,
             )
         except Exception as error:
             if isinstance(error, HostError):

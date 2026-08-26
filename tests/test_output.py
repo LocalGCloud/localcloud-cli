@@ -73,6 +73,38 @@ def test_summary_humanizes_runtime_status_values() -> None:
     assert "State" not in lines
 
 
+@pytest.mark.parametrize(
+    ("formatted", "expected"),
+    [
+        (
+            "(Local: ID: qualified , sha256:qualified)",
+            "Image        jaysen2apache/localcloud:latest (Local: ID: qualified , sha256:qualified)",
+        ),
+        (
+            "(not available locally)",
+            "Image        jaysen2apache/localcloud:latest (not available locally)",
+        ),
+    ],
+)
+def test_status_summary_shows_doctor_image_details_next_to_image(
+    formatted: str, expected: str
+) -> None:
+    payload = {
+        "status": "not_created",
+        "data_volume": "localcloud-data",
+        "container": {
+            "configured_image": "jaysen2apache/localcloud:latest",
+            "image_status": "not available locally",
+            "image_details": {"formatted": formatted},
+        },
+    }
+
+    lines = render_summary("status", payload).splitlines()
+
+    assert expected in lines
+    assert not any(line.startswith("Image status") for line in lines)
+
+
 def test_stop_summary_includes_stopped_container_identity() -> None:
     payload = {
         "status": "stopped",
@@ -482,4 +514,3 @@ def test_reporter_panel_settles_above_log_stream() -> None:
     done_pos = plain.find("Done")
 
     assert panel_pos < log1_pos < log2_pos < done_pos
-

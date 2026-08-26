@@ -681,28 +681,41 @@ def test_observer_debug_mode_writes_debug_lines() -> None:
     assert "[debug]" not in stream_disabled.getvalue()
 
 
-def test_observer_renders_image_pull_layer_progress() -> None:
+def test_observer_renders_consolidated_image_pull_progress() -> None:
     from localcloud_cli.cli import _ExecutionObserver
     from localcloud_cli.output import LifecycleReporter
 
+    now = [0.0]
     stream = io.StringIO()
-    reporter = LifecycleReporter(stream=stream, environ={"TERM": "dumb"})
+    reporter = LifecycleReporter(
+        stream=stream,
+        environ={"TERM": "dumb"},
+        clock=lambda: now[0],
+    )
     reporter.start("Starting LocalCloud…")
     observer = _ExecutionObserver(reporter)
 
     observer.image_pull(
         "example/localcloud:latest",
         status="Downloading",
-        layer="abcdef1234567890",
+        layer="layer-a",
         current=5 * 1024 * 1024,
         total=10 * 1024 * 1024,
+    )
+    now[0] = 2.1
+    observer.image_pull(
+        "example/localcloud:latest",
+        status="Downloading",
+        layer="layer-b",
+        current=15 * 1024 * 1024,
+        total=30 * 1024 * 1024,
     )
     reporter.succeed("Done")
 
     output = stream.getvalue()
-    assert "Fetching · Downloading · 50%" in output
-    assert "5.0 MiB / 10.0 MiB" in output
-    assert "layer abcdef123456 · image 'example/localcloud:latest'" in output
+    assert "Downloading 50% overall · 20.0 MiB / 40.0 MiB · 2 layers" in output
+    assert "layer-a" not in output
+    assert "layer-b" not in output
 
     class TtyBuffer(io.StringIO):
         def isatty(self) -> bool:
@@ -717,7 +730,7 @@ def test_observer_renders_image_pull_layer_progress() -> None:
     tty_observer.image_pull(
         "registry.example.com/organization/localcloud:latest",
         status="Downloading",
-        layer="abcdef1234567890",
+        layer="layer-a",
         current=5 * 1024 * 1024,
         total=10 * 1024 * 1024,
     )
@@ -769,11 +782,112 @@ def test_observer_throttles_plain_image_pull_updates() -> None:
     reporter.succeed("Done")
 
     output = stream.getvalue()
-    assert "layer layer-a" in output
-    assert "layer layer-b" in output
-    assert "50%" not in output
-    assert "75%" in output
-    assert output.count("Fetching") == 4
+    assert "layer-a" not in output
+    assert "layer-b" not in output
+    assert "1% overall" in output
+    assert "38% overall" in output
+    assert "2 layers" in output
+    assert output.count("Processing") == 5
+
+
+def test_observer_reports_extraction_as_a_separate_pull_phase() -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    now = [0.0]
+    stream = io.StringIO()
+    reporter = LifecycleReporter(
+        stream=stream,
+        environ={"TERM": "dumb"},
+        clock=lambda: now[0],
+    )
+    observer = _ExecutionObserver(reporter)
+
+    observer.image_pull(
+        "example/image:latest",
+        status="Downloading",
+        layer="layer-a",
+        current=50,
+        total=100,
+    )
+    now[0] = 2.1
+    observer.image_pull(
+        "example/image:latest",
+        status="Extracting",
+        layer="layer-a",
+        current=25,
+        total=100,
+    )
+
+    output = stream.getvalue()
+    assert "Downloading 50% overall" in output
+    assert "Fetching image 'example/image:latest' · Extracting · 1 layer" in output
+
+
+def test_observer_only_reports_image_downloaded_for_final_pull_completion() -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    class TtyBuffer(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    reporter = LifecycleReporter(
+        stream=TtyBuffer(),
+        environ={"TERM": "xterm", "NO_COLOR": "1"},
+    )
+    observer = _ExecutionObserver(reporter)
+
+    observer.image_pull(
+        "example/image:latest",
+        status="Downloading",
+        layer="layer-a",
+        current=50,
+        total=100,
+    )
+    observer.image_pull(
+        "example/image:latest",
+        status="Pull complete",
+        layer="layer-a",
+    )
+
+    assert "Downloaded image" not in reporter._message
+    assert "Downloading 100% overall" in reporter._message
+
+    observer.image_pull("example/image:latest", status="Pull complete")
+
+    assert reporter._message == "Downloaded image 'example/image:latest'…"
+
+
+def test_observer_resets_consolidated_progress_for_the_next_image() -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    stream = io.StringIO()
+    reporter = LifecycleReporter(stream=stream, environ={"TERM": "dumb"})
+    observer = _ExecutionObserver(reporter)
+
+    observer.image_pull(
+        "example/first:latest",
+        status="Downloading",
+        layer="first-layer",
+        current=50,
+        total=100,
+    )
+    observer.image_pull(
+        "example/second:latest",
+        status="Downloading",
+        layer="second-layer",
+        current=10,
+        total=100,
+    )
+
+    output = stream.getvalue()
+    assert "Downloading 50% overall" in output
+    assert "image 'example/first:latest'" in output
+    assert "Downloading 10% overall" in output
+    assert "image 'example/second:latest'" in output
+    assert "Downloading 30% overall" not in output
 
 
 def test_main_start_debug_prints_docker_command(

@@ -39,6 +39,15 @@ _PROGRESS_COMMANDS = {
     "doctor", "cleanup", "start", "restart", "reset", "stop", "status", "logs", "console", "env"
 }
 _PLAIN_PULL_UPDATE_INTERVAL = 2.0
+_PULL_DOWNLOAD_STATUSES = {
+    "already exists",
+    "download complete",
+    "downloading",
+    "pull complete",
+    "pulling fs layer",
+    "verifying checksum",
+    "waiting",
+}
 
 
 class _ExecutionObserver:
@@ -47,7 +56,9 @@ class _ExecutionObserver:
         self.debug_enabled = debug
         self._seen_lines: set[str] = set()
         self._emitted_history: list[str] = []
-        self._plain_pull_image: str | None = None
+        self._pull_image: str | None = None
+        self._pull_layers: set[str] = set()
+        self._pull_progress: dict[str, tuple[int, int]] = {}
         self._plain_pull_update_at: float | None = None
 
     def debug(self, message: str) -> None:
@@ -63,11 +74,36 @@ class _ExecutionObserver:
         current: int | None = None,
         total: int | None = None,
     ) -> None:
+        if image != self._pull_image:
+            self._pull_image = image
+            self._pull_layers.clear()
+            self._pull_progress.clear()
+            self._plain_pull_update_at = None
+
+        normalized_status = status.strip().lower()
+        if layer is not None:
+            self._pull_layers.add(layer)
+            if (
+                normalized_status == "downloading"
+                and current is not None
+                and total is not None
+                and total > 0
+            ):
+                self._pull_progress[layer] = (
+                    max(0, min(current, total)),
+                    total,
+                )
+            elif normalized_status in {
+                "already exists",
+                "download complete",
+                "pull complete",
+            }:
+                previous = self._pull_progress.get(layer)
+                if previous is not None:
+                    self._pull_progress[layer] = (previous[1], previous[1])
+
         if not self.reporter.capabilities.cursor and layer is not None:
             now = self.reporter.clock()
-            if image != self._plain_pull_image:
-                self._plain_pull_image = image
-                self._plain_pull_update_at = None
             if (
                 self._plain_pull_update_at is not None
                 and now - self._plain_pull_update_at < _PLAIN_PULL_UPDATE_INTERVAL
@@ -75,21 +111,27 @@ class _ExecutionObserver:
                 return
             self._plain_pull_update_at = now
 
-        parts = ["Fetching"]
-        if status:
-            parts.append(status)
-        if current is not None and total:
-            percent = max(0, min(100, round(current / total * 100)))
-            parts.extend(
-                (
-                    f"{percent}%",
-                    f"{_format_bytes(current)} / {_format_bytes(total)}",
-                )
+        if normalized_status == "contacting registry":
+            message = f"Contacting registry for image {image!r}…"
+        elif normalized_status == "pull complete" and layer is None:
+            message = f"Downloaded image {image!r}…"
+        elif self._pull_progress and normalized_status in _PULL_DOWNLOAD_STATUSES:
+            downloaded = sum(value[0] for value in self._pull_progress.values())
+            download_size = sum(value[1] for value in self._pull_progress.values())
+            percent = max(0, min(100, round(downloaded / download_size * 100)))
+            layer_count = len(self._pull_layers)
+            layer_text = "layer" if layer_count == 1 else "layers"
+            message = (
+                f"Downloading {percent}% overall · "
+                f"{_format_bytes(downloaded)} / {_format_bytes(download_size)} · "
+                f"{layer_count} {layer_text} · image {image!r}…"
             )
-        if layer:
-            parts.append(f"layer {layer[:12]}")
-        parts.append(f"image {image!r}")
-        self.reporter.update(f"{' · '.join(parts)}…")
+        else:
+            layer_count = len(self._pull_layers)
+            layer_text = "layer" if layer_count == 1 else "layers"
+            detail = f" · {layer_count} {layer_text}" if layer_count else ""
+            message = f"Fetching image {image!r} · {status}{detail}…"
+        self.reporter.update(message)
 
     def config(self, command: str, config: LocalCloudConfig, args: argparse.Namespace) -> None:
         if command not in {"start", "restart", "reset", "stop", "status"}:

@@ -1362,6 +1362,20 @@ def test_create_sets_image_status_from_pull(
     assert record2.image_status == "pulled from registry"
     assert client.images.pulls == [config.image]
 
+
+def test_create_reuses_prepared_image_without_pulling_again(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    prepared = runtime.preflight_create(config, pull=True)
+
+    record = runtime.create(config, prepared_image=prepared)
+
+    assert record.image_status == "pulled from registry"
+    assert client.images.pulls == [config.image]
+
 def test_create_with_explicit_pull_forces_images_pull(
     tmp_path: Path,
     ready_runtime: tuple[DockerRuntime, Client],

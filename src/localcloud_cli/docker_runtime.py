@@ -344,8 +344,8 @@ class DockerRuntime:
         pull: bool = False,
         readiness_deadline: float | None = None,
         observer: Any | None = None,
+        prepared_image: tuple[Any, bool] | None = None,
     ) -> RuntimeRecord:
-        deadline = _resolve_readiness_deadline(readiness_deadline)
         current = self.resolve(config)
         if current is not None:
             raise HostError(
@@ -356,9 +356,12 @@ class DockerRuntime:
                     "container_id": current.container_id,
                 },
             )
-        image, was_pulled = self.preflight_create(
-            config, pull=pull, observer=observer
+        image, was_pulled = (
+            prepared_image
+            if prepared_image is not None
+            else self.preflight_create(config, pull=pull, observer=observer)
         )
+        deadline = _resolve_readiness_deadline(readiness_deadline)
         if was_pulled and observer is not None and hasattr(observer, "starting"):
             observer.starting(config)
 

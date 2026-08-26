@@ -188,6 +188,7 @@ _EXTRA_COMMON = (
     FieldSpec("container.name", "Container", "muted"),
     FieldSpec("container.id", "Container ID", "muted"),
     FieldSpec("container.state", "State", "status"),
+    FieldSpec("container.image_status", "Image status", "status"),
     FieldSpec("container.actual_image", "Actual image", "muted"),
     FieldSpec("data", "Data", "muted"),
     FieldSpec("network.name", "Network", "muted"),
@@ -215,7 +216,21 @@ DEFAULT_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
         FieldSpec("container.name", "Container", "muted"),
         FieldSpec("container.id", "Container ID", "muted"),
     ),
-    "status": tuple(field for field in _COMMON_FIELDS if field.path not in {"project", "user", "changed_fields", "reset_scope", "logs"}),
+    "status": tuple(
+        FieldSpec(field.path, field.label, "image")
+        if field.path == "container.configured_image"
+        else field
+        for field in _COMMON_FIELDS
+        if field.path
+        not in {
+            "project",
+            "user",
+            "container.image_status",
+            "changed_fields",
+            "reset_scope",
+            "logs",
+        }
+    ),
     "doctor": _DOCTOR_FIELDS,
     "cleanup": _CLEANUP_FIELDS,
     "console": _CONSOLE_FIELDS,
@@ -370,6 +385,10 @@ def render_summary(
         value = _resolve_path(payload, field.path)
         if value is _MISSING or value is None or value == [] or value == {}:
             continue
+        if command == "status" and field.path == "container.configured_image":
+            formatted = _resolve_path(payload, "container.image_details.formatted")
+            if formatted is not _MISSING and formatted:
+                value = f"{value} {formatted}"
         if field.style == "status":
             value = _human_status(value)
         resolved.append((field, value))

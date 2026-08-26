@@ -42,11 +42,20 @@ class FakeRuntime:
         self.preflight_pulls: list[bool] = []
         self.create_pulls: list[bool] = []
         self.preflight_error: HostError | None = None
+        self.preflight_delay = 0.0
         self.readiness_deadlines: list[float | None] = []
+        self.prepared_images: list[tuple[Any, bool] | None] = []
         self.wait_error: HostError | None = None
         self.log_calls: list[tuple[LocalCloudConfig, RuntimeRecord, int]] = []
         self.doctor_report: dict[str, Any] = {"status": "ok", "warning": "runtime warning"}
         self.effective: tuple[str, ...] | None = None
+        self.image_details_result: dict[str, Any] = {
+            "location": "Local",
+            "image_id": "qualified",
+            "sha": "sha256:qualified",
+            "formatted": "(Local: ID: qualified , sha256:qualified)",
+        }
+        self.image_details_images: list[str] = []
 
 
 
@@ -71,6 +80,8 @@ class FakeRuntime:
         pull: bool = False,
         observer: Any | None = None,
     ) -> tuple[Any, bool]:
+        if self.preflight_delay:
+            controller_module.time.sleep(self.preflight_delay)
         self.preflights.append(
             None if replacing is None else str(replacing.container_id)
         )
@@ -88,10 +99,12 @@ class FakeRuntime:
         pull: bool = False,
         readiness_deadline: float | None = None,
         observer: Any | None = None,
+        prepared_image: tuple[Any, bool] | None = None,
     ) -> RuntimeRecord:
         self.creates += 1
         self.create_pulls.append(pull)
         self.readiness_deadlines.append(readiness_deadline)
+        self.prepared_images.append(prepared_image)
         self.record = replace(
             _record(config, container_id=f"container-{self.creates}"),
             volume_created=self.creates == 1,
@@ -177,13 +190,9 @@ class FakeRuntime:
     def image_status(self, _image_name: str) -> str:
         return "available locally"
 
-    def image_details(self, _image_name: str) -> dict[str, Any]:
-        return {
-            "location": "Local",
-            "image_id": "qualified",
-            "sha": "sha256:qualified",
-            "formatted": "(Local: ID: qualified , sha256:qualified)",
-        }
+    def image_details(self, image_name: str) -> dict[str, Any]:
+        self.image_details_images.append(image_name)
+        return dict(self.image_details_result)
 
     def cleanup_resources(
         self, invalid: list[dict[str, Any]]
@@ -520,6 +529,46 @@ def test_start_retries_transient_project_catalog_readiness(
     assert runtime.starts == 0
     assert runtime.restarts == 0
     assert all(0 < timeout <= 5 for timeout in FakeJavaClient.timeouts)
+
+
+def test_start_readiness_deadline_begins_after_slow_image_pull(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    clock = FakeClock()
+    runtime.preflight_delay = 95.0
+    monkeypatch.setattr(controller_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
+
+    result = controller.start(config)
+
+    assert result["status"] == "started"
+    assert clock.now == 95.0
+    assert runtime.readiness_deadlines == [155.0]
+    assert runtime.prepared_images == [(None, False)]
+
+
+def test_start_replacement_deadline_begins_after_slow_image_pull(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    clock = FakeClock()
+    runtime.preflight_delay = 95.0
+    monkeypatch.setattr(controller_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
+
+    result = controller.start(config, pull=True)
+
+    assert result["status"] == "started"
+    assert clock.now == 95.0
+    assert runtime.preflight_pulls == [True]
+    assert runtime.readiness_deadlines == [155.0]
+    assert runtime.prepared_images == [(None, True)]
 
 
 def test_start_fails_immediately_for_permanent_project_error(
@@ -1007,7 +1056,26 @@ def test_status_reports_runtime_identity_and_image(tmp_path: Path) -> None:
     assert result["data_volume"] == "team-data"
     assert result["container"]["configured_image"] == config.image
     assert result["container"]["actual_image"] == config.image
+    assert result["container"]["image_details"]["formatted"] == (
+        "(Local: ID: qualified , sha256:qualified)"
+    )
     assert result["mount"]["source"] == "team-data"
+
+
+def test_status_looks_up_details_for_the_image_it_renders(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = replace(
+        _record(config),
+        configured_image="example/custom-localcloud:latest",
+    )
+
+    result = controller.status(config)
+
+    assert result["container"]["configured_image"] == (
+        "example/custom-localcloud:latest"
+    )
+    assert runtime.image_details_images == ["example/custom-localcloud:latest"]
 
 
 def test_status_uses_server_reported_effective_services_when_ready(
@@ -1235,6 +1303,26 @@ def test_status_includes_image_status_for_absent_runtime(tmp_path: Path) -> None
 
     assert result["status"] == "not_created"
     assert result["container"]["image_status"] == "available locally"
+
+
+def test_status_reuses_doctor_details_for_image_not_available_locally(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.image_details_result = {
+        "location": "Remote",
+        "image_id": "not available locally",
+        "sha": "unknown",
+        "formatted": "(not available locally)",
+    }
+
+    result = controller.status(config)
+
+    assert result["container"]["configured_image"] == config.image
+    assert result["container"]["image_details"]["formatted"] == (
+        "(not available locally)"
+    )
 
 def test_start_tails_runtime_logs_with_specified_duration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
