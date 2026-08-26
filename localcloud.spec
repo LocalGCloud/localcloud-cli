@@ -18,22 +18,22 @@ def required_mcp_module(name):
     )
 
 
-mcp_datas, mcp_binaries, mcp_hiddenimports = collect_all(
+_mcp_datas, _mcp_binaries, mcp_hiddenimports = collect_all(
     "mcp",
     filter_submodules=required_mcp_module,
 )
-datas = mcp_datas + copy_metadata("localcloud-cli", recursive=True)
+datas = copy_metadata("localcloud-cli", recursive=False)
 
 analysis = Analysis(
     [str(project_root / "src" / "localcloud_cli" / "__main__.py")],
     pathex=[str(project_root / "src")],
-    binaries=mcp_binaries,
+    binaries=[],
     datas=datas,
     hiddenimports=mcp_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=["setuptools", "distutils", "_distutils_hack"],
     noarchive=False,
     optimize=0,
 )
