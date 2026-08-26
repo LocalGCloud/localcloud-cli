@@ -205,7 +205,16 @@ DEFAULT_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
     "start": _COMMON_FIELDS,
     "restart": _COMMON_FIELDS,
     "reset": tuple(field for field in _COMMON_FIELDS if field.path != "logs"),
-    "stop": tuple(field for field in _COMMON_FIELDS if field.path not in {"project", "user", "changed_fields", "reset_scope", "logs"}),
+    "stop": (
+        *tuple(
+            field
+            for field in _COMMON_FIELDS
+            if field.path
+            not in {"project", "user", "changed_fields", "reset_scope", "logs"}
+        ),
+        FieldSpec("container.name", "Container", "muted"),
+        FieldSpec("container.id", "Container ID", "muted"),
+    ),
     "status": tuple(field for field in _COMMON_FIELDS if field.path not in {"project", "user", "changed_fields", "reset_scope", "logs"}),
     "doctor": _DOCTOR_FIELDS,
     "cleanup": _CLEANUP_FIELDS,
@@ -345,7 +354,15 @@ def render_summary(
 ) -> str:
     validate_fields(command, requested)
     allowed = {field.path: field for field in ALLOWED_FIELDS.get(command, ())}
-    fields = list(DEFAULT_FIELDS.get(command, ()))
+    fields = [
+        field
+        for field in DEFAULT_FIELDS.get(command, ())
+        if not (
+            command == "stop"
+            and payload.get("status") != "stopped"
+            and field.path in {"container.name", "container.id"}
+        )
+    ]
     present = {field.path for field in fields}
     fields.extend(allowed[path] for path in requested if path not in present)
     resolved: list[tuple[FieldSpec, Any]] = []

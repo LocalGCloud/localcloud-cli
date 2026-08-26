@@ -895,7 +895,27 @@ def test_stop_preserves_attached_ephemeral_runtime(tmp_path: Path) -> None:
     result = controller.stop(config)
 
     assert result["status"] == "stopped"
+    assert result["container"]["name"] == config.container_name
+    assert result["container"]["id"] == "container-existing"
     assert runtime.stops == 1
+    assert runtime.removes == []
+
+
+@pytest.mark.parametrize("data", ["persistent", "ephemeral"])
+def test_stop_reports_not_running_without_mutating_stopped_runtime(
+    tmp_path: Path, data: str,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = replace(_config(tmp_path, paths=paths), data=data)
+    runtime.record = replace(_record(config), state="exited", health=None, url=None)
+
+    result = controller.stop(config)
+
+    assert result["status"] == "not_running"
+    assert result["container"]["name"] == config.container_name
+    assert result["container"]["id"] == "container-existing"
+    assert result["container"]["state"] == "exited"
+    assert runtime.stops == 0
     assert runtime.removes == []
 
 

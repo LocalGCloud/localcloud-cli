@@ -300,6 +300,10 @@ class Controller:
             )
             if current is None:
                 return self._absent_payload("not_running", config)
+            if current.state != "running":
+                return self._payload(
+                    "not_running", current, config, include_sdk=False
+                )
             if current.data == "ephemeral" and current.origin == "managed":
                 self.runtime.remove(config, current, remove_volume=True)
                 removed = replace(

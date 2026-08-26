@@ -9,7 +9,12 @@ from typing import Any
 import pytest
 
 from localcloud_cli import __version__
-from localcloud_cli.cli import _command_config, _execute, _parser, main
+from localcloud_cli.cli import (
+    _command_config,
+    _execute,
+    _parser,
+    main,
+)
 from localcloud_cli.errors import HostError
 
 
@@ -264,6 +269,52 @@ def test_stop_dispatches_loaded_data_volume_config() -> None:
     call, config = FakeController.instance.calls[-1]
     assert call == "stop"
     assert config.data_volume == "team-data"
+
+
+def test_main_stop_reports_not_running_without_stopped_container_details(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def stop(_self: FakeController, config: Any) -> dict[str, Any]:
+        return {
+            "status": "not_running",
+            "data_volume": config.data_volume,
+            "container": {
+                "name": config.container_name,
+                "id": "a1b2c3d4e5f6",
+                "state": "exited",
+            },
+        }
+
+    monkeypatch.setattr(FakeController, "stop", stop)
+
+    assert main(["stop"]) == 0
+    captured = capsys.readouterr()
+    assert "LocalCloud runtime was not running" in captured.err
+    assert "LocalCloud runtime stopped" not in captured.err
+    assert "Container" not in captured.out
+
+
+def test_main_stop_reports_stopped_container_name_and_id(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def stop(_self: FakeController, config: Any) -> dict[str, Any]:
+        return {
+            "status": "stopped",
+            "data_volume": config.data_volume,
+            "container": {
+                "name": config.container_name,
+                "id": "a1b2c3d4e5f6",
+                "state": "exited",
+            },
+        }
+
+    monkeypatch.setattr(FakeController, "stop", stop)
+
+    assert main(["stop"]) == 0
+    captured = capsys.readouterr()
+    assert "LocalCloud runtime stopped" in captured.err
+    assert "Container     localcloud" in captured.out
+    assert "Container ID  a1b2c3d4e5f6" in captured.out
 
 
 def test_console_encodes_selected_project_and_user(

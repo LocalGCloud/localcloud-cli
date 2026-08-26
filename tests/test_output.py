@@ -73,6 +73,40 @@ def test_summary_humanizes_runtime_status_values() -> None:
     assert "State" not in lines
 
 
+def test_stop_summary_includes_stopped_container_identity() -> None:
+    payload = {
+        "status": "stopped",
+        "data_volume": "localcloud-data",
+        "container": {
+            "name": "localcloud",
+            "id": "a1b2c3d4e5f6",
+            "state": "exited",
+        },
+    }
+
+    lines = render_summary("stop", payload).splitlines()
+
+    assert "Container     localcloud" in lines
+    assert "Container ID  a1b2c3d4e5f6" in lines
+
+
+def test_stop_summary_omits_container_identity_when_nothing_was_stopped() -> None:
+    payload = {
+        "status": "not_running",
+        "data_volume": "localcloud-data",
+        "container": {
+            "name": "localcloud",
+            "id": "a1b2c3d4e5f6",
+            "state": "exited",
+        },
+    }
+
+    lines = render_summary("stop", payload).splitlines()
+
+    assert not any(line.startswith("Container ") for line in lines)
+    assert not any(line.startswith("Container ID") for line in lines)
+
+
 def test_summary_adds_nested_fields_in_requested_order_and_deduplicates() -> None:
     requested = parse_fields(["container.name,mcp.direct_url", "container.name"])
     lines = render_summary("start", PAYLOAD, requested).splitlines()
