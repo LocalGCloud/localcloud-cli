@@ -48,7 +48,11 @@ class Controller:
         if current is None:
             return None
         value = current.config_path
-        return None if value in {None, DEFAULTS_CONFIG_LABEL} else str(value)
+        return (
+            DEFAULTS_CONFIG_LABEL
+            if value in {None, DEFAULTS_CONFIG_LABEL}
+            else str(value)
+        )
 
     def start(
         self,
@@ -978,9 +982,7 @@ class Controller:
             }
             url = None
             endpoint_map: dict[str, int] = {}
-            services: str | tuple[str, ...] = (
-                "<default>" if config.services is None else config.services
-            )
+            services: str | tuple[str, ...] = "unavailable"
             data = config.data
             container = {
                 "name": config.container_name,
@@ -1012,7 +1014,10 @@ class Controller:
             ownership = dict(environment.ownership)
             url = environment.url
             endpoint_map = environment.endpoint_map
-            services = environment.services
+            effective_services = self.runtime.effective_services(environment)
+            services = (
+                "unavailable" if effective_services is None else effective_services
+            )
             data = environment.data
             container = {
                 "name": environment.name,
@@ -1156,8 +1161,8 @@ def _active_container_id(environment: RuntimeRecord) -> str:
 
 
 def _public_services(value: str | list[str] | tuple[str, ...]) -> str | list[str]:
-    if value == "<default>":
-        return "default"
+    if value in ("unavailable", "<default>"):
+        return "default" if value == "<default>" else "unavailable"
     if isinstance(value, str):
         return value.split(",") if value else "default"
     return list(value)

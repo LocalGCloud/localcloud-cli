@@ -10,6 +10,7 @@ import pytest  # pyright: ignore[reportMissingImports]
 import localcloud_cli.controller as controller_module
 import localcloud_cli.endpoints as endpoints_module
 from localcloud_cli.config import (
+    DEFAULTS_CONFIG_LABEL,
     HostPaths,
     LocalCloudConfig,
     load_active_runtime,
@@ -45,6 +46,7 @@ class FakeRuntime:
         self.wait_error: HostError | None = None
         self.log_calls: list[tuple[LocalCloudConfig, RuntimeRecord, int]] = []
         self.doctor_report: dict[str, Any] = {"status": "ok", "warning": "runtime warning"}
+        self.effective: tuple[str, ...] | None = None
 
 
 
@@ -164,6 +166,9 @@ class FakeRuntime:
 
     def is_ready(self, _current: RuntimeRecord) -> bool:
         return self.ready
+
+    def effective_services(self, _current: RuntimeRecord) -> tuple[str, ...] | None:
+        return self.effective
 
     def doctor(self) -> dict[str, Any]:
         return dict(self.doctor_report)
@@ -465,7 +470,7 @@ def test_start_adopts_attached_container_without_reconfiguration(
             "data_volume": "attached",
         },
     )
-    changed = _config(tmp_path, paths=paths, yaml="memory: 8g\n")
+    changed = _config(tmp_path, paths=paths, yaml="host:\n  memory: 8g\n")
 
     result = controller.start(changed)
 
@@ -581,7 +586,7 @@ def test_start_creates_project_and_applies_seed_once(
     config = _config(
         tmp_path,
         paths=paths,
-        yaml="project: new-project\nseed: seed.yaml\n",
+        yaml="context:\n  project: new-project\nhost:\n  seed: seed.yaml\n",
     )
     runtime.record = _record(config)
 
@@ -609,7 +614,7 @@ def test_start_observes_project_after_transient_create_response_failure(
     config = _config(
         tmp_path,
         paths=paths,
-        yaml="project: new-project\nseed: seed.yaml\n",
+        yaml="context:\n  project: new-project\nhost:\n  seed: seed.yaml\n",
     )
     runtime.record = _record(config)
     FakeJavaClient.create_error = _java_transport_error()
@@ -633,7 +638,7 @@ def test_start_preserves_transient_create_failure_at_visibility_timeout(
     config = _config(
         tmp_path,
         paths=paths,
-        yaml="project: new-project\n",
+        yaml="context:\n  project: new-project\n",
     )
     runtime.record = _record(config)
     FakeJavaClient.create_error = _java_transport_error()
@@ -719,7 +724,7 @@ def test_reconfiguration_preflight_preserves_current_runtime_on_failure(
     runtime.preflight_error = HostError(
         "managed_image_capability_missing", "replacement is incompatible"
     )
-    changed = _config(tmp_path, paths=paths, yaml="memory: 8g\n")
+    changed = _config(tmp_path, paths=paths, yaml="host:\n  memory: 8g\n")
 
     with pytest.raises(HostError) as caught:
         controller.start(changed)
@@ -744,12 +749,12 @@ def test_managed_container_on_attached_volume_can_be_reconfigured(
             "data_volume": "attached",
         },
     )
-    changed = _config(tmp_path, paths=paths, yaml="memory: 8g\n")
+    changed = _config(tmp_path, paths=paths, yaml="host:\n  memory: 8g\n")
 
     result = controller.start(changed)
 
     assert result["status"] == "reconfigured"
-    assert result["changed_fields"] == ["memory"]
+    assert result["changed_fields"] == ["config_path", "memory"]
     assert runtime.removes == [False]
     assert runtime.creates == 1
 
@@ -761,7 +766,7 @@ def test_reconfigure_to_ephemeral_preserves_existing_persistent_volume(
     original = _config(tmp_path, paths=paths)
     assert original.data == "persistent"
     runtime.record = _record(original)
-    changed = _config(tmp_path, paths=paths, yaml="data: ephemeral\n")
+    changed = _config(tmp_path, paths=paths, yaml="host:\n  data: ephemeral\n")
 
     result = controller.start(changed)
 
@@ -786,7 +791,7 @@ def test_restart_never_replaces_attached_container(tmp_path: Path) -> None:
             "data_volume": "attached",
         },
     )
-    changed = _config(tmp_path, paths=paths, yaml="memory: 8g\n")
+    changed = _config(tmp_path, paths=paths, yaml="host:\n  memory: 8g\n")
 
     result = controller.restart(changed)
 
@@ -881,7 +886,7 @@ def test_start_attaches_to_running_runtime_without_replacing_when_local_image_di
 
 def test_stop_preserves_attached_ephemeral_runtime(tmp_path: Path) -> None:
     controller, runtime, paths = _controller(tmp_path)
-    config = _config(tmp_path, paths=paths, yaml="data: ephemeral\n")
+    config = _config(tmp_path, paths=paths, yaml="host:\n  data: ephemeral\n")
     runtime.record = _record(
         config,
         origin="attached",
@@ -921,7 +926,7 @@ def test_stop_reports_not_running_without_mutating_stopped_runtime(
 
 def test_stop_removes_fully_managed_ephemeral_runtime(tmp_path: Path) -> None:
     controller, runtime, paths = _controller(tmp_path)
-    config = _config(tmp_path, paths=paths, yaml="data: ephemeral\n")
+    config = _config(tmp_path, paths=paths, yaml="host:\n  data: ephemeral\n")
     runtime.record = _record(config)
 
     result = controller.stop(config)
@@ -1004,6 +1009,48 @@ def test_status_reports_runtime_identity_and_image(tmp_path: Path) -> None:
     assert result["mount"]["source"] == "team-data"
 
 
+def test_status_uses_server_reported_effective_services_when_ready(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    runtime.effective = ("bigtable", "gcs")
+
+    result = controller.status(config)
+
+    assert result["services"] == ["bigtable", "gcs"]
+
+
+def test_status_reports_services_unavailable_when_server_state_cannot_be_read(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    runtime.effective = None
+
+    result = controller.status(config)
+
+    assert result["services"] == "unavailable"
+
+
+def test_absent_status_reports_services_unavailable_rather_than_configured_yaml(
+    tmp_path: Path,
+) -> None:
+    controller, _runtime, paths = _controller(
+        tmp_path
+    )
+    config = _config(
+        tmp_path, paths=paths, yaml="services:\n  enabled: [gcs]\n"
+    )
+
+    result = controller.status(config)
+
+    assert result["status"] == "not_created"
+    assert result["services"] == "unavailable"
+
+
 def test_target_returns_only_connection_context(tmp_path: Path) -> None:
     controller, runtime, paths = _controller(tmp_path)
     config = _config(tmp_path, paths=paths)
@@ -1031,7 +1078,7 @@ def test_target_requires_existing_project(tmp_path: Path) -> None:
 
 def test_logs_and_remembered_config_use_resolved_runtime(tmp_path: Path) -> None:
     controller, runtime, paths = _controller(tmp_path)
-    config = _config(tmp_path, paths=paths, yaml="memory: 6g\n")
+    config = _config(tmp_path, paths=paths, yaml="host:\n  memory: 6g\n")
     runtime.record = _record(config)
 
     assert controller.remembered_config(config) == str(
@@ -1040,13 +1087,21 @@ def test_logs_and_remembered_config_use_resolved_runtime(tmp_path: Path) -> None
     assert controller.logs(config, tail=17)["logs"] == "tail=17"
 
 
+def test_remembered_config_marks_resolved_builtin_defaults(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+
+    assert controller.remembered_config(config) == DEFAULTS_CONFIG_LABEL
+
+
 def test_failed_seed_does_not_update_active_runtime(tmp_path: Path) -> None:
     controller, _runtime, paths = _controller(tmp_path)
     (tmp_path / "seed.yaml").write_text(
         "projects:\n  - projectId: local-gcp-project\n", encoding="utf-8"
     )
     config = _config(
-        tmp_path, paths=paths, yaml="seed: seed.yaml\n"
+        tmp_path, paths=paths, yaml="host:\n  seed: seed.yaml\n"
     )
     FakeJavaClient.fail_seed = True
 
@@ -1254,4 +1309,3 @@ def test_start_when_already_running_skips_tailing_and_observer_starting(
     assert observer.started_calls == 0
     assert observer.logs == []
     assert result.get("logs") is None
-

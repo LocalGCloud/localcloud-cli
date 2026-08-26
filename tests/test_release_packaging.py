@@ -38,6 +38,8 @@ def test_rendered_homebrew_formula_installs_and_tests_lc_alias(tmp_path: Path) -
     )
 
     formula = formula_path.read_text(encoding="utf-8")
+    assert 'libexec.install "localcloud", "localcloud-runtime"' in formula
+    assert 'bin.write_exec_script libexec/"localcloud"' in formula
     assert 'bin.install_symlink bin/"localcloud" => "lc"' in formula
     assert "lc is an alias for localcloud; both commands behave identically." in formula
     assert 'canonical_version = shell_output("#{bin}/localcloud --version")' in formula

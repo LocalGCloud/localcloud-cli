@@ -15,6 +15,7 @@ from localcloud_cli.cli import (
     _parser,
     main,
 )
+from localcloud_cli.config import DEFAULTS_CONFIG_LABEL
 from localcloud_cli.errors import HostError
 
 
@@ -27,10 +28,11 @@ class FakeController:
         self.pull_calls: list[tuple[str, bool]] = []
         self.tail_calls: list[tuple[str, float | None]] = []
         self.remembered: str | None = None
+        self.remembered_by_volume: dict[str, str | None] = {}
 
     def remembered_config(self, config: Any) -> str | None:
         self.calls.append(("remembered_config", config))
-        return self.remembered
+        return self.remembered_by_volume.get(config.data_volume, self.remembered)
 
     def start(
         self,
@@ -173,7 +175,8 @@ def test_start_dispatch_applies_context_and_managed_resource_names(
 ) -> None:
     config_path = tmp_path / "custom.yaml"
     config_path.write_text(
-        "project: yaml-project-1\nuser: yaml-user\n", encoding="utf-8"
+        "context:\n  project: yaml-project-1\n  user: yaml-user\n",
+        encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
     args = _parser().parse_args(
@@ -209,8 +212,12 @@ def test_local_config_precedes_remembered_config(
 ) -> None:
     local = tmp_path / "localcloud.yaml"
     remembered = tmp_path / "remembered.yaml"
-    local.write_text("project: current-project-1\n", encoding="utf-8")
-    remembered.write_text("project: remembered-project-1\n", encoding="utf-8")
+    local.write_text(
+        "context:\n  project: current-project-1\n", encoding="utf-8"
+    )
+    remembered.write_text(
+        "context:\n  project: remembered-project-1\n", encoding="utf-8"
+    )
     monkeypatch.chdir(tmp_path)
     controller = FakeController()
     controller.remembered = str(remembered)
@@ -225,7 +232,9 @@ def test_remembered_config_is_used_when_local_file_is_absent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     remembered = tmp_path / "remembered.yaml"
-    remembered.write_text("project: remembered-project-1\n", encoding="utf-8")
+    remembered.write_text(
+        "context:\n  project: remembered-project-1\n", encoding="utf-8"
+    )
     monkeypatch.chdir(tmp_path)
     controller = FakeController()
     controller.remembered = str(remembered)
@@ -235,6 +244,66 @@ def test_remembered_config_is_used_when_local_file_is_absent(
     assert selected.project == "remembered-project-1"
     assert controller.calls[0][0] == "remembered_config"
     assert controller.calls[0][1].data_volume == "localcloud-data"
+
+
+def test_stale_implicit_active_runtime_falls_back_to_default_volume(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "active-runtime.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "data_volume": "stale-pr-data",
+                "image": "jaysen2apache/localcloud:latest",
+                "container_id": "missing-container",
+            }
+        ),
+        encoding="utf-8",
+    )
+    controller = FakeController()
+    controller.remembered_by_volume["localcloud-data"] = DEFAULTS_CONFIG_LABEL
+
+    selected = _command_config(controller, _parser().parse_args(["stop"]))
+
+    assert selected.data_volume == "localcloud-data"
+    attempted_volumes = [
+        call[1].data_volume
+        for call in controller.calls
+        if call[0] == "remembered_config"
+    ]
+    assert attempted_volumes == ["stale-pr-data", "localcloud-data"]
+
+
+def test_valid_implicit_active_runtime_with_defaults_remains_selected(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "active-runtime.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "data_volume": "team-data",
+                "image": "jaysen2apache/localcloud:latest",
+                "container_id": "team-container",
+            }
+        ),
+        encoding="utf-8",
+    )
+    controller = FakeController()
+    controller.remembered_by_volume["team-data"] = DEFAULTS_CONFIG_LABEL
+
+    selected = _command_config(controller, _parser().parse_args(["stop"]))
+
+    assert selected.data_volume == "team-data"
+    attempted_volumes = [
+        call[1].data_volume
+        for call in controller.calls
+        if call[0] == "remembered_config"
+    ]
+    assert attempted_volumes == ["team-data"]
 
 
 def test_reset_all_projects_dispatches_explicit_scope() -> None:
@@ -252,7 +321,11 @@ def test_reset_progress_uses_resolved_data_volume(
 ) -> None:
     config = tmp_path / "team.yaml"
     config.write_text(
-        "data_volume: team-data\nproject: team-project-1\n", encoding="utf-8"
+        "context:\n"
+        "  project: team-project-1\n"
+        "host:\n"
+        "  data_volume: team-data\n",
+        encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
 
@@ -632,5 +705,3 @@ def test_main_start_when_already_running_reports_guidance_and_skips_panel(
     captured = capsys.readouterr()
     assert "LocalCloud runtime is already running" in captured.err
     assert "LocalCloud v" not in captured.err
-
-

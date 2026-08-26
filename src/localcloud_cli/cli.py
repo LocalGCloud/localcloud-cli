@@ -289,6 +289,7 @@ def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConf
         "user": getattr(args, "user", None),
         "container_name": getattr(args, "container_name", None),
         "network_name": getattr(args, "network_name", None),
+        "skip_validation": getattr(args, "skip_config_validation", False),
     }
     paths = getattr(controller, "paths", None) or HostPaths.from_environment()
     active_diagnostics: list[dict[str, Any]] = []
@@ -301,7 +302,17 @@ def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConf
     preliminary = load_config(explicit=explicit, **overrides, **snapshot)
     if preliminary.config_path is not None:
         return preliminary
+
     remembered = controller.remembered_config(preliminary)
+    implicit_active = (
+        explicit is None
+        and overrides["data_volume"] is None
+        and active is not None
+    )
+    if remembered is None and implicit_active:
+        snapshot["active_runtime"] = None
+        preliminary = load_config(explicit=explicit, **overrides, **snapshot)
+        remembered = controller.remembered_config(preliminary)
     if remembered is None:
         return preliminary
     return load_config(
@@ -467,13 +478,25 @@ def _parser() -> argparse.ArgumentParser:
             metavar="CONFIG",
             nargs="?",
             help=(
-                "Configuration file. Otherwise use ./localcloud.yaml, the "
-                "runtime's remembered file, or built-in defaults"
+                "Versioned localcloud.yaml overlay. Otherwise use "
+                "LOCALCLOUD_CONFIG, ./localcloud.yaml, the runtime's "
+                "remembered file, or built-in defaults"
             ),
         )
         _add_context(command)
         _add_resource_names(command)
         _add_output_options(command, fields=True)
+        command.add_argument(
+            "--skip-config-validation",
+            action="store_true",
+            help=(
+                "Proceed even if localcloud.yaml fails CLI-side host/context "
+                "checks; the file is still passed through unchanged for "
+                "LocalCloud to accept or reject. Also settable via "
+                "LOCALCLOUD_SKIP_CONFIG_VALIDATION=1. Use only if CLI and "
+                "LocalCloud validation disagree."
+            ),
+        )
         if name in {"start", "restart"}:
             command.add_argument(
                 "--pull",

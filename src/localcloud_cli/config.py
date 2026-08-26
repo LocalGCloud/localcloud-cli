@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import fcntl
 import hashlib
 import json
@@ -33,10 +34,16 @@ PROJECT_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 USER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+@-]{0,126}$")
 ENVIRONMENT_KEY_PATTERN = re.compile(r"^LOCALCLOUD_[A-Z0-9_]+$")
 CONFIG_FIELDS = {
-    "data_volume",
-    "project",
-    "user",
+    "version",
+    "context",
+    "host",
+    "server",
     "services",
+    "infrastructure",
+}
+CONTEXT_FIELDS = {"project", "user"}
+HOST_CONFIG_FIELDS = {
+    "data_volume",
     "seed",
     "data",
     "image",
@@ -47,9 +54,131 @@ CONFIG_FIELDS = {
     "container_name",
     "network_name",
 }
+SERVICES_FIELDS = {"enabled", "catalog"}
+FLAT_FIELD_REPLACEMENTS = {
+    "project": "context.project",
+    "user": "context.user",
+    "services": "services.enabled",
+    **{field: f"host.{field}" for field in HOST_CONFIG_FIELDS},
+}
+RESERVED_HOST_ENVIRONMENT = {
+    "LOCALCLOUD_CONFIG",
+    "LOCALCLOUD_PROJECT",
+    "LOCALCLOUD_DATA_DIR",
+    "LOCALCLOUD_SERVICES",
+}
 LEGACY_CONFIG_FIELDS = {"instance", "volume_name"}
+SKIP_CONFIG_VALIDATION_ENV = "LOCALCLOUD_SKIP_CONFIG_VALIDATION"
+AMBIGUOUS_PLAIN_SCALARS = {
+    "yes",
+    "no",
+    "on",
+    "off",
+    "true",
+    "false",
+    "null",
+    "~",
+}
+EXACT_SPECIAL_SCALARS = {"true", "false", "null", "~"}
 _ACTIVE_RUNTIME_UNSET = object()
 
+
+
+class _StrictLoader(yaml.SafeLoader):
+    pass
+
+
+_StrictLoader.yaml_implicit_resolvers = copy.deepcopy(
+    yaml.SafeLoader.yaml_implicit_resolvers
+)
+for _first_character, _resolvers in list(
+    _StrictLoader.yaml_implicit_resolvers.items()
+):
+    _StrictLoader.yaml_implicit_resolvers[_first_character] = [
+        resolver
+        for resolver in _resolvers
+        if resolver[0]
+        not in {"tag:yaml.org,2002:bool", "tag:yaml.org,2002:null"}
+    ]
+_StrictLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:bool",
+    re.compile(r"^(?:true|false)$"),
+    list("tf"),
+)
+_StrictLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:null",
+    re.compile(r"^(?:null|~)$"),
+    ["n", "~"],
+)
+
+
+def _validate_yaml_node(
+    node: yaml.Node,
+    path: Path,
+    active: set[int] | None = None,
+    validated: set[int] | None = None,
+) -> None:
+    active = set() if active is None else active
+    validated = set() if validated is None else validated
+    identity = id(node)
+    if identity in active:
+        _invalid_config(
+            "Recursive YAML aliases are not supported",
+            config=str(path),
+        )
+    if identity in validated:
+        return
+
+    active.add(identity)
+    try:
+        if isinstance(node, yaml.MappingNode):
+            seen: set[str] = set()
+            for key_node, value_node in node.value:
+                if (
+                    isinstance(key_node, yaml.ScalarNode)
+                    and (
+                        key_node.value == "<<"
+                        or key_node.tag == "tag:yaml.org,2002:merge"
+                    )
+                ):
+                    _invalid_config(
+                        "YAML merge keys (<<) are not supported",
+                        config=str(path),
+                    )
+                if (
+                    not isinstance(key_node, yaml.ScalarNode)
+                    or key_node.tag != "tag:yaml.org,2002:str"
+                ):
+                    _invalid_config(
+                        "Configuration field names must be strings",
+                        config=str(path),
+                    )
+                if key_node.value in seen:
+                    _invalid_config(
+                        "Duplicate configuration field",
+                        config=str(path),
+                        field=key_node.value,
+                    )
+                seen.add(key_node.value)
+                _validate_yaml_node(key_node, path, active, validated)
+                _validate_yaml_node(value_node, path, active, validated)
+        elif isinstance(node, yaml.SequenceNode):
+            for value_node in node.value:
+                _validate_yaml_node(value_node, path, active, validated)
+        elif isinstance(node, yaml.ScalarNode) and node.style is None:
+            lowered = node.value.lower()
+            if (
+                lowered in AMBIGUOUS_PLAIN_SCALARS
+                and node.value not in EXACT_SPECIAL_SCALARS
+            ):
+                _invalid_config(
+                    "Ambiguous YAML scalar must be quoted when used as a string",
+                    config=str(path),
+                    value=node.value,
+                )
+    finally:
+        active.remove(identity)
+    validated.add(identity)
 
 @dataclass(frozen=True)
 class ActiveRuntime:
@@ -92,10 +221,12 @@ class LocalCloudConfig:
 
 
 def runtime_settings(config: LocalCloudConfig) -> dict[str, Any]:
-    """Return the Docker-runtime settings that define configuration identity."""
+    """Return host-owned Docker settings that define runtime identity."""
     return {
         "data_volume": config.data_volume,
-        "services": list(config.services) if config.services is not None else None,
+        "config_path": str(config.config_path)
+        if config.config_path is not None
+        else None,
         "data": config.data,
         "image": config.image,
         "memory": config.memory,
@@ -485,6 +616,59 @@ def _record_active_diagnostic(
         diagnostics.append(error.to_dict())
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _enforce_or_record(
+    skip_validation: bool,
+    diagnostics: list[dict[str, Any]],
+    violated: bool,
+    message: str,
+    **details: object,
+) -> None:
+    """Raise unless skip_validation is set, in which case record and continue.
+
+    Only ever used for the CLI's closed-set beliefs about the shared
+    document's shape (known fields, supported version) — never for values the
+    CLI itself consumes directly to drive Docker, since those are not a
+    CLI/LocalCloud drift risk and getting them wrong breaks the CLI, not just
+    Java-owned semantics.
+    """
+    if not violated:
+        return
+    error = HostError("invalid_config", message, details)
+    if not skip_validation:
+        raise error
+    diagnostics.append(
+        {
+            **error.to_dict(),
+            "code": "config_validation_skipped",
+            "bypassed_code": error.code,
+        }
+    )
+
+
+def _reject_or_record(
+    skip_validation: bool,
+    diagnostics: list[dict[str, Any]],
+    reject: Any,
+    raw: dict[object, object],
+) -> None:
+    try:
+        reject(raw)
+    except HostError as error:
+        if not skip_validation:
+            raise
+        diagnostics.append(
+            {
+                **error.to_dict(),
+                "code": "config_validation_skipped",
+                "bypassed_code": error.code,
+            }
+        )
+
+
 def load_config(
     explicit: str | Path | None = None,
     remembered: str | None = None,
@@ -498,28 +682,36 @@ def load_config(
     paths: HostPaths | None = None,
     active_runtime: ActiveRuntime | None | object = _ACTIVE_RUNTIME_UNSET,
     active_diagnostics: tuple[dict[str, Any], ...] = (),
+    skip_validation: bool = False,
 ) -> LocalCloudConfig:
     source_directory = _source_directory(directory)
     explicit_path = Path(explicit) if explicit is not None else None
     config_path = _select_config_path(source_directory, explicit_path, remembered)
     raw = _read_config(config_path)
-
-    non_string_keys = sorted(str(key) for key in raw if not isinstance(key, str))
-    if non_string_keys:
-        _invalid_config("Configuration field names must be strings", fields=non_string_keys)
-    _reject_legacy_config(raw)
-    unknown = sorted(set(raw) - CONFIG_FIELDS)
-    if unknown:
-        _invalid_config("Unknown configuration fields", fields=unknown)
-
+    effective_skip_validation = skip_validation or _env_flag(
+        SKIP_CONFIG_VALIDATION_ENV
+    )
     diagnostics = list(active_diagnostics)
+    _validate_config_document(
+        raw, skip_validation=effective_skip_validation, diagnostics=diagnostics
+    )
+
+    context = raw.get("context") or {}
+    host = raw.get("host") or {}
+    services_section = raw.get("services") or {}
+
+    def host_value(field: str, default: object) -> object:
+        value = host.get(field)
+        return default if value is None else value
+
     host_paths = paths if paths is not None else HostPaths.from_environment()
     if active_runtime is _ACTIVE_RUNTIME_UNSET:
+        configured_volume = host.get("data_volume")
         requested_runtime_volume = (
             data_volume
             if data_volume is not None
-            else raw.get("data_volume")
-            if isinstance(raw.get("data_volume"), str)
+            else configured_volume
+            if isinstance(configured_volume, str)
             else None
         )
         active = load_active_runtime(
@@ -531,35 +723,47 @@ def load_config(
         active = active_runtime
         if active is not None and not isinstance(active, ActiveRuntime):
             raise TypeError("active_runtime must be ActiveRuntime or None")
+
+    configured_volume = host.get("data_volume")
     if data_volume is not None:
         selected_data_volume = validate_data_volume(data_volume)
-    elif "data_volume" in raw:
-        if raw["data_volume"] is None:
-            raise HostError(
-                "invalid_data_volume",
-                "data_volume must be a valid named Docker volume",
-                {"data_volume": None},
-            )
-        selected_data_volume = validate_data_volume(raw["data_volume"])
+    elif configured_volume is not None:
+        selected_data_volume = validate_data_volume(configured_volume)
     elif active is not None:
         selected_data_volume = active.data_volume
     else:
         selected_data_volume = DEFAULT_DATA_VOLUME
 
     selected_project = validate_project(
-        project if project is not None else raw.get("project", DEFAULT_PROJECT)
+        project
+        if project is not None
+        else context.get("project", DEFAULT_PROJECT)
     )
+    configured_user = context.get("user")
     selected_user = validate_user(
-        user if user is not None else raw.get("user", DEFAULT_USER)
+        user
+        if user is not None
+        else configured_user
+        if configured_user is not None
+        else DEFAULT_USER
     )
-    services = _services(raw.get("services"))
-    seed_path, seed_yaml = _seed(raw.get("seed", "auto"), config_path, source_directory)
-    data = raw.get("data", "persistent")
+    services = (
+        _services(services_section["enabled"])
+        if "enabled" in services_section
+        else None
+    )
+    seed_path, seed_yaml = _seed(
+        host_value("seed", "auto"), config_path, source_directory
+    )
+    data = host_value("data", "persistent")
     if data not in {"persistent", "ephemeral"}:
-        _invalid_config("data must be 'persistent' or 'ephemeral'", value=data)
+        _invalid_config(
+            "host.data must be 'persistent' or 'ephemeral'", value=data
+        )
 
-    if "image" in raw:
-        image = _non_blank_string("image", raw["image"])
+    configured_image = host.get("image")
+    if configured_image is not None:
+        image = _non_blank_string("host.image", configured_image)
     else:
         image = os.environ.get("LOCALCLOUD_IMAGE")
         if (
@@ -568,13 +772,19 @@ def load_config(
             and active.data_volume == selected_data_volume
         ):
             image = active.image
-        image = _non_blank_string("image", image or DEFAULT_IMAGE)
-    memory = _non_blank_string("memory", raw.get("memory", DEFAULT_MEMORY))
-    docker_socket = _boolean("docker_socket", raw.get("docker_socket", False))
-    transparent_network = _boolean(
-        "transparent_network", raw.get("transparent_network", False)
+        image = _non_blank_string("host.image", image or DEFAULT_IMAGE)
+
+    memory = _non_blank_string(
+        "host.memory", host_value("memory", DEFAULT_MEMORY)
     )
-    environment = _environment(raw.get("environment", {}))
+    docker_socket = _boolean(
+        "host.docker_socket", host_value("docker_socket", False)
+    )
+    transparent_network = _boolean(
+        "host.transparent_network",
+        host_value("transparent_network", False),
+    )
+    environment = _environment(host_value("environment", {}))
 
     defaults = default_resource_names(selected_data_volume)
     active_for_volume = (
@@ -582,27 +792,33 @@ def load_config(
         if active is not None and active.data_volume == selected_data_volume
         else None
     )
+    configured_container = host.get("container_name")
+    default_container = (
+        active_for_volume.container_name
+        if active_for_volume and active_for_volume.container_name
+        else defaults["container"]
+    )
     selected_container = _docker_name(
-        "container_name",
+        "host.container_name",
         container_name
         if container_name is not None
-        else raw.get(
-            "container_name",
-            active_for_volume.container_name
-            if active_for_volume and active_for_volume.container_name
-            else defaults["container"],
-        ),
+        else configured_container
+        if configured_container is not None
+        else default_container,
+    )
+    configured_network = host.get("network_name")
+    default_network = (
+        active_for_volume.network_name
+        if active_for_volume and active_for_volume.network_name
+        else defaults["network"]
     )
     selected_network = _docker_name(
-        "network_name",
+        "host.network_name",
         network_name
         if network_name is not None
-        else raw.get(
-            "network_name",
-            active_for_volume.network_name
-            if active_for_volume and active_for_volume.network_name
-            else defaults["network"],
-        ),
+        else configured_network
+        if configured_network is not None
+        else default_network,
     )
 
     return LocalCloudConfig(
@@ -625,6 +841,126 @@ def load_config(
     )
 
 
+def _validate_config_document(
+    raw: dict[object, object],
+    *,
+    skip_validation: bool,
+    diagnostics: list[dict[str, Any]],
+) -> None:
+    non_string_keys = sorted(str(key) for key in raw if not isinstance(key, str))
+    if non_string_keys:
+        _invalid_config(
+            "Configuration field names must be strings", fields=non_string_keys
+        )
+    _reject_or_record(skip_validation, diagnostics, _reject_legacy_config, raw)
+    _reject_or_record(skip_validation, diagnostics, _reject_flat_config, raw)
+    unknown = sorted(set(raw) - CONFIG_FIELDS)
+    _enforce_or_record(
+        skip_validation,
+        diagnostics,
+        bool(unknown),
+        "Unknown configuration fields",
+        fields=unknown,
+    )
+
+    _enforce_or_record(
+        skip_validation,
+        diagnostics,
+        "version" in raw and (type(raw["version"]) is not int or raw["version"] != 1),
+        "version must be the supported integer value 1",
+        value=raw.get("version"),
+    )
+
+    context = raw.get("context")
+    if "context" in raw:
+        if not isinstance(context, dict):
+            _invalid_config("context must be an object", value=context)
+        else:
+            unknown_context = sorted(set(context) - CONTEXT_FIELDS)
+            _enforce_or_record(
+                skip_validation,
+                diagnostics,
+                bool(unknown_context),
+                "Unknown context fields",
+                fields=unknown_context,
+            )
+            if "project" in context and context["project"] is None:
+                _invalid_config("context.project cannot be null")
+
+    host = raw.get("host")
+    if host is not None:
+        if not isinstance(host, dict):
+            _invalid_config("host must be an object or null", value=host)
+        else:
+            unknown_host = sorted(set(host) - HOST_CONFIG_FIELDS)
+            _enforce_or_record(
+                skip_validation,
+                diagnostics,
+                bool(unknown_host),
+                "Unknown host fields",
+                fields=unknown_host,
+            )
+
+    server = raw.get("server")
+    if "server" in raw and not isinstance(server, dict):
+        _invalid_config("server must be an object", value=server)
+
+    services = raw.get("services")
+    if "services" in raw:
+        if not isinstance(services, dict):
+            _invalid_config("services must be an object", value=services)
+        else:
+            unknown_services = sorted(set(services) - SERVICES_FIELDS)
+            _enforce_or_record(
+                skip_validation,
+                diagnostics,
+                bool(unknown_services),
+                "Unknown services fields",
+                fields=unknown_services,
+            )
+            if "enabled" in services and services["enabled"] is None:
+                _invalid_config("services.enabled cannot be null")
+            if "catalog" in services and not isinstance(
+                services["catalog"], dict
+            ):
+                _invalid_config(
+                    "services.catalog must be an object",
+                    value=services["catalog"],
+                )
+
+    infrastructure = raw.get("infrastructure")
+    if "infrastructure" in raw and not isinstance(infrastructure, dict):
+        _invalid_config(
+            "infrastructure must be an object", value=infrastructure
+        )
+
+
+def _reject_flat_config(raw: dict[object, object]) -> None:
+    removed = sorted(
+        field
+        for field in FLAT_FIELD_REPLACEMENTS
+        if field in raw
+        and not (field == "services" and isinstance(raw[field], dict))
+    )
+    if not removed:
+        return
+    details: dict[str, object] = {
+        "fields": removed,
+        "replacement": {
+            field: FLAT_FIELD_REPLACEMENTS[field] for field in removed
+        },
+    }
+    if "seed" in removed and raw.get("seed") is None:
+        details["seed_null_migration"] = {
+            "from": "seed: null",
+            "replacement": "host.seed: disabled",
+        }
+    raise HostError(
+        "removed_flat_config",
+        "Configuration uses the removed flat LocalCloud schema",
+        details,
+    )
+
 def _reject_legacy_config(raw: dict[object, object]) -> None:
     legacy = sorted(str(field) for field in LEGACY_CONFIG_FIELDS if field in raw)
     if not legacy:
@@ -643,8 +979,8 @@ def _reject_legacy_config(raw: dict[object, object]) -> None:
         "Configuration uses removed LocalCloud runtime selectors",
         {
             "fields": legacy,
-            "replacement": {"data_volume": replacement},
-            "recovery": "Replace the listed fields with data_volume",
+            "replacement": {"host.data_volume": replacement},
+            "recovery": "Replace the listed fields with host.data_volume",
         },
     )
 
@@ -675,6 +1011,10 @@ def _select_config_path(
 ) -> Path | None:
     if explicit is not None:
         return _required_config_path(explicit, directory)
+
+    configured = os.environ.get("LOCALCLOUD_CONFIG")
+    if configured is not None and configured.strip():
+        return _required_config_path(Path(configured), directory)
 
     local_config = directory / DEFAULT_CONFIG_NAME
     if local_config.exists():
@@ -712,7 +1052,14 @@ def _read_config(path: Path | None) -> dict[object, object]:
     if path is None:
         return {}
     try:
-        parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+        node = yaml.compose(text, Loader=_StrictLoader)
+        if node is None:
+            return {}
+        _validate_yaml_node(node, path)
+        parsed = yaml.load(text, Loader=_StrictLoader)
+    except HostError:
+        raise
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise HostError(
             "invalid_config",
@@ -753,17 +1100,20 @@ def _docker_name(field: str, value: object) -> str:
 
 
 def _services(value: object) -> tuple[str, ...] | None:
-    if value is None or (
-        isinstance(value, str) and value.strip().lower() == "default"
-    ):
+    if isinstance(value, str) and value.strip() == "default":
         return None
     if not isinstance(value, list) or not value:
-        _invalid_config("services must be 'default' or a non-empty list", value=value)
+        _invalid_config(
+            "services.enabled must be 'default' or a non-empty list",
+            value=value,
+        )
     normalized: list[str] = []
     seen: set[str] = set()
     for item in value:
         if not isinstance(item, str) or not item.strip():
-            _invalid_config("service IDs must be non-empty strings", value=item)
+            _invalid_config(
+                "services.enabled IDs must be non-empty strings", value=item
+            )
         service = item.strip().lower()
         if service not in seen:
             normalized.append(service)
@@ -774,18 +1124,21 @@ def _services(value: object) -> tuple[str, ...] | None:
 def _seed(
     value: object, config_path: Path | None, directory: Path
 ) -> tuple[Path | None, str | None]:
-    if value is None:
-        return None, None
     if not isinstance(value, str) or not value.strip():
-        _invalid_config("seed must be 'auto', null, or a file path", value=value)
+        _invalid_config(
+            "host.seed must be 'auto', 'disabled', or a file path", value=value
+        )
 
+    selected = value.strip()
+    if selected == "disabled":
+        return None, None
     base = config_path.parent if config_path is not None else directory
-    if value.strip() == "auto":
+    if selected == "auto":
         path = base / "seed.yaml"
         if not path.exists():
             return None, None
     else:
-        path = Path(value.strip()).expanduser()
+        path = Path(selected).expanduser()
         if not path.is_absolute():
             path = base / path
 
@@ -823,12 +1176,17 @@ def _environment(value: object) -> dict[str, str]:
             _invalid_config(
                 "environment keys must match LOCALCLOUD_[A-Z0-9_]+", value=key
             )
+        if key in RESERVED_HOST_ENVIRONMENT:
+            _invalid_config(
+                f"host.environment cannot set controller-owned {key}",
+                key=key,
+            )
         if isinstance(item, (dict, list)):
             _invalid_config("environment values must be scalars", key=key)
+        if item is None:
+            continue
         if isinstance(item, bool):
             normalized[key] = str(item).lower()
-        elif item is None:
-            normalized[key] = ""
         else:
             normalized[key] = str(item)
     return normalized

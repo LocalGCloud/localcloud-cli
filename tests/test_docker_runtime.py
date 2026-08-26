@@ -8,10 +8,13 @@ from typing import Any
 import pytest
 
 import localcloud_cli.docker_runtime as runtime_module
-from localcloud_cli.config import DEFAULT_IMAGE, DEFAULT_PROJECT, HostPaths, load_config
+from localcloud_cli.config import DEFAULT_IMAGE, HostPaths, load_config
 from localcloud_cli.docker_runtime import (
+    CONFIG_SCHEMA_CAPABILITY,
+    CONFIG_SCHEMA_LABEL,
     CONFIG_HASH_LABEL,
     CONFIG_LABEL,
+    CONFIG_MOUNT_DESTINATION,
     CONFIG_PATH_LABEL,
     DATA_LABEL,
     DATA_MOUNT_DESTINATION,
@@ -156,7 +159,10 @@ class Image:
     ):
         self.id = image_id
         labels = (
-            {RUNTIME_OWNERSHIP_LABEL: RUNTIME_OWNERSHIP_CAPABILITY}
+            {
+                RUNTIME_OWNERSHIP_LABEL: RUNTIME_OWNERSHIP_CAPABILITY,
+                CONFIG_SCHEMA_LABEL: CONFIG_SCHEMA_CAPABILITY,
+            }
             if qualified
             else {}
         )
@@ -324,7 +330,7 @@ def ready_runtime(monkeypatch: pytest.MonkeyPatch) -> tuple[DockerRuntime, Clien
     return runtime, client
 
 
-def test_managed_create_uses_data_volume_ownership_and_fixed_bootstrap_project(
+def test_managed_create_uses_only_controller_owned_bootstrap_environment(
     tmp_path: Path,
     ready_runtime: tuple[DockerRuntime, Client],
 ) -> None:
@@ -349,10 +355,13 @@ def test_managed_create_uses_data_volume_ownership_and_fixed_bootstrap_project(
     assert labels[CONFIG_HASH_LABEL] == config.config_hash
     assert labels[CONFIG_PATH_LABEL] == "<defaults>"
     assert labels[NETWORK_NAME_LABEL] == "localcloud"
-    assert labels[SERVICES_LABEL] == "<default>"
+    assert SERVICES_LABEL not in labels
     assert labels[DATA_LABEL] == "persistent"
-    assert environment["LOCALCLOUD_PROJECT"] == DEFAULT_PROJECT
+    assert environment["LOCALCLOUD_DATA_DIR"] == DATA_MOUNT_DESTINATION
     assert environment["LOCALCLOUD_DATA_VOLUME"] == "localcloud-data"
+    assert "LOCALCLOUD_PROJECT" not in environment
+    assert "LOCALCLOUD_SERVICES" not in environment
+    assert "LOCALCLOUD_CONFIG" not in environment
     assert "LOCALCLOUD_INSTANCE" not in environment
     assert "LOCALCLOUD_USER" not in environment
     assert client.networks.values["localcloud"].labels[VOLUME_NAME_LABEL] == (
@@ -363,6 +372,50 @@ def test_managed_create_uses_data_volume_ownership_and_fixed_bootstrap_project(
     )
 
 
+
+
+def test_selected_config_is_mounted_read_only_without_freezing_server_values(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config_path = tmp_path / "localcloud.yaml"
+    config_path.write_text(
+        "version: 1\n"
+        "context:\n"
+        "  project: merged-project\n"
+        "server:\n"
+        "  postgres:\n"
+        "    password: super-secret\n"
+        "services:\n"
+        "  enabled: [gcs]\n"
+        "  catalog:\n"
+        "    gcs:\n"
+        "      displayName: Local Buckets\n",
+        encoding="utf-8",
+    )
+    config = _config(tmp_path)
+
+    runtime.create(config)
+
+    run = client.containers.run_calls[0]
+    mounted = run["volumes"][str(config_path.resolve())]
+    assert mounted == {"bind": CONFIG_MOUNT_DESTINATION, "mode": "ro"}
+    assert run["environment"]["LOCALCLOUD_CONFIG"] == CONFIG_MOUNT_DESTINATION
+    assert "LOCALCLOUD_PROJECT" not in run["environment"]
+    assert "LOCALCLOUD_SERVICES" not in run["environment"]
+    assert SERVICES_LABEL not in run["labels"]
+    assert "super-secret" not in run["labels"][CONFIG_LABEL]
+    assert "Local Buckets" not in run["labels"][CONFIG_LABEL]
+
+    original_hash = config.config_hash
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "super-secret", "changed-secret"
+        ),
+        encoding="utf-8",
+    )
+    assert _config(tmp_path).config_hash == original_hash
 
 def test_port_probe_rejects_occupied_tcp_port() -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -404,7 +457,9 @@ def test_managed_create_rejects_image_without_runtime_ownership_capability(
         Image("sha256:legacy", qualified=False),
     )
     assert legacy.attrs["Config"]["Labels"] == {}
-    config = _write_config(tmp_path, "image: registry.example/localcloud:legacy\n")
+    config = _write_config(
+        tmp_path, "host:\n  image: registry.example/localcloud:legacy\n"
+    )
 
     with pytest.raises(HostError) as caught:
         runtime.create(config)
@@ -413,6 +468,26 @@ def test_managed_create_rejects_image_without_runtime_ownership_capability(
     assert client.containers.run_calls == []
     assert client.networks.created == []
     assert client.volumes.created == []
+
+def test_managed_create_rejects_image_without_config_schema_capability(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    image_name = "registry.example/localcloud:old-schema"
+    image = Image("sha256:old-schema")
+    image.attrs["Config"]["Labels"].pop(CONFIG_SCHEMA_LABEL)
+    client.images.add(image_name, image)
+    config = _write_config(
+        tmp_path, f"host:\n  image: {image_name}\n"
+    )
+
+    with pytest.raises(HostError) as caught:
+        runtime.create(config)
+
+    assert caught.value.code == "managed_image_capability_missing"
+    assert CONFIG_SCHEMA_LABEL in caught.value.details["capabilities"]
+    assert client.containers.run_calls == []
 
 
 def test_manual_container_is_adopted_by_exact_mount_and_id(
@@ -668,7 +743,9 @@ def test_equivalent_reference_or_immutable_image_id_is_compatible(
         "mirror.example/localcloud:pinned",
         client.images.get(DEFAULT_IMAGE),
     )
-    config = _write_config(tmp_path, "image: mirror.example/localcloud:pinned\n")
+    config = _write_config(
+        tmp_path, "host:\n  image: mirror.example/localcloud:pinned\n"
+    )
     record = runtime.resolve(config)
     assert record is not None
     assert record.container_id == external.id
@@ -698,7 +775,9 @@ def test_managed_runtime_remains_resolvable_for_image_reconfiguration(
     created = runtime.create(original)
     replacement_image = "registry.example/localcloud:replacement"
     client.images.add(replacement_image, Image("sha256:replacement"))
-    replacement = _write_config(tmp_path, f"image: {replacement_image}\n")
+    replacement = _write_config(
+        tmp_path, f"host:\n  image: {replacement_image}\n"
+    )
 
     resolved = runtime.resolve(replacement)
 
@@ -914,7 +993,7 @@ def test_legacy_compatible_image_can_attach_and_restart_but_not_create(
     runtime, client = ready_runtime
     legacy_name = "registry.example/localcloud:legacy"
     client.images.add(legacy_name, Image("sha256:legacy", qualified=False))
-    config = _write_config(tmp_path, f"image: {legacy_name}\n")
+    config = _write_config(tmp_path, f"host:\n  image: {legacy_name}\n")
     external = _add_external(
         client,
         state="exited",

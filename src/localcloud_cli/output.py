@@ -826,10 +826,8 @@ def _wide_panel(context: PanelContext, box_width: int, phase: float, progress: f
     s1_hdr = " Tips & Commands"
     right_rows.append(style_text(s1_hdr, "section_header", color, bold=True) + " " * max(0, right_width - visible_width(s1_hdr)))
     cmds = (
-        ("localcloud start", "g_blue", "Start localcloud container."),
-        ("localcloud stop", "g_red", "Stop localcloud container."),
-        ("localcloud status", "g_green", "Health & Running status of localcloud"),
-        ("eval $(lc env)", "g_yellow", "Export env. vars to redirect cloud service calls to localcloud."),
+        ("localcloud (or lc) status | start | stop | restart", "g_blue", "Manage localcloud container lifecycle."),
+        ("eval $(lc env)", "g_yellow", "Exports env. vars that redirects cloud service calls to localcloud."),
     )
     for cmd, role, desc in cmds:
         cmd_col_width = 21

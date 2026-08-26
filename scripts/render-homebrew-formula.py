@@ -85,7 +85,8 @@ def render(version: str, checksums_path: Path) -> str:
   end
 
   def install
-    bin.install "localcloud"
+    libexec.install "localcloud", "localcloud-runtime"
+    bin.write_exec_script libexec/"localcloud"
     bin.install_symlink bin/"localcloud" => "lc"
   end
 

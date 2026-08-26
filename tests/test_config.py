@@ -98,9 +98,10 @@ def test_resource_creation_overrides_do_not_change_data_volume(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "localcloud.yaml").write_text(
-        "data_volume: localcloud-data-team-a\n"
-        "container_name: custom-container\n"
-        "network_name: custom-network\n",
+        "host:\n"
+        "  data_volume: localcloud-data-team-a\n"
+        "  container_name: custom-container\n"
+        "  network_name: custom-network\n",
         encoding="utf-8",
     )
 
@@ -141,7 +142,9 @@ def test_data_volume_precedence_is_cli_yaml_active_then_default(
     )
 
     config = tmp_path / "localcloud.yaml"
-    config.write_text("data_volume: localcloud-data-yaml\n", encoding="utf-8")
+    config.write_text(
+        "host:\n  data_volume: localcloud-data-yaml\n", encoding="utf-8"
+    )
     assert load_config(directory=tmp_path, paths=paths).data_volume == (
         "localcloud-data-yaml"
     )
@@ -181,7 +184,7 @@ def test_image_precedence_is_yaml_environment_scoped_active_then_default(
     )
 
     (tmp_path / "localcloud.yaml").write_text(
-        "image: registry.example/localcloud:yaml\n",
+        "host:\n  image: registry.example/localcloud:yaml\n",
         encoding="utf-8",
     )
     assert load_config(directory=tmp_path, paths=paths).image == (
@@ -195,9 +198,15 @@ def test_config_path_precedence_is_explicit_then_local_then_remembered(
     explicit = tmp_path / "explicit.yaml"
     local = tmp_path / "localcloud.yaml"
     remembered = tmp_path / "remembered.yaml"
-    explicit.write_text("project: explicit-project-1\n", encoding="utf-8")
-    local.write_text("project: current-project-1\n", encoding="utf-8")
-    remembered.write_text("project: remembered-project-1\n", encoding="utf-8")
+    explicit.write_text(
+        "context:\n  project: explicit-project-1\n", encoding="utf-8"
+    )
+    local.write_text(
+        "context:\n  project: current-project-1\n", encoding="utf-8"
+    )
+    remembered.write_text(
+        "context:\n  project: remembered-project-1\n", encoding="utf-8"
+    )
     paths = _paths(tmp_path)
 
     selected = load_config(
@@ -228,7 +237,11 @@ def test_request_context_and_seed_do_not_change_runtime_hash(
 ) -> None:
     path = tmp_path / "localcloud.yaml"
     path.write_text(
-        "project: yaml-project-1\nuser: yaml-user\nseed: seed.yaml\n",
+        "context:\n"
+        "  project: yaml-project-1\n"
+        "  user: yaml-user\n"
+        "host:\n"
+        "  seed: seed.yaml\n",
         encoding="utf-8",
     )
     seed = tmp_path / "seed.yaml"
@@ -260,7 +273,9 @@ def test_runtime_settings_change_hash(tmp_path: Path) -> None:
         paths=paths,
         data_volume="localcloud-data-team-a",
     )
-    (tmp_path / "localcloud.yaml").write_text("memory: 8g\n", encoding="utf-8")
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  memory: 8g\n", encoding="utf-8"
+    )
     memory = load_config(directory=tmp_path, paths=paths)
 
     assert first.config_hash != named.config_hash
@@ -271,7 +286,7 @@ def test_seed_auto_resolves_beside_selected_config(tmp_path: Path) -> None:
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     config = config_dir / "custom.yaml"
-    config.write_text("seed: auto\n", encoding="utf-8")
+    config.write_text("host:\n  seed: auto\n", encoding="utf-8")
     seed = config_dir / "seed.yaml"
     seed.write_text("projects: []\n", encoding="utf-8")
 
@@ -288,7 +303,9 @@ def test_local_seed_auto_and_null_disable(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     assert load_config(directory=tmp_path, paths=paths).seed_path == seed.resolve()
 
-    (tmp_path / "localcloud.yaml").write_text("seed: null\n", encoding="utf-8")
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  seed: disabled\n", encoding="utf-8"
+    )
     selected = load_config(directory=tmp_path, paths=paths)
     assert selected.seed_path is None
     assert selected.seed_yaml is None
@@ -497,7 +514,368 @@ def test_legacy_runtime_selectors_have_exact_migration_guidance(
         load_config(directory=tmp_path, paths=_paths(tmp_path))
 
     assert caught.value.code == "legacy_runtime_selector"
-    assert caught.value.details["replacement"] == {"data_volume": replacement}
+    assert caught.value.details["replacement"] == {
+        "host.data_volume": replacement
+    }
     assert set(caught.value.details["fields"]).issubset(
         {"instance", "volume_name"}
+    )
+
+
+def test_removed_flat_schema_returns_exact_namespace_migration_map(
+    tmp_path: Path,
+) -> None:
+    source = (
+        "project: project-flat-1\n"
+        "user: flat-user\n"
+        "services: [gcs]\n"
+        "data_volume: flat-data\n"
+        "seed: null\n"
+        "memory: 8g\n"
+    )
+    (tmp_path / "localcloud.yaml").write_text(source, encoding="utf-8")
+
+    with pytest.raises(HostError) as caught:
+        load_config(directory=tmp_path, paths=_paths(tmp_path))
+
+    assert caught.value.code == "removed_flat_config"
+    assert caught.value.details["replacement"] == {
+        "data_volume": "host.data_volume",
+        "memory": "host.memory",
+        "project": "context.project",
+        "seed": "host.seed",
+        "services": "services.enabled",
+        "user": "context.user",
+    }
+    assert caught.value.details["seed_null_migration"] == {
+        "from": "seed: null",
+        "replacement": "host.seed: disabled",
+    }
+
+
+def test_namespaced_schema_preserves_host_model_and_context_precedence(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "localcloud.yaml"
+    config.write_text(
+        "version: 1\n"
+        "context:\n"
+        "  project: namespaced-project-1\n"
+        "  user: namespaced-user\n"
+        "host:\n"
+        "  data_volume: namespaced-data\n"
+        "  seed: disabled\n"
+        "  data: ephemeral\n"
+        "  memory: 6g\n"
+        "  docker_socket: true\n"
+        "  transparent_network: true\n"
+        "services:\n"
+        "  enabled: [PUBSUB, gcs, pubsub]\n"
+        "server:\n"
+        "  logging:\n"
+        "    verbosity: debug\n"
+        "infrastructure: {}\n",
+        encoding="utf-8",
+    )
+
+    selected = load_config(
+        directory=tmp_path,
+        paths=_paths(tmp_path),
+        active_runtime=None,
+    )
+
+    assert selected.project == "namespaced-project-1"
+    assert selected.user == "namespaced-user"
+    assert selected.data_volume == "namespaced-data"
+    assert selected.services == ("pubsub", "gcs")
+    assert selected.seed_path is None
+    assert selected.data == "ephemeral"
+    assert selected.memory == "6g"
+    assert selected.docker_socket is True
+    assert selected.transparent_network is True
+
+    overridden = load_config(
+        directory=tmp_path,
+        paths=_paths(tmp_path),
+        active_runtime=None,
+        project="cli-project-1",
+        user="cli-user",
+    )
+    assert overridden.project == "cli-project-1"
+    assert overridden.user == "cli-user"
+
+
+def test_null_host_and_members_fall_back_to_cli_defaults(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    seed = tmp_path / "seed.yaml"
+    seed.write_text("services: {}\n", encoding="utf-8")
+    (tmp_path / "localcloud.yaml").write_text("host: null\n", encoding="utf-8")
+    selected = load_config(
+        directory=tmp_path, paths=paths, active_runtime=None
+    )
+    assert selected.data_volume == DEFAULT_DATA_VOLUME
+    assert selected.memory == "4g"
+    assert selected.seed_path == seed
+    assert selected.seed_yaml == "services: {}\n"
+
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n"
+        "  data_volume: null\n"
+        "  seed: null\n"
+        "  image: null\n"
+        "  memory: null\n"
+        "  docker_socket: null\n"
+        "  environment: null\n",
+        encoding="utf-8",
+    )
+    selected = load_config(
+        directory=tmp_path, paths=paths, active_runtime=None
+    )
+    assert selected.data_volume == DEFAULT_DATA_VOLUME
+    assert selected.image == DEFAULT_IMAGE
+    assert selected.memory == "4g"
+    assert selected.docker_socket is False
+    assert selected.environment == {}
+    assert selected.seed_path == seed
+    assert selected.seed_yaml == "services: {}\n"
+
+
+def test_non_null_empty_owned_values_are_rejected(tmp_path: Path) -> None:
+    invalid = (
+        'context:\n  user: ""\n',
+        'host:\n  container_name: ""\n',
+        'host:\n  network_name: ""\n',
+    )
+    for source in invalid:
+        (tmp_path / "localcloud.yaml").write_text(source, encoding="utf-8")
+        with pytest.raises(HostError):
+            load_config(
+                directory=tmp_path,
+                paths=_paths(tmp_path),
+                active_runtime=None,
+            )
+
+
+def test_null_services_enabled_and_invalid_passthrough_shapes_are_rejected(
+    tmp_path: Path,
+) -> None:
+    invalid = (
+        "services:\n  enabled: null\n",
+        "server: null\n",
+        "services:\n  catalog: null\n",
+        "infrastructure: null\n",
+    )
+    for source in invalid:
+        (tmp_path / "localcloud.yaml").write_text(source, encoding="utf-8")
+        with pytest.raises(HostError):
+            load_config(directory=tmp_path, paths=_paths(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "LOCALCLOUD_CONFIG",
+        "LOCALCLOUD_PROJECT",
+        "LOCALCLOUD_DATA_DIR",
+        "LOCALCLOUD_SERVICES",
+    ],
+)
+def test_host_environment_rejects_controller_owned_config_keys(
+    tmp_path: Path, name: str
+) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        f"host:\n  environment:\n    {name}: forbidden\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(HostError) as caught:
+        load_config(directory=tmp_path, paths=_paths(tmp_path))
+    assert name in caught.value.message
+
+
+def test_host_localcloud_config_selector_precedes_local_and_remembered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    explicit = tmp_path / "explicit.yaml"
+    configured = tmp_path / "configured.yaml"
+    local = tmp_path / "localcloud.yaml"
+    remembered = tmp_path / "remembered.yaml"
+    for path, project in (
+        (explicit, "explicit-project-1"),
+        (configured, "configured-project-1"),
+        (local, "local-project-1"),
+        (remembered, "remembered-project-1"),
+    ):
+        path.write_text(
+            f"context:\n  project: {project}\n", encoding="utf-8"
+        )
+    monkeypatch.setenv("LOCALCLOUD_CONFIG", str(configured))
+
+    assert load_config(
+        explicit=explicit,
+        remembered=str(remembered),
+        directory=tmp_path,
+        paths=_paths(tmp_path),
+    ).project == "explicit-project-1"
+    selected = load_config(
+        remembered=str(remembered),
+        directory=tmp_path,
+        paths=_paths(tmp_path),
+    )
+    assert selected.project == "configured-project-1"
+    assert selected.config_path == configured.resolve()
+
+
+def test_config_path_presence_and_identity_change_runtime_hash(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    defaults = load_config(
+        directory=tmp_path, paths=paths, active_runtime=None
+    )
+    local = tmp_path / "localcloud.yaml"
+    local.write_text("# empty overlay\n", encoding="utf-8")
+    selected = load_config(
+        directory=tmp_path, paths=paths, active_runtime=None
+    )
+    other = tmp_path / "other.yaml"
+    other.write_text("# same empty overlay\n", encoding="utf-8")
+    other_selected = load_config(
+        explicit=other,
+        directory=tmp_path,
+        paths=paths,
+        active_runtime=None,
+    )
+
+    assert defaults.config_hash != selected.config_hash
+    assert selected.config_hash != other_selected.config_hash
+
+
+def test_strict_yaml_rejects_duplicates_merge_keys_and_ambiguous_scalars(
+    tmp_path: Path,
+) -> None:
+    invalid = (
+        "context:\n  project: first-project\n  project: second-project\n",
+        "context:\n  <<: {project: inherited-project}\n",
+        "context:\n  project: on\n",
+        "context:\n  1: value\n",
+        "host: &host\n  environment: *host\n",
+    )
+    for source in invalid:
+        (tmp_path / "localcloud.yaml").write_text(source, encoding="utf-8")
+        with pytest.raises(HostError):
+            load_config(directory=tmp_path, paths=_paths(tmp_path))
+
+
+def test_skip_validation_bypasses_unknown_top_level_fields_with_diagnostic(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "version: 1\nfuture_top_level_section:\n  new_thing: true\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HostError):
+        load_config(directory=tmp_path, paths=_paths(tmp_path))
+
+    selected = load_config(
+        directory=tmp_path, paths=_paths(tmp_path), skip_validation=True
+    )
+
+    assert any(
+        entry["code"] == "config_validation_skipped"
+        and entry["bypassed_code"] == "invalid_config"
+        for entry in selected.diagnostics
+    )
+
+
+def test_skip_validation_bypasses_removed_flat_schema_with_diagnostic(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "project: project-flat-1\n", encoding="utf-8"
+    )
+
+    selected = load_config(
+        directory=tmp_path, paths=_paths(tmp_path), skip_validation=True
+    )
+
+    assert selected.project == DEFAULT_PROJECT
+    assert any(
+        entry["code"] == "config_validation_skipped"
+        and entry["bypassed_code"] == "removed_flat_config"
+        for entry in selected.diagnostics
+    )
+
+
+def test_skip_config_validation_env_var_enables_bypass_without_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  unknown_future_field: true\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("LOCALCLOUD_SKIP_CONFIG_VALIDATION", "1")
+
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
+
+    assert any(
+        entry["code"] == "config_validation_skipped"
+        for entry in selected.diagnostics
+    )
+
+
+def test_skip_validation_never_bypasses_yaml_syntax_or_host_value_shape(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "context:\n  project: dup\n  project: dup2\n", encoding="utf-8"
+    )
+    with pytest.raises(HostError):
+        load_config(
+            directory=tmp_path, paths=_paths(tmp_path), skip_validation=True
+        )
+
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  data: not-a-real-mode\n", encoding="utf-8"
+    )
+    with pytest.raises(HostError):
+        load_config(
+            directory=tmp_path, paths=_paths(tmp_path), skip_validation=True
+        )
+
+
+def test_cli_runtime_modules_embed_no_java_owned_service_catalog() -> None:
+    java_catalog_schema_markers = (
+        "gatewayObservable",
+        "minTier",
+        "envValuePrefix",
+        "terraformEnvVar",
+        "gcloudApiName",
+        "healthCheck",
+        "gatewayApiName",
+    )
+    src_root = Path(config_module.__file__).parent
+    for module_name in ("config.py", "docker_runtime.py", "controller.py"):
+        source = (src_root / module_name).read_text(encoding="utf-8")
+        for marker in java_catalog_schema_markers:
+            assert marker not in source, (
+                f"{module_name} embeds Java-owned catalog schema field {marker!r}; "
+                "the CLI must not carry a copy of LocalCloud's service catalog"
+            )
+
+
+def test_cli_package_has_no_java_or_image_execution_dependency() -> None:
+    project_root = Path(config_module.__file__).parent.parent.parent
+    pyproject = (project_root / "pyproject.toml").read_text(encoding="utf-8")
+    for forbidden in ("jdk", "jre", "openjdk", "jpype", "py4j"):
+        assert forbidden not in pyproject.lower(), (
+            f"pyproject.toml declares a Java runtime dependency ({forbidden!r}); "
+            "the CLI must remain installable and usable without a local JVM"
+        )
+
+    docker_runtime_source = (
+        Path(config_module.__file__).parent / "docker_runtime.py"
+    ).read_text(encoding="utf-8")
+    assert "subprocess" not in docker_runtime_source, (
+        "docker_runtime.py must not shell out to run the LocalCloud image "
+        "before container creation to resolve configuration"
     )

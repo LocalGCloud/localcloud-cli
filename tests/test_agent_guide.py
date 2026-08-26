@@ -10,15 +10,15 @@ from localcloud_cli.agent_guide import render_agent_guide
 
 
 SERVICE_LINE = re.compile(
-    r"^  (?P<comment># )?- (?P<id>[a-z0-9]+)  # "
+    r"^    (?P<comment># )?- (?P<id>[a-z0-9]+)  # "
     r"(?P<deactivated>deactivated service: )?(?P<display>.+)$"
 )
 
 
 def _canonical_services() -> dict[str, dict[str, Any]]:
-    registry_path = Path(__file__).parent / "fixtures" / "services.yaml"
+    registry_path = Path(__file__).parent / "fixtures" / "localcloud.defaults.yaml"
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
-    return registry["services"]
+    return registry["services"]["catalog"]
 
 
 def test_guide_inventory_matches_canonical_service_registry() -> None:

@@ -341,66 +341,103 @@ provider "google" {
 
 ## Configuration Reference (`localcloud.yaml`)
 
-You can place a `localcloud.yaml` file in your repository root to declare services, memory limits, and seed data.
+The host CLI and container read the same versioned partial overlay. Image
+defaults remain authoritative for server/catalog wiring; `host` values are
+resolved by the CLI before it creates the container.
 
 ```yaml
 # localcloud.yaml
-data_volume: localcloud-data
-project: local-gcp-project
-user: local-developer
-
-# Explicit list of enabled GCP services (or 'default' for standard services)
+version: 1
+context:
+  project: local-gcp-project
+  user: local-developer
+host:
+  data_volume: localcloud-data
+  seed: auto
+  data: persistent
+  memory: 4g
+  environment:
+    LOCALCLOUD_LOG_VERBOSITY: debug
 services:
-  - gcs                  # Cloud Storage
-  - firestore            # Cloud Firestore
-  - pubsub               # Cloud Pub/Sub
-  - bigquery             # Cloud BigQuery
-  - secretmanager        # Secret Manager
-  - spanner              # Cloud Spanner
-  - cloudsql             # Cloud SQL
-  - cloudtasks           # Cloud Tasks
-  - logging              # Cloud Logging
-  - dataproc             # Cloud Dataproc
-
-# Seed initial data (loads ./seed.yaml when present)
-seed: auto
-
-# Persistence mode ('persistent' or 'in-memory')
-data: persistent
-
-# Container resource limits
-memory: 4g
-
-# Optional custom environment variables passed to container
-environment:
-  LOCALCLOUD_LOG_LEVEL: INFO
+  enabled:
+    - gcs
+    - firestore
+    - pubsub
+server:
+  logging:
+    verbosity: debug
 ```
+
+Selection order is an explicit positional config, host
+`LOCALCLOUD_CONFIG`, `./localcloud.yaml`, the runtime's remembered config,
+then no user file. A selected explicit/environment/remembered path that is
+missing or unreadable fails instead of falling back.
+
+CLI resource flags override the corresponding `host` values. `--project-id`
+and `--user` override request context only; they do not replace the server's
+YAML-derived `context.project`. The selected file is mounted read-only at
+`/etc/localcloud/localcloud.yaml`; with no file the CLI adds neither a mount
+nor container `LOCALCLOUD_CONFIG`.
+
+The container recursively merges the file over packaged
+`localcloud.defaults.yaml`. Omitted values inherit and a mapping member set to
+`null` is deleted. Existing setting-specific environment variables remain
+higher precedence. Use `host.seed: disabled`, not `null`, to turn host-side
+seeding off.
+
+| Removed flat key | Replacement |
+| :--- | :--- |
+| `project`, `user` | `context.project`, `context.user` |
+| `services` | `services.enabled` |
+| `data_volume`, `seed`, `data`, `image`, `memory` | the same key under `host` |
+| `docker_socket`, `transparent_network`, `environment` | the same key under `host` |
+| `container_name`, `network_name` | the same key under `host` |
+
+Changing the config path/presence recreates the managed runtime. Editing
+server/catalog values at the same path is picked up on explicit restart without
+putting those values or secrets into Docker labels. Protect any config file
+that contains credentials with normal host-file permissions.
+
+If the CLI's host/context checks ever disagree with what a newer LocalCloud
+image actually accepts, pass `--skip-config-validation` (or set
+`LOCALCLOUD_SKIP_CONFIG_VALIDATION=1`) on `start`/`restart`/`reset` to bypass
+the CLI's closed-set field/version checks and removed-flat-schema detection.
+The file is still passed through unchanged, so LocalCloud remains the final
+authority; each bypassed check is recorded in `diagnostics` on the resulting
+status output. This never bypasses YAML syntax checks or the value checks the
+CLI needs to drive Docker itself (e.g. `host.memory`, `host.data`).
 
 ### Available Services Inventory
 
 | Service ID | Google Cloud Service | Default Status |
 | :--- | :--- | :--- |
 | `gcs` | Cloud Storage | Enabled |
-| `firestore` | Cloud Firestore | Enabled |
-| `pubsub` | Cloud Pub/Sub | Enabled |
-| `bigquery` | Cloud BigQuery | Enabled |
+| `pubsub` | Pub/Sub | Enabled |
+| `firestore` | Firestore | Disabled |
+| `bigtable` | Bigtable | Enabled |
+| `spanner` | Spanner | Enabled |
+| `bigquery` | BigQuery | Enabled |
+| `sheets` | Google Sheets | Enabled |
 | `secretmanager` | Secret Manager | Enabled |
-| `spanner` | Cloud Spanner | Enabled |
-| `cloudsql` | Cloud SQL | Enabled |
 | `cloudtasks` | Cloud Tasks | Enabled |
 | `cloudscheduler` | Cloud Scheduler | Enabled |
 | `cloudfunctions` | Cloud Functions (2nd Gen) | Enabled |
-| `logging` | Cloud Logging | Enabled |
-| `monitoring` | Cloud Monitoring | Enabled |
-| `dataproc` | Cloud Dataproc | Enabled |
-| `bigtable` | Cloud Bigtable | Enabled |
 | `alloydb` | AlloyDB | Enabled |
+| `dataproc` | Dataproc | Enabled |
 | `cloudiam` | Cloud IAM | Enabled |
 | `cloudresourcemanager` | Cloud Resource Manager | Enabled |
 | `serviceusage` | Service Usage | Enabled |
 | `cloudbilling` | Cloud Billing | Enabled |
+| `logging` | Cloud Logging | Enabled |
+| `monitoring` | Cloud Monitoring | Enabled |
+| `gke` | GKE | Disabled |
+| `compute` | Compute Engine | Disabled |
+| `cloudrun` | Cloud Run | Disabled |
 | `memorystore` | Memorystore (Redis/Valkey) | Enabled |
 | `workflows` | Cloud Workflows | Enabled |
+| `vertexai` | Vertex AI | Disabled |
+| `kms` | Cloud KMS | Disabled |
+| `cloudsql` | Cloud SQL | Enabled |
 
 ---
 

@@ -82,23 +82,27 @@ def write_config(
     seed: str | None = "seed.yaml",
     name: str = "localcloud.yaml",
 ) -> LocalCloudConfig:
-    seed_value = "null" if seed is None else seed
+    seed_value = "disabled" if seed is None else seed
     path = directory / name
     path.write_text(
         "\n".join(
             [
-                f"data_volume: {data_volume}",
-                f"project: {project}",
-                f"user: {user}",
+                "version: 1",
+                "context:",
+                f"  project: {project}",
+                f"  user: {user}",
+                "host:",
+                f"  data_volume: {data_volume}",
+                f"  seed: {seed_value}",
+                f"  data: {data}",
+                f"  image: {image}",
+                "  memory: 4g",
+                f"  docker_socket: {str(docker_socket).lower()}",
+                "  transparent_network: false",
+                "  environment: {}",
                 "services:",
-                *[f"  - {service}" for service in services],
-                f"seed: {seed_value}",
-                f"data: {data}",
-                f"image: {image}",
-                "memory: 4g",
-                f"docker_socket: {str(docker_socket).lower()}",
-                "transparent_network: false",
-                "environment: {}",
+                "  enabled:",
+                *[f"    - {service}" for service in services],
                 "",
             ]
         ),

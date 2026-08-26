@@ -70,6 +70,10 @@ def native_build_project(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
     scripts.mkdir(parents=True)
     script = scripts / "release.sh"
     shutil.copy2(SCRIPT, script)
+    shutil.copy2(
+        PROJECT_ROOT / "scripts" / "localcloud-launcher.sh",
+        scripts / "localcloud-launcher.sh",
+    )
     (project / "THIRD_PARTY_NOTICES").write_text("locked notices\n", encoding="utf-8")
     (project / "localcloud.spec").write_text("# test spec\n", encoding="utf-8")
 
@@ -97,15 +101,15 @@ done
 
 case " $* " in
     *" -m PyInstaller "*)
-        mkdir -p dist
-        cat > dist/localcloud <<'EOF'
+        mkdir -p dist/localcloud-runtime
+        cat > dist/localcloud-runtime/localcloud <<'EOF'
 #!/bin/sh
 printf 'binary %s\\n' "$*" >> "$COMMAND_LOG"
 if [ "${1:-}" = "--version" ]; then
     printf 'localcloud %s\n' "${CLI_VERSION:-0.1.0}"
 fi
 EOF
-        chmod +x dist/localcloud
+        chmod +x dist/localcloud-runtime/localcloud
         ;;
 esac
 """,
@@ -128,6 +132,7 @@ def test_native_build_modes_validate_build_and_smoke(
 
     assert result.returncode == 0, result.stderr
     assert (project / "dist" / "localcloud").is_file()
+    assert (project / "dist" / "localcloud-runtime" / "localcloud").is_file()
     assert (project / "THIRD_PARTY_NOTICES").read_bytes() == notices_before
     commands = command_log.read_text(encoding="utf-8").splitlines()
     assert commands[0] == "uv lock --check"
@@ -386,7 +391,7 @@ def test_release_reuses_matching_published_tag(tmp_path: Path) -> None:
     assert git(project, "rev-parse", "refs/tags/v1.2.3").stdout.strip() == tag_object
 
 
-def test_release_refuses_conflicting_tag(tmp_path: Path) -> None:
+def test_existing_release_refuses_conflicting_tag(tmp_path: Path) -> None:
     script, env, command_log = release_project(tmp_path)
     project = script.parents[1]
     git(project, "tag", "-a", "v1.2.3", "-m", "Wrong release commit")
@@ -395,12 +400,31 @@ def test_release_refuses_conflicting_tag(tmp_path: Path) -> None:
     git(project, "add", "committed.txt")
     git(project, "commit", "-m", "Advance release source")
     git(project, "push", "origin", "main")
+    env["GH_RELEASE_EXISTS"] = "1"
 
     result = run_script("--release", "1.2.3", script=script, cwd=tmp_path, env=env)
 
     assert result.returncode == 1
     assert "tag v1.2.3 does not point to the release commit" in result.stderr
-    assert_no_release_mutation(command_log)
+    commands = command_log.read_text(encoding="utf-8")
+    assert "gh release view" not in commands
+    assert "workflow run" not in commands
+
+
+def test_existing_release_requires_local_and_remote_tag(tmp_path: Path) -> None:
+    script, env, command_log = release_project(tmp_path)
+    env["GH_RELEASE_EXISTS"] = "1"
+
+    result = run_script("--release", "1.2.3", script=script, cwd=tmp_path, env=env)
+
+    assert result.returncode == 1
+    assert (
+        "GitHub release v1.2.3 exists but its tag is missing locally or on origin"
+        in result.stderr
+    )
+    commands = command_log.read_text(encoding="utf-8")
+    assert "gh release view" not in commands
+    assert "workflow run" not in commands
 
 
 def test_release_validation_failure_does_not_create_tag(tmp_path: Path) -> None:
@@ -422,24 +446,73 @@ def test_release_validation_failure_does_not_create_tag(tmp_path: Path) -> None:
     assert_no_release_mutation(command_log)
 
 
-def test_release_refuses_existing_github_release(tmp_path: Path) -> None:
+def test_release_resumes_from_existing_github_release(tmp_path: Path) -> None:
     script, env, command_log = release_project(tmp_path)
     project = script.parents[1]
+    git(project, "tag", "-a", "v1.2.3", "-m", "Release LocalCloud CLI 1.2.3")
+    git(project, "push", "origin", "refs/tags/v1.2.3")
+    tag_object = git(project, "rev-parse", "refs/tags/v1.2.3").stdout.strip()
     env["GH_RELEASE_EXISTS"] = "1"
 
     result = run_script("--release", "1.2.3", script=script, cwd=tmp_path, env=env)
 
-    assert result.returncode == 1
-    assert "already exists" in result.stderr
-    tag_lookup = subprocess.run(
-        ["git", "rev-parse", "-q", "--verify", "refs/tags/v1.2.3"],
-        cwd=project,
-        text=True,
-        capture_output=True,
-        check=False,
+    assert result.returncode == 0, result.stderr
+    assert git(project, "rev-parse", "refs/tags/v1.2.3").stdout.strip() == tag_object
+    commands = command_log.read_text(encoding="utf-8").splitlines()
+    assert not any("gh workflow run cli-release.yml" in command for command in commands)
+    assert not any("gh run watch 101" in command for command in commands)
+    asset_check = commands.index(
+        "gh release view v1.2.3 --repo LocalGCloud/localcloud-cli "
+        "--json assets --jq .assets[].name"
     )
-    assert tag_lookup.returncode != 0
-    assert_no_release_mutation(command_log)
+    tap_dispatch = commands.index(
+        "gh workflow run publish-formula.yml "
+        "--repo LocalGCloud/homebrew-tap -f version=1.2.3"
+    )
+    tap_watch = commands.index(
+        "gh run watch 202 --repo LocalGCloud/homebrew-tap --exit-status"
+    )
+    assert asset_check < tap_dispatch < tap_watch
+    assert "Reusing existing GitHub release v1.2.3" in result.stdout
+    assert "Release 1.2.3 completed." in result.stdout
+    assert (
+        "CLI release: "
+        "https://github.com/LocalGCloud/localcloud-cli/releases/tag/v1.2.3"
+        in result.stdout
+    )
+    assert (
+        "CLI workflow: skipped (verified existing release v1.2.3)"
+        in result.stdout
+    )
+    assert (
+        "Tap workflow: "
+        "https://github.com/LocalGCloud/homebrew-tap/actions/runs/202"
+        in result.stdout
+    )
+
+
+def test_existing_release_with_invalid_assets_dispatches_no_workflow(
+    tmp_path: Path,
+) -> None:
+    script, env, command_log = release_project(tmp_path)
+    project = script.parents[1]
+    git(project, "tag", "-a", "v1.2.3", "-m", "Release LocalCloud CLI 1.2.3")
+    git(project, "push", "origin", "refs/tags/v1.2.3")
+    env["GH_RELEASE_EXISTS"] = "1"
+    assets = Path(env["GH_ASSETS"])
+    assets.write_text(
+        assets.read_text(encoding="utf-8").replace("localcloud.rb\n", ""),
+        encoding="utf-8",
+    )
+
+    result = run_script("--release", "1.2.3", script=script, cwd=tmp_path, env=env)
+
+    assert result.returncode == 1
+    assert "asset set is incomplete or unexpected" in result.stderr
+    commands = command_log.read_text(encoding="utf-8")
+    assert "--json assets" in commands
+    assert "gh workflow run cli-release.yml" not in commands
+    assert "gh workflow run publish-formula.yml" not in commands
 
 
 def test_release_lookup_failure_does_not_create_tag(tmp_path: Path) -> None:

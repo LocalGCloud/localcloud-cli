@@ -6,7 +6,7 @@ from .config import DEFAULT_IMAGE, DEFAULT_PROJECT, DEFAULT_USER
 _SERVICE_INVENTORY = (
     ("gcs", "Cloud Storage", True),
     ("pubsub", "Pub/Sub", True),
-    ("firestore", "Firestore", True),
+    ("firestore", "Firestore", False),
     ("bigtable", "Bigtable", True),
     ("spanner", "Spanner", True),
     ("bigquery", "BigQuery", True),
@@ -37,9 +37,9 @@ _SERVICE_INVENTORY = (
 def _service_inventory() -> str:
     return "\n".join(
         (
-            f"  - {service_id}  # {display_name}"
+            f"    - {service_id}  # {display_name}"
             if enabled
-            else f"  # - {service_id}  # deactivated service: {display_name}"
+            else f"    # - {service_id}  # deactivated service: {display_name}"
         )
         for service_id, display_name, enabled in _SERVICE_INVENTORY
     )
@@ -109,36 +109,45 @@ MCP API-catalog-first workflow
 
 Optional copy-paste configuration
 
-Paste this complete canonical service inventory into `localcloud.yaml`. Active
+Paste this versioned shared configuration into `localcloud.yaml`. Active
 entries are default-enabled. Commented entries are available but deactivated by
 default; uncomment one to include it in an explicit service set.
 
 cat > localcloud.yaml <<'YAML'
-data_volume: localcloud-data
+version: 1
+context:
+  project: {DEFAULT_PROJECT}
+  user: {DEFAULT_USER}
+host:
+  data_volume: localcloud-data
+  seed: auto
+  data: persistent
+  image: {DEFAULT_IMAGE}
+  memory: 4g
+  docker_socket: false
+  transparent_network: false
+  environment: {{}}
 services:
+  enabled:
 {_service_inventory()}
-seed: auto
-data: persistent
-image: {DEFAULT_IMAGE}
-memory: 4g
-docker_socket: false
-transparent_network: false
-environment: {{}}
 YAML
 localcloud reset
 eval "$(localcloud env)"
 
-Every field is optional. Omit `services`, or set it to `default`, to use image
-defaults. An explicit non-empty list is the complete enabled set; unknown IDs
-fail startup. `data_volume:` selects durable runtime identity and may be
-overridden with `--data-volume`. `project:` and `user:` select invocation
-context and may be overridden with `--project-id` and `--user`; they never
-affect Docker identity. If `image` is omitted, `LOCALCLOUD_IMAGE` wins; if that
-is also unset, the selected active runtime's recorded image wins, then default.
+Every section is optional. Omit `services.enabled`, or set it to `default`, to
+use image defaults. An explicit non-empty list is the complete enabled set;
+unknown IDs fail startup. `host.data_volume` selects durable runtime identity
+and may be overridden with `--data-volume`. `context.project` and
+`context.user` select invocation context and may be overridden with
+`--project-id` and `--user`; they never affect Docker identity. If
+`host.image` is omitted, `LOCALCLOUD_IMAGE` wins; if that is also unset, the
+selected active runtime's recorded image wins, then the CLI default.
 
-`seed: auto` loads `seed.yaml` beside the selected config when it exists and is
-otherwise a no-op. Set `seed: null` to disable seeding, or provide an existing
-path relative to the config file.
+`host.seed: auto` loads `seed.yaml` beside the selected config when it exists
+and is otherwise a no-op. Set `host.seed: disabled` to disable seeding, or
+provide an existing path relative to the config file. The selected file is
+mounted read-only for the container; server/catalog values apply on restart
+without being copied into Docker labels.
 
 Project and runtime lifecycle
 

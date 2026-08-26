@@ -130,13 +130,15 @@ validate_locked_inputs() {
 require_build_commands() {
     require_command uv
     require_command cmp
+    require_command install
     require_command mktemp
 }
 
 build_native_executable() {
-    stage "Build native one-file executable"
+    stage "Build native one-folder bundle"
     uv run --frozen --extra release python -m PyInstaller \
         --clean --noconfirm localcloud.spec
+    install -m 0755 scripts/localcloud-launcher.sh dist/localcloud
 }
 
 smoke_native_executable() {
@@ -159,7 +161,8 @@ build_native() {
     build_native_executable
     smoke_native_executable ""
 
-    printf '\nBuilt native executable: %s/dist/localcloud\n' "$PROJECT_ROOT"
+    printf '\nBuilt native bundle: %s/dist/localcloud and %s/dist/localcloud-runtime\n' \
+        "$PROJECT_ROOT" "$PROJECT_ROOT"
 }
 
 require_clean_tree() {
@@ -185,6 +188,7 @@ remote_tag_commit() {
 
 prepare_tag() {
     head_commit=$1
+    existing_release=$2
     local_tag_commit=$(
         git rev-parse -q --verify "refs/tags/$TAG^{}" 2>/dev/null || :
     )
@@ -197,6 +201,15 @@ prepare_tag() {
         [ "$published_tag_commit" != "$head_commit" ]; then
         fail "remote tag $TAG does not point to the release commit"
     fi
+
+    if [ -n "$existing_release" ]; then
+        if [ -z "$local_tag_commit" ] || [ -z "$published_tag_commit" ]; then
+            fail "GitHub release $TAG exists but its tag is missing locally or on origin"
+        fi
+        printf '\nReusing tag %s at %s\n' "$TAG" "$head_commit"
+        return
+    fi
+
     if [ -z "$local_tag_commit" ] && [ -n "$published_tag_commit" ]; then
         fail "remote tag $TAG could not be resolved locally"
     fi
@@ -319,19 +332,21 @@ release_version() {
     require_clean_tree
 
     existing_release=$(published_release_tag)
-    [ -z "$existing_release" ] ||
-        fail "GitHub release $TAG already exists; refusing to overwrite it"
+    prepare_tag "$head_commit" "$existing_release"
 
-    prepare_tag "$head_commit"
+    CLI_RUN_URL=
+    if [ -z "$existing_release" ]; then
+        stage "Push prepared source and tag"
+        git push "$SOURCE_REMOTE" "$SOURCE_BRANCH"
+        git push "$SOURCE_REMOTE" "refs/tags/$TAG"
 
-    stage "Push prepared source and tag"
-    git push "$SOURCE_REMOTE" "$SOURCE_BRANCH"
-    git push "$SOURCE_REMOTE" "refs/tags/$TAG"
-
-    dispatch_and_watch \
-        "Build and publish four native CLI archives" \
-        "$RELEASE_WORKFLOW" "$SOURCE_REPO" --ref "$TAG"
-    CLI_RUN_URL=$WORKFLOW_RUN_URL
+        dispatch_and_watch \
+            "Build and publish four native CLI archives" \
+            "$RELEASE_WORKFLOW" "$SOURCE_REPO" --ref "$TAG"
+        CLI_RUN_URL=$WORKFLOW_RUN_URL
+    else
+        printf '\nReusing existing GitHub release %s\n' "$TAG"
+    fi
 
     verify_release_assets
 
@@ -342,7 +357,11 @@ release_version() {
 
     printf '\nRelease %s completed.\n' "$VERSION"
     printf 'CLI release: %s\n' "$RELEASE_URL"
-    printf 'CLI workflow: %s\n' "$CLI_RUN_URL"
+    if [ -n "$CLI_RUN_URL" ]; then
+        printf 'CLI workflow: %s\n' "$CLI_RUN_URL"
+    else
+        printf 'CLI workflow: skipped (verified existing release %s)\n' "$TAG"
+    fi
     printf 'Tap workflow: %s\n' "$TAP_RUN_URL"
     printf '\nPublic-channel checks:\n'
     printf '  gh release view %s --repo %s\n' "$TAG" "$SOURCE_REPO"

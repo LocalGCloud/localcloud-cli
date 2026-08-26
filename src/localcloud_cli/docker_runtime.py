@@ -14,7 +14,6 @@ import httpx
 
 from .config import (
     DEFAULTS_CONFIG_LABEL,
-    DEFAULT_PROJECT,
     LocalCloudConfig,
     runtime_settings,
     validate_data_volume,
@@ -33,7 +32,10 @@ SERVICES_LABEL = "com.localcloud.services"
 DATA_LABEL = "com.localcloud.data"
 RUNTIME_OWNERSHIP_LABEL = "com.localcloud.runtime-ownership"
 RUNTIME_OWNERSHIP_CAPABILITY = "data-volume-v1"
+CONFIG_SCHEMA_LABEL = "com.localcloud.config-schema"
+CONFIG_SCHEMA_CAPABILITY = "1"
 DATA_MOUNT_DESTINATION = "/var/lib/localcloud"
+CONFIG_MOUNT_DESTINATION = "/etc/localcloud/localcloud.yaml"
 GATEWAY_PORT = "24080"
 _DEFAULT_READINESS_TIMEOUT = 120.0
 _CHILD_MANAGED_LABEL = "localcloud.managed"
@@ -52,7 +54,6 @@ _MANAGEMENT_LABELS = {
     CONFIG_LABEL,
     NETWORK_NAME_LABEL,
     VOLUME_NAME_LABEL,
-    SERVICES_LABEL,
     DATA_LABEL,
 }
 _CONTAINER_METADATA_LABELS = (
@@ -61,7 +62,6 @@ _CONTAINER_METADATA_LABELS = (
     CONFIG_LABEL,
     NETWORK_NAME_LABEL,
     VOLUME_NAME_LABEL,
-    SERVICES_LABEL,
     DATA_LABEL,
 )
 
@@ -388,6 +388,11 @@ class DockerRuntime:
                 volumes["/var/run/docker.sock"] = {
                     "bind": "/var/run/docker.sock",
                     "mode": "rw",
+                }
+            if config.config_path is not None:
+                volumes[str(config.config_path)] = {
+                    "bind": CONFIG_MOUNT_DESTINATION,
+                    "mode": "ro",
                 }
             if observer is not None and hasattr(observer, "debug"):
                 observer.debug(
@@ -865,6 +870,33 @@ class DockerRuntime:
             return payload.get("status") in {"healthy", "ok", "ready"}
         except Exception:
             return False
+
+    def effective_services(self, runtime: RuntimeRecord) -> tuple[str, ...] | None:
+        """Return the enabled service IDs LocalCloud reports, or None if unavailable.
+
+        Queried live from the running server rather than predicted from the
+        public YAML, so results reflect catalog/tier/availability resolution
+        the CLI does not own.
+        """
+        if runtime.state != "running" or not runtime.url:
+            return None
+        try:
+            response = httpx.get(f"{runtime.url}/services", timeout=3.0)
+            if response.status_code != 200:
+                return None
+            payload = response.json()
+        except Exception:
+            return None
+        services = payload.get("services") if isinstance(payload, dict) else None
+        if not isinstance(services, list):
+            return None
+        return tuple(
+            sorted(
+                str(entry["id"])
+                for entry in services
+                if isinstance(entry, dict) and entry.get("enabled") and entry.get("id")
+            )
+        )
 
     def doctor(self) -> dict[str, Any]:
         legacy: list[dict[str, str]] = []
@@ -1367,11 +1399,14 @@ class DockerRuntime:
                     "container_id": _resource_identity(container),
                 },
             )
+        config_path = labels[CONFIG_PATH_LABEL]
         return {
             "config_hash": labels[CONFIG_HASH_LABEL],
-            "config_path": labels[CONFIG_PATH_LABEL],
+            "config_path": config_path,
             "runtime_config": runtime_config,
-            "services": labels[SERVICES_LABEL],
+            "services": "<default>"
+            if config_path == DEFAULTS_CONFIG_LABEL
+            else "<config>",
             "data": labels[DATA_LABEL],
         }
 
@@ -1457,20 +1492,26 @@ class DockerRuntime:
 
     @staticmethod
     def _require_runtime_ownership_capability(image_name: str, image: Any) -> None:
-        actual = _image_labels(image).get(RUNTIME_OWNERSHIP_LABEL)
-        if actual != RUNTIME_OWNERSHIP_CAPABILITY:
+        labels = _image_labels(image)
+        actual_ownership = labels.get(RUNTIME_OWNERSHIP_LABEL)
+        actual_schema = labels.get(CONFIG_SCHEMA_LABEL)
+        missing: dict[str, dict[str, str | None]] = {}
+        if actual_ownership != RUNTIME_OWNERSHIP_CAPABILITY:
+            missing[RUNTIME_OWNERSHIP_LABEL] = {
+                "expected": RUNTIME_OWNERSHIP_CAPABILITY,
+                "actual": actual_ownership,
+            }
+        if actual_schema != CONFIG_SCHEMA_CAPABILITY:
+            missing[CONFIG_SCHEMA_LABEL] = {
+                "expected": CONFIG_SCHEMA_CAPABILITY,
+                "actual": actual_schema,
+            }
+        if missing:
             raise HostError(
                 "managed_image_capability_missing",
-                "Managed runtime creation requires a data-volume ownership capable LocalCloud image",
-                {
-                    "image": image_name,
-                    "required_label": {
-                        RUNTIME_OWNERSHIP_LABEL: RUNTIME_OWNERSHIP_CAPABILITY
-                    },
-                    "actual": actual,
-                },
+                "The configured image does not support this LocalCloud CLI",
+                {"image": image_name, "capabilities": missing},
             )
-
     def _port_bindings(
         self,
         config: LocalCloudConfig,
@@ -1827,9 +1868,6 @@ def _config_labels(config: LocalCloudConfig) -> dict[str, str]:
         ),
         NETWORK_NAME_LABEL: config.network_name,
         VOLUME_NAME_LABEL: config.data_volume,
-        SERVICES_LABEL: ",".join(config.services)
-        if config.services is not None
-        else "<default>",
         DATA_LABEL: config.data,
     }
 
@@ -1852,11 +1890,6 @@ def _container_environment(
     config: LocalCloudConfig, network_name: str
 ) -> dict[str, str]:
     environment = dict(config.environment)
-    environment["LOCALCLOUD_PROJECT"] = DEFAULT_PROJECT
-    if config.services is None:
-        environment.pop("LOCALCLOUD_SERVICES", None)
-    else:
-        environment["LOCALCLOUD_SERVICES"] = ",".join(config.services)
     environment.update(
         {
             "LOCALCLOUD_DATA_DIR": DATA_MOUNT_DESTINATION,
@@ -1875,6 +1908,10 @@ def _container_environment(
             "LOCALCLOUD_MCP_ALLOW_REMOTE": "true",
         }
     )
+    if config.config_path is not None:
+        environment["LOCALCLOUD_CONFIG"] = CONFIG_MOUNT_DESTINATION
+    else:
+        environment.pop("LOCALCLOUD_CONFIG", None)
     environment.pop("LOCALCLOUD_INSTANCE", None)
     return environment
 
