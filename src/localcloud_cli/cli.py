@@ -157,6 +157,9 @@ class _ExecutionObserver:
             f"{action} data volume {config.data_volume!r} "
             f"for project {config.project!r}…"
         )
+        if command in {"restart", "stop"}:
+            self.reporter.update(message)
+            return
         services: str | tuple[str, ...] = config.services or "default"
         panel = PanelContext(
             data_volume=config.data_volume,
@@ -173,16 +176,7 @@ class _ExecutionObserver:
             f"Starting data volume {config.data_volume!r} "
             f"for project {config.project!r}…"
         )
-        services: str | tuple[str, ...] = config.services or "default"
-        panel = PanelContext(
-            data_volume=config.data_volume,
-            project=config.project,
-            user=config.user,
-            services=services,
-            data=config.data,
-            config=str(config.config_path) if config.config_path is not None else None,
-        )
-        self.reporter.update(message, panel)
+        self.reporter.update(message)
 
     def doctor(self, args: argparse.Namespace) -> None:
         data_volume = getattr(args, "data_volume", None) or DEFAULT_DATA_VOLUME

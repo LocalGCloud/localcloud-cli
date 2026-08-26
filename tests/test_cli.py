@@ -4,6 +4,7 @@ import io
 import json
 from importlib.metadata import distribution
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -679,6 +680,121 @@ def test_observer_debug_mode_writes_debug_lines() -> None:
     obs_disabled = _ExecutionObserver(rep_disabled, debug=False)
     obs_disabled.debug("docker run -d --name localcloud")
     assert "[debug]" not in stream_disabled.getvalue()
+
+
+class _TtyBuffer(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+@pytest.mark.parametrize(
+    ("command", "message"),
+    [
+        ("start", "Checking data volume 'localcloud-data'"),
+        ("restart", "Restarting data volume 'localcloud-data'"),
+        ("stop", "Stopping data volume 'localcloud-data'"),
+    ],
+)
+def test_observer_lifecycle_commands_skip_artwork_panel(
+    command: str,
+    message: str,
+) -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    args = SimpleNamespace(all_projects=False)
+    config = SimpleNamespace(
+        data_volume="localcloud-data",
+        project="local-gcp-project",
+        user="local-developer",
+        services=None,
+        data="persistent",
+        config_path=None,
+    )
+    stream = _TtyBuffer()
+    reporter = LifecycleReporter(
+        stream=stream,
+        environ={"TERM": "xterm", "NO_COLOR": "1"},
+    )
+
+    _ExecutionObserver(reporter).config(command, config, args)
+    reporter.succeed("Done")
+
+    assert reporter._panel is None
+    assert message in reporter._message
+    assert "LocalCloud v" not in stream.getvalue()
+
+
+def test_observer_starting_transition_skips_artwork_panel() -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    config = SimpleNamespace(
+        data_volume="localcloud-data",
+        project="local-gcp-project",
+    )
+    stream = _TtyBuffer()
+    reporter = LifecycleReporter(
+        stream=stream,
+        environ={"TERM": "xterm", "NO_COLOR": "1"},
+    )
+
+    _ExecutionObserver(reporter).starting(config)
+    reporter.succeed("Done")
+
+    assert reporter._panel is None
+    assert "Starting data volume 'localcloud-data'" in reporter._message
+    assert "LocalCloud v" not in stream.getvalue()
+
+
+@pytest.mark.parametrize("command", ["reset", "status"])
+def test_observer_retains_artwork_panel_for_other_runtime_commands(
+    command: str,
+) -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter, PanelContext
+
+    args = SimpleNamespace(all_projects=False)
+    config = SimpleNamespace(
+        data_volume="localcloud-data",
+        project="local-gcp-project",
+        user="local-developer",
+        services=None,
+        data="persistent",
+        config_path=None,
+    )
+    stream = _TtyBuffer()
+    reporter = LifecycleReporter(
+        stream=stream,
+        environ={"TERM": "xterm", "NO_COLOR": "1"},
+    )
+
+    _ExecutionObserver(reporter).config(command, config, args)
+
+    assert isinstance(reporter._panel, PanelContext)
+    assert "LocalCloud v" in stream.getvalue()
+
+
+def test_observer_retains_artwork_panel_for_doctor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter, PanelContext
+
+    monkeypatch.chdir(tmp_path)
+    stream = _TtyBuffer()
+    reporter = LifecycleReporter(
+        stream=stream,
+        environ={"TERM": "xterm", "NO_COLOR": "1"},
+    )
+
+    _ExecutionObserver(reporter).doctor(
+        SimpleNamespace(data_volume=None, project_id=None, user=None)
+    )
+
+    assert isinstance(reporter._panel, PanelContext)
+    assert "LocalCloud v" in stream.getvalue()
 
 
 def test_observer_renders_consolidated_image_pull_progress() -> None:
