@@ -549,6 +549,30 @@ def test_main_returns_structured_host_error_when_verbose(
     assert error["code"] == "runtime_not_running"
 
 
+
+def test_main_invalid_fields_lists_recovery_choices(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["status", "--fields", "nope"]) == 2
+
+    error = capsys.readouterr().err
+    assert "Unsupported summary field for status: nope" in error
+    assert "Fields: nope" in error
+    assert "Valid Fields:" in error
+    assert "container.state" in error
+
+
+def test_status_help_lists_valid_summary_fields(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as caught:
+        _parser().parse_args(["status", "--help"])
+
+    assert caught.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "Valid paths:" in help_text
+    assert "container.state" in help_text
+
 def test_main_reports_unexpected_exception_as_clean_error(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -923,9 +947,16 @@ def test_observer_native_commands_use_resolved_context_without_artwork(
     assert expected in reporter._message
 
 
-@pytest.mark.parametrize("command", ["reset", "status"])
+@pytest.mark.parametrize(
+    ("command", "expected_heading"),
+    [
+        ("reset", "Resetting project data"),
+        ("status", "Checking LocalCloud status"),
+    ],
+)
 def test_observer_retains_artwork_panel_for_other_runtime_commands(
     command: str,
+    expected_heading: str,
 ) -> None:
     from localcloud_cli.cli import _ExecutionObserver
     from localcloud_cli.output import LifecycleReporter, PanelContext
@@ -948,7 +979,32 @@ def test_observer_retains_artwork_panel_for_other_runtime_commands(
     _ExecutionObserver(reporter).config(command, config, args)
 
     assert isinstance(reporter._panel, PanelContext)
+    assert reporter._panel.heading == expected_heading
     assert "LocalCloud v" in stream.getvalue()
+
+
+def test_observer_uses_all_projects_reset_heading() -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    args = SimpleNamespace(all_projects=True)
+    config = SimpleNamespace(
+        data_volume="localcloud-data",
+        project="local-gcp-project",
+        user="local-developer",
+        services=None,
+        data="persistent",
+        config_path=None,
+    )
+    reporter = LifecycleReporter(
+        stream=_TtyBuffer(),
+        environ={"TERM": "xterm", "NO_COLOR": "1"},
+    )
+
+    _ExecutionObserver(reporter).config("reset", config, args)
+
+    assert reporter._panel is not None
+    assert reporter._panel.heading == "Resetting all LocalCloud data"
 
 
 def test_observer_retains_artwork_panel_for_doctor(
@@ -970,6 +1026,7 @@ def test_observer_retains_artwork_panel_for_doctor(
     )
 
     assert isinstance(reporter._panel, PanelContext)
+    assert reporter._panel.heading == "Checking LocalCloud setup"
     assert "LocalCloud v" in stream.getvalue()
 
 

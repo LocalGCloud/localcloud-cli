@@ -198,6 +198,55 @@ def test_colored_summary_preserves_visible_text() -> None:
     assert strip_ansi(colored) == plain
 
 
+def test_summary_wraps_values_with_hanging_indent_at_visible_width() -> None:
+    payload = {
+        "status": "not_created",
+        "data_volume": "localcloud-data",
+        "container": {
+            "configured_image": "jaysen2apache/localcloud:latest",
+            "image_details": {
+                "formatted": "(Local: ID: abcdef123456 , sha256:abcdef123456)"
+            },
+        },
+        "services": [
+            "alloydb",
+            "bigquery",
+            "cloudfunctions",
+            "memorystore",
+            "monitoring",
+        ],
+    }
+
+    plain = render_summary("status", payload, width=40)
+    colored = render_summary(
+        "status", payload, color=ColorMode.TRUECOLOR, width=40
+    )
+
+    assert all(visible_width(line) <= 40 for line in plain.splitlines())
+    assert any(line.startswith(" " * 13) for line in plain.splitlines())
+    assert strip_ansi(colored) == plain
+    assert "monitoring" in plain
+    assert "mon\n" not in plain
+
+
+def test_interactive_summary_wrapping_strips_embedded_ansi_sequences() -> None:
+    payload = {**PAYLOAD, "logs": "\x1b[31mcolored container log output\x1b[0m"}
+
+    plain = render_summary("start", payload, ["logs"], width=20)
+    colored = render_summary(
+        "start",
+        payload,
+        ["logs"],
+        color=ColorMode.TRUECOLOR,
+        width=20,
+    )
+
+    assert "\x1b[" not in plain
+    assert "\x1b[31m" not in colored
+    assert strip_ansi(colored) == plain
+    assert all(visible_width(line) <= 20 for line in colored.splitlines())
+
+
 def test_json_color_preserves_parseable_payload_after_stripping() -> None:
     colored = render_json(PAYLOAD, color=ColorMode.TRUECOLOR)
     assert json.loads(strip_ansi(colored)) == PAYLOAD
@@ -209,6 +258,39 @@ def test_error_is_concise_and_keeps_scalar_details() -> None:
         HostError("runtime_not_running", "Start it first", {"data_volume": "team-data"})
     )
     assert rendered == "Error [runtime_not_running] Start it first\nData Volume: team-data"
+
+
+def test_error_lists_valid_field_choices_for_recovery() -> None:
+    rendered = render_error(
+        HostError(
+            "invalid_output_field",
+            "Unsupported summary field for status: nope",
+            {
+                "fields": ["nope"],
+                "valid_fields": ["status", "data_volume", "container.state"],
+            },
+        )
+    )
+
+    assert rendered.splitlines() == [
+        "Error [invalid_output_field] Unsupported summary field for status: nope",
+        "Fields: nope",
+        "Valid Fields: status, data_volume, container.state",
+    ]
+
+
+def test_error_wraps_complete_valid_field_list_without_truncation() -> None:
+    valid_fields = [f"field.{index:02d}" for index in range(30)]
+    rendered = render_error(
+        HostError(
+            "invalid_output_field",
+            "Unsupported summary field",
+            {"valid_fields": valid_fields},
+        )
+    )
+
+    assert all(field in rendered for field in valid_fields)
+    assert "…" not in rendered
 
 
 def test_error_omits_verbose_logs_and_nested_diagnostics() -> None:
@@ -243,7 +325,7 @@ def test_cloud_has_equal_visible_width_and_animation_changes_color() -> None:
     assert resting != moving
 
 
-@pytest.mark.parametrize("width", [42, 60, 100])
+@pytest.mark.parametrize("width", [40, 42, 49, 50, 60, 79, 80, 100])
 def test_panel_rows_are_aligned_at_all_breakpoints(width: int) -> None:
     context = PanelContext(
         data_volume="volume-with-a-name-that-must-be-truncated",
@@ -283,6 +365,28 @@ def test_panel_stays_within_very_narrow_terminal() -> None:
     )
     lines = render_panel(context, 20, color=ColorMode.ANSI256)
     assert {visible_width(line) for line in lines} == {18}
+
+
+def test_40_column_panel_preserves_full_artwork_and_context() -> None:
+    context = PanelContext(
+        data_volume="localcloud-data",
+        project="local-gcp-project",
+        user="local-developer",
+        services=("storage", "pubsub", "cloudsql"),
+        data="persistent",
+        config=None,
+        heading="Checking LocalCloud status",
+    )
+
+    lines = render_panel(context, 40, color=ColorMode.NONE)
+    plain_text = "\n".join(lines)
+
+    for artwork_line in render_cloud(color=ColorMode.NONE):
+        assert artwork_line.strip() in plain_text
+    for label in ("Data Volume:", "Project:", "User:", "Config:", "Data:", "Featured:"):
+        assert label in plain_text
+    assert "● 3 selected · ○ 7 off" in plain_text
+    assert {visible_width(line) for line in lines} == {38}
 
 
 def test_narrow_lifecycle_lines_do_not_wrap() -> None:
@@ -405,14 +509,14 @@ def test_wide_panel_structure_and_color_coding() -> None:
     )
     lines = render_panel(context, 100, color=ColorMode.TRUECOLOR)
     plain_text = "\n".join(strip_ansi(line) for line in lines)
-    assert "Welcome back!" in plain_text
+    assert "LocalCloud overview" in plain_text
     assert "Tips & Commands" in plain_text
     assert "localcloud (or lc)" in plain_text
     assert "status | start | stop | restart" in plain_text
     assert "eval $(lc env)" in plain_text
-    assert "Google Cloud Services" in plain_text
+    assert "Featured services" in plain_text
     assert "● Storage" in plain_text
-    assert "● Firestore" in plain_text
+    assert "○ Firestore" in plain_text
     assert "● Pub/Sub" in plain_text
     assert "● BigQuery" in plain_text
     assert "● Secrets" in plain_text
@@ -432,15 +536,17 @@ def test_custom_services_rendering_in_panel() -> None:
         data_volume="localcloud-data",
         project="local-gcp-project",
         user="local-developer",
-        services=("storage", "bigquery", "pubsub"),
+        services=("gcs", "secretmanager", "cloudtasks"),
         data="persistent",
         config=None,
     )
     lines = render_panel(context, 100, color=ColorMode.TRUECOLOR)
     plain_text = "\n".join(strip_ansi(line) for line in lines)
     assert "● Storage" in plain_text
-    assert "● BigQuery" in plain_text
-    assert "● Pub/Sub" in plain_text
+    assert "● Secrets" in plain_text
+    assert "● Tasks" in plain_text
+    assert "○ Firestore" in plain_text
+    assert "○ BigQuery" in plain_text
     assert all(visible_width(line) == 98 for line in lines)
 
 
@@ -460,7 +566,7 @@ def test_cloud_color_modes_emit_appropriate_escape_codes() -> None:
     assert tuple(strip_ansi(line) for line in ansi16) == none
 
 
-@pytest.mark.parametrize("width", [120, 100, 80, 70, 50, 42, 20])
+@pytest.mark.parametrize("width", [120, 100, 80, 79, 70, 50, 49, 42, 40, 20])
 def test_all_breakpoints_have_uniform_line_widths(width: int) -> None:
     context = PanelContext(
         data_volume="my-volume-data",

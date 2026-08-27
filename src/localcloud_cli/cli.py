@@ -29,6 +29,8 @@ from .output import (
     render_json,
     render_summary,
     terminal_capabilities,
+    terminal_width,
+    valid_field_paths,
     validate_fields,
 )
 
@@ -197,6 +199,12 @@ class _ExecutionObserver:
             self.reporter.update(message)
             return
         services: str | tuple[str, ...] = config.services or "default"
+        if command == "status":
+            heading = "Checking LocalCloud status"
+        elif args.all_projects:
+            heading = "Resetting all LocalCloud data"
+        else:
+            heading = "Resetting project data"
         panel = PanelContext(
             data_volume=config.data_volume,
             project=config.project,
@@ -204,6 +212,7 @@ class _ExecutionObserver:
             services=services,
             data=config.data,
             config=str(config.config_path) if config.config_path is not None else None,
+            heading=heading,
         )
         self.reporter.update(message, panel)
 
@@ -236,6 +245,7 @@ class _ExecutionObserver:
             services=services,
             data="persistent",
             config=config_path,
+            heading="Checking LocalCloud setup",
         )
         self.reporter.update("Checking Docker and LocalCloud state…", panel)
 
@@ -477,7 +487,8 @@ def _print_result(args: argparse.Namespace, result: Any, fields: list[str]) -> N
         value = result.get("logs", "") if isinstance(result, dict) else result
         _print_native(str(value))
         return
-    color = terminal_capabilities(sys.stdout).color
+    capabilities = terminal_capabilities(sys.stdout)
+    color = capabilities.color
     if command == "env":
         if isinstance(result, str):
             _print_native(result)
@@ -490,7 +501,13 @@ def _print_result(args: argparse.Namespace, result: Any, fields: list[str]) -> N
     if getattr(args, "verbose", False):
         print(render_json(result, color=color))
         return
-    rendered = render_summary(command, result, fields, color=color)
+    rendered = render_summary(
+        command,
+        result,
+        fields,
+        color=color,
+        width=terminal_width(sys.stdout) if capabilities.interactive else None,
+    )
     if rendered:
         print(rendered)
 
@@ -625,7 +642,7 @@ def _parser() -> argparse.ArgumentParser:
         help="Check Docker access and detect legacy LocalCloud state",
         description="Check Docker access and detect legacy LocalCloud state.",
     )
-    _add_output_options(doctor, fields=True)
+    _add_output_options(doctor, fields=True, command_name="doctor")
     cleanup = commands.add_parser(
         "cleanup",
         help="Remove malformed LocalCloud Docker resources, stale runtime state, and legacy host files",
@@ -661,7 +678,7 @@ def _parser() -> argparse.ArgumentParser:
         )
         _add_context(command)
         _add_resource_names(command)
-        _add_output_options(command, fields=True)
+        _add_output_options(command, fields=True, command_name=name)
         command.add_argument(
             "--skip-config-validation",
             action="store_true",
@@ -750,7 +767,7 @@ def _parser() -> argparse.ArgumentParser:
         description="Stop the selected runtime without deleting persistent data.",
     )
     _add_data_volume(stop)
-    _add_output_options(stop, fields=True)
+    _add_output_options(stop, fields=True, command_name="stop")
 
     status = commands.add_parser(
         "status",
@@ -758,7 +775,7 @@ def _parser() -> argparse.ArgumentParser:
         description="Show runtime health, ownership, and Docker details.",
     )
     _add_data_volume(status)
-    _add_output_options(status, fields=True)
+    _add_output_options(status, fields=True, command_name="status")
 
     logs = commands.add_parser(
         "logs",
@@ -807,8 +824,16 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _add_output_options(parser: argparse.ArgumentParser, *, fields: bool) -> None:
+def _add_output_options(
+    parser: argparse.ArgumentParser,
+    *,
+    fields: bool,
+    command_name: str | None = None,
+) -> None:
     if fields:
+        if command_name is None:
+            raise ValueError("command_name is required when fields are enabled")
+        valid_paths = ", ".join(valid_field_paths(command_name))
         group = parser.add_mutually_exclusive_group()
         group.add_argument(
             "--verbose",
@@ -819,7 +844,10 @@ def _add_output_options(parser: argparse.ArgumentParser, *, fields: bool) -> Non
             "--fields",
             action="append",
             metavar="PATH[,PATH...]",
-            help="Add comma-separated JSON paths to the default summary",
+            help=(
+                "Add comma-separated JSON paths to the default summary. "
+                f"Valid paths: {valid_paths}"
+            ),
         )
     else:
         parser.add_argument(
