@@ -2,7 +2,7 @@
 
 ## Goal
 
-Resolve every prioritized finding in `00-UI-REVIEW.md` while preserving LocalCloud's approved colorful 20×5 cloud artwork, stable redirected-stream behavior, machine-readable schemas, and existing lifecycle-panel suppression for `start`, `restart`, and `stop`.
+Resolve every prioritized finding in `00-UI-REVIEW.md` while preserving LocalCloud's approved colorful five-row cloud artwork, stable redirected-stream behavior, machine-readable schemas, and existing lifecycle-panel suppression for `start`, `restart`, and `stop`. The mark's current 16×5 geometry is defined by `2026-08-27-terminal-cloud-compaction-design.md`.
 
 ## Scope
 
@@ -18,7 +18,7 @@ It does not change controller payloads, Docker behavior, MCP behavior, environme
 
 ## Approved Visual Direction
 
-The existing colorful 20×5 cloud remains unchanged. At 40–49 columns, the panel uses the approved **full mark, stacked context** composition:
+The colorful 16×5 cloud remains intact at every panel breakpoint. At 40–49 columns, the panel uses the approved **full mark, stacked context** composition:
 
 1. LocalCloud version border title;
 2. command-aware heading;
@@ -124,9 +124,9 @@ Smoke verification must run real CLI help, a failing invalid-field command, PTY 
 
 Rejected by the user. It maximizes information density but discards the approved LocalCloud identity precisely where the responsive design should adapt it.
 
-### Use a reduced or replacement cloud at narrow widths
+### Use a second reduced cloud only at narrow widths
 
-Rejected by the user. Maintaining two marks creates visual drift and weakens the existing exact-artwork contract.
+Rejected by the user. Maintaining two marks creates visual drift and weakens the exact-artwork contract. The selected 16×5 compaction applies consistently to every panel width.
 
 ### Keep the README monolithic
 
@@ -139,7 +139,7 @@ Rejected because it would degrade verbose JSON and duplicate formatting concerns
 ## Approved Constraints
 
 - Minimum complete panel width: 40 columns.
-- Preserve the exact colorful 20×5 cloud artwork.
+- Preserve the exact colorful 16×5 cloud artwork.
 - Implement all P1, P2, and P3 audit findings.
 - Split long-form README content into focused documents.
 - Proceed through implementation and full verification without additional approval gates.

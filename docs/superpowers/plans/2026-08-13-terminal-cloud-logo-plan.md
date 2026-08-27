@@ -1,5 +1,7 @@
 # Terminal Cloud Logo Implementation Plan
 
+> **Superseded geometry:** This plan implemented the original 20×5 mark. The active 16×5 contract and migration plan are in `../specs/2026-08-27-terminal-cloud-compaction-design.md` and `2026-08-27-terminal-cloud-compaction-plan.md`.
+
 ## Objective
 
 Implement the approved 20×5 curved outline from `docs/superpowers/specs/2026-08-13-terminal-cloud-logo-design.md` without changing rendering, animation, or responsive panel behavior.

@@ -31,7 +31,7 @@
 
 **Steps:**
 1. Add a single-field context-row formatter that is ANSI-aware and width-bounded.
-2. Rework 40–49 column rendering to keep the exact full 20×5 cloud centered, followed by heading, data volume, project, user, config, data mode, and service summary rows.
+2. Rework 40–49 column rendering to keep the exact full 16×5 cloud centered, followed by heading, data volume, project, user, config, data mode, and service summary rows.
 3. Rework 50–79 column rendering to retain the full cloud and complete context; pair fields only when values fit, otherwise use one row per field.
 4. Add data mode and service summary to the wide panel while retaining the split composition and 100-column cap.
 5. Keep the existing minimal safety layout below 40 columns.

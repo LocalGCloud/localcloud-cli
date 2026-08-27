@@ -101,14 +101,14 @@ Semantic colors are stable:
 
 `start` and `restart` render a branded panel after configuration is resolved and before the controller operation begins. The context is therefore accurate even when values come from `localcloud.yaml` or remembered configuration.
 
-The cloud is a compact, curved-outline, fixed-width `20 x 5` Unicode mark:
+The cloud is a compact, curved-outline, fixed-width `16 x 5` Unicode mark:
 
 ```text
-       ╭────╮       
-   ╭───╯    ╰───╮   
- ╭──╯          ╰──╮ 
-╭╯                ╰╮
-╰──────────────────╯
+     ╭────╮     
+  ╭──╯    ╰──╮  
+ ╭─╯        ╰─╮ 
+╭╯            ╰╮
+╰──────────────╯
 ```
 
 Each non-space glyph receives its own ANSI foreground color. Color position is computed diagonally from the glyph's `(x, y)` coordinate, following the same core technique as OMP's welcome logo. The cyclic true-color stops are:
