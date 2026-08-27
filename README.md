@@ -95,10 +95,10 @@ Interactive `doctor`, `status`, and `reset` commands retain the colorful LocalCl
 ╭── LocalCloud v0.1.2 ───────────────╮
 │     Checking LocalCloud setup      │
 │               ╭────╮               │
-│           ╭───╯    ╰───╮           │
-│         ╭──╯          ╰──╮         │
-│        ╭╯                ╰╮        │
-│        ╰──────────────────╯        │
+│            ╭──╯    ╰──╮            │
+│           ╭─╯        ╰─╮           │
+│          ╭╯            ╰╮          │
+│          ╰──────────────╯          │
 │────────────────────────────────────│
 │  Data Volume: localcloud-data      │
 │  Project: local-gcp-project        │

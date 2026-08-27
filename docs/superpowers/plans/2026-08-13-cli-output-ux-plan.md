@@ -1,5 +1,7 @@
 # LocalCloud CLI Output UX Implementation Plan
 
+> **Historical geometry:** This plan implemented the original 20×5 mark. The active 16×5 contract is defined by `../specs/2026-08-27-terminal-cloud-compaction-design.md`.
+
 ## Objective
 
 Implement the approved CLI output design in `docs/superpowers/specs/2026-08-13-cli-output-ux-design.md` without changing controller result schemas or adding a runtime dependency.

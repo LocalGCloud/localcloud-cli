@@ -309,17 +309,27 @@ def test_error_omits_verbose_logs_and_nested_diagnostics() -> None:
 
 
 def test_cloud_has_equal_visible_width_and_animation_changes_color() -> None:
+    from localcloud_cli.output import _CLOUD_PERIMETER_COORDS
+
     expected = (
-        "       ╭────╮       ",
-        "   ╭───╯    ╰───╮   ",
-        " ╭──╯          ╰──╮ ",
-        "╭╯                ╰╮",
-        "╰──────────────────╯",
+        "     ╭────╮     ",
+        "  ╭──╯    ╰──╮  ",
+        " ╭─╯        ╰─╮ ",
+        "╭╯            ╰╮",
+        "╰──────────────╯",
     )
+    glyph_coordinates = {
+        (x, y)
+        for y, line in enumerate(expected)
+        for x, character in enumerate(line)
+        if character != " "
+    }
     resting = render_cloud(phase=0.0, progress=1.0, color=ColorMode.TRUECOLOR)
     moving = render_cloud(phase=0.0, progress=0.25, color=ColorMode.TRUECOLOR)
     assert render_cloud(color=ColorMode.NONE) == expected
-    assert {visible_width(line) for line in resting} == {20}
+    assert {visible_width(line) for line in resting} == {16}
+    assert len(_CLOUD_PERIMETER_COORDS) == len(set(_CLOUD_PERIMETER_COORDS))
+    assert set(_CLOUD_PERIMETER_COORDS) == glyph_coordinates
     assert tuple(strip_ansi(line) for line in resting) == expected
     assert tuple(strip_ansi(line) for line in moving) == expected
     assert resting != moving
