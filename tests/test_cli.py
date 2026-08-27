@@ -89,6 +89,7 @@ class FakeController:
         return {
             "data_volume": config.data_volume,
             "url": "http://127.0.0.1:49080",
+            "connect_url": "http://127.0.0.1:49080",
             "endpoint_map": {"24080": 49080},
             "project": config.project,
             "user": config.user,
@@ -332,7 +333,7 @@ def test_reset_progress_uses_resolved_data_volume(
 
     assert main(["reset", str(config)]) == 0
     captured = capsys.readouterr()
-    assert "data volume 'team-data'" in captured.err
+    assert "data volume: 'team-data'" in captured.err
     assert "instance" not in captured.err.lower()
 
 
@@ -396,7 +397,10 @@ def test_console_encodes_selected_project_and_user(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     opened: list[str] = []
-    monkeypatch.setattr("localcloud_cli.cli.webbrowser.open", opened.append)
+    monkeypatch.setattr(
+        "localcloud_cli.cli.webbrowser.open",
+        lambda url: opened.append(url) or True,
+    )
 
     result = _execute(
         _parser().parse_args(
@@ -418,6 +422,20 @@ def test_console_encodes_selected_project_and_user(
     assert opened == [expected]
     assert result["data_volume"] == "team-data"
     assert result["url"] == expected
+
+
+def test_console_reports_manual_url_when_browser_cannot_open(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("localcloud_cli.cli.webbrowser.open", lambda _url: False)
+
+    assert main(["console"]) == 2
+    captured = capsys.readouterr()
+    assert "Error [console_open_failed]" in captured.err
+    assert "open the URL manually" in captured.err
+    assert "http://127.0.0.1:49080" in captured.err
+    assert captured.out == ""
 
 
 def test_env_dispatch_preserves_context(
@@ -556,10 +574,21 @@ def test_main_reraises_unexpected_exception_when_debug(
 
 
 @pytest.mark.parametrize("command", ["env", "mcp"])
-def test_env_and_mcp_accept_debug_and_verbose_flags(command: str) -> None:
-    args = _parser().parse_args([command, "--debug", "--verbose"])
-    assert args.debug is True
-    assert args.verbose is True
+def test_native_commands_accept_debug_but_reject_summary_flags(command: str) -> None:
+    parser = _parser()
+    assert parser.parse_args([command, "--debug"]).debug is True
+    with pytest.raises(SystemExit):
+        parser.parse_args([command, "--verbose"])
+    with pytest.raises(SystemExit):
+        parser.parse_args([command, "--fields", "status"])
+
+
+@pytest.mark.parametrize("command", ["cleanup", "console"])
+def test_structured_commands_without_extra_fields_reject_fields(command: str) -> None:
+    parser = _parser()
+    assert parser.parse_args([command, "--verbose"]).verbose is True
+    with pytest.raises(SystemExit):
+        parser.parse_args([command, "--fields", "status"])
 
 
 def test_cleanup_dispatches_to_controller() -> None:
@@ -574,6 +603,28 @@ def test_cleanup_dispatches_to_controller() -> None:
     call, confirm = FakeController.instance.calls[-1]
     assert call == "cleanup"
     assert confirm is False
+
+
+def test_main_cleanup_partial_returns_failure_with_result(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        FakeController,
+        "cleanup",
+        lambda _self, **_kwargs: {
+            "status": "partial",
+            "dry_run": False,
+            "failures": [{"kind": "network", "name": "broken-network"}],
+        },
+    )
+
+    assert main(["cleanup"]) == 1
+    captured = capsys.readouterr()
+    assert "Failed" in captured.err
+    assert "LocalCloud cleanup completed with failures" in captured.err
+    assert "Status    Partial" in captured.out
+    assert "Failures" in captured.out
 
 def test_restart_and_start_pull_flags() -> None:
     parser = _parser()
@@ -600,6 +651,77 @@ def test_restart_dispatch_passes_pull_flag() -> None:
 
     _execute(_parser().parse_args(["start"]))
     assert FakeController.instance.pull_calls[-1] == ("start", False)
+
+def test_restart_and_start_tls_flags() -> None:
+    parser = _parser()
+    assert parser.parse_args(["restart"]).tls is None
+    assert parser.parse_args(["restart", "--no-tls"]).tls is False
+    assert parser.parse_args(["restart", "--tls"]).tls is True
+    assert parser.parse_args(["start"]).tls is None
+    assert parser.parse_args(["start", "--no-tls"]).tls is False
+    assert parser.parse_args(["start", "--tls"]).tls is True
+
+
+def test_start_and_restart_tls_dispatch_defaults_to_enabled() -> None:
+    _execute(_parser().parse_args(["start"]))
+    _, config = FakeController.instance.calls[-1]
+    assert config.environment["LOCALCLOUD_TLS_ENABLED"] == "true"
+
+    _execute(_parser().parse_args(["start", "--no-tls"]))
+    _, config = FakeController.instance.calls[-1]
+    assert config.environment["LOCALCLOUD_TLS_ENABLED"] == "false"
+
+    _execute(_parser().parse_args(["restart", "--tls"]))
+    _, config = FakeController.instance.calls[-1]
+    assert config.environment["LOCALCLOUD_TLS_ENABLED"] == "true"
+
+
+def test_restart_and_start_memory_image_services_flags() -> None:
+    parser = _parser()
+    args = parser.parse_args(
+        [
+            "start",
+            "--memory",
+            "8g",
+            "--image",
+            "myrepo/localcloud:dev",
+            "--services",
+            "gcs,pubsub",
+        ]
+    )
+    assert args.memory == "8g"
+    assert args.image == "myrepo/localcloud:dev"
+    assert args.services == ["gcs", "pubsub"]
+
+    assert parser.parse_args(["restart", "--services", "default"]).services == "default"
+    assert parser.parse_args(["start"]).memory is None
+    assert parser.parse_args(["start"]).image is None
+    assert parser.parse_args(["start"]).services is None
+
+
+def test_start_and_restart_memory_image_services_dispatch() -> None:
+    _execute(
+        _parser().parse_args(
+            [
+                "start",
+                "--memory",
+                "8g",
+                "--image",
+                "myrepo/localcloud:dev",
+                "--services",
+                "gcs,pubsub",
+            ]
+        )
+    )
+    _, config = FakeController.instance.calls[-1]
+    assert config.memory == "8g"
+    assert config.image == "myrepo/localcloud:dev"
+    assert config.services == ("gcs", "pubsub")
+
+    _execute(_parser().parse_args(["restart", "--services", "default"]))
+    _, config = FakeController.instance.calls[-1]
+    assert config.services is None
+
 
 def test_start_and_restart_tail_flags() -> None:
     parser = _parser()
@@ -690,9 +812,18 @@ class _TtyBuffer(io.StringIO):
 @pytest.mark.parametrize(
     ("command", "message"),
     [
-        ("start", "Checking data volume 'localcloud-data'"),
-        ("restart", "Restarting data volume 'localcloud-data'"),
-        ("stop", "Stopping data volume 'localcloud-data'"),
+        (
+            "start",
+            "Starting LocalCloud container on data volume: 'localcloud-data'",
+        ),
+        (
+            "restart",
+            "Restarting LocalCloud container on data volume: 'localcloud-data'",
+        ),
+        (
+            "stop",
+            "Stopping LocalCloud container on data volume: 'localcloud-data'",
+        ),
     ],
 )
 def test_observer_lifecycle_commands_skip_artwork_panel(
@@ -743,8 +874,53 @@ def test_observer_starting_transition_skips_artwork_panel() -> None:
     reporter.succeed("Done")
 
     assert reporter._panel is None
-    assert "Starting data volume 'localcloud-data'" in reporter._message
+    assert "Starting LocalCloud container on data volume: 'localcloud-data'" in reporter._message
     assert "LocalCloud v" not in stream.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        (
+            "logs",
+            "Reading 1 recent log line from data volume: 'localcloud-data'",
+        ),
+        (
+            "console",
+            "Opening LocalCloud console for project 'local-gcp-project' "
+            "on data volume: 'localcloud-data'",
+        ),
+        (
+            "env",
+            "Generating shell SDK configuration for project 'local-gcp-project'",
+        ),
+    ],
+)
+def test_observer_native_commands_use_resolved_context_without_artwork(
+    command: str,
+    expected: str,
+) -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    args = SimpleNamespace(all_projects=False, tail=1, format="shell")
+    config = SimpleNamespace(
+        data_volume="localcloud-data",
+        project="local-gcp-project",
+        user="local-developer",
+        services=None,
+        data="persistent",
+        config_path=None,
+    )
+    reporter = LifecycleReporter(
+        stream=_TtyBuffer(),
+        environ={"TERM": "xterm", "NO_COLOR": "1"},
+    )
+
+    _ExecutionObserver(reporter).config(command, config, args)
+
+    assert reporter._panel is None
+    assert expected in reporter._message
 
 
 @pytest.mark.parametrize("command", ["reset", "status"])

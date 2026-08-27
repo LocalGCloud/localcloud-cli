@@ -23,6 +23,12 @@ _mcp_datas, _mcp_binaries, mcp_hiddenimports = collect_all(
     filter_submodules=required_mcp_module,
 )
 datas = copy_metadata("localcloud-cli", recursive=False)
+datas += [
+    (
+        str(project_root / "src" / "localcloud_cli" / "defaults" / "localcloud.v1.yaml"),
+        "localcloud_cli/defaults",
+    )
+]
 
 analysis = Analysis(
     [str(project_root / "src" / "localcloud_cli" / "__main__.py")],

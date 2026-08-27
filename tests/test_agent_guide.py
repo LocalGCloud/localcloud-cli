@@ -16,7 +16,13 @@ SERVICE_LINE = re.compile(
 
 
 def _canonical_services() -> dict[str, dict[str, Any]]:
-    registry_path = Path(__file__).parent / "fixtures" / "localcloud.defaults.yaml"
+    registry_path = (
+        Path(__file__).parent.parent
+        / "src"
+        / "localcloud_cli"
+        / "defaults"
+        / "localcloud.v1.yaml"
+    )
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
     return registry["services"]["catalog"]
 
@@ -62,6 +68,9 @@ def test_guide_explains_volume_identity_and_catalog_first_workflow() -> None:
     assert "mcp.direct_url" in guide
     assert "mcp.headers" in guide
     assert "localcloud.yaml" in guide
+    assert "localcloud doctor --verbose" in guide
+    assert "localcloud start --verbose" in guide
+    assert "`start --verbose` returns JSON" in guide
 
     removed_surfaces = (
         "--" + "work" + "space",

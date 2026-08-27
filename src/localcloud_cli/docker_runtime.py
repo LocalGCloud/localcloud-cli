@@ -37,6 +37,7 @@ CONFIG_SCHEMA_CAPABILITY = "1"
 DATA_MOUNT_DESTINATION = "/var/lib/localcloud"
 CONFIG_MOUNT_DESTINATION = "/etc/localcloud/localcloud.yaml"
 GATEWAY_PORT = "24080"
+TLS_GATEWAY_PORT = "24443"
 _DEFAULT_READINESS_TIMEOUT = 120.0
 _CHILD_MANAGED_LABEL = "localcloud.managed"
 _LEGACY_LABELS = {
@@ -76,6 +77,7 @@ class RuntimeRecord:
     state: str
     health: str | None
     url: str | None
+    connect_url: str | None
     endpoint_map: dict[str, int]
     network_name: str | None
     mount: dict[str, Any]
@@ -237,6 +239,14 @@ class DockerRuntime:
         )
         endpoint_map = self._resolved_ports(container)
         gateway = endpoint_map.get(GATEWAY_PORT)
+        tls_gateway = endpoint_map.get(TLS_GATEWAY_PORT)
+        tls_enabled = (
+            _container_environment_values(container)
+            .get("LOCALCLOUD_TLS_ENABLED", "")
+            .strip()
+            .lower()
+            == "true"
+        )
         state = _container_state(container)
         health = _container_health(container)
         runtime_config = metadata.get("runtime_config")
@@ -254,6 +264,13 @@ class DockerRuntime:
             state=state,
             health=health,
             url=f"http://127.0.0.1:{gateway}" if gateway else None,
+            connect_url=(
+                f"https://127.0.0.1:{tls_gateway}"
+                if tls_enabled and tls_gateway
+                else f"http://127.0.0.1:{gateway}"
+                if gateway
+                else None
+            ),
             endpoint_map=endpoint_map,
             network_name=network_name,
             mount=mount,
@@ -517,6 +534,8 @@ class DockerRuntime:
     ) -> RuntimeRecord:
         deadline = _resolve_readiness_deadline(readiness_deadline)
         container, current = self._mutation_target(config, runtime)
+        if observer is not None and hasattr(observer, "debug"):
+            observer.debug(_format_effective_run_command(config, current))
         if current.state != "running":
             if observer is not None and hasattr(observer, "debug"):
                 target_name = _resource_name(container) or current.container_id
@@ -578,6 +597,7 @@ class DockerRuntime:
         deadline = _resolve_readiness_deadline(readiness_deadline)
         container, current = self._mutation_target(config, runtime)
         if observer is not None and hasattr(observer, "debug"):
+            observer.debug(_format_effective_run_command(config, current))
             target_name = _resource_name(container) or current.container_id
             observer.debug(f"docker restart -t 20 {target_name}")
         try:
@@ -2013,8 +2033,83 @@ def _container_environment(
         environment["LOCALCLOUD_CONFIG"] = CONFIG_MOUNT_DESTINATION
     else:
         environment.pop("LOCALCLOUD_CONFIG", None)
+    if config.services is not None:
+        environment["LOCALCLOUD_SERVICES"] = ",".join(config.services)
+    else:
+        environment.pop("LOCALCLOUD_SERVICES", None)
     environment.pop("LOCALCLOUD_INSTANCE", None)
     return environment
+
+
+def _format_port_args(ports: Mapping[str, Any]) -> list[str]:
+    """Render `-p` flags, collapsing contiguous 1:1 port runs into Docker's
+    `host_start-host_end:container_start-container_end` range syntax so the
+    debug-printed command stays short. Purely cosmetic: the real container is
+    still created via one port-binding entry per port through the Docker SDK.
+    """
+    parsed: list[tuple[int, str, str, int | None]] = []
+    literal: list[str] = []
+    for container_port, binding in ports.items():
+        if not isinstance(binding, (tuple, list)):
+            literal.append(str(binding))
+            continue
+        host_ip, host_port = binding[0], binding[1]
+        port_text, _, proto = container_port.partition("/")
+        try:
+            port_num = int(port_text)
+        except ValueError:
+            spec = (
+                f"{host_ip}:{host_port}:{container_port}"
+                if host_port is not None
+                else f"{host_ip}::{container_port}"
+            )
+            literal.append(spec)
+            continue
+        parsed.append((port_num, proto or "tcp", str(host_ip), host_port))
+    parsed.sort(key=lambda item: (item[1], item[2], item[0]))
+
+    args: list[str] = []
+
+    def flush(run: list[tuple[int, str, str, int | None]]) -> None:
+        if not run:
+            return
+        _, proto, host_ip, _ = run[0]
+        if len(run) == 1:
+            port_num, _, _, host_port = run[0]
+            spec = (
+                f"{host_ip}:{host_port}:{port_num}"
+                if host_port is not None
+                else f"{host_ip}::{port_num}"
+            )
+        else:
+            start_port, start_host = run[0][0], run[0][3]
+            end_port, end_host = run[-1][0], run[-1][3]
+            spec = f"{host_ip}:{start_host}-{end_host}:{start_port}-{end_port}"
+        args.extend(["-p", f"{spec}/{proto}"])
+
+    run: list[tuple[int, str, str, int | None]] = []
+    for item in parsed:
+        port_num, proto, host_ip, host_port = item
+        previous = run[-1] if run else None
+        contiguous = (
+            previous is not None
+            and previous[1] == proto
+            and previous[2] == host_ip
+            and previous[3] is not None
+            and host_port is not None
+            and port_num == previous[0] + 1
+            and host_port == previous[3] + 1
+        )
+        if contiguous:
+            run.append(item)
+        else:
+            flush(run)
+            run = [item]
+    flush(run)
+    for spec in literal:
+        args.extend(["-p", spec])
+    return args
+
 
 def _format_docker_run(
     image: str,
@@ -2037,15 +2132,7 @@ def _format_docker_run(
             mode = mount.get("mode", "rw") if isinstance(mount, dict) else "rw"
             args.extend(["-v", f"{host_source}:{bind}:{mode}"])
     if ports:
-        for container_port, binding in sorted(ports.items()):
-            if isinstance(binding, (tuple, list)):
-                host_ip, host_port = binding[0], binding[1]
-                if host_port is not None:
-                    args.extend(["-p", f"{host_ip}:{host_port}:{container_port}"])
-                else:
-                    args.extend(["-p", f"{host_ip}::{container_port}"])
-            else:
-                args.extend(["-p", str(binding)])
+        args.extend(_format_port_args(ports))
     if environment:
         for k, v in sorted(environment.items()):
             args.extend(["-e", f"{k}={v}"])
@@ -2054,6 +2141,50 @@ def _format_docker_run(
             args.extend(["-l", f"{k}={v}"])
     args.append(image)
     return shlex.join(args)
+
+
+def _format_effective_run_command(
+    config: LocalCloudConfig, current: "RuntimeRecord"
+) -> str:
+    """Render the docker-run equivalent of the container's current
+    configuration for --debug, even when no `docker run`/`create` is actually
+    happening (a plain start/restart of an already-conforming container).
+    Ports come from the live, already-resolved endpoint map so this needs no
+    extra Docker API calls; everything else is derived the same way `create`
+    derives it, from `config`.
+    """
+    volumes: dict[str, dict[str, str]] = {
+        config.data_volume: {"bind": DATA_MOUNT_DESTINATION, "mode": "rw"},
+    }
+    if config.docker_socket:
+        volumes["/var/run/docker.sock"] = {
+            "bind": "/var/run/docker.sock",
+            "mode": "rw",
+        }
+    if config.config_path is not None:
+        volumes[str(config.config_path)] = {
+            "bind": CONFIG_MOUNT_DESTINATION,
+            "mode": "ro",
+        }
+    ports = {
+        f"{container_port}/tcp": ("127.0.0.1", host_port)
+        for container_port, host_port in current.endpoint_map.items()
+    }
+    network_name = current.network_name or config.network_name
+    container_labels = {
+        **_config_labels(config),
+        **_base_labels(config.data_volume, "container"),
+    }
+    return _format_docker_run(
+        config.image,
+        config.container_name,
+        network_name,
+        config.memory,
+        volumes,
+        ports,
+        _container_environment(config, network_name),
+        container_labels,
+    )
 
 
 def _runtime_drift(

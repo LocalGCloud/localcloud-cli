@@ -83,7 +83,18 @@ def test_spec_trims_build_only_payloads(monkeypatch: Any) -> None:
 
     _, analysis_kwargs = calls["analysis"]
     assert analysis_kwargs["binaries"] == []
-    assert analysis_kwargs["datas"] == localcloud_metadata
+    assert analysis_kwargs["datas"] == localcloud_metadata + [
+        (
+            str(
+                PROJECT_ROOT
+                / "src"
+                / "localcloud_cli"
+                / "defaults"
+                / "localcloud.v1.yaml"
+            ),
+            "localcloud_cli/defaults",
+        )
+    ]
     assert analysis_kwargs["hiddenimports"] == collected_hiddenimports
     assert analysis_kwargs["excludes"] == [
         "setuptools",

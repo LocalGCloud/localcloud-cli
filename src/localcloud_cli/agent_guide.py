@@ -1,48 +1,34 @@
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
+import yaml
+
 from .config import DEFAULT_IMAGE, DEFAULT_PROJECT, DEFAULT_USER
 
+# The service catalog rendered below is not maintained here: it is read from
+# the versioned snapshot of LocalCloud's own localcloud.defaults.yaml bundled
+# at defaults/localcloud.v1.yaml, so the guide can never drift from what the
+# runtime actually ships. Bump _DEFAULTS_FILE (adding a localcloud.v2.yaml
+# alongside it) when the runtime's schema version changes.
+_DEFAULTS_FILE = Path(__file__).parent / "defaults" / "localcloud.v1.yaml"
 
-_SERVICE_INVENTORY = (
-    ("gcs", "Cloud Storage", True),
-    ("pubsub", "Pub/Sub", True),
-    ("firestore", "Firestore", False),
-    ("bigtable", "Bigtable", True),
-    ("spanner", "Spanner", True),
-    ("bigquery", "BigQuery", True),
-    ("sheets", "Google Sheets", True),
-    ("secretmanager", "Secret Manager", True),
-    ("cloudtasks", "Cloud Tasks", True),
-    ("cloudscheduler", "Cloud Scheduler", True),
-    ("cloudfunctions", "Cloud Functions (2nd Gen)", True),
-    ("alloydb", "AlloyDB", True),
-    ("dataproc", "Dataproc", True),
-    ("cloudiam", "Cloud IAM", True),
-    ("cloudresourcemanager", "Cloud Resource Manager", True),
-    ("serviceusage", "Service Usage", True),
-    ("cloudbilling", "Cloud Billing", True),
-    ("logging", "Cloud Logging", True),
-    ("monitoring", "Cloud Monitoring", True),
-    ("gke", "GKE", False),
-    ("compute", "Compute Engine", False),
-    ("cloudrun", "Cloud Run", False),
-    ("memorystore", "Memorystore (Redis/Valkey)", True),
-    ("workflows", "Cloud Workflows", True),
-    ("vertexai", "Vertex AI", False),
-    ("kms", "Cloud KMS", False),
-    ("cloudsql", "Cloud SQL", True),
-)
+
+def _service_catalog() -> dict[str, dict[str, Any]]:
+    defaults = yaml.safe_load(_DEFAULTS_FILE.read_text(encoding="utf-8"))
+    return defaults["services"]["catalog"]
 
 
 def _service_inventory() -> str:
-    return "\n".join(
-        (
-            f"    - {service_id}  # {display_name}"
-            if enabled
-            else f"    # - {service_id}  # deactivated service: {display_name}"
-        )
-        for service_id, display_name, enabled in _SERVICE_INVENTORY
-    )
+    lines = []
+    for service_id, definition in _service_catalog().items():
+        display_name = definition["displayName"]
+        if definition["defaultEnabled"]:
+            lines.append(f"    - {service_id}  # {display_name}")
+        else:
+            lines.append(f"    # - {service_id}  # deactivated service: {display_name}")
+    return "\n".join(lines)
 
 
 _GUIDE = f"""LocalCloud coding-agent guide
@@ -76,19 +62,20 @@ Copy-paste first run
 
    localcloud doctor
 
-   Continue when the command exits successfully and returns `"status": "ok"`.
-   Review any legacy-resource warning separately; LocalCloud never removes those
-   resources automatically.
+   Continue when the concise summary reports `Status` as `OK`. Review any
+   legacy-resource warning separately; LocalCloud never removes those resources
+   automatically. Use `localcloud doctor --verbose` when machine-readable JSON
+   is required.
 
 2. Start the runtime on the default data volume and configure the current
    shell:
 
-   localcloud start
+   localcloud start --verbose
    eval "$(localcloud env)"
 
-   `start` returns JSON containing `data_volume`, the selected container,
-   runtime origin and per-resource ownership, selected project and caller,
-   loopback SDK endpoints, and an `mcp` object. Repeating it is safe.
+   `start --verbose` returns JSON containing `data_volume`, the selected
+   container, runtime origin and per-resource ownership, selected project and
+   caller, loopback SDK endpoints, and an `mcp` object. Repeating it is safe.
 
 3. Copy the returned `mcp.command` and `mcp.args` into a stdio-only MCP client.
    For a Streamable HTTP client, use `mcp.direct_url` together with every

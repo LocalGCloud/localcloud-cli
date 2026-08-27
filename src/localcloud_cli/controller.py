@@ -404,6 +404,7 @@ class Controller:
             )
         return {
             "url": current.url,
+            "connect_url": current.connect_url or current.url,
             "endpoint_map": dict(current.endpoint_map),
         }
 
@@ -1066,7 +1067,7 @@ class Controller:
                 "id": environment.container_id,
                 "state": environment.state,
                 "health": environment.health,
-                "url": url,
+                "url": environment.connect_url or url,
                 "configured_image": environment.configured_image,
                 "actual_image": environment.actual_image,
                 "image_id": environment.image_id,

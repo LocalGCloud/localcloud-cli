@@ -155,7 +155,6 @@ _COMMON_FIELDS = (
     FieldSpec("services", "Services"),
     FieldSpec("changed_fields", "Changed", "warning"),
     FieldSpec("reset_scope", "Reset scope", "warning"),
-    FieldSpec("logs", "Logs", "muted"),
 )
 _DOCTOR_FIELDS = (
     FieldSpec("status", "Status", "status"),
@@ -166,6 +165,13 @@ _DOCTOR_FIELDS = (
     FieldSpec("legacy_host_state", "Legacy host state", "warning"),
     FieldSpec("legacy_locks", "Legacy locks", "warning"),
     FieldSpec("warning", "Warning", "warning"),
+)
+_DOCTOR_EXTRA_FIELDS = (
+    FieldSpec("active_runtime", "Active runtime", "muted"),
+    FieldSpec("active_runtime_diagnostics", "Active diagnostics", "warning"),
+    FieldSpec("image_details", "Image details", "muted"),
+    FieldSpec("volume_collisions", "Volume collisions", "warning"),
+    FieldSpec("invalid_ownership", "Invalid ownership", "warning"),
 )
 _CLEANUP_FIELDS = (
     FieldSpec("status", "Status", "status"),
@@ -200,18 +206,19 @@ _EXTRA_COMMON = (
     FieldSpec("mcp.args", "MCP arguments", "muted"),
     FieldSpec("mcp.direct_url", "MCP URL", "url"),
     FieldSpec("mcp.headers", "MCP headers", "muted"),
+    FieldSpec("logs", "Logs", "muted"),
 )
 
 DEFAULT_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
     "start": _COMMON_FIELDS,
     "restart": _COMMON_FIELDS,
-    "reset": tuple(field for field in _COMMON_FIELDS if field.path != "logs"),
+    "reset": _COMMON_FIELDS,
     "stop": (
         *tuple(
             field
             for field in _COMMON_FIELDS
             if field.path
-            not in {"project", "user", "changed_fields", "reset_scope", "logs"}
+            not in {"project", "user", "changed_fields", "reset_scope"}
         ),
         FieldSpec("container.name", "Container", "muted"),
         FieldSpec("container.id", "Container ID", "muted"),
@@ -228,7 +235,6 @@ DEFAULT_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
             "container.image_status",
             "changed_fields",
             "reset_scope",
-            "logs",
         }
     ),
     "doctor": _DOCTOR_FIELDS,
@@ -237,8 +243,10 @@ DEFAULT_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
 }
 ALLOWED_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
     command: (
-        defaults
-        if command in ("doctor", "cleanup")
+        tuple(dict.fromkeys((*defaults, *_DOCTOR_EXTRA_FIELDS)))
+        if command == "doctor"
+        else defaults
+        if command == "cleanup"
         else tuple(dict.fromkeys((*defaults, *_EXTRA_COMMON)))
     )
     for command, defaults in DEFAULT_FIELDS.items()
@@ -399,12 +407,14 @@ def render_summary(
     for field, value in resolved:
         label = style_text(field.label.ljust(label_width), "label", color, bold=True)
         value_text = _format_value(value)
-        if field.style == "image":
-            rendered_value = _render_image_value(value_text, color)
-        else:
-            role = _value_role(field, value)
-            rendered_value = style_text(value_text, role, color)
-        lines.append(f"{label}  {rendered_value}")
+        role = _value_role(field, value)
+        for index, value_line in enumerate(value_text.splitlines() or [""]):
+            if field.style == "image":
+                rendered_value = _render_image_value(value_line, color)
+            else:
+                rendered_value = style_text(value_line, role, color)
+            rendered_label = label if index == 0 else " " * label_width
+            lines.append(f"{rendered_label}  {rendered_value}")
     return "\n".join(lines)
 
 
@@ -437,10 +447,36 @@ def _format_value(value: Any) -> str:
     return str(value)
 
 
+_HUMAN_STATUSES = {
+    "running": "Running",
+    "ready": "Ready",
+    "started": "Running",
+    "already running": "Running",
+    "restarted": "Running",
+    "reconfigured": "Running",
+    "opened": "Opened",
+    "stopped": "Stopped",
+    "not running": "Not running",
+    "not created": "Not created",
+    "unhealthy": "Unhealthy",
+    "absent": "Absent",
+    "reset": "Reset",
+    "ok": "OK",
+    "partial": "Partial",
+}
+
+
 def _human_status(value: Any) -> Any:
     if not isinstance(value, str):
         return value
     normalized = value.strip().lower().replace("_", " ")
+    return _HUMAN_STATUSES.get(normalized, normalized.capitalize())
+
+
+def _value_role(field: FieldSpec, value: Any) -> str:
+    if field.style != "status":
+        return field.style
+    normalized = str(value).strip().lower().replace("_", " ")
     if normalized in {
         "running",
         "ready",
@@ -449,36 +485,21 @@ def _human_status(value: Any) -> Any:
         "restarted",
         "reconfigured",
         "opened",
+        "ok",
+        "reset",
+        "available locally",
     }:
-        return "Running"
-    if normalized in {
-        "stopped",
-        "not running",
-        "not created",
-        "unhealthy",
-        "absent",
-        "not_created",
-        "not_running",
-    }:
-        return "Not Running"
-    return value
-
-
-def _value_role(field: FieldSpec, value: Any) -> str:
-    if field.style != "status":
-        return field.style
-    normalized = str(value).strip().lower().replace("_", " ")
-    if normalized in {"running", "ready", "started", "already running", "restarted", "reconfigured", "opened", "ok"}:
         return "success"
     if normalized in {
         "stopped",
         "not running",
         "not created",
         "absent",
-        "unhealthy",
+        "partial",
+        "not available locally",
     }:
         return "warning"
-    if normalized in {"error", "failed"}:
+    if normalized in {"error", "failed", "unhealthy", "dead"}:
         return "error"
     return "primary"
 

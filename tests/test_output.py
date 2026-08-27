@@ -61,16 +61,25 @@ def test_summary_uses_relevant_fields_in_stable_order() -> None:
     ]
 
 
-def test_summary_humanizes_runtime_status_values() -> None:
-    payload = {
-        "status": "not_running",
-        "data_volume": "localcloud-data",
-        "config": "localcloud.yaml",
-        "container": {"state": "stopped", "url": "http://127.0.0.1:49080"},
-    }
-    lines = render_summary("status", payload).splitlines()
-    assert lines[0] == "Status       Not Running"
-    assert "State" not in lines
+@pytest.mark.parametrize(
+    ("command", "status", "expected"),
+    [
+        ("status", "not_running", "Not running"),
+        ("status", "not_created", "Not created"),
+        ("status", "unhealthy", "Unhealthy"),
+        ("console", "opened", "Opened"),
+        ("reset", "reset", "Reset"),
+        ("doctor", "ok", "OK"),
+        ("cleanup", "partial", "Partial"),
+    ],
+)
+def test_summary_uses_precise_human_status_values(
+    command: str,
+    status: str,
+    expected: str,
+) -> None:
+    lines = render_summary(command, {"status": status}).splitlines()
+    assert lines[0].endswith(expected)
 
 
 @pytest.mark.parametrize(
@@ -146,6 +155,28 @@ def test_summary_adds_nested_fields_in_requested_order_and_deduplicates() -> Non
         "Container    localcloud",
         "MCP URL      http://127.0.0.1:49080/mcp",
     ]
+
+
+def test_start_summary_omits_streamed_logs_unless_requested() -> None:
+    payload = {**PAYLOAD, "logs": "boot line 1\nboot line 2"}
+
+    assert not any(
+        line.startswith("Logs") for line in render_summary("start", payload).splitlines()
+    )
+
+    lines = render_summary("start", payload, ["logs"]).splitlines()
+    assert lines[-2].endswith("boot line 1")
+    assert lines[-1] == " " * 13 + "boot line 2"
+
+
+def test_doctor_allows_additional_diagnostic_fields() -> None:
+    lines = render_summary(
+        "doctor",
+        {"status": "ok", "active_runtime": {"state": "current"}},
+        ["active_runtime"],
+    ).splitlines()
+
+    assert lines[-1] == 'Active runtime  {"state":"current"}'
 
 
 def test_summary_rejects_unknown_field_with_valid_choices() -> None:

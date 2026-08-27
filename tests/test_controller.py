@@ -356,6 +356,7 @@ def _record(
         state=state,
         health="healthy" if state == "running" else None,
         url="http://127.0.0.1:49080",
+        connect_url="http://127.0.0.1:49080",
         endpoint_map={"24080": 49080},
         network_name=config.network_name or "localcloud",
         mount={
@@ -917,6 +918,23 @@ def test_restart_replaces_container_when_local_image_id_is_updated(
     assert runtime.restarts == 0
 
 
+def test_restart_replaces_container_when_services_override_changes(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    original = _config(tmp_path, paths=paths)
+    runtime.record = _record(original)
+    changed = _config(tmp_path, paths=paths, services=["bigquery"])
+
+    result = controller.restart(changed)
+
+    assert result["status"] == "reconfigured"
+    assert result["changed_fields"] == ["services"]
+    assert runtime.removes == [False]
+    assert runtime.creates == 1
+    assert runtime.restarts == 0
+
+
 def test_start_attaches_to_running_runtime_without_replacing_when_local_image_differs(
     tmp_path: Path,
 ) -> None:
@@ -1129,6 +1147,7 @@ def test_target_returns_only_connection_context(tmp_path: Path) -> None:
 
     assert result == {
         "url": "http://127.0.0.1:49080",
+        "connect_url": "http://127.0.0.1:49080",
         "endpoint_map": {"24080": 49080},
     }
 

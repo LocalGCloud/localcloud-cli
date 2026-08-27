@@ -295,6 +295,7 @@ def _add_external(
     mount: dict[str, Any] | None = None,
     ports: dict[str, Any] | None = None,
     network: str = "external-network",
+    environment: dict[str, str] | None = None,
 ) -> Resource:
     if data_volume not in client.volumes.values:
         client.volumes.add(Resource(data_volume))
@@ -310,7 +311,7 @@ def _add_external(
             mounts=[mount or _volume_mount(data_volume)],
             ports=_ports() if ports is None else ports,
             networks=[network],
-            environment={"LOCALCLOUD_DATA_DIR": DATA_MOUNT_DESTINATION},
+            environment={"LOCALCLOUD_DATA_DIR": DATA_MOUNT_DESTINATION, **(environment or {})},
         )
     )
 
@@ -372,9 +373,22 @@ def test_managed_create_uses_only_controller_owned_bootstrap_environment(
     )
 
 
+def test_managed_create_propagates_explicit_services_override(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path, services=["gcs", "pubsub"])
+
+    runtime.create(config)
+    environment = client.containers.run_calls[0]["environment"]
+
+    assert environment["LOCALCLOUD_SERVICES"] == "gcs,pubsub"
 
 
-def test_selected_config_is_mounted_read_only_without_freezing_server_values(
+
+
+def test_selected_config_is_mounted_read_only_and_forwards_resolved_services(
     tmp_path: Path,
     ready_runtime: tuple[DockerRuntime, Client],
 ) -> None:
@@ -402,8 +416,14 @@ def test_selected_config_is_mounted_read_only_without_freezing_server_values(
     mounted = run["volumes"][str(config_path.resolve())]
     assert mounted == {"bind": CONFIG_MOUNT_DESTINATION, "mode": "ro"}
     assert run["environment"]["LOCALCLOUD_CONFIG"] == CONFIG_MOUNT_DESTINATION
+    # project/user are request-scoped, not container-scoped, so they are never
+    # frozen into the container even though the mounted file carries them.
     assert "LOCALCLOUD_PROJECT" not in run["environment"]
-    assert "LOCALCLOUD_SERVICES" not in run["environment"]
+    # services.enabled IS container-scoped (it picks which emulators the
+    # process starts), so the resolved list is forwarded like every other
+    # host.*-tier setting (memory, image, tls) and participates in the
+    # config hash that decides whether a change requires recreation.
+    assert run["environment"]["LOCALCLOUD_SERVICES"] == "gcs"
     assert SERVICES_LABEL not in run["labels"]
     assert "super-secret" not in run["labels"][CONFIG_LABEL]
     assert "Local Buckets" not in run["labels"][CONFIG_LABEL]
@@ -531,6 +551,48 @@ def test_manual_container_is_adopted_by_exact_mount_and_id(
         "read_write": True,
     }
     assert external.labels == labels_before
+
+
+def test_resolve_reports_https_connect_url_when_tls_enabled(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    _add_external(
+        client,
+        ports={
+            "24080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49080"}],
+            "24443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49443"}],
+        },
+        environment={"LOCALCLOUD_TLS_ENABLED": "true"},
+    )
+
+    record = runtime.resolve(_config(tmp_path))
+
+    assert record is not None
+    assert record.url == "http://127.0.0.1:49080"
+    assert record.connect_url == "https://127.0.0.1:49443"
+
+
+def test_resolve_connect_url_matches_http_url_when_tls_disabled(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    _add_external(
+        client,
+        ports={
+            "24080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49080"}],
+            "24443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49443"}],
+        },
+        environment={"LOCALCLOUD_TLS_ENABLED": "false"},
+    )
+
+    record = runtime.resolve(_config(tmp_path))
+
+    assert record is not None
+    assert record.url == "http://127.0.0.1:49080"
+    assert record.connect_url == "http://127.0.0.1:49080"
 
 
 def test_resolve_filters_by_volume_and_inspects_only_candidates(
@@ -1488,6 +1550,30 @@ def test_format_docker_run_produces_valid_command_string() -> None:
     assert "-e LOCALCLOUD_PROJECT=default" in cmd
     assert "-l managed=true" in cmd
     assert cmd.endswith("jaysen2apache/localcloud:latest")
+
+
+def test_format_docker_run_collapses_contiguous_port_ranges() -> None:
+    from localcloud_cli.docker_runtime import _format_docker_run
+
+    ports = {
+        f"{port}/tcp": ("127.0.0.1", port) for port in range(24080, 24094)
+    }
+    ports["24443/tcp"] = ("127.0.0.1", 24443)
+
+    cmd = _format_docker_run(
+        image="jaysen2apache/localcloud:latest",
+        name="localcloud",
+        network_name="localcloud-net",
+        mem_limit="4g",
+        volumes=None,
+        ports=ports,
+        environment=None,
+        labels=None,
+    )
+    assert "-p 127.0.0.1:24080-24093:24080-24093/tcp" in cmd
+    assert "-p 127.0.0.1:24443:24443/tcp" in cmd
+    assert "24081/tcp" not in cmd
+    assert cmd.count("-p ") == 2
 
 
 def test_docker_runtime_emits_debug_commands_to_observer(

@@ -37,6 +37,8 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+[tool.setuptools.package-data]
+localcloud_cli = ["defaults/*.yaml"]
 [tool.setuptools.dynamic]
 version = {attr = "localcloud_cli.__version__"}
 

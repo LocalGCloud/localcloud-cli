@@ -232,6 +232,7 @@ def runtime_settings(config: LocalCloudConfig) -> dict[str, Any]:
         "memory": config.memory,
         "docker_socket": config.docker_socket,
         "transparent_network": config.transparent_network,
+        "services": list(config.services) if config.services is not None else None,
         "environment": dict(config.environment),
         "container_name": config.container_name,
         "network_name": config.network_name,
@@ -679,6 +680,10 @@ def load_config(
     user: str | None = None,
     container_name: str | None = None,
     network_name: str | None = None,
+    tls: bool | None = None,
+    memory: str | None = None,
+    image: str | None = None,
+    services: list[str] | str | None = None,
     paths: HostPaths | None = None,
     active_runtime: ActiveRuntime | None | object = _ACTIVE_RUNTIME_UNSET,
     active_diagnostics: tuple[dict[str, Any], ...] = (),
@@ -747,8 +752,10 @@ def load_config(
         if configured_user is not None
         else DEFAULT_USER
     )
-    services = (
-        _services(services_section["enabled"])
+    selected_services = (
+        _services(services)
+        if services is not None
+        else _services(services_section["enabled"])
         if "enabled" in services_section
         else None
     )
@@ -761,21 +768,25 @@ def load_config(
             "host.data must be 'persistent' or 'ephemeral'", value=data
         )
 
-    configured_image = host.get("image")
-    if configured_image is not None:
-        image = _non_blank_string("host.image", configured_image)
+    if image is not None:
+        image = _non_blank_string("host.image", image)
     else:
-        image = os.environ.get("LOCALCLOUD_IMAGE")
-        if (
-            image is None
-            and active is not None
-            and active.data_volume == selected_data_volume
-        ):
-            image = active.image
-        image = _non_blank_string("host.image", image or DEFAULT_IMAGE)
+        configured_image = host.get("image")
+        if configured_image is not None:
+            image = _non_blank_string("host.image", configured_image)
+        else:
+            image = os.environ.get("LOCALCLOUD_IMAGE")
+            if (
+                image is None
+                and active is not None
+                and active.data_volume == selected_data_volume
+            ):
+                image = active.image
+            image = _non_blank_string("host.image", image or DEFAULT_IMAGE)
 
     memory = _non_blank_string(
-        "host.memory", host_value("memory", DEFAULT_MEMORY)
+        "host.memory",
+        memory if memory is not None else host_value("memory", DEFAULT_MEMORY),
     )
     docker_socket = _boolean(
         "host.docker_socket", host_value("docker_socket", False)
@@ -785,6 +796,10 @@ def load_config(
         host_value("transparent_network", False),
     )
     environment = _environment(host_value("environment", {}))
+    if tls is not None:
+        environment["LOCALCLOUD_TLS_ENABLED"] = "true" if tls else "false"
+    else:
+        environment.setdefault("LOCALCLOUD_TLS_ENABLED", "true")
 
     defaults = default_resource_names(selected_data_volume)
     active_for_volume = (
@@ -826,7 +841,7 @@ def load_config(
         config_path=config_path,
         project=selected_project,
         user=selected_user,
-        services=services,
+        services=selected_services,
         seed_path=seed_path,
         seed_yaml=seed_yaml,
         data=str(data),

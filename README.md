@@ -127,15 +127,24 @@ lc start
 lc start --project-id my-project
 lc start --data-volume isolated-data --user alice
 lc start ./custom-config.yaml
+lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firestore
 ```
 
 - Reuses existing running containers attached to the same volume.
 - Automatically creates project contexts if they do not exist yet.
 - Waits up to 60 seconds for container health and service readiness before returning.
+- TLS is enabled by default; pass `--no-tls` to disable it, or `--tls` to
+  re-enable it explicitly. The flag overrides any
+  `host.environment.LOCALCLOUD_TLS_ENABLED` set in `localcloud.yaml`.
+- `--memory` overrides `host.memory` (default: `4g`).
+- `--image` overrides `host.image` and `LOCALCLOUD_IMAGE` (default:
+  `jaysen2apache/localcloud:latest`).
+- `--services` overrides `services.enabled` with a comma-separated list of
+  service IDs, or `default` to reset to the built-in set.
 
 ### `status`
 
-Inspects runtime health, Docker container state, endpoints, and active context.
+Inspects runtime health, Docker container state, endpoints, and ownership.
 
 ```sh
 lc status
@@ -189,6 +198,12 @@ lc restart
 
 # Pull the latest container image from registry and restart with updated image
 lc restart --pull
+
+# Restart without TLS
+lc restart --no-tls
+
+# Restart with a different memory limit and service set
+lc restart --memory 8g --services gcs,pubsub
 ```
 ### `reset`
 
@@ -506,43 +521,56 @@ or instruct your agent:
 
 ### Interactive Terminals
 
-On interactive TTYs, LocalCloud displays structured 2-column OMP banners with 4-color Google Cloud artwork, active context details, and lifecycle spinners.
+Interactive commands display lifecycle spinners and elapsed time. `doctor`,
+`status`, and `reset` also display the LocalCloud artwork and resolved context;
+`start`, `restart`, and `stop` keep progress compact while logs stream.
 
 ### Machine-Readable JSON (`--verbose`)
 
-For CI/CD pipelines and scripts, pass `--verbose` to obtain complete structured JSON outputs:
+For CI/CD pipelines and scripts, `doctor`, `cleanup`, `start`, `restart`,
+`reset`, `stop`, `status`, `logs`, and `console` accept `--verbose` and return
+their complete structured result as JSON. For example, this command selects a
+few fields from the complete status payload:
 
 ```sh
-lc status --verbose
+lc status --verbose | jq '{
+  status,
+  data_volume,
+  container: {
+    name: .container.name,
+    state: .container.state,
+    url: .container.url
+  },
+  services
+}'
 ```
 
 ```json
 {
   "status": "running",
   "data_volume": "localcloud-data",
-  "project": "local-gcp-project",
-  "user": "local-developer",
   "container": {
-    "id": "7a8b9c0d1e2f",
     "name": "localcloud",
     "state": "running",
     "url": "http://127.0.0.1:49080"
   },
-  "services": "default",
-  "mcp": {
-    "command": "localcloud",
-    "args": ["mcp", "--data-volume", "localcloud-data"],
-    "direct_url": "http://127.0.0.1:49080/mcp"
-  }
+  "services": ["gcs", "pubsub"]
 }
 ```
 
-### Selective Fields (`--fields`)
+`status` describes Docker runtime state and does not include request-scoped
+project, user, or MCP configuration. Use `lc start --verbose` for the complete
+project and MCP connection result. `env` uses `--format json` for JSON output;
+`mcp` reserves stdout for the stdio protocol.
 
-Extract specific fields directly into standard tabular summary format:
+### Additional Summary Fields (`--fields`)
+
+`doctor`, `start`, `restart`, `reset`, `stop`, and `status` accept `--fields`
+to append supported JSON paths to their concise summary:
 
 ```sh
 lc start --fields container.name,mcp.direct_url
+lc doctor --fields active_runtime,volume_collisions
 ```
 
 ### Color Mode Control

@@ -11,6 +11,8 @@ import inspect
 from . import __version__
 from .config import (
     DEFAULT_DATA_VOLUME,
+    DEFAULT_IMAGE,
+    DEFAULT_MEMORY,
     DEFAULT_PROJECT,
     DEFAULT_USER,
     HostPaths,
@@ -134,30 +136,64 @@ class _ExecutionObserver:
         self.reporter.update(message)
 
     def config(self, command: str, config: LocalCloudConfig, args: argparse.Namespace) -> None:
-        if command not in {"start", "restart", "reset", "stop", "status"}:
+        if command not in {
+            "start",
+            "restart",
+            "reset",
+            "stop",
+            "status",
+            "logs",
+            "console",
+            "env",
+        }:
             return
         if command == "start":
-            self.reporter.update(
-                f"Checking data volume {config.data_volume!r} for project {config.project!r}…"
+            message = (
+                "Starting LocalCloud container on data volume: "
+                f"{config.data_volume!r}…"
             )
-            return
-        if command == "reset":
-            action = (
-                "Resetting all data for"
-                if args.all_projects
-                else "Resetting project data in"
+        elif command == "restart":
+            message = (
+                "Restarting LocalCloud container on data volume: "
+                f"{config.data_volume!r}…"
             )
         elif command == "stop":
-            action = "Stopping"
+            message = (
+                "Stopping LocalCloud container on data volume: "
+                f"{config.data_volume!r}…"
+            )
         elif command == "status":
-            action = "Inspecting"
+            message = (
+                "Checking LocalCloud container on data volume: "
+                f"{config.data_volume!r}…"
+            )
+        elif command == "logs":
+            unit = "line" if args.tail == 1 else "lines"
+            message = (
+                f"Reading {args.tail} recent log {unit} from data volume: "
+                f"{config.data_volume!r}…"
+            )
+        elif command == "console":
+            message = (
+                f"Opening LocalCloud console for project {config.project!r} "
+                f"on data volume: {config.data_volume!r}…"
+            )
+        elif command == "env":
+            message = (
+                f"Generating {args.format} SDK configuration for project "
+                f"{config.project!r}…"
+            )
+        elif args.all_projects:
+            message = (
+                "Resetting all LocalCloud data on data volume: "
+                f"{config.data_volume!r}…"
+            )
         else:
-            action = "Restarting"
-        message = (
-            f"{action} data volume {config.data_volume!r} "
-            f"for project {config.project!r}…"
-        )
-        if command in {"restart", "stop"}:
+            message = (
+                f"Resetting project {config.project!r} on data volume: "
+                f"{config.data_volume!r}…"
+            )
+        if command not in {"reset", "status"}:
             self.reporter.update(message)
             return
         services: str | tuple[str, ...] = config.services or "default"
@@ -172,11 +208,10 @@ class _ExecutionObserver:
         self.reporter.update(message, panel)
 
     def starting(self, config: LocalCloudConfig) -> None:
-        message = (
-            f"Starting data volume {config.data_volume!r} "
-            f"for project {config.project!r}…"
+        self.reporter.update(
+            "Starting LocalCloud container on data volume: "
+            f"{config.data_volume!r}…"
         )
-        self.reporter.update(message)
 
     def doctor(self, args: argparse.Namespace) -> None:
         data_volume = getattr(args, "data_volume", None) or DEFAULT_DATA_VOLUME
@@ -202,7 +237,7 @@ class _ExecutionObserver:
             data="persistent",
             config=config_path,
         )
-        self.reporter.update("Inspecting Docker and legacy LocalCloud state…", panel)
+        self.reporter.update("Checking Docker and LocalCloud state…", panel)
 
     def runtime_logs(self, logs: str) -> None:
         if not logs or logs.startswith("<logs unavailable"):
@@ -263,10 +298,14 @@ def main(argv: list[str] | None = None) -> int:
         reporter.start(_initial_task(args))
     try:
         result = _execute(args, observer=_ExecutionObserver(reporter, debug=debug))
+        failure_message = _result_failure_message(args, result)
         if reports_progress:
-            reporter.succeed(_success_message(args, result))
+            if failure_message is None:
+                reporter.succeed(_success_message(args, result))
+            else:
+                reporter.fail(failure_message)
         _print_result(args, result, fields)
-        return 0
+        return 1 if failure_message is not None else 0
     except HostError as error:
         if reports_progress:
             reporter.fail(error.message)
@@ -343,15 +382,29 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
             return run(config)
         target = controller.target(config)
         if args.command == "console":
-            url = f"{target['url']}?{urlencode({'project': config.project, 'user': config.user})}"
-            webbrowser.open(url)
-            return {
-                "status": "opened",
+            connect_url = target.get("connect_url") or target["url"]
+            url = f"{connect_url}?{urlencode({'project': config.project, 'user': config.user})}"
+            details = {
                 "data_volume": config.data_volume,
                 "project": config.project,
                 "user": config.user,
                 "url": url,
             }
+            try:
+                opened = webbrowser.open(url)
+            except Exception as error:
+                raise HostError(
+                    "console_open_failed",
+                    "Could not open the LocalCloud console automatically; open the URL manually",
+                    {**details, "cause": str(error)},
+                ) from error
+            if not opened:
+                raise HostError(
+                    "console_open_failed",
+                    "Could not open the LocalCloud console automatically; open the URL manually",
+                    details,
+                )
+            return {"status": "opened", **details}
         if args.command == "env":
             from .endpoints import environment_config
 
@@ -378,6 +431,10 @@ def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConf
         "user": getattr(args, "user", None),
         "container_name": getattr(args, "container_name", None),
         "network_name": getattr(args, "network_name", None),
+        "tls": getattr(args, "tls", None),
+        "memory": getattr(args, "memory", None),
+        "image": getattr(args, "image", None),
+        "services": getattr(args, "services", None),
         "skip_validation": getattr(args, "skip_config_validation", False),
     }
     paths = getattr(controller, "paths", None) or HostPaths.from_environment()
@@ -453,27 +510,35 @@ def _print_error(args: argparse.Namespace, error: HostError) -> None:
 
 
 def _initial_task(args: argparse.Namespace) -> str:
-    data_volume = getattr(args, "data_volume", None) or DEFAULT_DATA_VOLUME
     command = args.command
     if command == "doctor":
-        return "Inspecting Docker and legacy LocalCloud state…"
+        return "Checking Docker and LocalCloud state…"
     if command == "cleanup":
-        return "Checking for cleanup candidates…" if args.dry_run else "Cleaning up LocalCloud state…"
-    if command in {"start", "restart"}:
-        return f"Preparing LocalCloud {command}…"
+        return (
+            "Checking LocalCloud cleanup candidates…"
+            if args.dry_run
+            else "Cleaning up LocalCloud state…"
+        )
+    if command == "start":
+        return "Preparing to start LocalCloud…"
+    if command == "restart":
+        return "Preparing to restart LocalCloud…"
     if command == "reset":
-        scope = "all data" if args.all_projects else "the selected project"
-        return f"Preparing to reset {scope}…"
+        return (
+            "Preparing to reset all LocalCloud data…"
+            if args.all_projects
+            else "Preparing to reset project data…"
+        )
     if command == "stop":
-        return f"Stopping runtime on data volume {data_volume!r}…"
+        return "Preparing to stop LocalCloud…"
     if command == "status":
-        return f"Inspecting runtime on data volume {data_volume!r}…"
+        return "Preparing to check LocalCloud status…"
     if command == "logs":
-        return f"Reading {args.tail} recent log lines from data volume {data_volume!r}…"
+        return "Preparing to read LocalCloud logs…"
     if command == "console":
-        return "Locating the selected project console…"
+        return "Preparing to open the LocalCloud console…"
     if command == "env":
-        return f"Generating {args.format} SDK configuration…"
+        return f"Preparing {args.format} SDK configuration…"
     return f"Running LocalCloud {command}…"
 
 
@@ -502,7 +567,17 @@ def _success_message(args: argparse.Namespace, result: Any) -> str:
     if command == "stop":
         return "LocalCloud runtime stopped" if status != "not_running" else "LocalCloud runtime was not running"
     if command == "status":
-        return f"LocalCloud runtime is {status or 'inspected'}"
+        if status == "not_created":
+            data_volume = result.get("data_volume")
+            if data_volume:
+                return (
+                    "No LocalCloud container exists on data volume: "
+                    f"{data_volume!r}"
+                )
+            return "No LocalCloud container exists for the selected data volume"
+        if status in {"running", "stopped", "unhealthy"}:
+            return f"LocalCloud container is {status}"
+        return "LocalCloud status checked"
     if command == "logs":
         return "LocalCloud logs loaded"
     if command == "console":
@@ -510,6 +585,18 @@ def _success_message(args: argparse.Namespace, result: Any) -> str:
     if command == "env":
         return "SDK configuration generated"
     return f"LocalCloud {command} completed"
+
+
+def _result_failure_message(
+    args: argparse.Namespace, result: Any
+) -> str | None:
+    if (
+        args.command == "cleanup"
+        and isinstance(result, dict)
+        and result.get("status") == "partial"
+    ):
+        return "LocalCloud cleanup completed with failures"
+    return None
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -553,7 +640,7 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Inspect what would be removed without deleting resources",
     )
-    _add_output_options(cleanup, fields=True)
+    _add_output_options(cleanup, fields=False)
 
     lifecycle_help = {
         "start": "Start the runtime selected by data volume and prepare a project",
@@ -610,6 +697,46 @@ def _parser() -> argparse.ArgumentParser:
                     else "Duration in seconds to tail logs after restart (default: 5; omit value for continuous streaming)"
                 ),
             )
+            command.add_argument(
+                "--tls",
+                action=argparse.BooleanOptionalAction,
+                default=None,
+                help=(
+                    "Enable TLS on the LocalCloud runtime (default: enabled). "
+                    "Pass --no-tls to disable; overrides "
+                    "host.environment.LOCALCLOUD_TLS_ENABLED in localcloud.yaml "
+                    "when set"
+                ),
+            )
+            command.add_argument(
+                "--memory",
+                default=None,
+                metavar="LIMIT",
+                help=(
+                    f"Docker memory limit, e.g. 4g or 512m (default: {DEFAULT_MEMORY}). "
+                    "Overrides host.memory in localcloud.yaml when set"
+                ),
+            )
+            command.add_argument(
+                "--image",
+                default=None,
+                metavar="IMAGE",
+                help=(
+                    f"Docker image to run (default: {DEFAULT_IMAGE}). Overrides "
+                    "host.image in localcloud.yaml and LOCALCLOUD_IMAGE when set"
+                ),
+            )
+            command.add_argument(
+                "--services",
+                default=None,
+                type=_services_argument,
+                metavar="ID[,ID...]|default",
+                help=(
+                    "Comma-separated service IDs to enable, or 'default' to reset "
+                    "to the built-in set. Overrides services.enabled in "
+                    "localcloud.yaml when set"
+                ),
+            )
         if name == "reset":
             command.add_argument(
                 "--all-projects",
@@ -654,7 +781,7 @@ def _parser() -> argparse.ArgumentParser:
         description="Open the web console for the selected project and user.",
     )
     _add_context(console)
-    _add_output_options(console, fields=True)
+    _add_output_options(console, fields=False)
 
     env_command = commands.add_parser(
         "env",
@@ -668,7 +795,7 @@ def _parser() -> argparse.ArgumentParser:
         default="shell",
         help="Output format (default: shell)",
     )
-    _add_output_options(env_command, fields=True)
+    _add_debug_option(env_command)
 
     mcp = commands.add_parser(
         "mcp",
@@ -676,7 +803,7 @@ def _parser() -> argparse.ArgumentParser:
         description="Run the stdio MCP bridge for the selected runtime.",
     )
     _add_context(mcp)
-    _add_output_options(mcp, fields=False)
+    _add_debug_option(mcp)
     return parser
 
 
@@ -700,10 +827,14 @@ def _add_output_options(parser: argparse.ArgumentParser, *, fields: bool) -> Non
             action="store_true",
             help="Print the complete JSON result instead of the command payload",
         )
+    _add_debug_option(parser)
+
+
+def _add_debug_option(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Print debug information including Docker commands executed",
+        help="Show diagnostic details and Docker commands when available",
     )
 
 
@@ -769,6 +900,17 @@ def _non_negative_int(value: str) -> int:
     if parsed < 0:
         raise argparse.ArgumentTypeError("must be zero or greater")
     return parsed
+
+
+def _services_argument(value: str) -> list[str] | str:
+    if value.strip().lower() == "default":
+        return "default"
+    services = [item.strip() for item in value.split(",") if item.strip()]
+    if not services:
+        raise argparse.ArgumentTypeError(
+            "must be 'default' or a comma-separated list of service IDs"
+        )
+    return services
 
 
 if __name__ == "__main__":

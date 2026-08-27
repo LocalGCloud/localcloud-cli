@@ -278,8 +278,11 @@ def test_runtime_settings_change_hash(tmp_path: Path) -> None:
     )
     memory = load_config(directory=tmp_path, paths=paths)
 
+    services = load_config(directory=tmp_path, paths=paths, services=["gcs"])
+
     assert first.config_hash != named.config_hash
     assert first.config_hash != memory.config_hash
+    assert first.config_hash != services.config_hash
 
 
 def test_seed_auto_resolves_beside_selected_config(tmp_path: Path) -> None:
@@ -635,7 +638,7 @@ def test_null_host_and_members_fall_back_to_cli_defaults(tmp_path: Path) -> None
     assert selected.image == DEFAULT_IMAGE
     assert selected.memory == "4g"
     assert selected.docker_socket is False
-    assert selected.environment == {}
+    assert selected.environment == {"LOCALCLOUD_TLS_ENABLED": "true"}
     assert selected.seed_path == seed
     assert selected.seed_yaml == "services: {}\n"
 
@@ -690,6 +693,84 @@ def test_host_environment_rejects_controller_owned_config_keys(
     with pytest.raises(HostError) as caught:
         load_config(directory=tmp_path, paths=_paths(tmp_path))
     assert name in caught.value.message
+
+
+def test_tls_enabled_by_default_with_no_config_or_override(tmp_path: Path) -> None:
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
+    assert selected.environment == {"LOCALCLOUD_TLS_ENABLED": "true"}
+
+
+def test_tls_override_false_disables_regardless_of_config(tmp_path: Path) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  environment:\n    LOCALCLOUD_TLS_ENABLED: \"true\"\n",
+        encoding="utf-8",
+    )
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path), tls=False)
+    assert selected.environment == {"LOCALCLOUD_TLS_ENABLED": "false"}
+
+
+def test_tls_override_true_wins_over_config_disabling_it(tmp_path: Path) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  environment:\n    LOCALCLOUD_TLS_ENABLED: \"false\"\n",
+        encoding="utf-8",
+    )
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path), tls=True)
+    assert selected.environment == {"LOCALCLOUD_TLS_ENABLED": "true"}
+
+
+def test_tls_config_value_respected_without_cli_override(tmp_path: Path) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  environment:\n    LOCALCLOUD_TLS_ENABLED: \"false\"\n",
+        encoding="utf-8",
+    )
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
+    assert selected.environment == {"LOCALCLOUD_TLS_ENABLED": "false"}
+
+
+def test_memory_override_wins_over_config(tmp_path: Path) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  memory: 2g\n", encoding="utf-8"
+    )
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path), memory="8g")
+    assert selected.memory == "8g"
+
+
+def test_memory_defaults_to_config_without_cli_override(tmp_path: Path) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  memory: 2g\n", encoding="utf-8"
+    )
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
+    assert selected.memory == "2g"
+
+
+def test_image_override_wins_over_config(tmp_path: Path) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  image: yamlrepo/localcloud:yaml\n", encoding="utf-8"
+    )
+    selected = load_config(
+        directory=tmp_path, paths=_paths(tmp_path), image="clirepo/localcloud:dev"
+    )
+    assert selected.image == "clirepo/localcloud:dev"
+
+
+def test_services_override_wins_over_config(tmp_path: Path) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "services:\n  enabled:\n    - firestore\n", encoding="utf-8"
+    )
+    selected = load_config(
+        directory=tmp_path, paths=_paths(tmp_path), services=["gcs", "pubsub"]
+    )
+    assert selected.services == ("gcs", "pubsub")
+
+
+def test_services_override_default_resets_config_list(tmp_path: Path) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "services:\n  enabled:\n    - firestore\n", encoding="utf-8"
+    )
+    selected = load_config(
+        directory=tmp_path, paths=_paths(tmp_path), services="default"
+    )
+    assert selected.services is None
 
 
 def test_host_localcloud_config_selector_precedes_local_and_remembered(
