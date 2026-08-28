@@ -18,7 +18,7 @@ from localcloud_cli.config import (
     runtime_settings,
 )
 from localcloud_cli.controller import Controller
-from localcloud_cli.docker_runtime import RuntimeRecord
+from localcloud_cli.docker_runtime import DockerRunPlan, RuntimeRecord
 from localcloud_cli.errors import HostError
 
 
@@ -30,7 +30,7 @@ class FakeRuntime:
         self.restarts = 0
         self.stops = 0
         self.removes: list[bool] = []
-        self.purges = 0
+        self.remove_network_calls: list[bool] = []
         self.ready = True
         self.recreation = {
             "container": "managed",
@@ -45,6 +45,8 @@ class FakeRuntime:
         self.preflight_delay = 0.0
         self.readiness_deadlines: list[float | None] = []
         self.prepared_images: list[tuple[Any, bool] | None] = []
+        self.preview_network_exists: list[bool | None] = []
+        self.preview_remove_network: list[bool] = []
         self.wait_error: HostError | None = None
         self.log_calls: list[tuple[LocalCloudConfig, RuntimeRecord, int]] = []
         self.doctor_report: dict[str, Any] = {"status": "ok", "warning": "runtime warning"}
@@ -79,6 +81,7 @@ class FakeRuntime:
         *,
         pull: bool = False,
         observer: Any | None = None,
+        local_only: bool = False,
     ) -> tuple[Any, bool]:
         if self.preflight_delay:
             controller_module.time.sleep(self.preflight_delay)
@@ -90,7 +93,64 @@ class FakeRuntime:
             raise self.preflight_error
         return None, pull
 
+    def plan_run(
+        self,
+        config: LocalCloudConfig,
+        _image: Any,
+        *,
+        replacing: RuntimeRecord | None = None,
+    ) -> DockerRunPlan:
+        _ = replacing
+        return DockerRunPlan(
+            image=config.image,
+            name=config.container_name,
+            network_name=config.network_name,
+            mem_limit=config.memory,
+            volumes={
+                config.data_volume: {
+                    "bind": "/var/lib/localcloud",
+                    "mode": "rw",
+                }
+            },
+            ports={
+                "24080/tcp": ("127.0.0.1", 24080),
+                "24081/tcp": ("127.0.0.1", 24081),
+            },
+            environment=config.environment,
+            labels={},
+        )
 
+    def inspect_run_plan(
+        self,
+        config: LocalCloudConfig,
+        _current: RuntimeRecord,
+    ) -> DockerRunPlan:
+        return self.plan_run(config, None)
+
+
+    def preview_create_commands(
+        self,
+        _config: LocalCloudConfig,
+        run_plan: DockerRunPlan,
+        *,
+        volume_exists: bool | None = None,
+        network_exists: bool | None = None,
+    ) -> tuple[str, ...]:
+        self.preview_network_exists.append(network_exists)
+        _ = volume_exists, network_exists
+        return (run_plan.command(),)
+
+    def preview_remove_commands(
+        self,
+        _config: LocalCloudConfig,
+        current: RuntimeRecord,
+        *,
+        remove_volume: bool,
+        remove_network: bool = True,
+    ) -> tuple[str, ...]:
+        self.preview_remove_network.append(remove_network)
+        suffix = " --volume" if remove_volume else ""
+        return (f"docker rm {current.container_id}{suffix}",)
 
     def create(
         self,
@@ -100,6 +160,7 @@ class FakeRuntime:
         readiness_deadline: float | None = None,
         observer: Any | None = None,
         prepared_image: tuple[Any, bool] | None = None,
+        run_plan: DockerRunPlan | None = None,
     ) -> RuntimeRecord:
         self.creates += 1
         self.create_pulls.append(pull)
@@ -142,7 +203,11 @@ class FakeRuntime:
         return self.record
 
     def stop(
-        self, _config: LocalCloudConfig, current: RuntimeRecord
+        self,
+        _config: LocalCloudConfig,
+        current: RuntimeRecord,
+        *,
+        observer: Any | None = None,
     ) -> RuntimeRecord:
         self.stops += 1
         self.record = replace(current, state="exited", health=None)
@@ -154,12 +219,11 @@ class FakeRuntime:
         _current: RuntimeRecord,
         *,
         remove_volume: bool,
+        remove_network: bool = True,
+        observer: Any | None = None,
     ) -> None:
         self.removes.append(remove_volume)
-        self.record = None
-
-    def purge(self, _config: LocalCloudConfig) -> None:
-        self.purges += 1
+        self.remove_network_calls.append(remove_network)
         self.record = None
 
     def recreation_ownership(
@@ -393,9 +457,13 @@ def _controller(tmp_path: Path) -> tuple[Controller, FakeRuntime, HostPaths]:
 class _RuntimeObserver:
     def __init__(self) -> None:
         self.logs: list[str] = []
+        self.debug_messages: list[str] = []
 
     def runtime_logs(self, value: str) -> None:
         self.logs.append(value)
+
+    def debug(self, value: str) -> None:
+        self.debug_messages.append(value)
 
 
 def test_start_creates_runtime_project_and_active_record(tmp_path: Path) -> None:
@@ -449,6 +517,28 @@ def test_start_reports_docker_logs_to_observer(tmp_path: Path) -> None:
     assert result["logs"] == "tail=20"
 
 
+def test_start_debug_emits_one_copyable_ranged_run_command(
+    tmp_path: Path,
+) -> None:
+    controller, _runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    observer = _RuntimeObserver()
+
+    controller.start(config, observer=observer)
+
+    commands = [
+        message
+        for message in observer.debug_messages
+        if message.startswith("docker run ")
+    ]
+    assert len(commands) == 1
+    assert "24080-24081:24080-24081/tcp" in commands[0]
+    assert not any(
+        message.startswith(("Lifecycle action", "Published ports"))
+        for message in observer.debug_messages
+    )
+
+
 def test_restart_reports_docker_logs_to_observer(tmp_path: Path) -> None:
     controller, runtime, paths = _controller(tmp_path)
     _ = paths
@@ -465,6 +555,19 @@ def test_restart_reports_docker_logs_to_observer(tmp_path: Path) -> None:
     assert observer.logs == ["tail=12"]
     # _runtime_logs uses tail=20 for the result dict.
     assert result["logs"] == "tail=20"
+
+
+def test_restart_replacement_reports_runtime_logs_once(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    observer = _RuntimeObserver()
+
+    result = controller.restart(config, pull=True, observer=observer)
+
+    assert isinstance(result, dict)
+    assert result["status"] == "restarted"
+    assert observer.logs == ["tail=12"]
 
 
 def test_start_adopts_attached_container_without_reconfiguration(
@@ -810,6 +913,24 @@ def test_managed_container_on_attached_volume_can_be_reconfigured(
     assert runtime.creates == 1
 
 
+def test_reconfigure_with_unchanged_network_name_never_tears_down_network(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    original = _config(tmp_path, paths=paths)
+    runtime.record = _record(original)
+    changed = _config(tmp_path, paths=paths, yaml="host:\n  memory: 8g\n")
+
+    result = controller.start(changed)
+
+    # A memory change is unrelated to the network - `docker network create`
+    # never varies with it, so the still-valid network must be left alone
+    # instead of being torn down and recreated.
+    assert result["status"] == "reconfigured"
+    assert runtime.remove_network_calls == [False]
+    assert runtime.preview_network_exists[-1] is True
+
+
 def test_reconfigure_to_ephemeral_preserves_existing_persistent_volume(
     tmp_path: Path,
 ) -> None:
@@ -1015,21 +1136,42 @@ def test_reset_all_rejects_attached_resources_before_mutation(
         controller.reset(config, all_projects=True)
 
     assert caught.value.code == "ownership_forbidden"
-    assert runtime.purges == 0
+    assert runtime.removes == []
     assert runtime.creates == 0
 
 
-def test_reset_all_recreates_fully_managed_runtime(tmp_path: Path) -> None:
+def test_reset_all_refuses_and_prints_manual_volume_steps(tmp_path: Path) -> None:
     controller, runtime, paths = _controller(tmp_path)
     config = _config(tmp_path, paths=paths)
     runtime.record = _record(config)
 
-    result = controller.reset(config, all_projects=True)
+    with pytest.raises(HostError) as caught:
+        controller.reset(config, all_projects=True)
 
-    assert result["status"] == "reset"
-    assert result["reset_scope"] == "all_projects"
-    assert runtime.purges == 1
-    assert runtime.creates == 1
+    assert caught.value.code == "manual_volume_removal_required"
+    steps = caught.value.details["steps"]
+    assert any(
+        line == f"docker volume rm -f {config.data_volume}" for line in steps
+    )
+    assert any(line.startswith("localcloud start ") for line in steps)
+    assert runtime.removes == []
+    assert runtime.creates == 0
+
+
+def test_reset_all_dry_run_renders_manual_steps_without_mutating(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+
+    plan = controller.reset(config, all_projects=True, dry_run=True)
+
+    assert isinstance(plan, str)
+    assert "# action: reset-all" in plan
+    assert f"docker volume rm -f {config.data_volume}" in plan
+    assert runtime.removes == []
+    assert runtime.creates == 0
 
 
 def test_selected_project_reset_uses_attached_runtime(tmp_path: Path) -> None:
@@ -1417,3 +1559,144 @@ def test_start_when_already_running_skips_tailing_and_observer_starting(
     assert observer.started_calls == 0
     assert observer.logs == []
     assert result.get("logs") is None
+
+
+def test_start_dry_run_renders_exact_run_without_mutating(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+
+    result = controller.start(config, dry_run=True)
+
+    assert isinstance(result, str)
+    assert "# action: create" in result
+    assert "docker run -d --name localcloud" in result
+    assert "-p 127.0.0.1:24080-24081:24080-24081/tcp" in result
+    assert runtime.creates == 0
+    assert runtime.starts == 0
+    assert runtime.removes == []
+    assert not paths.locks.exists()
+    assert load_active_runtime(paths) is None
+
+
+def test_dry_run_rejects_pull_without_inspecting_or_mutating(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+
+    with pytest.raises(HostError) as caught:
+        controller.start(config, pull=True, dry_run=True)
+
+    assert caught.value.code == "dry_run_pull_conflict"
+    assert runtime.preflights == []
+    assert runtime.creates == 0
+
+
+def test_restart_without_runtime_initializes_status(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+
+    result = controller.restart(config)
+
+    assert isinstance(result, dict)
+    assert result["status"] == "restarted"
+    assert runtime.creates == 1
+
+
+def test_reset_and_stop_dry_runs_do_not_mutate(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+
+    project_plan = controller.reset(config, dry_run=True)
+    all_plan = controller.reset(config, all_projects=True, dry_run=True)
+    runtime.record = replace(
+        runtime.record,
+        data="ephemeral",
+        origin="managed",
+    )
+    stop_plan = controller.stop(config, dry_run=True)
+
+    assert isinstance(project_plan, str)
+    assert "[LocalCloud API] reset project=" in project_plan
+    assert isinstance(all_plan, str)
+    assert "# action: reset-all" in all_plan
+    assert isinstance(stop_plan, str)
+    assert "# action: remove" in stop_plan
+    assert runtime.creates == 0
+    assert runtime.removes == []
+    assert runtime.stops == 0
+
+
+def test_reused_start_debug_reports_copyable_ranged_run_command(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    observer = _RuntimeObserver()
+
+    result = controller.start(config, observer=observer)
+
+    assert isinstance(result, dict)
+    assert result["status"] == "already_running"
+    commands = [
+        message
+        for message in observer.debug_messages
+        if message.startswith("docker run ")
+    ]
+    assert len(commands) == 1
+    assert "24080-24081:24080-24081/tcp" in commands[0]
+
+
+def test_reset_dry_run_plans_managed_unready_restart(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    runtime.ready = False
+
+    plan = controller.reset(config, dry_run=True)
+
+    assert isinstance(plan, str)
+    assert "docker restart -t 20 localcloud" in plan
+    assert runtime.restarts == 0
+
+
+def test_reset_dry_run_rejects_unready_attached_runtime(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(
+        config,
+        origin="attached",
+        ownership={
+            "container": "attached",
+            "network": "attached",
+            "data_volume": "attached",
+        },
+    )
+    runtime.ready = False
+
+    with pytest.raises(HostError) as caught:
+        controller.reset(config, dry_run=True)
+
+    assert caught.value.code == "attached_runtime_unhealthy"
+    assert runtime.restarts == 0
+
+
+def test_replacement_preview_inspects_different_target_network(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    original = _config(tmp_path, paths=paths)
+    runtime.record = _record(original)
+    changed = _config(
+        tmp_path,
+        paths=paths,
+        network_name="localcloud-target-network",
+    )
+
+    plan = controller.start(changed, dry_run=True)
+
+    # Renaming the network is the one case where it genuinely needs to be
+    # torn down and recreated under the new name.
+    assert runtime.preview_remove_network == [True]
+    assert isinstance(plan, str)
+    assert runtime.preview_network_exists[-1] is None

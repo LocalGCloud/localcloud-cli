@@ -15,11 +15,14 @@ usage() {
 Usage:
   ./scripts/release.sh
   ./scripts/release.sh --build-only
-  ./scripts/release.sh --release VERSION
+  ./scripts/release.sh [-f|--force] --release VERSION
 
 Modes:
   --build-only       Build and smoke-test for the current platform.
   --release VERSION  Publish a prepared X.Y.Z version through GitHub Actions.
+
+Options:
+  -f, --force        Replace an existing GitHub release without changing its tag.
 
 With no arguments, the default: build for the current platform.
 EOF
@@ -71,36 +74,46 @@ is_version() {
 
 MODE="build"
 VERSION=""
+FORCE_RELEASE="false"
+BUILD_ONLY="false"
 
-case $# in
-    0)
-        ;;
-    1)
-        case $1 in
-            --build-only)
-                ;;
-            -h | --help)
-                usage
-                exit 0
-                ;;
-            --release)
-                usage_error "--release requires VERSION"
-                ;;
-            *)
-                usage_error "unknown argument: $1"
-                ;;
-        esac
-        ;;
-    2)
-        [ "$1" = "--release" ] || usage_error "unexpected arguments"
-        is_version "$2" || usage_error "release version must have the form X.Y.Z"
-        MODE="release"
-        VERSION=$2
-        ;;
-    *)
-        usage_error "unexpected arguments"
-        ;;
-esac
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        --build-only)
+            [ "$BUILD_ONLY" = "false" ] && [ -z "$VERSION" ] ||
+                usage_error "--build-only cannot be combined with other modes"
+            BUILD_ONLY="true"
+            shift
+            ;;
+        --release)
+            [ "$BUILD_ONLY" = "false" ] && [ -z "$VERSION" ] ||
+                usage_error "--release cannot be combined with other modes"
+            [ "$#" -ge 2 ] || usage_error "--release requires VERSION"
+            is_version "$2" ||
+                usage_error "release version must have the form X.Y.Z"
+            MODE="release"
+            VERSION=$2
+            shift 2
+            ;;
+        -f | --force)
+            [ "$FORCE_RELEASE" = "false" ] ||
+                usage_error "--force may be specified only once"
+            FORCE_RELEASE="true"
+            shift
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            usage_error "unknown argument: $1"
+            ;;
+    esac
+done
+
+if [ "$FORCE_RELEASE" = "true" ] && [ "$MODE" != "release" ]; then
+    usage_error "--force requires --release VERSION"
+fi
 
 SCRIPT_DIR=$(CDPATH='' cd "$(dirname "$0")" && pwd)
 PROJECT_ROOT=$(CDPATH='' cd "$SCRIPT_DIR/.." && pwd)
@@ -339,10 +352,16 @@ release_version() {
         stage "Push prepared source and tag"
         git push "$SOURCE_REMOTE" "$SOURCE_BRANCH"
         git push "$SOURCE_REMOTE" "refs/tags/$TAG"
+    fi
 
+    if [ -z "$existing_release" ] || [ "$FORCE_RELEASE" = "true" ]; then
+        if [ -n "$existing_release" ]; then
+            printf '\nReplacing existing GitHub release %s; preserving its tag\n' "$TAG"
+        fi
         dispatch_and_watch \
             "Build and publish four native CLI archives" \
-            "$RELEASE_WORKFLOW" "$SOURCE_REPO" --ref "$TAG"
+            "$RELEASE_WORKFLOW" "$SOURCE_REPO" \
+            --ref "$TAG" -f "force=$FORCE_RELEASE"
         CLI_RUN_URL=$WORKFLOW_RUN_URL
     else
         printf '\nReusing existing GitHub release %s\n' "$TAG"

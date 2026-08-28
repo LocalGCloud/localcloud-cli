@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
+import shlex
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -23,13 +25,31 @@ from .config import (
     runtime_settings,
     save_active_runtime,
 )
-from .docker_runtime import DockerRuntime, RuntimeRecord
+from .docker_runtime import DockerRunPlan, DockerRuntime, RuntimeRecord
 from .errors import HostError
 from .java_client import JavaMcpClient, is_retryable_java_error
 
 _START_READINESS_TIMEOUT = 60.0
 _READINESS_REQUEST_TIMEOUT = 5.0
 _READINESS_POLL_INTERVAL = 1.0
+
+
+@dataclass(frozen=True)
+class _LifecyclePlan:
+    action: str
+    reason: str
+    commands: tuple[str, ...]
+    current: RuntimeRecord | None = None
+    run_plan: DockerRunPlan | None = None
+    prepared_image: tuple[Any, bool] | None = None
+
+    def render(self) -> str:
+        lines = [
+            f"# action: {self.action}",
+            f"# reason: {self.reason}",
+        ]
+        lines.extend(self.commands or ("# no mutations planned",))
+        return "\n".join(lines)
 
 
 class Controller:
@@ -61,61 +81,150 @@ class Controller:
         pull: bool = False,
         observer: Any | None = None,
         tail: float | None = 0.0,
-    ) -> dict[str, Any]:
+        dry_run: bool = False,
+    ) -> dict[str, Any] | str:
+        if dry_run and pull:
+            raise HostError(
+                "dry_run_pull_conflict",
+                "Dry-run cannot be combined with --pull because previews are strictly read-only",
+                {"image": config.image},
+            )
         start_time = time.monotonic()
         deadline = start_time + _START_READINESS_TIMEOUT
-        with data_volume_lock(self.paths, config.data_volume):
+        with (
+            nullcontext()
+            if dry_run
+            else data_volume_lock(self.paths, config.data_volume)
+        ):
             current = self.runtime.resolve(
                 config, preferred_container_id=self._preferred_container_id(config)
             )
             changed_fields: list[str] = []
             fresh_data = False
+            prepared_image: tuple[Any, bool] | None = None
+            run_plan: DockerRunPlan | None = None
+            commands: tuple[str, ...] = ()
+
             if current is None:
-                if observer is not None and hasattr(observer, "starting"):
+                action = "create"
+                reason = "no container uses the selected data volume"
+                if (
+                    not dry_run
+                    and observer is not None
+                    and hasattr(observer, "starting")
+                ):
                     observer.starting(config)
                 prepared_image = self.runtime.preflight_create(
                     config,
                     pull=pull,
                     observer=observer,
+                    local_only=dry_run,
                 )
-                deadline = time.monotonic() + _START_READINESS_TIMEOUT
-                self._remaining_readiness(
-                    deadline,
+                run_plan = self.runtime.plan_run(config, prepared_image[0])
+                commands = self.runtime.preview_create_commands(config, run_plan)
+                status = "started"
+            elif pull or self._requires_managed_replacement(current, config):
+                action = "replace"
+                reason = (
+                    "an image pull was requested"
+                    if pull
+                    else "managed runtime configuration changed"
+                )
+                _validate_replacement(current, config)
+                if (
+                    not dry_run
+                    and observer is not None
+                    and hasattr(observer, "starting")
+                ):
+                    observer.starting(config)
+                changed_fields = _changed_fields(current, config)
+                prepared_image = self.runtime.preflight_create(
                     config,
                     current,
-                    "docker_health",
+                    pull=pull,
+                    observer=observer,
+                    local_only=dry_run,
                 )
+                run_plan = self.runtime.plan_run(
+                    config,
+                    prepared_image[0],
+                    replacing=current,
+                )
+                preserve_volume = (
+                    current.data == "persistent"
+                    or current.ownership["data_volume"] == "attached"
+                )
+                preserve_network = current.network_name == config.network_name
+                commands = (
+                    *self.runtime.preview_remove_commands(
+                        config,
+                        current,
+                        remove_volume=not preserve_volume,
+                        remove_network=not preserve_network,
+                    ),
+                    *self.runtime.preview_create_commands(
+                        config,
+                        run_plan,
+                        volume_exists=preserve_volume,
+                        network_exists=True if preserve_network else None,
+                    ),
+                )
+                status = (
+                    "reconfigured"
+                    if self._requires_managed_replacement(current, config)
+                    else "started"
+                )
+            elif current.state != "running":
+                action = "start"
+                reason = "the selected container is stopped"
+                target = current.name or current.container_id or config.container_name
+                commands = (shlex.join(["docker", "start", target]),)
+                status = "started"
+            elif not self.runtime.is_ready(current):
+                action = "wait"
+                reason = "the selected container is running but not ready"
+                status = "already_running"
+            else:
+                action = "reuse"
+                reason = "the selected container is already running and ready"
+                status = "already_running"
+
+            commands = (
+                *commands,
+                f"[LocalCloud API] ensure project={config.project!r} "
+                f"user={config.user!r} (create only if missing)",
+                *(
+                    ("[conditional LocalCloud seed] apply when project or data is created",)
+                    if config.seed_yaml is not None
+                    else ()
+                ),
+                "[host state] record active runtime",
+            )
+            plan = _LifecyclePlan(
+                action=action,
+                reason=reason,
+                commands=commands,
+                current=current,
+                run_plan=run_plan,
+                prepared_image=prepared_image,
+            )
+            _debug_plan(observer, plan, self.runtime, config)
+            if dry_run:
+                return plan.render()
+
+            if action == "create":
+                deadline = time.monotonic() + _START_READINESS_TIMEOUT
                 environment = self.runtime.create(
                     config,
                     readiness_deadline=deadline,
                     observer=observer,
                     prepared_image=prepared_image,
+                    run_plan=run_plan,
                 )
                 self._emit_runtime_logs(observer, config, environment)
                 fresh_data = environment.volume_created
-                status = "started"
-            elif pull or self._requires_managed_replacement(current, config):
-                if observer is not None and hasattr(observer, "starting"):
-                    observer.starting(config)
-                changed_fields = _changed_fields(current, config)
-                prepared_image = None
-                if (
-                    current.ownership["container"] == "managed"
-                    and current.ownership["network"] == "managed"
-                ):
-                    prepared_image = self.runtime.preflight_create(
-                        config,
-                        current,
-                        pull=pull,
-                        observer=observer,
-                    )
-                    deadline = time.monotonic() + _START_READINESS_TIMEOUT
-                self._remaining_readiness(
-                    deadline,
-                    config,
-                    current,
-                    "docker_health",
-                )
+            elif action == "replace":
+                deadline = time.monotonic() + _START_READINESS_TIMEOUT
                 environment = self._replace(
                     current,
                     config,
@@ -123,10 +232,10 @@ class Controller:
                     readiness_deadline=deadline,
                     observer=observer,
                     prepared_image=prepared_image,
+                    run_plan=run_plan,
                 )
                 fresh_data = environment.volume_created
-                status = "reconfigured" if self._requires_managed_replacement(current, config) else "started"
-            elif current.state != "running":
+            elif action in {"start", "wait"}:
                 if observer is not None and hasattr(observer, "starting"):
                     observer.starting(config)
                 self._remaining_readiness(
@@ -142,27 +251,10 @@ class Controller:
                     observer=observer,
                 )
                 self._emit_runtime_logs(observer, config, environment)
-                status = "started"
-            elif not self.runtime.is_ready(current):
-                if observer is not None and hasattr(observer, "starting"):
-                    observer.starting(config)
-                self._remaining_readiness(
-                    deadline,
-                    config,
-                    current,
-                    "docker_health",
-                )
-                environment = self.runtime.start(
-                    config,
-                    current,
-                    readiness_deadline=deadline,
-                    observer=observer,
-                )
-                self._emit_runtime_logs(observer, config, environment)
-                status = "already_running"
             else:
+                assert current is not None
                 environment = current
-                status = "already_running"
+
             project_created = self._ensure_project(
                 environment,
                 config,
@@ -190,7 +282,11 @@ class Controller:
                 config,
                 include_sdk=True,
                 changed_fields=changed_fields,
-                logs=self._runtime_logs(config, environment) if status != "already_running" else None,
+                logs=(
+                    self._runtime_logs(config, environment)
+                    if status != "already_running"
+                    else None
+                ),
             )
 
     def restart(
@@ -200,47 +296,150 @@ class Controller:
         pull: bool = False,
         observer: Any | None = None,
         tail: float | None = 0.0,
-    ) -> dict[str, Any]:
+        dry_run: bool = False,
+    ) -> dict[str, Any] | str:
+        if dry_run and pull:
+            raise HostError(
+                "dry_run_pull_conflict",
+                "Dry-run cannot be combined with --pull because previews are strictly read-only",
+                {"image": config.image},
+            )
         start_time = time.monotonic()
-        with data_volume_lock(self.paths, config.data_volume):
+        with (
+            nullcontext()
+            if dry_run
+            else data_volume_lock(self.paths, config.data_volume)
+        ):
             current = self.runtime.resolve(
                 config, preferred_container_id=self._preferred_container_id(config)
             )
             changed_fields: list[str] = []
+            prepared_image: tuple[Any, bool] | None = None
+            run_plan: DockerRunPlan | None = None
+            image_changed = bool(
+                current is not None
+                and current.ownership["container"] == "managed"
+                and current.configured_image_id
+                and current.image_id
+                and current.configured_image_id != current.image_id
+            )
             if current is None:
-                environment = self.runtime.create(config, pull=pull, observer=observer)
-                self._emit_runtime_logs(observer, config, environment)
+                action = "create"
+                reason = "no container uses the selected data volume"
+                prepared_image = self.runtime.preflight_create(
+                    config,
+                    pull=pull,
+                    observer=observer,
+                    local_only=dry_run,
+                )
+                run_plan = self.runtime.plan_run(config, prepared_image[0])
+                commands = self.runtime.preview_create_commands(config, run_plan)
+                status = "restarted"
             elif (
                 pull
                 or self._requires_managed_replacement(current, config)
-                or (
-                    current.ownership["container"] == "managed"
-                    and current.configured_image_id
-                    and current.image_id
-                    and current.configured_image_id != current.image_id
-                )
+                or image_changed
             ):
+                action = "replace"
+                reason = (
+                    "an image pull was requested"
+                    if pull
+                    else "the configured image changed"
+                    if image_changed
+                    else "managed runtime configuration changed"
+                )
+                _validate_replacement(current, config)
                 changed_fields = _changed_fields(current, config)
+                prepared_image = self.runtime.preflight_create(
+                    config,
+                    current,
+                    pull=pull,
+                    observer=observer,
+                    local_only=dry_run,
+                )
+                run_plan = self.runtime.plan_run(
+                    config,
+                    prepared_image[0],
+                    replacing=current,
+                )
+                preserve_volume = (
+                    current.data == "persistent"
+                    or current.ownership["data_volume"] == "attached"
+                )
+                preserve_network = current.network_name == config.network_name
+                commands = (
+                    *self.runtime.preview_remove_commands(
+                        config,
+                        current,
+                        remove_volume=not preserve_volume,
+                        remove_network=not preserve_network,
+                    ),
+                    *self.runtime.preview_create_commands(
+                        config,
+                        run_plan,
+                        volume_exists=preserve_volume,
+                        network_exists=True if preserve_network else None,
+                    ),
+                )
+                status = (
+                    "reconfigured"
+                    if self._requires_managed_replacement(current, config)
+                    or image_changed
+                    else "restarted"
+                )
+            else:
+                action = "restart"
+                reason = "the selected container is conforming"
+                target = current.name or current.container_id or config.container_name
+                commands = (
+                    shlex.join(["docker", "restart", "-t", "20", target]),
+                )
+                status = "restarted"
+
+            commands = (
+                *commands,
+                *(
+                    ("[LocalCloud seed] reapply volatile seed data",)
+                    if config.seed_yaml is not None
+                    else ()
+                ),
+                "[host state] record active runtime",
+            )
+            plan = _LifecyclePlan(
+                action=action,
+                reason=reason,
+                commands=commands,
+                current=current,
+                run_plan=run_plan,
+                prepared_image=prepared_image,
+            )
+            _debug_plan(observer, plan, self.runtime, config)
+            if dry_run:
+                return plan.render()
+
+            if action == "create":
+                environment = self.runtime.create(
+                    config,
+                    observer=observer,
+                    prepared_image=prepared_image,
+                    run_plan=run_plan,
+                )
+            elif action == "replace":
                 environment = self._replace(
                     current,
                     config,
                     pull=pull,
                     observer=observer,
-                )
-                status = (
-                    "reconfigured"
-                    if self._requires_managed_replacement(current, config)
-                    or (
-                        current.configured_image_id
-                        and current.image_id
-                        and current.configured_image_id != current.image_id
-                    )
-                    else "restarted"
+                    prepared_image=prepared_image,
+                    run_plan=run_plan,
                 )
             else:
-                environment = self.runtime.restart(config, current, observer=observer)
+                assert current is not None
+                environment = self.runtime.restart(
+                    config, current, observer=observer
+                )
+            if action != "replace":
                 self._emit_runtime_logs(observer, config, environment)
-                status = "restarted"
             if config.seed_yaml is not None:
                 self._seed_project(environment, config, volatile_only=True)
             self._tail_runtime_logs(
@@ -257,15 +456,23 @@ class Controller:
             )
 
     def reset(
-        self, config: LocalCloudConfig, *, all_projects: bool = False
-    ) -> dict[str, Any]:
-        with data_volume_lock(self.paths, config.data_volume):
+        self,
+        config: LocalCloudConfig,
+        *,
+        all_projects: bool = False,
+        observer: Any | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any] | str:
+        with (
+            nullcontext()
+            if dry_run
+            else data_volume_lock(self.paths, config.data_volume)
+        ):
+            current = self.runtime.resolve(
+                config,
+                preferred_container_id=self._preferred_container_id(config),
+            )
             if all_projects:
-                current = self.runtime.resolve(
-                    config,
-                    preferred_container_id=self._preferred_container_id(config),
-                )
-                self.runtime.preflight_create(config, current)
                 ownership = self.runtime.recreation_ownership(config)
                 if any(value != "managed" for value in ownership.values()):
                     raise HostError(
@@ -276,20 +483,144 @@ class Controller:
                             "ownership": ownership,
                         },
                     )
-                self.runtime.purge(config)
-                environment = self.runtime.create(config)
-                self._require_project(environment, config.project, config.user)
-                if config.seed_yaml is not None:
-                    self._seed_project(environment, config)
-                return self._payload(
-                    "reset",
-                    environment,
-                    config,
-                    include_sdk=True,
-                    reset_scope="all_projects",
+                manual_steps = self._manual_purge_steps(config, current)
+                plan = _LifecyclePlan(
+                    action="reset-all",
+                    reason=(
+                        "recreating all managed data requires deleting the "
+                        "Docker data volume, which localcloud never does for you"
+                    ),
+                    commands=manual_steps,
+                    current=current,
+                )
+                if dry_run:
+                    return plan.render()
+                raise HostError(
+                    "manual_volume_removal_required",
+                    (
+                        "Recreating all managed runtime data means deleting the "
+                        "Docker data volume. localcloud does not remove data "
+                        "volumes; run the listed steps yourself, then start again."
+                    ),
+                    {
+                        "data_volume": config.data_volume,
+                        "steps": list(manual_steps),
+                    },
                 )
 
-            environment = self._ensure_running(config)
+            prepared_image: tuple[Any, bool] | None = None
+            run_plan: DockerRunPlan | None = None
+            if current is None:
+                action = "create"
+                reason = "no container uses the selected data volume"
+                prepared_image = self.runtime.preflight_create(
+                    config,
+                    observer=observer,
+                    local_only=dry_run,
+                )
+                run_plan = self.runtime.plan_run(config, prepared_image[0])
+                commands = self.runtime.preview_create_commands(config, run_plan)
+            elif self._requires_managed_replacement(current, config):
+                action = "replace"
+                reason = "managed runtime configuration changed"
+                _validate_replacement(current, config)
+                prepared_image = self.runtime.preflight_create(
+                    config,
+                    current,
+                    observer=observer,
+                    local_only=dry_run,
+                )
+                run_plan = self.runtime.plan_run(
+                    config,
+                    prepared_image[0],
+                    replacing=current,
+                )
+                preserve_volume = (
+                    current.data == "persistent"
+                    or current.ownership["data_volume"] == "attached"
+                )
+                preserve_network = current.network_name == config.network_name
+                commands = (
+                    *self.runtime.preview_remove_commands(
+                        config,
+                        current,
+                        remove_volume=not preserve_volume,
+                        remove_network=not preserve_network,
+                    ),
+                    *self.runtime.preview_create_commands(
+                        config,
+                        run_plan,
+                        volume_exists=preserve_volume,
+                        network_exists=True if preserve_network else None,
+                    ),
+                )
+            elif current.state != "running":
+                action = "start"
+                reason = "the selected container is stopped"
+                target = current.name or current.container_id or config.container_name
+                commands = (shlex.join(["docker", "start", target]),)
+            elif not self.runtime.is_ready(current):
+                _validate_unready_recovery(current, config)
+                action = "recover"
+                reason = "the managed container is running but not ready"
+                target = current.name or current.container_id or config.container_name
+                commands = (
+                    shlex.join(["docker", "restart", "-t", "20", target]),
+                )
+            else:
+                action = "no-op"
+                reason = "the selected container is already running and ready"
+                commands = ()
+
+            runtime_action = action
+            commands = (
+                *commands,
+                f"[LocalCloud API] reset project={config.project!r} user={config.user!r}",
+                *(
+                    ("[LocalCloud seed] apply configured seed data",)
+                    if config.seed_yaml is not None
+                    else ()
+                ),
+            )
+            plan = _LifecyclePlan(
+                action="reset-project",
+                reason=reason,
+                commands=commands,
+                current=current,
+                run_plan=run_plan,
+                prepared_image=prepared_image,
+            )
+            _debug_plan(observer, plan, self.runtime, config)
+            if dry_run:
+                return plan.render()
+
+            if runtime_action == "create":
+                environment = self.runtime.create(
+                    config,
+                    observer=observer,
+                    prepared_image=prepared_image,
+                    run_plan=run_plan,
+                )
+            elif runtime_action == "replace":
+                environment = self._replace(
+                    current,
+                    config,
+                    observer=observer,
+                    prepared_image=prepared_image,
+                    run_plan=run_plan,
+                )
+            elif runtime_action == "start":
+                environment = self.runtime.start(
+                    config, current, observer=observer
+                )
+            elif runtime_action == "recover":
+                environment = self._recover_unready(
+                    config, current, observer=observer
+                )
+            else:
+                assert current is not None
+                environment = current
+
             self._require_project(environment, config.project, config.user)
             client = JavaMcpClient(
                 _runtime_url(environment), config.project, config.user
@@ -316,28 +647,85 @@ class Controller:
                 reset_scope="project",
             )
 
-    def stop(self, config: LocalCloudConfig) -> dict[str, Any]:
-        with data_volume_lock(self.paths, config.data_volume):
+    def stop(
+        self,
+        config: LocalCloudConfig,
+        *,
+        observer: Any | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any] | str:
+        with (
+            nullcontext()
+            if dry_run
+            else data_volume_lock(self.paths, config.data_volume)
+        ):
             current = self.runtime.resolve(
                 config, preferred_container_id=self._preferred_container_id(config)
             )
+            if current is None:
+                plan = _LifecyclePlan(
+                    action="no-op",
+                    reason="no container uses the selected data volume",
+                    commands=(),
+                )
+            elif current.state != "running":
+                plan = _LifecyclePlan(
+                    action="no-op",
+                    reason="the selected container is already stopped",
+                    commands=(),
+                    current=current,
+                )
+            elif current.data == "ephemeral" and current.origin == "managed":
+                plan = _LifecyclePlan(
+                    action="remove",
+                    reason="managed ephemeral runtimes are removed when stopped",
+                    commands=self.runtime.preview_remove_commands(
+                        config,
+                        current,
+                        remove_volume=True,
+                    ),
+                    current=current,
+                )
+            else:
+                target = current.name or current.container_id or config.container_name
+                plan = _LifecyclePlan(
+                    action="stop",
+                    reason="the selected container is running",
+                    commands=(
+                        shlex.join(["docker", "stop", "-t", "20", target]),
+                    ),
+                    current=current,
+                )
+            _debug_plan(observer, plan, self.runtime, config)
+            if dry_run:
+                return plan.render()
             if current is None:
                 return self._absent_payload("not_running", config)
             if current.state != "running":
                 return self._payload(
                     "not_running", current, config, include_sdk=False
                 )
-            if current.data == "ephemeral" and current.origin == "managed":
-                self.runtime.remove(config, current, remove_volume=True)
+            if plan.action == "remove":
+                self.runtime.remove(
+                    config,
+                    current,
+                    remove_volume=True,
+                    observer=observer,
+                )
                 removed = replace(
                     current,
                     state="removed",
                     health=None,
                     url=None,
                     endpoint_map={},
+                    published_ports={},
                 )
-                return self._payload("stopped", removed, config, include_sdk=False)
-            stopped = self.runtime.stop(config, current)
+                return self._payload(
+                    "stopped", removed, config, include_sdk=False
+                )
+            stopped = self.runtime.stop(
+                config, current, observer=observer
+            )
             return self._payload("stopped", stopped, config, include_sdk=False)
 
     def status(self, config: LocalCloudConfig) -> dict[str, Any]:
@@ -618,22 +1006,14 @@ class Controller:
         current: RuntimeRecord,
         *,
         readiness_deadline: float | None = None,
+        observer: Any | None = None,
     ) -> RuntimeRecord:
-        if current.ownership["container"] != "managed":
-            raise HostError(
-                "attached_runtime_unhealthy",
-                "The attached LocalCloud runtime is not ready; inspect it or run localcloud restart explicitly",
-                {
-                    "data_volume": config.data_volume,
-                    "container_id": current.container_id,
-                    "url": current.url,
-                    "state": current.state,
-                },
-            )
+        _validate_unready_recovery(current, config)
         return self.runtime.restart(
             config,
             current,
             readiness_deadline=readiness_deadline,
+            observer=observer,
         )
 
 
@@ -645,6 +1025,42 @@ class Controller:
             current.ownership["container"] == "managed"
             and current.config_hash != config.config_hash
         )
+
+    @staticmethod
+    def _manual_purge_steps(
+        config: LocalCloudConfig, current: RuntimeRecord | None
+    ) -> tuple[str, ...]:
+        """Steps a user runs by hand to recreate all data on a volume.
+
+        `reset --all-projects` used to shell out `docker volume rm`; deleting a
+        data volume is now always the user's explicit action, so the command
+        prints these instead of executing anything."""
+        steps: list[str] = []
+        if current is not None:
+            steps.append(
+                shlex.join(
+                    ["localcloud", "stop", "--data-volume", config.data_volume]
+                )
+            )
+        steps.append("# deletes ALL projects and data on this volume:")
+        steps.append(
+            shlex.join(["docker", "volume", "rm", "-f", config.data_volume])
+        )
+        steps.append(
+            shlex.join(
+                [
+                    "localcloud",
+                    "start",
+                    "--data-volume",
+                    config.data_volume,
+                    "--project-id",
+                    config.project,
+                    "--user",
+                    config.user,
+                ]
+            )
+        )
+        return tuple(steps)
     def _replace(
         self,
         current: RuntimeRecord,
@@ -654,25 +1070,9 @@ class Controller:
         readiness_deadline: float | None = None,
         observer: Any | None = None,
         prepared_image: tuple[Any, bool] | None = None,
+        run_plan: DockerRunPlan | None = None,
     ) -> RuntimeRecord:
-        if current.ownership["container"] != "managed":
-            raise HostError(
-                "ownership_forbidden",
-                "Attached LocalCloud containers cannot be reconfigured",
-                {
-                    "data_volume": config.data_volume,
-                    "ownership": current.ownership,
-                },
-            )
-        if current.ownership["network"] != "managed":
-            raise HostError(
-                "ownership_forbidden",
-                "Reconfiguration requires a managed runtime network",
-                {
-                    "data_volume": config.data_volume,
-                    "ownership": current.ownership,
-                },
-            )
+        _validate_replacement(current, config)
         # Never discard a volume that currently holds persistent data as a side
         # effect of an implicit reconfigure (a `start`/`restart` after a config
         # change): `remove()` runs before `create()` can prove the new
@@ -685,6 +1085,11 @@ class Controller:
             current.data == "persistent"
             or current.ownership["data_volume"] == "attached"
         )
+        # A managed network never varies by config beyond its name (it's
+        # always `docker network create --driver bridge <name>`), so there's
+        # no need to tear it down and recreate it on every reconfigure -
+        # only when the target network name actually changes.
+        preserve_network = current.network_name == config.network_name
         prepared_image = (
             prepared_image
             if prepared_image is not None
@@ -703,7 +1108,11 @@ class Controller:
         ):
             observer.starting(config)
         self.runtime.remove(
-            config, current, remove_volume=not preserve_volume
+            config,
+            current,
+            remove_volume=not preserve_volume,
+            remove_network=not preserve_network,
+            observer=observer,
         )
         try:
             environment = self.runtime.create(
@@ -711,6 +1120,7 @@ class Controller:
                 readiness_deadline=readiness_deadline,
                 observer=observer,
                 prepared_image=prepared_image,
+                run_plan=run_plan,
             )
         except Exception as error:
             if isinstance(error, HostError):
@@ -1147,6 +1557,65 @@ class Controller:
         self, status: str, config: LocalCloudConfig
     ) -> dict[str, Any]:
         return self._payload(status, None, config, include_sdk=False)
+
+
+def _debug_plan(
+    observer: Any | None,
+    plan: _LifecyclePlan,
+    runtime: DockerRuntime,
+    config: LocalCloudConfig,
+) -> None:
+    if observer is None or not hasattr(observer, "debug"):
+        return
+    if hasattr(observer, "debug_enabled") and not observer.debug_enabled:
+        return
+    run_plan = plan.run_plan
+    if run_plan is None and plan.current is not None:
+        run_plan = runtime.inspect_run_plan(config, plan.current)
+    if run_plan is not None:
+        observer.debug(run_plan.command())
+
+
+def _validate_unready_recovery(
+    current: RuntimeRecord,
+    config: LocalCloudConfig,
+) -> None:
+    if current.ownership["container"] == "managed":
+        return
+    raise HostError(
+        "attached_runtime_unhealthy",
+        "The attached LocalCloud runtime is not ready; inspect it or run localcloud restart explicitly",
+        {
+            "data_volume": config.data_volume,
+            "container_id": current.container_id,
+            "url": current.url,
+            "state": current.state,
+        },
+    )
+
+
+def _validate_replacement(
+    current: RuntimeRecord,
+    config: LocalCloudConfig,
+) -> None:
+    if current.ownership["container"] != "managed":
+        raise HostError(
+            "ownership_forbidden",
+            "Attached LocalCloud containers cannot be reconfigured",
+            {
+                "data_volume": config.data_volume,
+                "ownership": current.ownership,
+            },
+        )
+    if current.ownership["network"] != "managed":
+        raise HostError(
+            "ownership_forbidden",
+            "Reconfiguration requires a managed runtime network",
+            {
+                "data_volume": config.data_volume,
+                "ownership": current.ownership,
+            },
+        )
 
 
 def _changed_fields(

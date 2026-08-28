@@ -122,7 +122,7 @@ Interactive `doctor`, `status`, and `reset` commands retain the colorful LocalCl
 | `lc console` | Open the selected project in the web console |
 | `lc logs` | Read recent runtime logs |
 | `lc restart` | Restart the runtime without deleting persistent data |
-| `lc reset` | Reset one project or all managed data |
+| `lc reset` | Reset one project (`--all-projects` prints manual full-recreate steps) |
 | `lc stop` | Stop the runtime without deleting its volume |
 | `lc cleanup` | Remove malformed or stale LocalCloud resources |
 | `lc guide` | Print authoritative coding-agent guidance |

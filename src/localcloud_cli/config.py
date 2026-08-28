@@ -37,11 +37,15 @@ CONFIG_FIELDS = {
     "version",
     "context",
     "host",
+    "tls",
+    "mcp",
     "server",
     "services",
     "infrastructure",
 }
 CONTEXT_FIELDS = {"project", "user"}
+TLS_FIELDS = {"enabled", "port", "certificate", "private_key"}
+MCP_FIELDS = {"write", "destructive", "allow_remote"}
 HOST_CONFIG_FIELDS = {
     "data_volume",
     "seed",
@@ -690,8 +694,14 @@ def load_config(
     skip_validation: bool = False,
 ) -> LocalCloudConfig:
     source_directory = _source_directory(directory)
+    host_paths = paths if paths is not None else HostPaths.from_environment()
     explicit_path = Path(explicit) if explicit is not None else None
-    config_path = _select_config_path(source_directory, explicit_path, remembered)
+    config_path = _select_config_path(
+        source_directory,
+        explicit_path,
+        remembered,
+        host_paths.home / DEFAULT_CONFIG_NAME,
+    )
     raw = _read_config(config_path)
     effective_skip_validation = skip_validation or _env_flag(
         SKIP_CONFIG_VALIDATION_ENV
@@ -709,7 +719,6 @@ def load_config(
         value = host.get(field)
         return default if value is None else value
 
-    host_paths = paths if paths is not None else HostPaths.from_environment()
     if active_runtime is _ACTIVE_RUNTIME_UNSET:
         configured_volume = host.get("data_volume")
         requested_runtime_volume = (
@@ -798,8 +807,6 @@ def load_config(
     environment = _environment(host_value("environment", {}))
     if tls is not None:
         environment["LOCALCLOUD_TLS_ENABLED"] = "true" if tls else "false"
-    else:
-        environment.setdefault("LOCALCLOUD_TLS_ENABLED", "true")
 
     defaults = default_resource_names(selected_data_volume)
     active_for_volume = (
@@ -916,6 +923,32 @@ def _validate_config_document(
                 fields=unknown_host,
             )
 
+    for section_name, value, allowed_fields in (
+        ("tls", raw.get("tls"), TLS_FIELDS),
+        ("mcp", raw.get("mcp"), MCP_FIELDS),
+    ):
+        if section_name not in raw:
+            continue
+        if not isinstance(value, dict):
+            _invalid_config(f"{section_name} must be an object", value=value)
+            continue
+        unknown_fields = sorted(set(value) - allowed_fields)
+        _enforce_or_record(
+            skip_validation,
+            diagnostics,
+            bool(unknown_fields),
+            f"Unknown {section_name} fields",
+            fields=unknown_fields,
+        )
+        for boolean_field in (
+            {"enabled"} if section_name == "tls" else MCP_FIELDS
+        ):
+            if boolean_field in value and type(value[boolean_field]) is not bool:
+                _invalid_config(
+                    f"{section_name}.{boolean_field} must be boolean",
+                    value=value[boolean_field],
+                )
+
     server = raw.get("server")
     if "server" in raw and not isinstance(server, dict):
         _invalid_config("server must be an object", value=server)
@@ -1022,7 +1055,10 @@ def _source_directory(value: str | Path | None) -> Path:
 
 
 def _select_config_path(
-    directory: Path, explicit: Path | None, remembered: str | None
+    directory: Path,
+    explicit: Path | None,
+    remembered: str | None,
+    home_config: Path,
 ) -> Path | None:
     if explicit is not None:
         return _required_config_path(explicit, directory)
@@ -1042,6 +1078,14 @@ def _select_config_path(
 
     if remembered and remembered != DEFAULTS_CONFIG_LABEL:
         return _required_config_path(Path(remembered), directory)
+
+    if home_config.exists():
+        if not home_config.is_file():
+            _invalid_config(
+                f"Configuration path is not a file: {home_config}",
+                config=str(home_config),
+            )
+        return home_config.resolve()
     return None
 
 

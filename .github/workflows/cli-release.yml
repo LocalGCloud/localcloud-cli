@@ -2,7 +2,12 @@ name: Release LocalCloud CLI
 
 on:
   workflow_dispatch:
-
+    inputs:
+      force:
+        description: Delete and recreate an existing release without deleting its tag
+        required: false
+        default: false
+        type: boolean
 concurrency:
   group: cli-release-${{ github.ref }}
   cancel-in-progress: false
@@ -215,10 +220,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.validate-release.outputs.version }}
           IMAGE: ${{ env.RUNTIME_IMAGE }}
+          FORCE_RELEASE: ${{ inputs.force }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME already exists; refusing to overwrite it." >&2
-            exit 1
+            if [[ "$FORCE_RELEASE" != "true" ]]; then
+              echo "Release $GITHUB_REF_NAME already exists; refusing to overwrite it." >&2
+              exit 1
+            fi
+            echo "Deleting existing release $GITHUB_REF_NAME; preserving its tag."
+            gh release delete "$GITHUB_REF_NAME" --yes
           fi
           printf "%s\n\n%s %s\n%s %s\n\n%s\n" \
             "LocalCloud CLI ${VERSION}" \

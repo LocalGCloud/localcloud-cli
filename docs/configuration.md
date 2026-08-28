@@ -34,13 +34,20 @@ Configuration selection order is:
 2. host `LOCALCLOUD_CONFIG`;
 3. `./localcloud.yaml`;
 4. the runtime's remembered config;
-5. no user file.
+5. `$HOME/.localcloud/localcloud.yaml` (or `LOCALCLOUD_HOME/localcloud.yaml`);
+6. no user file.
 
 A selected explicit, environment, or remembered path that is missing or unreadable fails instead of falling back.
 
-CLI resource flags override corresponding `host` values. `--project-id` and `--user` override request context only; they do not replace the server's YAML-derived `context.project`. The selected file is mounted read-only at `/etc/localcloud/localcloud.yaml`. With no file, the CLI adds neither a mount nor container `LOCALCLOUD_CONFIG`.
+CLI resource flags override corresponding `host` values. `--project-id` and `--user` override request context only; they do not replace the server's YAML-derived `context.project`. The selected file is mounted read-only at `/etc/localcloud/localcloud.yaml`; LocalCloud discovers that canonical path without `LOCALCLOUD_CONFIG`. With no file, the CLI adds neither a config mount nor a config environment variable.
 
 The container recursively merges the file over packaged `localcloud.defaults.yaml`. Omitted values inherit; a mapping member set to `null` is deleted. Existing setting-specific environment variables have higher precedence. Use `host.seed: disabled`, not `null`, to disable host-side seeding.
+
+When no host seed file is selected, LocalCloud keeps its packaged default
+auto-seed behavior. When `host.seed` resolves to a user file, the CLI mounts it
+read-only at `/etc/localcloud/cli-seed.yaml`; that sentinel suppresses the
+packaged default seed worker, and the CLI applies the user YAML through the
+LocalCloud seed API after readiness.
 
 ### Removed flat keys
 

@@ -6,10 +6,12 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "release.sh"
+WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "cli-release.yml"
 
 
 def run_script(
@@ -34,6 +36,7 @@ def test_help_documents_build_and_release_modes() -> None:
     assert result.returncode == 0
     assert "--build-only" in result.stdout
     assert "--release VERSION" in result.stdout
+    assert "-f, --force" in result.stdout
     assert "default: build for the current platform" in result.stdout
 
 
@@ -50,6 +53,8 @@ def test_help_documents_build_and_release_modes() -> None:
         ("--release", "1.2.3", "extra"),
         ("--build-only", "extra"),
         ("--unknown",),
+        ("-f",),
+        ("--force", "--build-only"),
     ],
 )
 def test_invalid_arguments_fail_with_usage(args: tuple[str, ...]) -> None:
@@ -62,6 +67,111 @@ def test_invalid_arguments_fail_with_usage(args: tuple[str, ...]) -> None:
 def write_executable(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
     path.chmod(0o755)
+
+
+def run_publish_workflow_step(
+    tmp_path: Path, *, force: bool, release_exists: bool
+) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    publish_script = next(
+        step["run"]
+        for step in workflow["jobs"]["publish-release"]["steps"]
+        if step.get("name") == "Create GitHub Release"
+    )
+
+    command_log = tmp_path / "workflow-commands.log"
+    deleted_release = tmp_path / "release-deleted"
+    tag_marker = tmp_path / "tag-preserved"
+    tag_marker.touch()
+    bin_dir = tmp_path / "workflow-bin"
+    bin_dir.mkdir()
+    write_executable(
+        bin_dir / "gh",
+        """#!/bin/sh
+set -eu
+printf 'gh %s\\n' "$*" >> "$COMMAND_LOG"
+case "${1:-} ${2:-}" in
+    "release view")
+        [ "$RELEASE_EXISTS" = "1" ]
+        ;;
+    "release delete")
+        case " $* " in
+            *" --cleanup-tag "*) rm -f "$TAG_MARKER" ;;
+        esac
+        touch "$RELEASE_DELETED"
+        ;;
+    "release create")
+        if [ "$RELEASE_EXISTS" = "1" ] && [ ! -f "$RELEASE_DELETED" ]; then
+            exit 9
+        fi
+        ;;
+    *)
+        exit 10
+        ;;
+esac
+""",
+    )
+    release_assets = tmp_path / "release-assets"
+    release_assets.mkdir()
+    (release_assets / "artifact.tar.gz").write_text("artifact\n", encoding="utf-8")
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "COMMAND_LOG": str(command_log),
+            "FORCE_RELEASE": str(force).lower(),
+            "GH_TOKEN": "test-token",
+            "GITHUB_REF_NAME": "v1.2.3",
+            "GITHUB_SHA": "deadbeef",
+            "IMAGE": "example/runtime:latest",
+            "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
+            "RELEASE_DELETED": str(deleted_release),
+            "RELEASE_EXISTS": "1" if release_exists else "0",
+            "TAG_MARKER": str(tag_marker),
+            "VERSION": "1.2.3",
+        }
+    )
+    result = subprocess.run(
+        ["/bin/bash", "-e", "-o", "pipefail", "-c", publish_script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result, command_log, tag_marker
+
+
+def test_publish_workflow_rejects_existing_release_without_force(
+    tmp_path: Path,
+) -> None:
+    result, command_log, tag_marker = run_publish_workflow_step(
+        tmp_path, force=False, release_exists=True
+    )
+
+    assert result.returncode == 1
+    assert "refusing to overwrite it" in result.stderr
+    assert command_log.read_text(encoding="utf-8").splitlines() == [
+        "gh release view v1.2.3"
+    ]
+    assert tag_marker.exists()
+
+
+def test_publish_workflow_force_replaces_release_and_preserves_tag(
+    tmp_path: Path,
+) -> None:
+    result, command_log, tag_marker = run_publish_workflow_step(
+        tmp_path, force=True, release_exists=True
+    )
+
+    assert result.returncode == 0, result.stderr
+    commands = command_log.read_text(encoding="utf-8").splitlines()
+    assert commands[0] == "gh release view v1.2.3"
+    assert commands[1] == "gh release delete v1.2.3 --yes"
+    assert commands[2].startswith(
+        "gh release create v1.2.3 release-assets/artifact.tar.gz "
+    )
+    assert tag_marker.exists()
 
 
 def native_build_project(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
@@ -353,7 +463,7 @@ def test_release_tags_dispatches_verifies_and_publishes_tap(tmp_path: Path) -> N
     commands = command_log.read_text(encoding="utf-8").splitlines()
     cli_dispatch = commands.index(
         "gh workflow run cli-release.yml "
-        "--repo LocalGCloud/localcloud-cli --ref v1.2.3"
+        "--repo LocalGCloud/localcloud-cli --ref v1.2.3 -f force=false"
     )
     cli_watch = commands.index(
         "gh run watch 101 --repo LocalGCloud/localcloud-cli --exit-status"
@@ -487,6 +597,49 @@ def test_release_resumes_from_existing_github_release(tmp_path: Path) -> None:
     assert (
         "Tap workflow: "
         "https://github.com/LocalGCloud/homebrew-tap/actions/runs/202"
+        in result.stdout
+    )
+
+
+def test_force_release_rebuilds_existing_release_without_changing_tag(
+    tmp_path: Path,
+) -> None:
+    script, env, command_log = release_project(tmp_path)
+    project = script.parents[1]
+    git(project, "tag", "-a", "v1.2.3", "-m", "Release LocalCloud CLI 1.2.3")
+    git(project, "push", "origin", "refs/tags/v1.2.3")
+    tag_object = git(project, "rev-parse", "refs/tags/v1.2.3").stdout.strip()
+    env["GH_RELEASE_EXISTS"] = "1"
+
+    result = run_script(
+        "-f", "--release", "1.2.3", script=script, cwd=tmp_path, env=env
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        git(project, "rev-parse", "refs/tags/v1.2.3").stdout.strip()
+        == tag_object
+    )
+    commands = command_log.read_text(encoding="utf-8").splitlines()
+    cli_dispatch = commands.index(
+        "gh workflow run cli-release.yml "
+        "--repo LocalGCloud/localcloud-cli --ref v1.2.3 -f force=true"
+    )
+    cli_watch = commands.index(
+        "gh run watch 101 --repo LocalGCloud/localcloud-cli --exit-status"
+    )
+    asset_check = commands.index(
+        "gh release view v1.2.3 --repo LocalGCloud/localcloud-cli "
+        "--json assets --jq .assets[].name"
+    )
+    assert cli_dispatch < cli_watch < asset_check
+    assert (
+        "Replacing existing GitHub release v1.2.3; preserving its tag"
+        in result.stdout
+    )
+    assert (
+        "CLI workflow: "
+        "https://github.com/LocalGCloud/localcloud-cli/actions/runs/101"
         in result.stdout
     )
 

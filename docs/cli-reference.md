@@ -19,7 +19,7 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
 - Reuses an existing running container attached to the same volume.
 - Creates project contexts when they do not exist.
 - Waits up to 60 seconds for container health and service readiness.
-- Enables TLS by default. `--no-tls` disables it; `--tls` re-enables it explicitly. The flag overrides `host.environment.LOCALCLOUD_TLS_ENABLED` in `localcloud.yaml`.
+- TLS is disabled by default. `--tls` enables it; `--no-tls` overrides an enabled configuration value.
 - `--memory` overrides `host.memory` (default: `4g`).
 - `--image` overrides `host.image` and `LOCALCLOUD_IMAGE` (default: `jaysen2apache/localcloud:latest`).
 - `--services` overrides `services.enabled` with a comma-separated list of service IDs, or `default` to use the built-in set.
@@ -81,8 +81,8 @@ lc restart
 # Pull the latest image before restarting
 lc restart --pull
 
-# Restart without TLS
-lc restart --no-tls
+# Restart with TLS
+lc restart --tls
 
 # Restart with different memory and services
 lc restart --memory 8g --services gcs,pubsub
@@ -96,9 +96,16 @@ Resets emulator data and reapplies initial seed state.
 # Reset only the selected project (default)
 lc reset
 
-# Reset all projects and recreate the managed data volume
+# Print the manual steps to recreate every project on the volume
 lc reset --all-projects
 ```
+
+`lc reset` (no flag) resets a single project through the LocalCloud API and
+never touches the Docker data volume. `lc reset --all-projects` does not mutate
+anything: recreating every project means deleting the data volume, and
+localcloud never runs `docker volume rm` for you. It prints the steps (`lc stop`,
+`docker volume rm -f <volume>`, `lc start`) and exits non-zero so nothing is
+destroyed by accident.
 
 ### `stop`
 
@@ -128,6 +135,39 @@ lc cleanup
 # Inspect candidates without removing them
 lc cleanup --dry-run
 ```
+
+### Lifecycle dry runs and debug diagnostics
+
+`start`, `restart`, `reset`, and `stop` accept `--dry-run`. The command
+validates configuration, inspects local Docker state, and prints every planned
+Docker and LocalCloud mutation in execution order without changing Docker,
+runtime data, project data, seed state, or active host state.
+
+```sh
+lc start --dry-run
+lc restart --dry-run
+lc reset --dry-run
+lc stop --dry-run
+```
+
+`lc reset --all-projects --dry-run` renders the manual recreate steps (it never
+had a Docker mutation to plan).
+
+Lifecycle dry runs are strictly read-only. They never pull images.
+`--dry-run --pull` is rejected because the CLI cannot know the exact
+post-pull image configuration without performing the pull. A create or
+recreate preview requires the configured image to exist locally.
+
+The rendered `docker run` command is the minimal operator-equivalent command:
+it omits image-inherited environment, image labels, and CLI-internal management
+metadata. When selected, `$HOME/.localcloud/localcloud.yaml` and a user seed
+file appear as read-only `-v` bind mounts.
+
+Use `--debug` for diagnostics on stderr. For a selected or planned runtime,
+debug output includes one shell-quoted `docker run` command that can be copied
+and executed. Contiguous one-to-one published ports use Docker range syntax,
+for example `-p 127.0.0.1:24080-24093:24080-24093/tcp`, instead of one flag
+per port. Dry-run plans remain on stdout and can be redirected independently.
 
 ### `guide`
 

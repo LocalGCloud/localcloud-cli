@@ -7,6 +7,7 @@ import socket
 import shlex
 import time
 from dataclasses import dataclass, field, replace
+from types import MappingProxyType
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
@@ -14,6 +15,7 @@ import httpx
 
 from .config import (
     DEFAULTS_CONFIG_LABEL,
+    DEFAULT_DATA_VOLUME,
     LocalCloudConfig,
     runtime_settings,
     validate_data_volume,
@@ -35,6 +37,7 @@ RUNTIME_OWNERSHIP_CAPABILITY = "data-volume-v1"
 CONFIG_SCHEMA_LABEL = "com.localcloud.config-schema"
 CONFIG_SCHEMA_CAPABILITY = "1"
 DATA_MOUNT_DESTINATION = "/var/lib/localcloud"
+CLI_SEED_MOUNT_DESTINATION = "/etc/localcloud/cli-seed.yaml"
 CONFIG_MOUNT_DESTINATION = "/etc/localcloud/localcloud.yaml"
 GATEWAY_PORT = "24080"
 TLS_GATEWAY_PORT = "24443"
@@ -95,6 +98,75 @@ class RuntimeRecord:
     volume_created: bool = False
     network_created: bool = False
     image_status: str = ""
+    published_ports: PublishedPorts = field(default_factory=dict)
+
+
+PublishedPorts = dict[str, tuple[tuple[str, int | None], ...]]
+
+
+@dataclass(frozen=True)
+class DockerRunPlan:
+    image: str
+    name: str
+    network_name: str
+    mem_limit: str | None
+    volumes: Mapping[str, Mapping[str, str]]
+    ports: Mapping[str, tuple[str, int | None]]
+    environment: Mapping[str, str]
+    labels: Mapping[str, str]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "volumes",
+            MappingProxyType(
+                {
+                    source: MappingProxyType(dict(mount))
+                    for source, mount in self.volumes.items()
+                }
+            ),
+        )
+        object.__setattr__(
+            self,
+            "ports",
+            MappingProxyType(dict(self.ports)),
+        )
+        object.__setattr__(
+            self,
+            "environment",
+            MappingProxyType(dict(self.environment)),
+        )
+        object.__setattr__(
+            self,
+            "labels",
+            MappingProxyType(dict(self.labels)),
+        )
+
+    def command(self, *, include_management_metadata: bool = False) -> str:
+        return _format_docker_run(
+            self.image,
+            self.name,
+            self.network_name,
+            self.mem_limit,
+            self.volumes,
+            self.ports,
+            self.environment,
+            self.labels if include_management_metadata else None,
+        )
+
+    def run_kwargs(self) -> dict[str, Any]:
+        return {
+            "detach": True,
+            "name": self.name,
+            "labels": dict(self.labels),
+            "environment": dict(self.environment),
+            "mem_limit": self.mem_limit,
+            "network": self.network_name,
+            "ports": dict(self.ports),
+            "volumes": {
+                source: dict(mount) for source, mount in self.volumes.items()
+            },
+        }
 
 
 class DockerRuntime:
@@ -237,7 +309,8 @@ class DockerRuntime:
             if all(value == "managed" for value in ownership.values())
             else "attached"
         )
-        endpoint_map = self._resolved_ports(container)
+        published_ports = _published_ports(container)
+        endpoint_map = _endpoint_map(published_ports)
         gateway = endpoint_map.get(GATEWAY_PORT)
         tls_gateway = endpoint_map.get(TLS_GATEWAY_PORT)
         tls_enabled = (
@@ -284,6 +357,7 @@ class DockerRuntime:
             data=metadata["data"],
             labels=labels,
             drift=drift,
+            published_ports=published_ports,
         )
 
     def preflight_create(
@@ -293,25 +367,20 @@ class DockerRuntime:
         *,
         pull: bool = False,
         observer: Any | None = None,
+        local_only: bool = False,
     ) -> tuple[Any, bool]:
         image, was_pulled = self._image_for_create(
-            config.image, pull=pull, observer=observer
+            config.image,
+            pull=pull,
+            observer=observer,
+            local_only=local_only,
         )
         self._require_runtime_ownership_capability(config, image)
-        allowed_transparent_ports: set[tuple[int, str]] = set()
-        if replacing is not None:
-            endpoint_map = replacing.endpoint_map
-            for host_port, container_port, protocol in (
-                (53, 24093, "udp"),
-                (80, 24095, "tcp"),
-                (443, 24094, "tcp"),
-            ):
-                if endpoint_map.get(str(container_port)) == host_port:
-                    allowed_transparent_ports.add((host_port, protocol))
+        allowed_ports = _published_host_ports(replacing)
         self._port_bindings(
             config,
             image,
-            allowed_transparent_ports=allowed_transparent_ports,
+            allowed_ports=allowed_ports,
         )
         replacing_id = replacing.container_id if replacing is not None else ""
         name_collision = self._get_optional(
@@ -345,7 +414,9 @@ class DockerRuntime:
             self.client.networks, config.network_name, "network"
         )
         if network is not None:
-            ownership = self._classify_resource(network, "network", config.data_volume)
+            ownership = self._classify_resource(
+                network, "network", config.data_volume
+            )
             if ownership != "managed":
                 raise HostError(
                     "resource_name_in_use",
@@ -353,6 +424,231 @@ class DockerRuntime:
                     {"network": config.network_name},
                 )
         return image, was_pulled
+
+    def plan_run(
+        self,
+        config: LocalCloudConfig,
+        image: Any,
+        *,
+        replacing: RuntimeRecord | None = None,
+    ) -> DockerRunPlan:
+        volumes: dict[str, dict[str, str]] = {
+            config.data_volume: {
+                "bind": DATA_MOUNT_DESTINATION,
+                "mode": "rw",
+            }
+        }
+        if config.docker_socket:
+            volumes["/var/run/docker.sock"] = {
+                "bind": "/var/run/docker.sock",
+                "mode": "rw",
+            }
+        if config.config_path is not None:
+            volumes[str(config.config_path)] = {
+                "bind": CONFIG_MOUNT_DESTINATION,
+                "mode": "ro",
+            }
+        if config.seed_path is not None:
+            volumes[str(config.seed_path)] = {
+                "bind": CLI_SEED_MOUNT_DESTINATION,
+                "mode": "ro",
+            }
+        labels = {
+            **_config_labels(config),
+            **_base_labels(config.data_volume, "container"),
+        }
+        return DockerRunPlan(
+            image=config.image,
+            name=config.container_name,
+            network_name=config.network_name,
+            mem_limit=config.memory,
+            volumes=volumes,
+            ports=self._port_bindings(
+                config,
+                image,
+                allowed_ports=_published_host_ports(replacing),
+            ),
+            environment=_container_environment(config, config.network_name),
+            labels=labels,
+        )
+
+    def inspect_run_plan(
+        self,
+        config: LocalCloudConfig,
+        runtime: RuntimeRecord,
+    ) -> DockerRunPlan:
+        container, current = self._mutation_target(config, runtime)
+        attrs = getattr(container, "attrs", {})
+        container_config = attrs.get("Config", {})
+        host_config = attrs.get("HostConfig", {})
+        container_config = (
+            container_config if isinstance(container_config, Mapping) else {}
+        )
+        host_config = host_config if isinstance(host_config, Mapping) else {}
+
+        volumes: dict[str, dict[str, str]] = {}
+        for mount in attrs.get("Mounts", ()):
+            if not isinstance(mount, Mapping):
+                continue
+            source = (
+                mount.get("Name")
+                if mount.get("Type") == "volume"
+                else mount.get("Source")
+            ) or mount.get("Source")
+            destination = mount.get("Destination")
+            if not source or not destination:
+                continue
+            mode = mount.get("Mode") or (
+                "rw" if mount.get("RW", True) else "ro"
+            )
+            volumes[str(source)] = {
+                "bind": str(destination),
+                "mode": str(mode),
+            }
+
+        ports: dict[str, tuple[str, int | None]] = {}
+        for container_port, bindings in current.published_ports.items():
+            if bindings:
+                ports[container_port] = bindings[0]
+
+        network_name = (
+            current.network_name
+            or str(host_config.get("NetworkMode") or config.network_name)
+        )
+        environment = _container_environment(config, network_name)
+
+        raw_labels = container_config.get("Labels")
+        labels = (
+            {str(key): str(value) for key, value in raw_labels.items()}
+            if isinstance(raw_labels, Mapping)
+            else dict(current.labels)
+        )
+        mem_limit = _format_memory_limit(host_config.get("Memory"))
+        return DockerRunPlan(
+            image=str(
+                container_config.get("Image")
+                or current.actual_image
+                or config.image
+            ),
+            name=current.name or config.container_name,
+            network_name=network_name,
+            mem_limit=mem_limit,
+            volumes=volumes,
+            ports=ports,
+            environment=environment,
+            labels=labels,
+        )
+
+    def preview_create_commands(
+        self,
+        config: LocalCloudConfig,
+        run_plan: DockerRunPlan,
+        *,
+        volume_exists: bool | None = None,
+        network_exists: bool | None = None,
+    ) -> tuple[str, ...]:
+        commands: list[str] = []
+        volume = self._get_optional(
+            self.client.volumes, config.data_volume, "volume"
+        )
+        effective_volume_exists = (
+            volume is not None if volume_exists is None else volume_exists
+        )
+        if not effective_volume_exists:
+            commands.append(
+                _format_resource_create(
+                    "volume",
+                    config.data_volume,
+                    _base_labels(config.data_volume, "volume"),
+                )
+            )
+
+        network = self._get_optional(
+            self.client.networks, config.network_name, "network"
+        )
+        effective_network_exists = (
+            network is not None if network_exists is None else network_exists
+        )
+        if not effective_network_exists:
+            commands.append(
+                _format_resource_create(
+                    "network",
+                    config.network_name,
+                    _network_labels(config),
+                )
+            )
+        commands.append(run_plan.command())
+        return tuple(commands)
+
+    def preview_remove_commands(
+        self,
+        config: LocalCloudConfig,
+        runtime: RuntimeRecord,
+        *,
+        remove_volume: bool,
+        remove_network: bool = True,
+    ) -> tuple[str, ...]:
+        container, current = self._mutation_target(config, runtime)
+        if current.ownership["container"] != "managed":
+            raise HostError(
+                "ownership_forbidden",
+                "Attached LocalCloud containers cannot be removed or replaced",
+                {
+                    "data_volume": config.data_volume,
+                    "container_id": current.container_id,
+                    "ownership": current.ownership,
+                },
+            )
+        failures: list[dict[str, Any]] = []
+        children = self._remove_children(
+            config.data_volume,
+            container,
+            current,
+            failures,
+            dry_run=True,
+        )
+        if failures:
+            raise HostError(
+                "cleanup_failed",
+                "Managed child-container cleanup could not be planned",
+                {"data_volume": config.data_volume, "failures": failures},
+            )
+        commands = [
+            shlex.join(
+                [
+                    "docker",
+                    "rm",
+                    "-f",
+                    "-v",
+                    _resource_name(child) or _resource_identity(child),
+                ]
+            )
+            for child in children
+        ]
+        commands.append(
+            shlex.join(
+                [
+                    "docker",
+                    "rm",
+                    "-f",
+                    "-v",
+                    _resource_name(container) or current.container_id,
+                ]
+            )
+        )
+        if (
+            remove_network
+            and current.ownership["network"] == "managed"
+            and current.network_name is not None
+        ):
+            commands.append(
+                shlex.join(["docker", "network", "rm", current.network_name])
+            )
+        if remove_volume and current.ownership["data_volume"] == "managed":
+            commands.append(
+                shlex.join(["docker", "volume", "rm", "-f", config.data_volume])
+            )
+        return tuple(commands)
 
     def create(
         self,
@@ -362,6 +658,7 @@ class DockerRuntime:
         readiness_deadline: float | None = None,
         observer: Any | None = None,
         prepared_image: tuple[Any, bool] | None = None,
+        run_plan: DockerRunPlan | None = None,
     ) -> RuntimeRecord:
         current = self.resolve(config)
         if current is not None:
@@ -382,18 +679,11 @@ class DockerRuntime:
         if was_pulled and observer is not None and hasattr(observer, "starting"):
             observer.starting(config)
 
-        metadata = _config_labels(config)
-        container_labels = {
-            **metadata,
-            **_base_labels(config.data_volume, "container"),
-        }
-        network_labels = {
-            **metadata,
-            **_base_labels(config.data_volume, "network"),
-        }
+        run_plan = run_plan or self.plan_run(config, image)
+        container_labels = dict(run_plan.labels)
+        network_labels = _network_labels(config)
         volume_labels = _base_labels(config.data_volume, "volume")
         self._require_runtime_ownership_capability(config, image)
-        ports = self._port_bindings(config, image)
 
         container = network = volume = None
         network_created = volume_created = False
@@ -405,45 +695,13 @@ class DockerRuntime:
             network, network_created = self._network_for_create(
                 config, network_labels
             )
-            volumes: dict[str, dict[str, str]] = {
-                config.data_volume: {
-                    "bind": DATA_MOUNT_DESTINATION,
-                    "mode": "rw",
-                }
-            }
-            if config.docker_socket:
-                volumes["/var/run/docker.sock"] = {
-                    "bind": "/var/run/docker.sock",
-                    "mode": "rw",
-                }
-            if config.config_path is not None:
-                volumes[str(config.config_path)] = {
-                    "bind": CONFIG_MOUNT_DESTINATION,
-                    "mode": "ro",
-                }
             if observer is not None and hasattr(observer, "debug"):
                 observer.debug(
-                    _format_docker_run(
-                        config.image,
-                        config.container_name,
-                        network.name if network else None,
-                        config.memory,
-                        volumes,
-                        ports,
-                        _container_environment(config, network.name if network else config.network_name),
-                        container_labels,
-                    )
+                    f"Executing Docker SDK containers.run for {run_plan.name!r}"
                 )
             container = self.client.containers.run(
-                config.image,
-                detach=True,
-                name=config.container_name,
-                labels=container_labels,
-                environment=_container_environment(config, network.name),
-                mem_limit=config.memory,
-                network=network.name,
-                ports=ports,
-                volumes=volumes,
+                run_plan.image,
+                **run_plan.run_kwargs(),
             )
             container.reload()
             container_id = _resource_identity(container)
@@ -477,12 +735,17 @@ class DockerRuntime:
                 container_id,
                 ready,
             )
-            return replace(
+            ready = replace(
                 ready,
                 volume_created=volume_created,
                 network_created=network_created,
-                image_status="pulled from registry" if was_pulled else "available locally",
+                image_status=(
+                    "pulled from registry"
+                    if was_pulled
+                    else "available locally"
+                ),
             )
+            return ready
         except Exception as error:
             failures = self._rollback_create(
                 container,
@@ -534,12 +797,12 @@ class DockerRuntime:
     ) -> RuntimeRecord:
         deadline = _resolve_readiness_deadline(readiness_deadline)
         container, current = self._mutation_target(config, runtime)
-        if observer is not None and hasattr(observer, "debug"):
-            observer.debug(_format_effective_run_command(config, current))
         if current.state != "running":
             if observer is not None and hasattr(observer, "debug"):
                 target_name = _resource_name(container) or current.container_id
-                observer.debug(f"docker start {target_name}")
+                observer.debug(
+                    "Executing: " + shlex.join(["docker", "start", target_name])
+                )
             try:
                 container.start()
             except Exception as error:
@@ -577,7 +840,7 @@ class DockerRuntime:
             require=True,
         )
         assert ready is not None
-        return replace(
+        ready = replace(
             self._require_container_identity(
                 config,
                 current.container_id,
@@ -585,6 +848,7 @@ class DockerRuntime:
             ),
             image_status="available locally",
         )
+        return ready
 
     def restart(
         self,
@@ -597,9 +861,11 @@ class DockerRuntime:
         deadline = _resolve_readiness_deadline(readiness_deadline)
         container, current = self._mutation_target(config, runtime)
         if observer is not None and hasattr(observer, "debug"):
-            observer.debug(_format_effective_run_command(config, current))
             target_name = _resource_name(container) or current.container_id
-            observer.debug(f"docker restart -t 20 {target_name}")
+            observer.debug(
+                "Executing: "
+                + shlex.join(["docker", "restart", "-t", "20", target_name])
+            )
         try:
             container.restart(timeout=20)
         except Exception as error:
@@ -637,7 +903,7 @@ class DockerRuntime:
             require=True,
         )
         assert ready is not None
-        return replace(
+        ready = replace(
             self._require_container_identity(
                 config,
                 current.container_id,
@@ -645,12 +911,23 @@ class DockerRuntime:
             ),
             image_status="available locally",
         )
+        return ready
 
     def stop(
-        self, config: LocalCloudConfig, runtime: RuntimeRecord
+        self,
+        config: LocalCloudConfig,
+        runtime: RuntimeRecord,
+        *,
+        observer: Any | None = None,
     ) -> RuntimeRecord:
         container, current = self._mutation_target(config, runtime)
         if current.state == "running":
+            if observer is not None and hasattr(observer, "debug"):
+                target_name = _resource_name(container) or current.container_id
+                observer.debug(
+                    "Executing: "
+                    + shlex.join(["docker", "stop", "-t", "20", target_name])
+                )
             try:
                 container.stop(timeout=20)
             except Exception as error:
@@ -677,6 +954,8 @@ class DockerRuntime:
         runtime: RuntimeRecord,
         *,
         remove_volume: bool = True,
+        remove_network: bool = True,
+        observer: Any | None = None,
     ) -> None:
         container, current = self._mutation_target(config, runtime)
         if current.ownership["container"] != "managed":
@@ -688,6 +967,11 @@ class DockerRuntime:
                     "container_id": current.container_id,
                     "ownership": current.ownership,
                 },
+            )
+        if observer is not None and hasattr(observer, "debug"):
+            observer.debug(
+                f"Removing managed container {current.name!r}; "
+                f"remove_volume={remove_volume}"
             )
 
         failures: list[dict[str, Any]] = []
@@ -707,7 +991,8 @@ class DockerRuntime:
             v=True,
         )
         if (
-            current.ownership["network"] == "managed"
+            remove_network
+            and current.ownership["network"] == "managed"
             and current.network_name is not None
         ):
             network = self._get_optional(
@@ -739,9 +1024,8 @@ class DockerRuntime:
         ownership: str | None = None,
     ) -> None:
         """Remove `network` if it is (or, when `ownership` is omitted, turns
-        out to be) managed by this LocalCloud instance. Shared by `remove()`
-        (which already knows the ownership from a resolved RuntimeRecord) and
-        `purge()`'s orphan-cleanup path (which has to classify on the fly)."""
+        out to be) managed by this LocalCloud instance. Called by `remove()`,
+        which already knows the ownership from a resolved RuntimeRecord."""
         if network is None:
             return
         resolved_ownership = (
@@ -767,8 +1051,8 @@ class DockerRuntime:
         ownership: str | None = None,
     ) -> None:
         """Remove `volume` if it is (or, when `ownership` is omitted, turns
-        out to be) managed by this LocalCloud instance. See
-        `_teardown_network_if_owned` for why this is shared."""
+        out to be) managed by this LocalCloud instance. Called by `remove()`
+        for a managed data volume when `remove_volume` is set."""
         if volume is None:
             return
         resolved_ownership = (
@@ -828,34 +1112,6 @@ class DockerRuntime:
             "data_volume": volume_ownership,
         }
 
-
-    def purge(self, config: LocalCloudConfig) -> None:
-        current = self.resolve(config)
-        if current is not None:
-            self.remove(config, current, remove_volume=True)
-            return
-        failures: list[dict[str, Any]] = []
-        self._remove_children(config.data_volume, None, None, failures)
-        if failures:
-            raise HostError(
-                "cleanup_failed",
-                "Managed child-container cleanup was incomplete",
-                {"data_volume": config.data_volume, "failures": failures},
-            )
-        network = self._get_optional(
-            self.client.networks, config.network_name, "network"
-        )
-        self._teardown_network_if_owned(config, network, failures)
-        volume = self._get_optional(
-            self.client.volumes, config.data_volume, "volume"
-        )
-        self._teardown_volume_if_owned(config, volume, failures)
-        if failures:
-            raise HostError(
-                "cleanup_failed",
-                "Managed LocalCloud runtime cleanup was incomplete",
-                {"data_volume": config.data_volume, "failures": failures},
-            )
 
     def logs(
         self,
@@ -1153,9 +1409,18 @@ class DockerRuntime:
         normalized = _validate_base_url(url)
         timeout = max(0.0, deadline - time.monotonic())
         last_error = "not attempted"
+        if observer is not None and hasattr(observer, "debug"):
+            observer.debug(
+                f"Waiting for runtime readiness at {normalized}/health "
+                f"(timeout {timeout:.1f}s)"
+            )
 
         def _emit_logs() -> None:
-            if container is not None and observer is not None and hasattr(observer, "runtime_logs"):
+            if (
+                container is not None
+                and observer is not None
+                and hasattr(observer, "runtime_logs")
+            ):
                 try:
                     logs = _container_logs(container, tail=12)
                     if logs and not logs.startswith("<logs unavailable"):
@@ -1198,6 +1463,10 @@ class DockerRuntime:
                     payload = response.json()
                     if payload.get("status") in {"healthy", "ok", "ready"}:
                         _emit_logs()
+                        if observer is not None and hasattr(observer, "debug"):
+                            observer.debug(
+                                f"Runtime readiness succeeded at {normalized}/health"
+                            )
                         return payload
                     last_error = f"health returned {payload}"
                 else:
@@ -1387,16 +1656,6 @@ class DockerRuntime:
                         "missing_labels": missing,
                     },
                 )
-        if role == "network" and not labels.get(CONFIG_HASH_LABEL):
-            raise HostError(
-                "ownership_mismatch",
-                "Managed network ownership metadata is incomplete",
-                {
-                    "data_volume": data_volume,
-                    "network": _resource_name(resource),
-                    "missing_labels": [CONFIG_HASH_LABEL],
-                },
-            )
         return "managed"
 
     @staticmethod
@@ -1492,7 +1751,14 @@ class DockerRuntime:
         *,
         pull: bool = False,
         observer: Any | None = None,
+        local_only: bool = False,
     ) -> tuple[Any, bool]:
+        if local_only and pull:
+            raise HostError(
+                "dry_run_pull_conflict",
+                "Read-only image planning cannot pull images",
+                {"image": image_name},
+            )
         if pull:
             try:
                 return self._pull_image(image_name, observer=observer), True
@@ -1518,6 +1784,16 @@ class DockerRuntime:
                     {
                         "image": image_name,
                         "cause": str(first_error),
+                    },
+                ) from first_error
+            if local_only:
+                raise HostError(
+                    "dry_run_image_unavailable",
+                    "Dry-run requires the configured image to exist locally",
+                    {
+                        "image": image_name,
+                        "cause": str(first_error),
+                        "suggestion": "Pull the image separately, then retry without --pull",
                     },
                 ) from first_error
             try:
@@ -1638,7 +1914,7 @@ class DockerRuntime:
         config: LocalCloudConfig,
         image: Any,
         *,
-        allowed_transparent_ports: set[tuple[int, str]] | None = None,
+        allowed_ports: set[tuple[int, str]] | None = None,
     ) -> dict[str, tuple[str, int | None]]:
         exposed = _image_exposed_ports(image)
         tcp_ports = sorted(
@@ -1652,7 +1928,11 @@ class DockerRuntime:
                 "Selected LocalCloud image does not expose 24080/tcp",
                 {"image": config.image, "exposed_ports": sorted(exposed)},
             )
-        canonical_free = all(_port_is_free(port) for port in tcp_ports)
+        allowed = allowed_ports or set()
+        canonical_free = all(
+            _port_is_free(port) or (port, "tcp") in allowed
+            for port in tcp_ports
+        )
         bindings: dict[str, tuple[str, int | None]] = {
             f"{port}/tcp": ("127.0.0.1", port if canonical_free else None)
             for port in tcp_ports
@@ -1663,11 +1943,14 @@ class DockerRuntime:
                 (80, 24095, "tcp"),
                 (443, 24094, "tcp"),
             ):
-                kind = socket.SOCK_DGRAM if protocol == "udp" else socket.SOCK_STREAM
+                kind = (
+                    socket.SOCK_DGRAM
+                    if protocol == "udp"
+                    else socket.SOCK_STREAM
+                )
                 if (
                     not _port_is_free(host_port, kind)
-                    and (host_port, protocol)
-                    not in (allowed_transparent_ports or set())
+                    and (host_port, protocol) not in allowed
                 ):
                     raise HostError(
                         "transparent_port_unavailable",
@@ -1713,21 +1996,7 @@ class DockerRuntime:
                     "Configured network name is already used by an attached resource",
                     {"network": config.network_name},
                 )
-            if _resource_labels(existing).get(CONFIG_HASH_LABEL) == config.config_hash:
-                return existing, False
-            failures: list[dict[str, Any]] = []
-            _remove_verified(
-                existing,
-                "network",
-                _base_labels(config.data_volume, "network"),
-                failures,
-            )
-            if failures:
-                raise HostError(
-                    "cleanup_failed",
-                    "Managed network replacement failed",
-                    {"data_volume": config.data_volume, "failures": failures},
-                )
+            return existing, False
         return (
             self.client.networks.create(
                 config.network_name,
@@ -1815,7 +2084,9 @@ class DockerRuntime:
         parent: Any | None,
         runtime: RuntimeRecord | None,
         failures: list[dict[str, Any]],
-    ) -> None:
+        *,
+        dry_run: bool = False,
+    ) -> list[Any]:
         try:
             containers = self.client.containers.list(all=True)
         except Exception as error:
@@ -1826,7 +2097,7 @@ class DockerRuntime:
                     "cause": str(error),
                 }
             )
-            return
+            return []
         parent_id = _resource_identity(parent) if parent is not None else None
         legacy_instance = None
         legacy_hash = None
@@ -1880,7 +2151,9 @@ class DockerRuntime:
             else:
                 owned.append((child, expected))
         if failures:
-            return
+            return []
+        if dry_run:
+            return [child for child, _expected in owned]
         for child, expected in owned:
             _remove_verified(
                 child,
@@ -1890,6 +2163,7 @@ class DockerRuntime:
                 force=True,
                 v=True,
             )
+        return [child for child, _expected in owned]
 
     @staticmethod
     def _get_optional(collection: Any, name: str, kind: str) -> Any | None:
@@ -1917,18 +2191,7 @@ class DockerRuntime:
 
     @staticmethod
     def _resolved_ports(container: Any) -> dict[str, int]:
-        resolved: dict[str, int] = {}
-        for container_port, bindings in (
-            getattr(container, "attrs", {})
-            .get("NetworkSettings", {})
-            .get("Ports", {})
-            .items()
-        ):
-            if bindings:
-                resolved[container_port.split("/", 1)[0]] = int(
-                    bindings[0]["HostPort"]
-                )
-        return resolved
+        return _endpoint_map(_published_ports(container))
 
     @staticmethod
     def _rollback_create(
@@ -1948,6 +2211,94 @@ class DockerRuntime:
             if resource is not None:
                 _remove_verified(resource, kind, labels, failures, **kwargs)
         return failures
+
+
+def _published_ports(container: Any) -> PublishedPorts:
+    attrs = getattr(container, "attrs", {})
+    network_settings = attrs.get("NetworkSettings", {})
+    host_config = attrs.get("HostConfig", {})
+    live = network_settings.get("Ports", {})
+    configured = host_config.get("PortBindings", {})
+    live = live if isinstance(live, Mapping) else {}
+    configured = configured if isinstance(configured, Mapping) else {}
+    published: PublishedPorts = {}
+    for container_port in sorted(set(live) | set(configured)):
+        raw_bindings = live.get(container_port) or configured.get(container_port)
+        if isinstance(raw_bindings, Mapping):
+            raw_bindings = [raw_bindings]
+        if not isinstance(raw_bindings, (tuple, list)):
+            continue
+        bindings: list[tuple[str, int | None]] = []
+        for raw in raw_bindings:
+            if not isinstance(raw, Mapping):
+                continue
+            host_ip = str(raw.get("HostIp") or "0.0.0.0")
+            host_port_value = raw.get("HostPort")
+            try:
+                host_port = (
+                    int(host_port_value)
+                    if host_port_value not in (None, "")
+                    else None
+                )
+            except (TypeError, ValueError):
+                continue
+            bindings.append((host_ip, host_port))
+        if bindings:
+            published[str(container_port)] = tuple(bindings)
+    return published
+
+
+def _endpoint_map(
+    published_ports: Mapping[str, tuple[tuple[str, int | None], ...]]
+) -> dict[str, int]:
+    selected: dict[str, tuple[int, int]] = {}
+    for container_port, bindings in sorted(published_ports.items()):
+        port, _, protocol = container_port.partition("/")
+        priority = 0 if (protocol or "tcp") == "tcp" else 1
+        host_port = next(
+            (value for _host_ip, value in bindings if value is not None),
+            None,
+        )
+        if host_port is None:
+            continue
+        previous = selected.get(port)
+        if previous is None or priority < previous[0]:
+            selected[port] = (priority, host_port)
+    return {port: value[1] for port, value in selected.items()}
+
+
+def _format_resource_create(
+    kind: str,
+    name: str,
+    labels: Mapping[str, str],
+) -> str:
+    args = ["docker", kind, "create"]
+    if kind == "network":
+        args.extend(["--driver", "bridge"])
+    for key, value in sorted(labels.items()):
+        args.extend(["--label", f"{key}={value}"])
+    args.append(name)
+    return shlex.join(args)
+
+
+def _published_host_ports(
+    runtime: RuntimeRecord | None,
+) -> set[tuple[int, str]]:
+    if runtime is None:
+        return set()
+    allowed: set[tuple[int, str]] = set()
+    for container_port, bindings in runtime.published_ports.items():
+        _port, _, protocol = container_port.partition("/")
+        for _host_ip, host_port in bindings:
+            if host_port is not None:
+                allowed.add((host_port, protocol or "tcp"))
+    if not allowed:
+        allowed.update((host_port, "tcp") for host_port in runtime.endpoint_map.values())
+    return allowed
+
+
+
+
 
 
 def _base_labels(data_volume: str, role: str) -> dict[str, str]:
@@ -1993,6 +2344,21 @@ def _config_labels(config: LocalCloudConfig) -> dict[str, str]:
     }
 
 
+def _network_labels(config: LocalCloudConfig) -> dict[str, str]:
+    """Ownership labels for the managed network.
+
+    Deliberately excludes the container-level config/config-hash labels:
+    `docker network create` never varies with unrelated config fields
+    (image, memory, environment, ...), so tagging the network with the
+    whole-config hash would make any unrelated config change look like a
+    network change and force a needless rm+recreate.
+    """
+    return {
+        **_base_labels(config.data_volume, "network"),
+        NETWORK_NAME_LABEL: config.network_name,
+    }
+
+
 def _record_container_labels(runtime: RuntimeRecord) -> dict[str, str]:
     labels = runtime.labels
     expected = _base_labels(runtime.data_volume, "container")
@@ -2011,34 +2377,32 @@ def _container_environment(
     config: LocalCloudConfig, network_name: str
 ) -> dict[str, str]:
     environment = dict(config.environment)
-    environment.update(
-        {
-            "LOCALCLOUD_DATA_DIR": DATA_MOUNT_DESTINATION,
-            "LOCALCLOUD_SEED_FILE": "/__localcloud_controller_seed_disabled__.yaml",
-            "LOCALCLOUD_MCP_WRITE": "true",
-            "LOCALCLOUD_MCP_DESTRUCTIVE": "true",
-            "LOCALCLOUD_RUNTIME_NETWORK": network_name,
-            "LOCALCLOUD_RUNTIME_EMBEDDED_DOCKER": "true"
-            if config.docker_socket
-            else "false",
-            "LOCALCLOUD_DATA_VOLUME": config.data_volume,
-            "LOCALCLOUD_CONFIG_HASH": config.config_hash,
-            "LOCALCLOUD_ENABLE_LOCAL_PROXY": "true"
-            if config.transparent_network
-            else "false",
-            "LOCALCLOUD_MCP_ALLOW_REMOTE": "true",
-        }
-    )
-    if config.config_path is not None:
-        environment["LOCALCLOUD_CONFIG"] = CONFIG_MOUNT_DESTINATION
-    else:
-        environment.pop("LOCALCLOUD_CONFIG", None)
+    environment.pop("LOCALCLOUD_CONFIG", None)
     if config.services is not None:
         environment["LOCALCLOUD_SERVICES"] = ",".join(config.services)
     else:
         environment.pop("LOCALCLOUD_SERVICES", None)
+    if config.data_volume != DEFAULT_DATA_VOLUME or network_name != "localcloud":
+        environment["LOCALCLOUD_RUNTIME_NETWORK"] = network_name
+        environment["LOCALCLOUD_DATA_VOLUME"] = config.data_volume
+    if config.docker_socket:
+        environment["LOCALCLOUD_RUNTIME_EMBEDDED_DOCKER"] = "true"
     environment.pop("LOCALCLOUD_INSTANCE", None)
     return environment
+
+def _format_memory_limit(value: Any) -> str | None:
+    if not isinstance(value, (int, float)) or value <= 0:
+        return None
+    size = int(value)
+    for suffix, unit in (
+        ("g", 1024**3),
+        ("m", 1024**2),
+        ("k", 1024),
+    ):
+        if size % unit == 0:
+            return f"{size // unit}{suffix}"
+    return str(size)
+
 
 
 def _format_port_args(ports: Mapping[str, Any]) -> list[str]:
@@ -2128,9 +2492,12 @@ def _format_docker_run(
         args.extend(["-m", str(mem_limit)])
     if volumes:
         for host_source, mount in sorted(volumes.items()):
-            bind = mount.get("bind", "") if isinstance(mount, dict) else str(mount)
-            mode = mount.get("mode", "rw") if isinstance(mount, dict) else "rw"
-            args.extend(["-v", f"{host_source}:{bind}:{mode}"])
+            bind = mount.get("bind", "") if isinstance(mount, Mapping) else str(mount)
+            mode = mount.get("mode", "rw") if isinstance(mount, Mapping) else "rw"
+            spec = f"{host_source}:{bind}"
+            if mode and mode != "rw":
+                spec = f"{spec}:{mode}"
+            args.extend(["-v", spec])
     if ports:
         args.extend(_format_port_args(ports))
     if environment:
@@ -2143,48 +2510,6 @@ def _format_docker_run(
     return shlex.join(args)
 
 
-def _format_effective_run_command(
-    config: LocalCloudConfig, current: "RuntimeRecord"
-) -> str:
-    """Render the docker-run equivalent of the container's current
-    configuration for --debug, even when no `docker run`/`create` is actually
-    happening (a plain start/restart of an already-conforming container).
-    Ports come from the live, already-resolved endpoint map so this needs no
-    extra Docker API calls; everything else is derived the same way `create`
-    derives it, from `config`.
-    """
-    volumes: dict[str, dict[str, str]] = {
-        config.data_volume: {"bind": DATA_MOUNT_DESTINATION, "mode": "rw"},
-    }
-    if config.docker_socket:
-        volumes["/var/run/docker.sock"] = {
-            "bind": "/var/run/docker.sock",
-            "mode": "rw",
-        }
-    if config.config_path is not None:
-        volumes[str(config.config_path)] = {
-            "bind": CONFIG_MOUNT_DESTINATION,
-            "mode": "ro",
-        }
-    ports = {
-        f"{container_port}/tcp": ("127.0.0.1", host_port)
-        for container_port, host_port in current.endpoint_map.items()
-    }
-    network_name = current.network_name or config.network_name
-    container_labels = {
-        **_config_labels(config),
-        **_base_labels(config.data_volume, "container"),
-    }
-    return _format_docker_run(
-        config.image,
-        config.container_name,
-        network_name,
-        config.memory,
-        volumes,
-        ports,
-        _container_environment(config, network_name),
-        container_labels,
-    )
 
 
 def _runtime_drift(

@@ -192,7 +192,7 @@ def test_image_precedence_is_yaml_environment_scoped_active_then_default(
     )
 
 
-def test_config_path_precedence_is_explicit_then_local_then_remembered(
+def test_config_path_precedence_is_explicit_local_remembered_then_home(
     tmp_path: Path,
 ) -> None:
     explicit = tmp_path / "explicit.yaml"
@@ -208,6 +208,11 @@ def test_config_path_precedence_is_explicit_then_local_then_remembered(
         "context:\n  project: remembered-project-1\n", encoding="utf-8"
     )
     paths = _paths(tmp_path)
+    paths.home.mkdir(parents=True)
+    home = paths.home / "localcloud.yaml"
+    home.write_text(
+        "context:\n  project: home-project-1\n", encoding="utf-8"
+    )
 
     selected = load_config(
         explicit=explicit,
@@ -230,6 +235,42 @@ def test_config_path_precedence_is_explicit_then_local_then_remembered(
     )
     assert selected.project == "remembered-project-1"
     assert selected.config_path == remembered.resolve()
+
+    remembered.unlink()
+    selected = load_config(directory=tmp_path, paths=paths)
+    assert selected.project == "home-project-1"
+    assert selected.config_path == home.resolve()
+
+
+def test_localcloud_tls_and_mcp_sections_pass_through_validation(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "localcloud.yaml"
+    config.write_text(
+        "tls:\n"
+        "  enabled: false\n"
+        "mcp:\n"
+        "  write: false\n"
+        "  destructive: false\n"
+        "  allow_remote: false\n",
+        encoding="utf-8",
+    )
+
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
+
+    assert selected.config_path == config.resolve()
+
+
+def test_mcp_permission_values_must_be_boolean(tmp_path: Path) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "mcp:\n  write: \"false\"\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HostError) as caught:
+        load_config(directory=tmp_path, paths=_paths(tmp_path))
+
+    assert caught.value.code == "invalid_config"
 
 
 def test_request_context_and_seed_do_not_change_runtime_hash(
@@ -638,7 +679,7 @@ def test_null_host_and_members_fall_back_to_cli_defaults(tmp_path: Path) -> None
     assert selected.image == DEFAULT_IMAGE
     assert selected.memory == "4g"
     assert selected.docker_socket is False
-    assert selected.environment == {"LOCALCLOUD_TLS_ENABLED": "true"}
+    assert selected.environment == {}
     assert selected.seed_path == seed
     assert selected.seed_yaml == "services: {}\n"
 
@@ -695,9 +736,9 @@ def test_host_environment_rejects_controller_owned_config_keys(
     assert name in caught.value.message
 
 
-def test_tls_enabled_by_default_with_no_config_or_override(tmp_path: Path) -> None:
+def test_tls_disabled_by_default_without_config_or_override(tmp_path: Path) -> None:
     selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
-    assert selected.environment == {"LOCALCLOUD_TLS_ENABLED": "true"}
+    assert selected.environment == {}
 
 
 def test_tls_override_false_disables_regardless_of_config(tmp_path: Path) -> None:

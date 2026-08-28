@@ -195,6 +195,22 @@ class _ExecutionObserver:
                 f"Resetting project {config.project!r} on data volume: "
                 f"{config.data_volume!r}…"
             )
+        config_source = (
+            str(config.config_path)
+            if config.config_path is not None
+            else "built-in defaults"
+        )
+        self.debug(
+            f"Command config: command={command} source={config_source!r} "
+            f"data_volume={config.data_volume!r} project={config.project!r} "
+            f"container={getattr(config, 'container_name', '<unknown>')!r} "
+            f"network={getattr(config, 'network_name', '<unknown>')!r} "
+            f"image={getattr(config, 'image', '<unknown>')!r} "
+            f"dry_run={bool(getattr(args, 'dry_run', False))} "
+            f"pull={bool(getattr(args, 'pull', False))}"
+        )
+        if getattr(args, "dry_run", False):
+            return
         if command not in {"reset", "status"}:
             self.reporter.update(message)
             return
@@ -367,7 +383,7 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
         config = _command_config(controller, args)
         if observer is not None:
             observer.config(args.command, config, args)
-        if args.command in {"start", "restart"}:
+        if args.command in {"start", "restart", "reset", "stop"}:
             command = getattr(controller, args.command)
             kwargs: dict[str, Any] = {}
             signature = inspect.signature(command)
@@ -375,13 +391,13 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
                 kwargs["pull"] = True
             if "tail" in signature.parameters and hasattr(args, "tail"):
                 kwargs["tail"] = args.tail
+            if "all_projects" in signature.parameters:
+                kwargs["all_projects"] = getattr(args, "all_projects", False)
+            if "dry_run" in signature.parameters and getattr(args, "dry_run", False):
+                kwargs["dry_run"] = True
             if observer is not None and "observer" in signature.parameters:
                 kwargs["observer"] = observer
             return command(config, **kwargs)
-        if args.command == "reset":
-            return controller.reset(config, all_projects=args.all_projects)
-        if args.command == "stop":
-            return controller.stop(config)
         if args.command == "status":
             return controller.status(config)
         if args.command == "logs":
@@ -536,6 +552,10 @@ def _initial_task(args: argparse.Namespace) -> str:
             if args.dry_run
             else "Cleaning up LocalCloud state…"
         )
+    if command in {"start", "restart", "reset", "stop"} and getattr(
+        args, "dry_run", False
+    ):
+        return f"Planning LocalCloud {command} without making changes…"
     if command == "start":
         return "Preparing to start LocalCloud…"
     if command == "restart":
@@ -562,6 +582,10 @@ def _initial_task(args: argparse.Namespace) -> str:
 def _success_message(args: argparse.Namespace, result: Any) -> str:
     command = args.command
     status = result.get("status") if isinstance(result, dict) else None
+    if command in {"start", "restart", "reset", "stop"} and getattr(
+        args, "dry_run", False
+    ):
+        return f"LocalCloud {command} dry-run completed"
     if command == "start":
         if status == "already_running":
             return (
@@ -662,7 +686,7 @@ def _parser() -> argparse.ArgumentParser:
     lifecycle_help = {
         "start": "Start the runtime selected by data volume and prepare a project",
         "restart": "Restart the selected runtime and reapply volatile seed data",
-        "reset": "Reset the selected project, or recreate all managed runtime data",
+        "reset": "Reset the selected project (use --all-projects for manual full-recreate steps)",
     }
     for name, help_text in lifecycle_help.items():
         command = commands.add_parser(name, help=help_text, description=f"{help_text}.")
@@ -679,6 +703,11 @@ def _parser() -> argparse.ArgumentParser:
         _add_context(command)
         _add_resource_names(command)
         _add_output_options(command, fields=True, command_name=name)
+        command.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Print the planned Docker and LocalCloud mutations without making changes",
+        )
         command.add_argument(
             "--skip-config-validation",
             action="store_true",
@@ -719,10 +748,9 @@ def _parser() -> argparse.ArgumentParser:
                 action=argparse.BooleanOptionalAction,
                 default=None,
                 help=(
-                    "Enable TLS on the LocalCloud runtime (default: enabled). "
-                    "Pass --no-tls to disable; overrides "
-                    "host.environment.LOCALCLOUD_TLS_ENABLED in localcloud.yaml "
-                    "when set"
+                    "Enable TLS on the LocalCloud runtime (default: disabled). "
+                    "Pass --tls to enable or --no-tls to override an enabled "
+                    "host.environment.LOCALCLOUD_TLS_ENABLED value"
                 ),
             )
             command.add_argument(
@@ -758,7 +786,7 @@ def _parser() -> argparse.ArgumentParser:
             command.add_argument(
                 "--all-projects",
                 action="store_true",
-                help="Delete and recreate all managed runtime data instead of only the selected project",
+                help="Print the manual steps to recreate all data on the volume (localcloud never deletes a data volume itself)",
             )
 
     stop = commands.add_parser(
@@ -768,6 +796,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     _add_data_volume(stop)
     _add_output_options(stop, fields=True, command_name="stop")
+    stop.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the planned Docker mutation without making changes",
+    )
 
     status = commands.add_parser(
         "status",
@@ -862,7 +895,7 @@ def _add_debug_option(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Show diagnostic details and Docker commands when available",
+        help="Show copyable Docker commands, execution details, and readiness diagnostics",
     )
 
 

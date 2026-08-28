@@ -14,6 +14,7 @@ from localcloud_cli.docker_runtime import (
     CONFIG_SCHEMA_LABEL,
     CONFIG_HASH_LABEL,
     CONFIG_LABEL,
+    CLI_SEED_MOUNT_DESTINATION,
     CONFIG_MOUNT_DESTINATION,
     CONFIG_PATH_LABEL,
     DATA_LABEL,
@@ -358,19 +359,55 @@ def test_managed_create_uses_only_controller_owned_bootstrap_environment(
     assert labels[NETWORK_NAME_LABEL] == "localcloud"
     assert SERVICES_LABEL not in labels
     assert labels[DATA_LABEL] == "persistent"
-    assert environment["LOCALCLOUD_DATA_DIR"] == DATA_MOUNT_DESTINATION
-    assert environment["LOCALCLOUD_DATA_VOLUME"] == "localcloud-data"
-    assert "LOCALCLOUD_PROJECT" not in environment
-    assert "LOCALCLOUD_SERVICES" not in environment
-    assert "LOCALCLOUD_CONFIG" not in environment
-    assert "LOCALCLOUD_INSTANCE" not in environment
-    assert "LOCALCLOUD_USER" not in environment
-    assert client.networks.values["localcloud"].labels[VOLUME_NAME_LABEL] == (
-        "localcloud-data"
-    )
+    assert environment == {}
+    network_labels = client.networks.values["localcloud"].labels
+    assert network_labels[MANAGED_LABEL] == "true"
+    assert network_labels[RESOURCE_ROLE_LABEL] == "network"
+    assert network_labels[VOLUME_NAME_LABEL] == "localcloud-data"
+    assert network_labels[NETWORK_NAME_LABEL] == "localcloud"
+    # The network's own identity never depends on unrelated config (image,
+    # memory, environment, ...), so it isn't tagged with the whole-config
+    # hash/JSON blob the container carries - that would make any unrelated
+    # config change look like a network change.
+    assert CONFIG_HASH_LABEL not in network_labels
+    assert CONFIG_LABEL not in network_labels
+    assert CONFIG_PATH_LABEL not in network_labels
+    assert DATA_LABEL not in network_labels
     assert client.volumes.values["localcloud-data"].labels[VOLUME_NAME_LABEL] == (
         "localcloud-data"
     )
+
+
+def test_non_default_runtime_passes_only_required_ownership_environment(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path, data_volume="localcloud-data-team")
+
+    runtime.create(config)
+
+    environment = client.containers.run_calls[0]["environment"]
+    assert environment == {
+        "LOCALCLOUD_RUNTIME_NETWORK": "localcloud-team",
+        "LOCALCLOUD_DATA_VOLUME": "localcloud-data-team",
+    }
+    assert client.volumes.values["localcloud-data-team"].labels[
+        VOLUME_NAME_LABEL
+    ] == "localcloud-data-team"
+
+
+def test_tls_flag_is_rendered_as_required_container_environment(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path, tls=True)
+    image = client.images.get(config.image)
+
+    command = runtime.plan_run(config, image).command()
+
+    assert "-e LOCALCLOUD_TLS_ENABLED=true" in command
 
 
 def test_managed_create_propagates_explicit_services_override(
@@ -415,7 +452,7 @@ def test_selected_config_is_mounted_read_only_and_forwards_resolved_services(
     run = client.containers.run_calls[0]
     mounted = run["volumes"][str(config_path.resolve())]
     assert mounted == {"bind": CONFIG_MOUNT_DESTINATION, "mode": "ro"}
-    assert run["environment"]["LOCALCLOUD_CONFIG"] == CONFIG_MOUNT_DESTINATION
+    assert "LOCALCLOUD_CONFIG" not in run["environment"]
     # project/user are request-scoped, not container-scoped, so they are never
     # frozen into the container even though the mounted file carries them.
     assert "LOCALCLOUD_PROJECT" not in run["environment"]
@@ -436,6 +473,28 @@ def test_selected_config_is_mounted_read_only_and_forwards_resolved_services(
         encoding="utf-8",
     )
     assert _config(tmp_path).config_hash == original_hash
+
+
+def test_user_seed_file_is_mounted_as_cli_seed_sentinel(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    seed = tmp_path / "custom-seed.yaml"
+    seed.write_text("services: {}\n", encoding="utf-8")
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  seed: custom-seed.yaml\n",
+        encoding="utf-8",
+    )
+    config = _config(tmp_path)
+
+    runtime.create(config)
+
+    mounted = client.containers.run_calls[0]["volumes"][str(seed.resolve())]
+    assert mounted == {
+        "bind": CLI_SEED_MOUNT_DESTINATION,
+        "mode": "ro",
+    }
 
 def test_port_probe_rejects_occupied_tcp_port() -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -1032,36 +1091,6 @@ def test_incomplete_new_child_ownership_blocks_parent_cleanup(
     assert child.removed == []
 
 
-def test_incomplete_orphan_child_ownership_blocks_purge(
-    tmp_path: Path,
-    ready_runtime: tuple[DockerRuntime, Client],
-) -> None:
-    runtime, client = ready_runtime
-    config = _config(tmp_path)
-    created = runtime.create(config)
-    parent = client.containers.values.pop(created.name)
-    network = client.networks.values[created.network_name]
-    volume = client.volumes.values[config.data_volume]
-    child = client.containers.add(
-        Resource(
-            "untrusted-orphan-child",
-            {
-                VOLUME_NAME_LABEL: config.data_volume,
-                "localcloud.managed": "true",
-            },
-        )
-    )
-
-    with pytest.raises(HostError) as caught:
-        runtime.purge(config)
-
-    assert caught.value.code == "cleanup_failed"
-    assert parent.removed == []
-    assert child.removed == []
-    assert network.removed == []
-    assert volume.removed == []
-
-
 def test_legacy_compatible_image_can_attach_and_restart_but_not_create(
     tmp_path: Path,
     ready_runtime: tuple[DockerRuntime, Client],
@@ -1544,7 +1573,7 @@ def test_format_docker_run_produces_valid_command_string() -> None:
     assert cmd.startswith("docker run -d --name localcloud")
     assert "--network localcloud-net" in cmd
     assert "-m 4g" in cmd
-    assert "-v localcloud-data:/var/lib/localcloud:rw" in cmd
+    assert "-v localcloud-data:/var/lib/localcloud" in cmd
     assert "-p 127.0.0.1:24080:24080/tcp" in cmd
     assert "-p 127.0.0.1::24081/tcp" in cmd
     assert "-e LOCALCLOUD_PROJECT=default" in cmd
@@ -1596,17 +1625,197 @@ def test_docker_runtime_emits_debug_commands_to_observer(
 
     observer = DebugObserver()
     runtime.create(config, observer=observer)
-    assert len(observer.debug_messages) == 1
-    assert observer.debug_messages[0].startswith("docker run -d --name localcloud")
+    assert any(
+        msg.startswith("Executing Docker SDK containers.run")
+        for msg in observer.debug_messages
+    )
+    assert not any(
+        "published ports" in msg.lower()
+        for msg in observer.debug_messages
+    )
+    assert not any(msg.startswith("docker run") for msg in observer.debug_messages)
 
-    # Start stopped container
+    observer.debug_messages.clear()
     record = runtime.resolve(config)
     assert record is not None
     container = client.containers.get(record.container_id)
     container.attrs["State"]["Status"] = "exited"
     runtime.start(config, record, observer=observer)
-    assert any(msg.startswith("docker start") for msg in observer.debug_messages)
+    assert any(
+        msg.startswith("Executing: docker start")
+        for msg in observer.debug_messages
+    )
+    assert not any("docker run" in msg for msg in observer.debug_messages)
 
-    # Restart container
+    observer.debug_messages.clear()
     runtime.restart(config, record, observer=observer)
-    assert any(msg.startswith("docker restart -t 20") for msg in observer.debug_messages)
+    assert any(
+        msg.startswith("Executing: docker restart -t 20")
+        for msg in observer.debug_messages
+    )
+    assert not any("docker run" in msg for msg in observer.debug_messages)
+
+
+def test_run_plan_is_shared_by_preview_and_sdk_execution(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    image = client.images.get(config.image)
+    plan = runtime.plan_run(config, image)
+
+    runtime.create(
+        config,
+        prepared_image=(image, False),
+        run_plan=plan,
+    )
+
+    assert client.containers.run_calls[-1] == {
+        "image": plan.image,
+        **plan.run_kwargs(),
+    }
+    assert "-p 127.0.0.1:24080-24081:24080-24081/tcp" in plan.command()
+
+
+def test_resolve_falls_back_to_configured_ports_for_stopped_container(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    created = runtime.create(config)
+    container = client.containers.get(created.container_id)
+    container.attrs["State"]["Status"] = "exited"
+    container.attrs["NetworkSettings"]["Ports"] = {}
+    container.attrs["HostConfig"] = {
+        "PortBindings": {
+            "24080/tcp": [
+                {"HostIp": "127.0.0.1", "HostPort": "49080"}
+            ],
+            "24093/udp": [
+                {"HostIp": "127.0.0.1", "HostPort": "53"}
+            ],
+        }
+    }
+
+    resolved = runtime.resolve(config)
+
+    assert resolved is not None
+    assert resolved.endpoint_map["24080"] == 49080
+    assert resolved.published_ports["24093/udp"] == (("127.0.0.1", 53),)
+
+
+def test_endpoint_map_prefers_tcp_when_protocols_share_container_port(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    created = runtime.create(config)
+    container = client.containers.get(created.container_id)
+    container.attrs["NetworkSettings"]["Ports"].update(
+        {
+            "24093/udp": [{"HostIp": "127.0.0.1", "HostPort": "53"}],
+            "24093/tcp": [
+                {"HostIp": "127.0.0.1", "HostPort": "49093"}
+            ],
+        }
+    )
+
+    resolved = runtime.resolve(config)
+
+    assert resolved is not None
+    assert resolved.endpoint_map["24093"] == 49093
+
+
+def test_local_only_preflight_never_pulls_missing_image(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path, image="missing/localcloud:latest")
+
+    with pytest.raises(HostError) as caught:
+        runtime.preflight_create(config, local_only=True)
+    assert caught.value.code == "dry_run_image_unavailable"
+    assert client.images.pulls == []
+
+
+
+def test_create_preview_reuses_existing_matching_target_network(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path, network_name="localcloud-target-network")
+    client.networks.add(
+        Resource(
+            config.network_name,
+            {
+                MANAGED_LABEL: "true",
+                RESOURCE_ROLE_LABEL: "network",
+                VOLUME_NAME_LABEL: config.data_volume,
+                CONFIG_HASH_LABEL: config.config_hash,
+            },
+        )
+    )
+    image, _pulled = runtime.preflight_create(config, local_only=True)
+    run_plan = runtime.plan_run(config, image)
+
+    commands = runtime.preview_create_commands(
+        config,
+        run_plan,
+        volume_exists=True,
+        network_exists=None,
+    )
+
+    assert not any("docker network create" in command for command in commands)
+    assert not any("docker network rm" in command for command in commands)
+
+
+def test_replace_with_remove_network_false_preserves_network_across_config_change(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    created = runtime.create(config)
+    original_network = client.networks.values[created.network_name]
+
+    changed = _write_config(tmp_path, "host:\n  memory: 8g\n")
+    assert changed.config_hash != config.config_hash
+
+    runtime.remove(config, created, remove_volume=False, remove_network=False)
+    recreated = runtime.create(changed)
+
+    # An unrelated config change (memory) must not have torn down and
+    # recreated the network: it's the exact same object, never removed.
+    assert client.networks.values[recreated.network_name] is original_network
+    assert original_network.removed == []
+    assert recreated.network_created is False
+
+
+def test_inspected_run_plan_is_copyable_and_collapses_port_ranges(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    current = runtime.create(config)
+    container = client.containers.get(current.container_id)
+    container.attrs["HostConfig"] = {
+        "Memory": 4 * 1024 * 1024 * 1024,
+        "NetworkMode": config.network_name,
+    }
+
+    command = runtime.inspect_run_plan(config, current).command()
+
+    assert command.startswith("docker run -d --name localcloud")
+    assert "--network localcloud" in command
+    assert "-m 4g" in command
+    assert "-v localcloud-data:/var/lib/localcloud" in command
+    assert "-p 0.0.0.0:24080-24081:24080-24081/tcp" in command
+    assert " -e " not in command
+    assert " -l " not in command
+    assert command.endswith(config.image)

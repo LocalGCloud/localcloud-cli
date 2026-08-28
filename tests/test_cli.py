@@ -28,6 +28,7 @@ class FakeController:
         self.calls: list[tuple[str, Any]] = []
         self.pull_calls: list[tuple[str, bool]] = []
         self.tail_calls: list[tuple[str, float | None]] = []
+        self.dry_run_calls: list[tuple[str, bool]] = []
         self.remembered: str | None = None
         self.remembered_by_volume: dict[str, str | None] = {}
 
@@ -42,12 +43,20 @@ class FakeController:
         pull: bool = False,
         tail: float | None = None,
         observer: Any | None = None,
-    ) -> dict[str, Any]:
+        dry_run: bool = False,
+    ) -> dict[str, Any] | str:
         self.calls.append(("start", config))
         self.pull_calls.append(("start", pull))
         self.tail_calls.append(("start", tail))
+        self.dry_run_calls.append(("start", dry_run))
         if observer is not None and hasattr(observer, "debug"):
-            observer.debug("docker run -d --name localcloud ...")
+            observer.debug(
+                "docker run -d --name localcloud "
+                "-p 127.0.0.1:24080-24093:24080-24093/tcp "
+                "jaysen2apache/localcloud:latest"
+            )
+        if dry_run:
+            return "# action: create\ndocker run -d --name localcloud"
         return {"status": "started", "data_volume": config.data_volume}
 
     def restart(
@@ -57,23 +66,52 @@ class FakeController:
         pull: bool = False,
         tail: float | None = None,
         observer: Any | None = None,
-    ) -> dict[str, Any]:
+        dry_run: bool = False,
+    ) -> dict[str, Any] | str:
         self.calls.append(("restart", config))
         self.pull_calls.append(("restart", pull))
         self.tail_calls.append(("restart", tail))
+        self.dry_run_calls.append(("restart", dry_run))
         if observer is not None and hasattr(observer, "debug"):
-            observer.debug("docker restart -t 20 localcloud")
+            observer.debug(
+                "docker run -d --name localcloud "
+                "-p 127.0.0.1:24080-24093:24080-24093/tcp "
+                "jaysen2apache/localcloud:latest"
+            )
+        if dry_run:
+            return "# action: restart\ndocker restart -t 20 localcloud"
         return {"status": "restarted", "data_volume": config.data_volume}
-    def reset(self, config: Any, *, all_projects: bool = False) -> dict[str, Any]:
+    def reset(
+        self,
+        config: Any,
+        *,
+        all_projects: bool = False,
+        observer: Any | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any] | str:
+        _ = observer
         self.calls.append(("reset", (config, all_projects)))
+        self.dry_run_calls.append(("reset", dry_run))
+        if dry_run:
+            return "# action: reset\n[LocalCloud API] reset project"
         return {
             "status": "reset",
             "data_volume": config.data_volume,
             "reset_scope": "all_projects" if all_projects else "project",
         }
 
-    def stop(self, config: Any) -> dict[str, Any]:
+    def stop(
+        self,
+        config: Any,
+        *,
+        observer: Any | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any] | str:
+        _ = observer
         self.calls.append(("stop", config))
+        self.dry_run_calls.append(("stop", dry_run))
+        if dry_run:
+            return "# action: stop\ndocker stop -t 20 localcloud"
         return {"status": "stopped", "data_volume": config.data_volume}
 
     def status(self, config: Any) -> dict[str, Any]:
@@ -686,10 +724,10 @@ def test_restart_and_start_tls_flags() -> None:
     assert parser.parse_args(["start", "--tls"]).tls is True
 
 
-def test_start_and_restart_tls_dispatch_defaults_to_enabled() -> None:
+def test_start_and_restart_tls_dispatch_defaults_to_disabled() -> None:
     _execute(_parser().parse_args(["start"]))
     _, config = FakeController.instance.calls[-1]
-    assert config.environment["LOCALCLOUD_TLS_ENABLED"] == "true"
+    assert "LOCALCLOUD_TLS_ENABLED" not in config.environment
 
     _execute(_parser().parse_args(["start", "--no-tls"]))
     _, config = FakeController.instance.calls[-1]
@@ -745,6 +783,17 @@ def test_start_and_restart_memory_image_services_dispatch() -> None:
     _execute(_parser().parse_args(["restart", "--services", "default"]))
     _, config = FakeController.instance.calls[-1]
     assert config.services is None
+
+
+@pytest.mark.parametrize("command", ["start", "restart", "reset", "stop"])
+def test_mutating_commands_accept_and_dispatch_dry_run(command: str) -> None:
+    args = _parser().parse_args([command, "--dry-run"])
+    assert args.dry_run is True
+
+    result = _execute(args)
+
+    assert isinstance(result, str)
+    assert FakeController.instance.dry_run_calls[-1] == (command, True)
 
 
 def test_start_and_restart_tail_flags() -> None:
@@ -1239,13 +1288,31 @@ def test_observer_resets_consolidated_progress_for_the_next_image() -> None:
     assert "Downloading 30% overall" not in output
 
 
-def test_main_start_debug_prints_docker_command(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_main_start_debug_prints_copyable_ranged_docker_command(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
     assert main(["start", "--debug"]) == 0
     captured = capsys.readouterr()
-    assert "[debug] docker run -d --name localcloud ..." in captured.err
+    assert "[debug] Lifecycle action" not in captured.err
+    assert "[debug] Published ports" not in captured.err
+    assert "[debug] docker run -d --name localcloud" in captured.err
+    assert "24080-24093:24080-24093/tcp" in captured.err
+
+
+def test_main_start_dry_run_prints_native_plan(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert main(["start", "--dry-run"]) == 0
+    captured = capsys.readouterr()
+    assert "# action: create" in captured.out
+    assert "docker run -d --name localcloud" in captured.out
+    assert "dry-run completed" in captured.err
 
 def test_main_start_when_already_running_reports_guidance_and_skips_panel(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path

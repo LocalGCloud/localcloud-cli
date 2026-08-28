@@ -80,32 +80,35 @@ VERSION=0.1.0
 ./scripts/release.sh --release "$VERSION"
 ```
 
+To intentionally rebuild an existing release while preserving its tag:
+
+```sh
+./scripts/release.sh -f --release "$VERSION"
+```
+
+Force mode still requires the existing local and `origin` tags to identify the
+prepared release commit. It rebuilds and signs every asset before the workflow
+deletes and recreates the GitHub release.
+
 The script:
 
 - validates the clean branch, remote revision, version, lockfile, and notices;
-- runs the complete test suite and a native frozen-binary smoke test;
-
-  Because this local preflight includes tests marked `docker`, Docker must be
-  reachable, a `jaysen2apache/localcloud:latest` image must be present locally,
-  and a compatible `localcloud-data` runtime must already be running and
-  operational. Its built-in `local-project` fixture must retain the seeded GCS
-  buckets and BigQuery datasets. The release tests attach to that runtime and
-  perform only read-only operational and seeded-data checks.
+- runs the non-Docker test suite and a native frozen-binary smoke test;
 - creates and pushes the annotated `v${VERSION}` tag for a new release, or
   verifies and reuses the matching local and `origin` tag for an existing
   release;
-- dispatches and watches `cli-release.yml` only when the GitHub release does
-  not already exist;
+- dispatches and watches `cli-release.yml` when the GitHub release is absent
+  or force replacement was explicitly requested;
 - verifies the exact archive, checksum, formula, and Sigstore asset set; and
 - dispatches and watches the idempotent Homebrew tap publisher.
 
 The GitHub workflow remains responsible for native macOS and Linux builds on
 ARM64 and AMD64 runners. The local script does not cross-compile. A matching
 tag may be reused after a failed workflow. If a complete GitHub release already
-exists, the script requires its local and `origin` tags to resolve to the
-current release commit, skips the duplicate CLI workflow, and resumes Homebrew
-publication. Conflicting tags and published release assets are never
-overwritten.
+exists, the default behavior verifies and reuses it before resuming Homebrew
+publication. With `--force`, all build and signing jobs must succeed before the
+workflow deletes only the existing release and immediately recreates it; the
+tag is never deleted or moved. Conflicting tags are always rejected.
 
 ## 4. Manual recovery commands
 
@@ -120,14 +123,15 @@ VERSION=0.1.0
 ```
 
 This repeats the local preflight. When a matching GitHub release already
-exists, it verifies the complete asset set, reuses the immutable release,
-skips the duplicate CLI build/publish workflow, and dispatches the idempotent
-Homebrew publisher. If `main` has advanced since the CLI release, use the
-direct tap command below rather than weakening the source and tag checks.
+exists, the default behavior verifies the complete asset set, reuses the
+release, skips the duplicate CLI build/publish workflow, and dispatches the
+idempotent Homebrew publisher. Use `-f` only when the published assets must be
+fully rebuilt. If `main` has advanced since the CLI release, use the direct tap
+command below rather than weakening the source and tag checks.
 
 The underlying commands are retained for low-level diagnosis or recovery.
-Rerunning `cli-release.yml` for an already published tag is intentionally
-rejected; only dispatch it when the GitHub release does not exist:
+Rerunning `cli-release.yml` for an already published tag is rejected unless its
+`force` input is explicitly set to `true`:
 
 ```sh
 VERSION=0.1.0
@@ -148,10 +152,11 @@ git tag -a "v${VERSION}" -m "Release LocalCloud CLI ${VERSION}"
 git push origin main
 git push origin "v${VERSION}"
 
-# Only run this workflow when v${VERSION} has no GitHub release.
+# Use force=true only to delete and recreate an existing release.
 cli_run_url=$(gh workflow run cli-release.yml \
   --repo LocalGCloud/localcloud-cli \
-  --ref "v${VERSION}")
+  --ref "v${VERSION}" \
+  -f force=false)
 gh run watch "${cli_run_url##*/}" \
   --repo LocalGCloud/localcloud-cli \
   --exit-status
@@ -168,9 +173,10 @@ gh run watch "${tap_run_url##*/}" \
 `pytest -m "not docker"`, builds all four native archives, and creates the
 GitHub release. It does not pull or otherwise depend on Docker Hub state — the
 release notes cite the runtime image by its mutable `:latest` tag, and no job
-in the workflow requires Docker. Release creation is fail-closed: rerunning
-the workflow for an already published tag is intentionally rejected rather
-than replacing its immutable assets. The tap workflow then downloads,
+in the workflow requires Docker. Release creation is fail-closed by default.
+With `force=true`, the per-tag concurrency lock serializes replacement runs,
+and the publish job deletes the existing release only after every archive and
+signature is ready; it never deletes the tag. The tap workflow then downloads,
 installs, tests, and commits the published formula; when the formula is already
 identical, it makes no commit.
 
