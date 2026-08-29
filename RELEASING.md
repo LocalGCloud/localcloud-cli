@@ -82,15 +82,16 @@ VERSION=0.1.0
 ./scripts/release.sh --release "$VERSION"
 ```
 
-To intentionally rebuild an existing release while preserving its tag:
+To intentionally replace an existing release with the prepared `main` commit:
 
 ```sh
 ./scripts/release.sh -f --release "$VERSION"
 ```
 
-Force mode still requires the existing local and `origin` tags to identify the
-prepared release commit. It rebuilds and signs every asset before the workflow
-deletes and recreates the GitHub release.
+Force mode retargets conflicting local and `origin` tags to the prepared release
+commit. The remote update uses a force-with-lease check so a concurrent tag
+change is rejected rather than overwritten. It then rebuilds and signs every
+asset before the workflow deletes and recreates the GitHub release.
 
 The script:
 
@@ -98,9 +99,9 @@ The script:
   notices;
 - warns and asks for confirmation when the local working tree is dirty;
 - runs the non-Docker test suite and a native frozen-binary smoke test;
-- creates and pushes the annotated `v${VERSION}` tag for a new release, or
-  verifies and reuses the matching local and `origin` tag for an existing
-  release;
+- creates and pushes the annotated `v${VERSION}` tag for a new release;
+- rejects conflicting tags by default, or retargets them to the prepared commit
+  when force replacement was explicitly requested;
 - dispatches and watches `cli-release.yml` when the GitHub release is absent
   or force replacement was explicitly requested;
 - verifies the exact archive, checksum, formula, and Sigstore asset set; and
@@ -110,19 +111,19 @@ The GitHub workflow remains responsible for native macOS and Linux builds on
 ARM64 and AMD64 runners. The local script does not cross-compile. A matching
 tag may be reused after a failed workflow. If a complete GitHub release already
 exists, the default behavior verifies and reuses it before resuming Homebrew
-publication. With `--force`, all build and signing jobs must succeed before the
-workflow deletes only the existing release and immediately recreates it; the
-tag is never deleted or moved. Conflicting tags are always rejected.
+publication. With `--force`, a conflicting tag is moved to the current prepared
+commit before the workflow starts. All build and signing jobs must then succeed
+before the workflow deletes the existing release and immediately recreates it.
 
 Official artifacts and their full validation are built by GitHub Actions from
 the clean tagged commit. Local preflight checks run in the current working tree,
-so unrelated local changes can still cause that earlier validation to fail.
+so confirmed local changes can still affect or fail that validation.
 
 ## 4. Manual recovery commands
 
 The automation above is the primary release path. After an interrupted run,
 the supported recovery is to rerun the same command while `main`,
-`origin/main`, the source version, and both tag refs still identify the release
+`origin/main`, and the source version still identify the intended release
 commit:
 
 ```sh
@@ -133,9 +134,9 @@ VERSION=0.1.0
 This repeats the local preflight. When a matching GitHub release already
 exists, the default behavior verifies the complete asset set, reuses the
 release, skips the duplicate CLI build/publish workflow, and dispatches the
-idempotent Homebrew publisher. Use `-f` only when the published assets must be
-fully rebuilt. If `main` has advanced since the CLI release, use the direct tap
-command below rather than weakening the source and tag checks.
+idempotent Homebrew publisher. Use `-f` when the published assets must be fully
+rebuilt from the current prepared `main` commit, including when the existing
+tag identifies an earlier commit.
 
 The underlying commands are retained for low-level diagnosis or recovery.
 Rerunning `cli-release.yml` for an already published tag is rejected unless its
@@ -238,10 +239,11 @@ git rev-parse -q --verify "refs/tags/v${VERSION}^{}"
 
 `prepare_tag` reuses a local `v${VERSION}` tag only if it already points at
 `HEAD`. A tag left over from an attempt that failed *before* the source was
-ever bumped and pushed points at an older commit, and blocks tag creation on
-the next run. Since it was never pushed to `origin` (confirm with
+ever bumped and pushed points at an older commit, and blocks a normal release
+on the next run. Force mode intentionally retargets it. If it was never pushed
+to `origin` (confirm with
 `git ls-remote --tags origin "refs/tags/v${VERSION}"`) and no GitHub release
-exists for it, it's safe to delete and let the script recreate it at the
+exists for it, it is also safe to delete and let the script recreate it at the
 correct commit:
 
 ```sh

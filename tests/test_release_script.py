@@ -38,7 +38,7 @@ def test_help_documents_build_and_release_modes() -> None:
     assert result.returncode == 0
     assert "--build-only" in result.stdout
     assert "--release VERSION" in result.stdout
-    assert "-f, --force" in result.stdout
+    assert "retarget conflicting tags to HEAD" in result.stdout
     assert "default: build for the current platform" in result.stdout
 
 
@@ -570,6 +570,43 @@ def test_existing_release_refuses_conflicting_tag(tmp_path: Path) -> None:
     assert "workflow run" not in commands
 
 
+def test_force_existing_release_retargets_conflicting_tag(tmp_path: Path) -> None:
+    script, env, command_log = release_project(tmp_path)
+    project = script.parents[1]
+    git(project, "tag", "-a", "v1.2.3", "-m", "Previous release commit")
+    git(project, "push", "origin", "refs/tags/v1.2.3")
+    previous_release_commit = git(project, "rev-parse", "v1.2.3^{}").stdout.strip()
+    (project / "committed.txt").write_text("corrected release\n", encoding="utf-8")
+    git(project, "add", "committed.txt")
+    git(project, "commit", "-m", "Correct release source")
+    git(project, "push", "origin", "main")
+    head = git(project, "rev-parse", "HEAD").stdout.strip()
+    git(project, "tag", "-fa", "v1.2.3", "-m", "Interrupted force retry", head)
+    env["GH_RELEASE_EXISTS"] = "1"
+
+    result = run_script(
+        "-f", "--release", "1.2.3", script=script, cwd=tmp_path, env=env
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert previous_release_commit != head
+    assert git(project, "rev-parse", "v1.2.3^{}").stdout.strip() == head
+    origin = git(project, "remote", "get-url", "origin").stdout.strip()
+    remote_tag = subprocess.run(
+        ["git", "--git-dir", origin, "rev-parse", "v1.2.3^{}"],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    assert remote_tag == head
+    assert f"Retargeted tag v1.2.3 to release commit {head}" in result.stdout
+    assert (
+        "gh workflow run cli-release.yml "
+        "--repo LocalGCloud/localcloud-cli --ref v1.2.3 -f force=true"
+        in command_log.read_text(encoding="utf-8")
+    )
+
+
 def test_existing_release_requires_local_and_remote_tag(tmp_path: Path) -> None:
     script, env, command_log = release_project(tmp_path)
     env["GH_RELEASE_EXISTS"] = "1"
@@ -692,6 +729,26 @@ def test_force_release_rebuilds_existing_release_without_changing_tag(
         in result.stdout
     )
 
+
+
+def test_force_release_restores_missing_local_tag(tmp_path: Path) -> None:
+    script, env, _ = release_project(tmp_path)
+    project = script.parents[1]
+    git(project, "tag", "-a", "v1.2.3", "-m", "Release LocalCloud CLI 1.2.3")
+    git(project, "push", "origin", "refs/tags/v1.2.3")
+    tag_object = git(project, "rev-parse", "refs/tags/v1.2.3").stdout.strip()
+    git(project, "tag", "-d", "v1.2.3")
+    env["GH_RELEASE_EXISTS"] = "1"
+
+    result = run_script(
+        "-f", "--release", "1.2.3", script=script, cwd=tmp_path, env=env
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        git(project, "rev-parse", "refs/tags/v1.2.3").stdout.strip()
+        == tag_object
+    )
 
 def test_existing_release_with_invalid_assets_dispatches_no_workflow(
     tmp_path: Path,

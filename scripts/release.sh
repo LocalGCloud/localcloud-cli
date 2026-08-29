@@ -22,7 +22,7 @@ Modes:
   --release VERSION  Publish a prepared X.Y.Z version through GitHub Actions.
 
 Options:
-  -f, --force        Replace an existing GitHub release without changing its tag.
+  -f, --force        Replace a release and retarget conflicting tags to HEAD.
 
 With no arguments, the default: build for the current platform.
 EOF
@@ -213,6 +213,11 @@ confirm_release_tree_state() {
     esac
 }
 
+remote_tag_object() {
+    remote_tag=$1
+    git ls-remote --tags "$SOURCE_REMOTE" "refs/tags/$remote_tag" | cut -f 1
+}
+
 remote_tag_commit() {
     remote_tag=$1
     remote_tag_line=$(
@@ -234,21 +239,47 @@ prepare_tag() {
     local_tag_commit=$(
         git rev-parse -q --verify "refs/tags/$TAG^{}" 2>/dev/null || :
     )
+    published_tag_object=$(remote_tag_object "$TAG")
     published_tag_commit=$(remote_tag_commit "$TAG")
+    TAG_PUSH_REQUIRED="false"
+    TAG_FORCE_PUSH="false"
+    TAG_REMOTE_EXPECTED=$published_tag_object
 
     if [ -n "$local_tag_commit" ] && [ "$local_tag_commit" != "$head_commit" ]; then
-        fail "local tag $TAG does not point to the release commit"
+        [ "$FORCE_RELEASE" = "true" ] ||
+            fail "local tag $TAG does not point to the release commit"
     fi
     if [ -n "$published_tag_commit" ] &&
         [ "$published_tag_commit" != "$head_commit" ]; then
-        fail "remote tag $TAG does not point to the release commit"
+        [ "$FORCE_RELEASE" = "true" ] ||
+            fail "remote tag $TAG does not point to the release commit"
+    fi
+
+    if {
+        [ -n "$local_tag_commit" ] && [ "$local_tag_commit" != "$head_commit" ]
+    } || {
+        [ -n "$published_tag_commit" ] &&
+            [ "$published_tag_commit" != "$head_commit" ]
+    }; then
+        stage "Retarget annotated tag $TAG"
+        git tag -fa "$TAG" -m "Release LocalCloud CLI $VERSION" "$head_commit"
+        local_tag_commit=$head_commit
+        if [ "$published_tag_commit" != "$head_commit" ]; then
+            TAG_PUSH_REQUIRED="true"
+            if [ -n "$published_tag_commit" ]; then
+                TAG_FORCE_PUSH="true"
+            fi
+        fi
+        printf 'Retargeted tag %s to release commit %s\n' "$TAG" "$head_commit"
     fi
 
     if [ -n "$existing_release" ]; then
         if [ -z "$local_tag_commit" ] || [ -z "$published_tag_commit" ]; then
             fail "GitHub release $TAG exists but its tag is missing locally or on origin"
         fi
-        printf '\nReusing tag %s at %s\n' "$TAG" "$head_commit"
+        if [ "$TAG_PUSH_REQUIRED" = "false" ]; then
+            printf '\nReusing tag %s at %s\n' "$TAG" "$head_commit"
+        fi
         return
     fi
 
@@ -261,6 +292,9 @@ prepare_tag() {
         git tag -a "$TAG" -m "Release LocalCloud CLI $VERSION"
     else
         printf '\nReusing tag %s at %s\n' "$TAG" "$head_commit"
+    fi
+    if [ -z "$published_tag_commit" ]; then
+        TAG_PUSH_REQUIRED="true"
     fi
 }
 
@@ -348,7 +382,21 @@ release_version() {
         fail "release must run from branch $SOURCE_BRANCH"
 
     gh auth status --hostname github.com >/dev/null
-    git fetch "$SOURCE_REMOTE" "$SOURCE_BRANCH" --tags
+    if [ "$FORCE_RELEASE" = "true" ]; then
+        git fetch "$SOURCE_REMOTE" "$SOURCE_BRANCH"
+        local_tag_object=$(
+            git rev-parse -q --verify "refs/tags/$TAG" 2>/dev/null || :
+        )
+        if [ -z "$local_tag_object" ]; then
+            published_tag_object=$(remote_tag_object "$TAG")
+            if [ -n "$published_tag_object" ]; then
+                git fetch "$SOURCE_REMOTE" \
+                    "refs/tags/$TAG:refs/tags/$TAG"
+            fi
+        fi
+    else
+        git fetch "$SOURCE_REMOTE" "$SOURCE_BRANCH" --tags
+    fi
     head_commit=$(git rev-parse HEAD)
     remote_commit=$(git rev-parse "$SOURCE_REMOTE/$SOURCE_BRANCH")
     [ "$head_commit" = "$remote_commit" ] ||
@@ -380,10 +428,16 @@ release_version() {
     prepare_tag "$head_commit" "$existing_release"
 
     CLI_RUN_URL=
-    if [ -z "$existing_release" ]; then
+    if [ -z "$existing_release" ] || [ "$TAG_PUSH_REQUIRED" = "true" ]; then
         stage "Push prepared source and tag"
         git push "$SOURCE_REMOTE" "$SOURCE_BRANCH"
-        git push "$SOURCE_REMOTE" "refs/tags/$TAG"
+        if [ "$TAG_FORCE_PUSH" = "true" ]; then
+            git push "$SOURCE_REMOTE" \
+                --force-with-lease="refs/tags/$TAG:$TAG_REMOTE_EXPECTED" \
+                "refs/tags/$TAG"
+        else
+            git push "$SOURCE_REMOTE" "refs/tags/$TAG"
+        fi
     fi
 
     if [ -z "$existing_release" ] || [ "$FORCE_RELEASE" = "true" ]; then
