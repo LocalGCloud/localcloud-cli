@@ -57,8 +57,10 @@ In `LocalGCloud/localcloud-cli`:
 3. Regenerate `THIRD_PARTY_NOTICES` when locked dependencies changed.
 4. Review, commit, and push the prepared source to `main`.
 
-Release automation never edits or commits tracked files. It requires a clean
-`main` whose `HEAD` already equals `origin/main`.
+Release automation never edits or commits tracked files. It requires `main`
+whose `HEAD` already equals `origin/main`. A dirty working tree is listed with
+a warning and requires explicit `yes` confirmation; those local changes are
+not included in the published release.
 
 To build and smoke-test a pre-extracted one-folder bundle for the current host
 without publishing anything:
@@ -92,7 +94,9 @@ deletes and recreates the GitHub release.
 
 The script:
 
-- validates the clean branch, remote revision, version, lockfile, and notices;
+- validates the branch, remote revision, committed version, lockfile, and
+  notices;
+- warns and asks for confirmation when the local working tree is dirty;
 - runs the non-Docker test suite and a native frozen-binary smoke test;
 - creates and pushes the annotated `v${VERSION}` tag for a new release, or
   verifies and reuses the matching local and `origin` tag for an existing
@@ -109,6 +113,10 @@ exists, the default behavior verifies and reuses it before resuming Homebrew
 publication. With `--force`, all build and signing jobs must succeed before the
 workflow deletes only the existing release and immediately recreates it; the
 tag is never deleted or moved. Conflicting tags are always rejected.
+
+Official artifacts and their full validation are built by GitHub Actions from
+the clean tagged commit. Local preflight checks run in the current working tree,
+so unrelated local changes can still cause that earlier validation to fail.
 
 ## 4. Manual recovery commands
 

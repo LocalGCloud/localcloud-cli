@@ -19,11 +19,13 @@ def run_script(
     script: Path = SCRIPT,
     cwd: Path = PROJECT_ROOT,
     env: dict[str, str] | None = None,
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["/bin/sh", str(script), *args],
         cwd=cwd,
         env=env,
+        input=input_text,
         text=True,
         capture_output=True,
         check=False,
@@ -198,6 +200,11 @@ printf 'uv %s\\n' "$*" >> "$COMMAND_LOG"
 if [ -n "${UV_FAIL_PATTERN:-}" ]; then
     case "$*" in
         *"$UV_FAIL_PATTERN"*) exit 9 ;;
+    esac
+fi
+if [ "${UV_MUTATE_TRACKED:-0}" = "1" ]; then
+    case " $* " in
+        *" pytest "*) printf 'changed during preflight\n' >> THIRD_PARTY_NOTICES ;;
     esac
 fi
 
@@ -394,15 +401,57 @@ def assert_no_release_mutation(command_log: Path) -> None:
         assert "workflow run" not in commands
 
 
-def test_release_refuses_dirty_working_tree(tmp_path: Path) -> None:
+def test_release_dirty_tree_requires_confirmation(tmp_path: Path) -> None:
     script, env, command_log = release_project(tmp_path)
     project = script.parents[1]
     (project / "untracked.txt").write_text("dirty\n", encoding="utf-8")
 
-    result = run_script("--release", "1.2.3", script=script, cwd=tmp_path, env=env)
+    result = run_script(
+        "--release", "1.2.3", script=script, cwd=tmp_path, env=env, input_text=""
+    )
 
     assert result.returncode == 1
-    assert "working tree must be clean" in result.stderr
+    assert "working tree is not clean" in result.stderr
+    assert "these local changes are excluded" in result.stderr
+    assert "release cancelled" in result.stderr
+    assert_no_release_mutation(command_log)
+
+
+def test_release_dirty_tree_can_release_committed_head(tmp_path: Path) -> None:
+    script, env, command_log = release_project(tmp_path)
+    project = script.parents[1]
+    version_file = project / "src" / "localcloud_cli" / "__init__.py"
+    version_file.write_text('__version__ = "9.9.9"\n', encoding="utf-8")
+    (project / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+
+    result = run_script(
+        "--release",
+        "1.2.3",
+        script=script,
+        cwd=tmp_path,
+        env=env,
+        input_text="yes\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    head = git(project, "rev-parse", "HEAD").stdout.strip()
+    assert git(project, "rev-parse", "v1.2.3^{}").stdout.strip() == head
+    assert f"Published artifacts will be built from commit {head}" in result.stderr
+    assert result.stderr.count("Release commit") == 1
+    assert "workflow run cli-release.yml" in command_log.read_text(encoding="utf-8")
+
+
+def test_release_reconfirms_tree_changed_during_preflight(tmp_path: Path) -> None:
+    script, env, command_log = release_project(tmp_path)
+    env["UV_MUTATE_TRACKED"] = "1"
+
+    result = run_script(
+        "--release", "1.2.3", script=script, cwd=tmp_path, env=env, input_text=""
+    )
+
+    assert result.returncode == 1
+    assert "working tree is not clean" in result.stderr
+    assert "release cancelled" in result.stderr
     assert_no_release_mutation(command_log)
 
 

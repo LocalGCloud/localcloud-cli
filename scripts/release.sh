@@ -120,6 +120,8 @@ PROJECT_ROOT=$(CDPATH='' cd "$SCRIPT_DIR/.." && pwd)
 cd "$PROJECT_ROOT"
 
 TEMP_DIR=""
+APPROVED_TREE_STATUS=""
+TREE_STATUS_APPROVED="false"
 cleanup() {
     if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
         rm -rf "$TEMP_DIR"
@@ -178,10 +180,37 @@ build_native() {
         "$PROJECT_ROOT" "$PROJECT_ROOT"
 }
 
-require_clean_tree() {
-    if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
-        fail "working tree must be clean before release"
+confirm_release_tree_state() {
+    release_commit=$1
+    tree_status=$(git status --porcelain --untracked-files=normal)
+    [ -n "$tree_status" ] || return 0
+
+    if [ "$TREE_STATUS_APPROVED" = "true" ] &&
+        [ "$tree_status" = "$APPROVED_TREE_STATUS" ]; then
+        return 0
     fi
+
+    printf 'warning: working tree is not clean.\n' >&2
+    printf 'Published artifacts will be built from commit %s; these local changes are excluded:\n' \
+        "$release_commit" >&2
+    printf '%s\n' "$tree_status" >&2
+    printf 'Release commit %s anyway? [y/N] ' "$release_commit" >&2
+
+    confirmation=
+    if ! IFS= read -r confirmation; then
+        confirmation=
+    fi
+    printf '\n' >&2
+
+    case $confirmation in
+        y | Y | yes | Yes | YES)
+            APPROVED_TREE_STATUS=$tree_status
+            TREE_STATUS_APPROVED="true"
+            ;;
+        *)
+            fail "release cancelled"
+            ;;
+    esac
 }
 
 remote_tag_commit() {
@@ -317,7 +346,6 @@ release_version() {
     current_branch=$(git branch --show-current)
     [ "$current_branch" = "$SOURCE_BRANCH" ] ||
         fail "release must run from branch $SOURCE_BRANCH"
-    require_clean_tree
 
     gh auth status --hostname github.com >/dev/null
     git fetch "$SOURCE_REMOTE" "$SOURCE_BRANCH" --tags
@@ -325,13 +353,17 @@ release_version() {
     remote_commit=$(git rev-parse "$SOURCE_REMOTE/$SOURCE_BRANCH")
     [ "$head_commit" = "$remote_commit" ] ||
         fail "HEAD must equal $SOURCE_REMOTE/$SOURCE_BRANCH before release"
+    confirm_release_tree_state "$head_commit"
 
+    committed_version_source=$(
+        git show "$head_commit:src/localcloud_cli/__init__.py"
+    ) || fail "source version file is missing from release commit $head_commit"
     source_version=$(
-        sed -n 's/^__version__ = "\([^"]*\)"$/\1/p' \
-            src/localcloud_cli/__init__.py
+        printf '%s\n' "$committed_version_source" |
+            sed -n 's/^__version__ = "\([^"]*\)"$/\1/p'
     )
     [ -n "$source_version" ] ||
-        fail "source version is missing from src/localcloud_cli/__init__.py"
+        fail "source version is missing from release commit $head_commit"
     [ "$source_version" = "$VERSION" ] ||
         fail "source version $source_version does not match $VERSION"
 
@@ -342,7 +374,7 @@ release_version() {
 
     build_native_executable
     smoke_native_executable "$VERSION"
-    require_clean_tree
+    confirm_release_tree_state "$head_commit"
 
     existing_release=$(published_release_tag)
     prepare_tag "$head_commit" "$existing_release"
