@@ -15,15 +15,19 @@ from typing import Any, Iterator
 
 import yaml
 
+from .constants import (
+    DEFAULT_CONFIG_NAME,
+    DEFAULTS_CONFIG_LABEL,
+    DEFAULT_DATA_VOLUME,
+    DEFAULT_IMAGE,
+    DEFAULT_MEMORY,
+    DEFAULT_PROJECT,
+    DEFAULT_TLS_PORT,
+    DEFAULT_USER,
+)
+
 from .errors import HostError
 
-DEFAULT_CONFIG_NAME = "localcloud.yaml"
-DEFAULT_IMAGE = "jaysen2apache/localcloud:latest"
-DEFAULT_MEMORY = "4g"
-DEFAULTS_CONFIG_LABEL = "<defaults>"
-DEFAULT_DATA_VOLUME = "localcloud-data"
-DEFAULT_PROJECT = "local-gcp-project"
-DEFAULT_USER = "local-developer"
 ACTIVE_RUNTIME_SCHEMA_VERSION = 3
 ACTIVE_RUNTIME_FILE = "active-runtime.json"
 LEGACY_LOCK_PATTERN = re.compile(r"^[0-9a-f]{64}\.lock$")
@@ -213,6 +217,9 @@ class LocalCloudConfig:
     container_name: str
     network_name: str
     diagnostics: tuple[dict[str, Any], ...]
+    tls_enabled: bool = False
+    tls_port: int = DEFAULT_TLS_PORT
+    strict_port_validation: bool = False
 
     def __post_init__(self) -> None:
         encoded = json.dumps(
@@ -226,7 +233,7 @@ class LocalCloudConfig:
 
 def runtime_settings(config: LocalCloudConfig) -> dict[str, Any]:
     """Return host-owned Docker settings that define runtime identity."""
-    return {
+    settings = {
         "data_volume": config.data_volume,
         "config_path": str(config.config_path)
         if config.config_path is not None
@@ -241,6 +248,10 @@ def runtime_settings(config: LocalCloudConfig) -> dict[str, Any]:
         "container_name": config.container_name,
         "network_name": config.network_name,
     }
+    if config.tls_enabled:
+        settings["tls_enabled"] = True
+        settings["tls_port"] = config.tls_port
+    return settings
 
 
 @dataclass(frozen=True)
@@ -692,6 +703,7 @@ def load_config(
     active_runtime: ActiveRuntime | None | object = _ACTIVE_RUNTIME_UNSET,
     active_diagnostics: tuple[dict[str, Any], ...] = (),
     skip_validation: bool = False,
+    strict_port_validation: bool = False,
 ) -> LocalCloudConfig:
     source_directory = _source_directory(directory)
     host_paths = paths if paths is not None else HostPaths.from_environment()
@@ -808,6 +820,36 @@ def load_config(
     if tls is not None:
         environment["LOCALCLOUD_TLS_ENABLED"] = "true" if tls else "false"
 
+    tls_section = raw.get("tls") or {}
+    if not isinstance(tls_section, dict):
+        _invalid_config("tls must be an object", value=tls_section)
+    tls_enabled = _boolean("tls.enabled", tls_section.get("enabled", False))
+    tls_port = _port("tls.port", tls_section.get("port", DEFAULT_TLS_PORT))
+    if "LOCALCLOUD_TLS_ENABLED" in environment:
+        tls_enabled = _environment_boolean(
+            "host.environment.LOCALCLOUD_TLS_ENABLED",
+            environment["LOCALCLOUD_TLS_ENABLED"],
+        )
+    if "LOCALCLOUD_TLS_PORT" in environment:
+        tls_port = _port(
+            "host.environment.LOCALCLOUD_TLS_PORT",
+            environment["LOCALCLOUD_TLS_PORT"],
+        )
+    if transparent_network and not tls_enabled:
+        _invalid_config(
+            "host.transparent_network requires TLS to be enabled",
+            field="host.transparent_network",
+        )
+    reserved_tls_ports = {*range(24080, 24094), 24481, 24482, 24489}
+    if transparent_network:
+        reserved_tls_ports.update({53, 80, 443})
+    if tls_enabled and tls_port in reserved_tls_ports:
+        _invalid_config(
+            "tls.port conflicts with another published LocalCloud listener",
+            field="tls.port",
+            port=tls_port,
+        )
+
     defaults = default_resource_names(selected_data_volume)
     active_for_volume = (
         active
@@ -857,6 +899,9 @@ def load_config(
         docker_socket=docker_socket,
         transparent_network=transparent_network,
         environment=environment,
+        tls_enabled=tls_enabled,
+        tls_port=tls_port,
+        strict_port_validation=strict_port_validation,
         container_name=selected_container,
         network_name=selected_network,
         diagnostics=tuple(diagnostics),
@@ -1218,6 +1263,26 @@ def _boolean(name: str, value: object) -> bool:
     if not isinstance(value, bool):
         _invalid_config(f"{name} must be a boolean", value=value)
     return value
+
+def _environment_boolean(name: str, value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized not in {"true", "false"}:
+        _invalid_config(f"{name} must be 'true' or 'false'", value=value)
+    return normalized == "true"
+
+
+def _port(name: str, value: object) -> int:
+    if isinstance(value, bool):
+        _invalid_config(f"{name} must be an integer in 1..65535", value=value)
+    if isinstance(value, int):
+        port = value
+    elif isinstance(value, str) and value.strip().isdigit():
+        port = int(value.strip())
+    else:
+        _invalid_config(f"{name} must be an integer in 1..65535", value=value)
+    if not 1 <= port <= 65535:
+        _invalid_config(f"{name} must be an integer in 1..65535", value=value)
+    return port
 
 
 def _non_blank_string(name: str, value: object) -> str:

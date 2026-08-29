@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+import io
 from typing import Any
 
+import anyio
 import pytest
 
 import localcloud_cli.mcp_stdio as mcp_module
@@ -32,12 +35,45 @@ CONFIG = LocalCloudConfig(
 )
 
 
+class _Buffer(io.StringIO):
+    def __init__(self, *, interactive: bool):
+        super().__init__()
+        self.interactive = interactive
+
+    def isatty(self) -> bool:
+        return self.interactive
+
+
+class _EmptyStream:
+    async def __aenter__(self) -> "_EmptyStream":
+        return self
+
+    async def __aexit__(self, *_args: Any) -> None:
+        return None
+
+    def __aiter__(self) -> "_EmptyStream":
+        return self
+
+    async def __anext__(self) -> Any:
+        raise StopAsyncIteration
+
+
 class RunningController:
     def __init__(self):
         self.targets: list[LocalCloudConfig] = []
+        self.readiness_timeouts: list[float | None] = []
 
-    def target(self, config: LocalCloudConfig) -> dict[str, Any]:
+    def target(
+        self,
+        config: LocalCloudConfig,
+        *,
+        readiness_timeout: float | None = None,
+        on_url_resolved: Any = None,
+    ) -> dict[str, Any]:
         self.targets.append(config)
+        self.readiness_timeouts.append(readiness_timeout)
+        if on_url_resolved is not None:
+            on_url_resolved("http://127.0.0.1:49080")
         return {
             "url": "http://127.0.0.1:49080",
             "endpoint_map": {"24080": 49080, "24081": 49081},
@@ -68,9 +104,126 @@ def _patch_java(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mcp_module, "JavaMcpClient", FakeJava)
 
 
+def test_run_raises_on_first_sigint_and_restores_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previous_handler = object()
+    installed: dict[str, Any] = {}
+    calls: list[tuple[int, Any]] = []
+
+    def set_handler(signum: int, handler: Any) -> Any:
+        calls.append((signum, handler))
+        if len(calls) == 1:
+            installed["handler"] = handler
+            return previous_handler
+        return installed["handler"]
+
+    def run_async(
+        _function: Any,
+        _config: LocalCloudConfig,
+        _connect_timeout: float,
+        _on_connecting: Any,
+    ) -> None:
+        installed["handler"](mcp_module.signal.SIGINT, None)
+
+    monkeypatch.setattr(mcp_module.signal, "signal", set_handler)
+    monkeypatch.setattr(anyio, "run", run_async)
+
+    with pytest.raises(KeyboardInterrupt):
+        mcp_module.run(CONFIG)
+
+    assert calls[0] == (
+        mcp_module.signal.SIGINT,
+        mcp_module._raise_keyboard_interrupt,
+    )
+    assert calls[1] == (mcp_module.signal.SIGINT, previous_handler)
+
+
+@pytest.mark.parametrize("interactive", [True, False])
+def test_stdio_lifecycle_feedback_uses_interactive_stderr_only(
+    interactive: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Adapter:
+        mcp_url = "http://127.0.0.1:49080/mcp"
+
+    @asynccontextmanager
+    async def fake_stdio_server():
+        yield _EmptyStream(), _EmptyStream()
+
+    import mcp.server.stdio as stdio_module
+
+    monkeypatch.setattr(
+        mcp_module,
+        "McpAdapter",
+        lambda _config, **_kwargs: Adapter(),
+    )
+    monkeypatch.setattr(stdio_module, "stdio_server", fake_stdio_server)
+    stderr = _Buffer(interactive=interactive)
+    stdout = io.StringIO()
+    monkeypatch.setattr(mcp_module.sys, "stderr", stderr)
+    monkeypatch.setattr(mcp_module.sys, "stdout", stdout)
+
+    anyio.run(mcp_module._run_sdk, CONFIG)
+
+    expected = (
+        "Connected to LocalCloud at http://127.0.0.1:49080/mcp\n"
+        "Accepting MCP requests over stdio. Press Ctrl-C to close.\n"
+        if interactive
+        else ""
+    )
+    assert stderr.getvalue() == expected
+    assert stdout.getvalue() == ""
+
+
+@pytest.mark.parametrize(
+    ("interactive", "expected"),
+    [
+        (
+            True,
+            "Connecting to LocalCloud MCP at "
+            "http://127.0.0.1:49080/mcp (timeout: 10s)…\n",
+        ),
+        (False, ""),
+    ],
+)
+def test_run_reports_resolved_endpoint_during_sdk_start(
+    interactive: bool,
+    expected: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stderr = _Buffer(interactive=interactive)
+    stdout = io.StringIO()
+    observed_before_url_resolution: list[str] = []
+
+    def run_async(
+        _function: Any,
+        _config: LocalCloudConfig,
+        connect_timeout: float,
+        on_connecting: Any,
+    ) -> None:
+        observed_before_url_resolution.append(stderr.getvalue())
+        assert connect_timeout == 10.0
+        on_connecting("http://127.0.0.1:49080/mcp")
+
+    monkeypatch.setattr(anyio, "run", run_async)
+    monkeypatch.setattr(mcp_module.sys, "stderr", stderr)
+    monkeypatch.setattr(mcp_module.sys, "stdout", stdout)
+
+    mcp_module.run(CONFIG)
+
+    assert observed_before_url_resolution == [""]
+    assert stderr.getvalue() == expected
+    assert stdout.getvalue() == ""
+
+
 def test_stopped_runtime_uses_exact_recovery_command() -> None:
     class StoppedController:
-        def target(self, _config: LocalCloudConfig) -> dict[str, Any]:
+        def target(
+            self,
+            _config: LocalCloudConfig,
+            **_kwargs: Any,
+        ) -> dict[str, Any]:
             raise HostError("runtime_not_running", "not running")
 
     with pytest.raises(HostError) as caught:
@@ -86,7 +239,11 @@ def test_stopped_runtime_uses_exact_recovery_command() -> None:
 
 def test_unknown_project_error_is_not_rewritten_as_runtime_failure() -> None:
     class UnknownProjectController:
-        def target(self, config: LocalCloudConfig) -> dict[str, Any]:
+        def target(
+            self,
+            config: LocalCloudConfig,
+            **_kwargs: Any,
+        ) -> dict[str, Any]:
             raise HostError(
                 "unknown_project",
                 f"Project {config.project!r} does not exist in {config.data_volume!r}",
@@ -127,13 +284,63 @@ def test_host_error_details_are_not_forwarded_to_mcp_client() -> None:
 
 def test_malformed_target_raises_clean_host_error_not_key_error() -> None:
     class MalformedController:
-        def target(self, _config: LocalCloudConfig) -> dict[str, Any]:
+        def target(
+            self,
+            _config: LocalCloudConfig,
+            **_kwargs: Any,
+        ) -> dict[str, Any]:
             return {"url": "http://127.0.0.1:49080"}  # missing endpoint_map
 
     with pytest.raises(HostError) as caught:
         McpAdapter(CONFIG, controller=MalformedController())
 
     assert caught.value.code == "runtime_target_invalid"
+
+
+@pytest.mark.parametrize(
+    ("connect_timeout", "duration"),
+    [
+        (1.0, "1 second"),
+        (2.5, "2.5 seconds"),
+    ],
+)
+def test_connection_timeout_names_endpoint_and_deadline(
+    connect_timeout: float,
+    duration: str,
+) -> None:
+    connecting: list[str] = []
+
+    class TimedOutController:
+        def target(
+            self,
+            _config: LocalCloudConfig,
+            *,
+            readiness_timeout: float,
+            on_url_resolved: Any,
+        ) -> dict[str, Any]:
+            assert readiness_timeout == connect_timeout
+            on_url_resolved("http://127.0.0.1:49080")
+            raise HostError(
+                "runtime_readiness_timeout",
+                "not ready",
+                {"url": "http://127.0.0.1:49080"},
+            )
+
+    with pytest.raises(HostError) as caught:
+        McpAdapter(
+            CONFIG,
+            controller=TimedOutController(),
+            connect_timeout=connect_timeout,
+            on_connecting=connecting.append,
+        )
+
+    assert connecting == ["http://127.0.0.1:49080/mcp"]
+    assert caught.value.code == "mcp_connection_timeout"
+    assert caught.value.message == (
+        "Could not connect to LocalCloud MCP at "
+        f"http://127.0.0.1:49080/mcp within {duration}."
+    )
+    assert caught.value.details["timeout_seconds"] == connect_timeout
 
 
 def test_running_bridge_lists_only_java_tools_and_preserves_initialize() -> None:
@@ -309,8 +516,10 @@ def test_config_context_is_forwarded_to_java(
     controller = RunningController()
 
     adapter = McpAdapter(CONFIG, controller=controller)
+    assert adapter.mcp_url == "http://127.0.0.1:49080/mcp"
 
     assert selected == [
         ("http://127.0.0.1:49080", PROJECT, USER)
     ]
     assert controller.targets == [CONFIG]
+    assert controller.readiness_timeouts == [10.0]

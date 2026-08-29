@@ -8,7 +8,8 @@ from urllib.parse import urlparse
 
 import pytest
 
-from localcloud_cli.config import DEFAULT_IMAGE, HostPaths, LocalCloudConfig, load_config
+from localcloud_cli.config import HostPaths, LocalCloudConfig, load_config
+from localcloud_cli.constants import DEFAULT_IMAGE
 from localcloud_cli.controller import Controller
 from localcloud_cli.docker_runtime import (
     VOLUME_NAME_LABEL,

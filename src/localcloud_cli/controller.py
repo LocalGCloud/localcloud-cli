@@ -5,13 +5,11 @@ import shlex
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from . import __version__
 from .config import (
     ACTIVE_RUNTIME_SCHEMA_VERSION,
-    DEFAULTS_CONFIG_LABEL,
-    DEFAULT_IMAGE,
     ActiveRuntime,
     HostPaths,
     LEGACY_HOST_FILES,
@@ -25,6 +23,7 @@ from .config import (
     runtime_settings,
     save_active_runtime,
 )
+from .constants import DEFAULTS_CONFIG_LABEL, DEFAULT_IMAGE
 from .docker_runtime import DockerRunPlan, DockerRuntime, RuntimeRecord
 from .errors import HostError
 from .java_client import JavaMcpClient, is_retryable_java_error
@@ -60,11 +59,17 @@ class Controller:
     ):
         self.runtime = runtime if runtime is not None else DockerRuntime()
         self.paths = paths if paths is not None else HostPaths.from_environment()
+        # Config selection already resolves Docker. Keep that exact result for
+        # one immediate, matching read-only command instead of inspecting twice.
+        self._remembered_resolution: (
+            tuple[LocalCloudConfig, RuntimeRecord | None] | None
+        ) = None
 
     def remembered_config(self, config: LocalCloudConfig) -> str | None:
         current = self.runtime.resolve(
             config, preferred_container_id=self._preferred_container_id(config)
         )
+        self._remembered_resolution = (config, current)
         if current is None:
             return None
         value = current.config_path
@@ -73,6 +78,29 @@ class Controller:
             if value in {None, DEFAULTS_CONFIG_LABEL}
             else str(value)
         )
+
+    def _resolve_runtime(
+        self,
+        config: LocalCloudConfig,
+        *,
+        require: bool = False,
+        reuse_remembered: bool = False,
+    ) -> RuntimeRecord | None:
+        remembered = self._remembered_resolution
+        self._remembered_resolution = None
+        if (
+            reuse_remembered
+            and remembered is not None
+            and remembered[0] == config
+            and (remembered[1] is not None or not require)
+        ):
+            return remembered[1]
+        return self.runtime.resolve(
+            config,
+            preferred_container_id=self._preferred_container_id(config),
+            require=require,
+        )
+
 
     def start(
         self,
@@ -96,9 +124,7 @@ class Controller:
             if dry_run
             else data_volume_lock(self.paths, config.data_volume)
         ):
-            current = self.runtime.resolve(
-                config, preferred_container_id=self._preferred_container_id(config)
-            )
+            current = self._resolve_runtime(config)
             changed_fields: list[str] = []
             fresh_data = False
             prepared_image: tuple[Any, bool] | None = None
@@ -310,9 +336,7 @@ class Controller:
             if dry_run
             else data_volume_lock(self.paths, config.data_volume)
         ):
-            current = self.runtime.resolve(
-                config, preferred_container_id=self._preferred_container_id(config)
-            )
+            current = self._resolve_runtime(config)
             changed_fields: list[str] = []
             prepared_image: tuple[Any, bool] | None = None
             run_plan: DockerRunPlan | None = None
@@ -468,10 +492,7 @@ class Controller:
             if dry_run
             else data_volume_lock(self.paths, config.data_volume)
         ):
-            current = self.runtime.resolve(
-                config,
-                preferred_container_id=self._preferred_container_id(config),
-            )
+            current = self._resolve_runtime(config)
             if all_projects:
                 ownership = self.runtime.recreation_ownership(config)
                 if any(value != "managed" for value in ownership.values()):
@@ -659,9 +680,7 @@ class Controller:
             if dry_run
             else data_volume_lock(self.paths, config.data_volume)
         ):
-            current = self.runtime.resolve(
-                config, preferred_container_id=self._preferred_container_id(config)
-            )
+            current = self._resolve_runtime(config)
             if current is None:
                 plan = _LifecyclePlan(
                     action="no-op",
@@ -729,46 +748,62 @@ class Controller:
             return self._payload("stopped", stopped, config, include_sdk=False)
 
     def status(self, config: LocalCloudConfig) -> dict[str, Any]:
-        current = self.runtime.resolve(
-            config, preferred_container_id=self._preferred_container_id(config)
-        )
+        current = self._resolve_runtime(config, reuse_remembered=True)
         if current is None:
-            result = self._absent_payload("not_created", config)
+            status = "not_created"
         elif current.state != "running":
-            result = self._payload("stopped", current, config, include_sdk=False)
+            status = "stopped"
         elif not self.runtime.is_ready(current):
-            result = self._payload("unhealthy", current, config, include_sdk=False)
+            status = "unhealthy"
         else:
-            result = self._payload("running", current, config, include_sdk=False)
+            status = "running"
 
-        image_name = str(result["container"]["configured_image"])
-        result["container"]["image_details"] = self.runtime.image_details(image_name)
+        image_name = current.configured_image if current is not None else config.image
+        image_details = self.runtime.image_details(image_name)
+        image_status = (
+            "available locally"
+            if image_details["location"] == "Local"
+            else "not available locally"
+        )
+        result = (
+            self._absent_payload(status, config, image_status=image_status)
+            if current is None
+            else self._payload(
+                status,
+                current,
+                config,
+                include_sdk=False,
+                image_status=image_status,
+            )
+        )
+        result["container"]["image_details"] = image_details
         return result
 
     def logs(self, config: LocalCloudConfig, tail: int = 200) -> dict[str, Any]:
-        current = self.runtime.resolve(
-            config,
-            preferred_container_id=self._preferred_container_id(config),
-            require=True,
+        current = self._resolve_runtime(
+            config, require=True, reuse_remembered=True
         )
         assert current is not None
         result = self._payload("logs", current, config, include_sdk=False)
         result["logs"] = self.runtime.logs(config, current, tail=tail)
         return result
 
-    def target(self, config: LocalCloudConfig) -> dict[str, Any]:
-        current = self.runtime.resolve(
-            config, preferred_container_id=self._preferred_container_id(config)
-        )
+    def target(
+        self,
+        config: LocalCloudConfig,
+        *,
+        readiness_timeout: float | None = None,
+        on_url_resolved: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        if readiness_timeout is not None and readiness_timeout <= 0:
+            raise ValueError("readiness_timeout must be positive")
+
+        current = self._resolve_runtime(config, reuse_remembered=True)
         recovery = (
             f"Run localcloud start --data-volume {config.data_volume} "
             f"--project-id {config.project} --user {config.user} before connecting."
         )
-        if (
-            current is None
-            or current.state != "running"
-            or not self.runtime.is_ready(current)
-        ):
+        if current is None or current.state != "running" or not current.url:
             raise HostError(
                 "runtime_not_running",
                 recovery,
@@ -778,23 +813,100 @@ class Controller:
                     "user": config.user,
                 },
             )
-        if not self._project_exists(current, config.project, config.user):
-            raise HostError(
-                "unknown_project",
-                (
-                    f"Project {config.project!r} does not exist; run localcloud start "
-                    f"--data-volume {config.data_volume} --project-id {config.project}."
-                ),
-                {
-                    "data_volume": config.data_volume,
-                    "project": config.project,
-                },
-            )
-        return {
-            "url": current.url,
-            "connect_url": current.connect_url or current.url,
+
+        url = current.url.rstrip("/")
+        target = {
+            "url": url,
+            "connect_url": current.connect_url or url,
             "endpoint_map": dict(current.endpoint_map),
         }
+        if on_url_resolved is not None:
+            on_url_resolved(url)
+
+        if readiness_timeout is None:
+            if not self.runtime.is_ready(current):
+                raise HostError(
+                    "runtime_not_running",
+                    recovery,
+                    {
+                        "data_volume": config.data_volume,
+                        "project": config.project,
+                        "user": config.user,
+                    },
+                )
+            if not self._project_exists(current, config.project, config.user):
+                raise HostError(
+                    "unknown_project",
+                    (
+                        f"Project {config.project!r} does not exist; run localcloud start "
+                        f"--data-volume {config.data_volume} --project-id {config.project}."
+                    ),
+                    {
+                        "data_volume": config.data_volume,
+                        "project": config.project,
+                    },
+                )
+            return target
+
+        deadline = time.monotonic() + readiness_timeout
+        last_error: HostError | None = None
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                details: dict[str, Any] = {
+                    "data_volume": config.data_volume,
+                    "project": config.project,
+                    "url": url,
+                    "timeout_seconds": readiness_timeout,
+                    "phase": "target",
+                }
+                if last_error is not None:
+                    details["last_error"] = last_error.to_dict()
+                raise HostError(
+                    "runtime_readiness_timeout",
+                    "LocalCloud did not become operational before the connection deadline",
+                    details,
+                )
+
+            if self.runtime.is_ready(current, timeout=min(3.0, remaining)):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    continue
+                try:
+                    project_exists = self._project_exists(
+                        current,
+                        config.project,
+                        config.user,
+                        timeout=min(_READINESS_REQUEST_TIMEOUT, remaining),
+                    )
+                except HostError as error:
+                    cause = error.__cause__
+                    if (
+                        not isinstance(cause, HostError)
+                        or not is_retryable_java_error(cause)
+                    ):
+                        raise
+                    last_error = error
+                else:
+                    if not project_exists:
+                        raise HostError(
+                            "unknown_project",
+                            (
+                                f"Project {config.project!r} does not exist; "
+                                "run localcloud start "
+                                f"--data-volume {config.data_volume} "
+                                f"--project-id {config.project}."
+                            ),
+                            {
+                                "data_volume": config.data_volume,
+                                "project": config.project,
+                            },
+                        )
+                    return target
+
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(_READINESS_POLL_INTERVAL, remaining))
 
 
     def doctor(self) -> dict[str, Any]:
@@ -1132,11 +1244,18 @@ class Controller:
 
     @staticmethod
     def _project_exists(
-        environment: RuntimeRecord, project: str, user: str
+        environment: RuntimeRecord,
+        project: str,
+        user: str,
+        *,
+        timeout: float = 60.0,
     ) -> bool:
         try:
             return JavaMcpClient(
-                _runtime_url(environment), project, user
+                _runtime_url(environment),
+                project,
+                user,
+                timeout=timeout,
             ).project_exists()
         except Exception as error:
             raise HostError(
@@ -1424,6 +1543,7 @@ class Controller:
         changed_fields: list[str] | None = None,
         reset_scope: str | None = None,
         logs: str | None = None,
+        image_status: str | None = None,
     ) -> dict[str, Any]:
         if environment is None:
             data_volume = config.data_volume
@@ -1446,7 +1566,7 @@ class Controller:
                 "configured_image": config.image,
                 "actual_image": None,
                 "image_id": None,
-                "image_status": self.runtime.image_status(config.image),
+                "image_status": image_status or self.runtime.image_status(config.image),
             }
             network = {
                 "name": config.network_name,
@@ -1481,7 +1601,11 @@ class Controller:
                 "configured_image": environment.configured_image,
                 "actual_image": environment.actual_image,
                 "image_id": environment.image_id,
-                "image_status": environment.image_status or self.runtime.image_status(environment.configured_image),
+                "image_status": (
+                    environment.image_status
+                    or image_status
+                    or self.runtime.image_status(environment.configured_image)
+                ),
             }
             network = {
                 "name": environment.network_name,
@@ -1554,9 +1678,19 @@ class Controller:
         return result
 
     def _absent_payload(
-        self, status: str, config: LocalCloudConfig
+        self,
+        status: str,
+        config: LocalCloudConfig,
+        *,
+        image_status: str | None = None,
     ) -> dict[str, Any]:
-        return self._payload(status, None, config, include_sdk=False)
+        return self._payload(
+            status,
+            None,
+            config,
+            include_sdk=False,
+            image_status=image_status,
+        )
 
 
 def _debug_plan(

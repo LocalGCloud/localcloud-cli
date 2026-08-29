@@ -29,8 +29,8 @@ test = [
 release = ["pyinstaller==6.14.1"]
 
 [project.scripts]
-lc = "localcloud_cli.cli:main"
-localcloud = "localcloud_cli.cli:main"
+lc = "localcloud_cli.entrypoint:main"
+localcloud = "localcloud_cli.entrypoint:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

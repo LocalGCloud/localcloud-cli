@@ -12,10 +12,6 @@ import pytest
 import localcloud_cli.config as config_module
 from localcloud_cli.config import (
     ACTIVE_RUNTIME_SCHEMA_VERSION,
-    DEFAULT_DATA_VOLUME,
-    DEFAULT_IMAGE,
-    DEFAULT_PROJECT,
-    DEFAULT_USER,
     ActiveRuntime,
     HostPaths,
     data_volume_lock,
@@ -24,6 +20,12 @@ from localcloud_cli.config import (
     load_config,
     save_active_runtime,
     validate_data_volume,
+)
+from localcloud_cli.constants import (
+    DEFAULT_DATA_VOLUME,
+    DEFAULT_IMAGE,
+    DEFAULT_PROJECT,
+    DEFAULT_USER,
 )
 from localcloud_cli.errors import HostError
 
@@ -613,6 +615,8 @@ def test_namespaced_schema_preserves_host_model_and_context_precedence(
         "  memory: 6g\n"
         "  docker_socket: true\n"
         "  transparent_network: true\n"
+        "tls:\n"
+        "  enabled: true\n"
         "services:\n"
         "  enabled: [PUBSUB, gcs, pubsub]\n"
         "server:\n"
@@ -637,6 +641,8 @@ def test_namespaced_schema_preserves_host_model_and_context_precedence(
     assert selected.memory == "6g"
     assert selected.docker_socket is True
     assert selected.transparent_network is True
+    assert selected.tls_enabled is True
+    assert selected.tls_port == 24443
 
     overridden = load_config(
         directory=tmp_path,
@@ -739,6 +745,8 @@ def test_host_environment_rejects_controller_owned_config_keys(
 def test_tls_disabled_by_default_without_config_or_override(tmp_path: Path) -> None:
     selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
     assert selected.environment == {}
+    assert selected.tls_enabled is False
+    assert selected.tls_port == 24443
 
 
 def test_tls_override_false_disables_regardless_of_config(tmp_path: Path) -> None:
@@ -748,6 +756,7 @@ def test_tls_override_false_disables_regardless_of_config(tmp_path: Path) -> Non
     )
     selected = load_config(directory=tmp_path, paths=_paths(tmp_path), tls=False)
     assert selected.environment == {"LOCALCLOUD_TLS_ENABLED": "false"}
+    assert selected.tls_enabled is False
 
 
 def test_tls_override_true_wins_over_config_disabling_it(tmp_path: Path) -> None:
@@ -757,6 +766,7 @@ def test_tls_override_true_wins_over_config_disabling_it(tmp_path: Path) -> None
     )
     selected = load_config(directory=tmp_path, paths=_paths(tmp_path), tls=True)
     assert selected.environment == {"LOCALCLOUD_TLS_ENABLED": "true"}
+    assert selected.tls_enabled is True
 
 
 def test_tls_config_value_respected_without_cli_override(tmp_path: Path) -> None:
@@ -766,6 +776,62 @@ def test_tls_config_value_respected_without_cli_override(tmp_path: Path) -> None
     )
     selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
     assert selected.environment == {"LOCALCLOUD_TLS_ENABLED": "false"}
+    assert selected.tls_enabled is False
+    assert selected.tls_port == 24443
+
+
+def test_top_level_tls_and_environment_port_resolve_effective_bindings(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "tls:\n"
+        "  enabled: true\n"
+        "  port: 25443\n"
+        "host:\n"
+        "  environment:\n"
+        "    LOCALCLOUD_TLS_PORT: \"26443\"\n",
+        encoding="utf-8",
+    )
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
+    assert selected.tls_enabled is True
+    assert selected.tls_port == 26443
+
+
+def test_enabled_tls_values_affect_runtime_identity(tmp_path: Path) -> None:
+    config_path = tmp_path / "localcloud.yaml"
+    config_path.write_text(
+        "tls:\n  enabled: true\n  port: 25443\n",
+        encoding="utf-8",
+    )
+    first = load_config(directory=tmp_path, paths=_paths(tmp_path))
+    config_path.write_text(
+        "tls:\n  enabled: true\n  port: 26443\n",
+        encoding="utf-8",
+    )
+    second = load_config(directory=tmp_path, paths=_paths(tmp_path))
+
+    assert second.config_hash != first.config_hash
+
+
+def test_transparent_network_requires_effective_tls(tmp_path: Path) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  transparent_network: true\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(HostError) as caught:
+        load_config(directory=tmp_path, paths=_paths(tmp_path))
+    assert "requires TLS" in caught.value.message
+
+
+def test_strict_port_validation_is_not_runtime_identity(tmp_path: Path) -> None:
+    normal = load_config(directory=tmp_path, paths=_paths(tmp_path))
+    strict = load_config(
+        directory=tmp_path,
+        paths=_paths(tmp_path),
+        strict_port_validation=True,
+    )
+    assert strict.strict_port_validation is True
+    assert strict.config_hash == normal.config_hash
 
 
 def test_memory_override_wins_over_config(tmp_path: Path) -> None:

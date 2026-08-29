@@ -10,7 +10,7 @@ import pytest
 
 from integration._support import assert_loopback_url, default_runtime_for
 from localcloud_cli.cli import main
-from localcloud_cli.config import DEFAULT_DATA_VOLUME, DEFAULT_PROJECT, DEFAULT_USER
+from localcloud_cli.constants import DEFAULT_DATA_VOLUME, DEFAULT_PROJECT, DEFAULT_USER
 from localcloud_cli.docker_runtime import DockerRuntime, RuntimeRecord
 from localcloud_cli.errors import HostError
 from localcloud_cli.java_client import JavaMcpClient, is_retryable_java_error
@@ -244,7 +244,7 @@ def _guard_against_runtime_mutation(
 
         return fail
 
-    for method in ("create", "start", "restart", "stop", "remove", "purge"):
+    for method in ("create", "start", "restart", "stop", "remove"):
         monkeypatch.setattr(
             DockerRuntime,
             method,

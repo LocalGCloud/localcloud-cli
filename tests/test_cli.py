@@ -16,7 +16,8 @@ from localcloud_cli.cli import (
     _parser,
     main,
 )
-from localcloud_cli.config import DEFAULTS_CONFIG_LABEL
+from localcloud_cli.constants import DEFAULTS_CONFIG_LABEL
+from localcloud_cli.entrypoint import main as entrypoint_main
 from localcloud_cli.errors import HostError
 
 
@@ -52,7 +53,7 @@ class FakeController:
         if observer is not None and hasattr(observer, "debug"):
             observer.debug(
                 "docker run -d --name localcloud "
-                "-p 127.0.0.1:24080-24093:24080-24093/tcp "
+                "-p 127.0.0.1:24080-24092:24080-24092/tcp "
                 "jaysen2apache/localcloud:latest"
             )
         if dry_run:
@@ -75,7 +76,7 @@ class FakeController:
         if observer is not None and hasattr(observer, "debug"):
             observer.debug(
                 "docker run -d --name localcloud "
-                "-p 127.0.0.1:24080-24093:24080-24093/tcp "
+                "-p 127.0.0.1:24080-24092:24080-24092/tcp "
                 "jaysen2apache/localcloud:latest"
             )
         if dry_run:
@@ -199,6 +200,32 @@ def test_version_output_is_exact(capsys: pytest.CaptureFixture[str]) -> None:
     assert capsys.readouterr().out == f"localcloud {__version__}\n"
 
 
+def test_public_version_output_is_exact(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert entrypoint_main(["--version"]) == 0
+    assert capsys.readouterr().out == f"localcloud {__version__}\n"
+
+
+def test_guide_fast_path_preserves_cli_error_handling(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_to_render() -> str:
+        raise RuntimeError("broken guide")
+
+    monkeypatch.setattr(
+        "localcloud_cli.agent_guide.render_agent_guide",
+        fail_to_render,
+    )
+
+    assert entrypoint_main(["guide"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Error [unexpected_error]" in captured.err
+    assert "broken guide" in captured.err
+
+
 def test_console_commands_share_the_canonical_entry_point() -> None:
     scripts = {
         entry.name: entry
@@ -206,8 +233,16 @@ def test_console_commands_share_the_canonical_entry_point() -> None:
         if entry.group == "console_scripts"
     }
 
-    assert scripts["lc"].value == scripts["localcloud"].value == "localcloud_cli.cli:main"
-    assert scripts["lc"].load() is scripts["localcloud"].load() is main
+    assert (
+        scripts["lc"].value
+        == scripts["localcloud"].value
+        == "localcloud_cli.entrypoint:main"
+    )
+    assert (
+        scripts["lc"].load()
+        is scripts["localcloud"].load()
+        is entrypoint_main
+    )
 
 
 def test_start_dispatch_applies_context_and_managed_resource_names(
@@ -387,7 +422,14 @@ def test_stop_dispatches_loaded_data_volume_config() -> None:
 def test_main_stop_reports_not_running_without_stopped_container_details(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def stop(_self: FakeController, config: Any) -> dict[str, Any]:
+    def stop(
+        _self: FakeController,
+        config: Any,
+        *,
+        observer: Any | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        _ = observer, dry_run
         return {
             "status": "not_running",
             "data_volume": config.data_volume,
@@ -410,7 +452,14 @@ def test_main_stop_reports_not_running_without_stopped_container_details(
 def test_main_stop_reports_stopped_container_name_and_id(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def stop(_self: FakeController, config: Any) -> dict[str, Any]:
+    def stop(
+        _self: FakeController,
+        config: Any,
+        *,
+        observer: Any | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        _ = observer, dry_run
         return {
             "status": "stopped",
             "data_volume": config.data_volume,
@@ -436,7 +485,7 @@ def test_console_encodes_selected_project_and_user(
     monkeypatch.chdir(tmp_path)
     opened: list[str] = []
     monkeypatch.setattr(
-        "localcloud_cli.cli.webbrowser.open",
+        "webbrowser.open",
         lambda url: opened.append(url) or True,
     )
 
@@ -466,7 +515,7 @@ def test_console_reports_manual_url_when_browser_cannot_open(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("localcloud_cli.cli.webbrowser.open", lambda _url: False)
+    monkeypatch.setattr("webbrowser.open", lambda _url: False)
 
     assert main(["console"]) == 2
     captured = capsys.readouterr()
@@ -519,8 +568,12 @@ def test_mcp_dispatch_passes_full_runtime_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    calls: list[Any] = []
-    monkeypatch.setattr("localcloud_cli.mcp_stdio.run", calls.append)
+    calls: list[tuple[Any, float]] = []
+
+    def run(config: Any, *, connect_timeout: float) -> None:
+        calls.append((config, connect_timeout))
+
+    monkeypatch.setattr("localcloud_cli.mcp_stdio.run", run)
 
     _execute(
         _parser().parse_args(
@@ -532,14 +585,18 @@ def test_mcp_dispatch_passes_full_runtime_config(
                 "agent-project-1",
                 "--user",
                 "alice",
+                "--connect-timeout",
+                "2.5",
             ]
         )
     )
 
     assert len(calls) == 1
-    assert calls[0].data_volume == "team-data"
-    assert calls[0].project == "agent-project-1"
-    assert calls[0].user == "alice"
+    config, connect_timeout = calls[0]
+    assert config.data_volume == "team-data"
+    assert config.project == "agent-project-1"
+    assert config.user == "alice"
+    assert connect_timeout == 2.5
 
 
 def test_native_guide_and_mcp_do_not_emit_lifecycle_status(
@@ -548,16 +605,89 @@ def test_native_guide_and_mcp_do_not_emit_lifecycle_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    assert main(["guide"]) == 0
+    assert entrypoint_main(["guide"]) == 0
     guide = capsys.readouterr()
     assert guide.out
     assert guide.err == ""
 
-    monkeypatch.setattr("localcloud_cli.mcp_stdio.run", lambda _config: None)
+    monkeypatch.setattr(
+        "localcloud_cli.mcp_stdio.run",
+        lambda _config, **_kwargs: None,
+    )
     assert main(["mcp"]) == 0
     mcp = capsys.readouterr()
     assert mcp.out == ""
     assert mcp.err == ""
+
+
+def test_main_mcp_interrupt_closes_cleanly_in_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupt(_config: Any, **_kwargs: Any) -> None:
+        raise KeyboardInterrupt
+
+    def exit_process(code: int) -> None:
+        raise SystemExit(code)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("localcloud_cli.mcp_stdio.run", interrupt)
+    monkeypatch.setattr("localcloud_cli.cli.os._exit", exit_process)
+    stderr = _TtyBuffer()
+    monkeypatch.setattr("localcloud_cli.cli.sys.stderr", stderr)
+
+    with pytest.raises(SystemExit) as caught:
+        main(["mcp"])
+
+    assert caught.value.code == 130
+    assert stderr.getvalue() == "MCP connection closed.\n"
+
+
+def test_main_mcp_interrupt_is_silent_when_not_interactive(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupt(_config: Any, **_kwargs: Any) -> None:
+        raise KeyboardInterrupt
+
+    def exit_process(code: int) -> None:
+        raise SystemExit(code)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("localcloud_cli.mcp_stdio.run", interrupt)
+    monkeypatch.setattr("localcloud_cli.cli.os._exit", exit_process)
+
+    with pytest.raises(SystemExit) as caught:
+        main(["mcp"])
+
+    assert caught.value.code == 130
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_mcp_connect_timeout_defaults_and_requires_positive_finite_seconds() -> None:
+    parser = _parser()
+
+    assert parser.parse_args(["mcp"]).connect_timeout == 10.0
+    assert parser.parse_args(["mcp", "--connect-timeout", "2.5"]).connect_timeout == 2.5
+
+    for invalid in ("0", "-1", "nan", "inf", "invalid"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["mcp", "--connect-timeout", invalid])
+
+
+def test_main_non_mcp_interrupt_still_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupt(_self: FakeController, _config: Any) -> dict[str, Any]:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(FakeController, "status", interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        main(["status"])
 
 
 def test_main_returns_concise_host_error_by_default(
@@ -738,6 +868,16 @@ def test_start_and_restart_tls_dispatch_defaults_to_disabled() -> None:
     assert config.environment["LOCALCLOUD_TLS_ENABLED"] == "true"
 
 
+def test_strict_port_validation_flag_reaches_runtime_config() -> None:
+    _execute(_parser().parse_args(["start", "--strict-port-validation"]))
+    _, config = FakeController.instance.calls[-1]
+    assert config.strict_port_validation is True
+
+    _execute(_parser().parse_args(["reset"]))
+    reset_config, _all_projects = FakeController.instance.calls[-1][1]
+    assert reset_config.strict_port_validation is False
+
+
 def test_restart_and_start_memory_image_services_flags() -> None:
     parser = _parser()
     args = parser.parse_args(
@@ -875,6 +1015,23 @@ def test_observer_debug_mode_writes_debug_lines() -> None:
     obs_disabled = _ExecutionObserver(rep_disabled, debug=False)
     obs_disabled.debug("docker run -d --name localcloud")
     assert "[debug]" not in stream_disabled.getvalue()
+
+
+def test_observer_warning_survives_disabled_verbose_reporter() -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    stream = io.StringIO()
+    reporter = LifecycleReporter(
+        stream=stream,
+        verbose=True,
+        environ={"TERM": "dumb"},
+    )
+    assert reporter.enabled is False
+
+    _ExecutionObserver(reporter).warning("image metadata drift")
+
+    assert stream.getvalue() == "Warning: image metadata drift\n"
 
 
 class _TtyBuffer(io.StringIO):
@@ -1299,7 +1456,7 @@ def test_main_start_debug_prints_copyable_ranged_docker_command(
     assert "[debug] Lifecycle action" not in captured.err
     assert "[debug] Published ports" not in captured.err
     assert "[debug] docker run -d --name localcloud" in captured.err
-    assert "24080-24093:24080-24093/tcp" in captured.err
+    assert "24080-24092:24080-24092/tcp" in captured.err
 
 
 def test_main_start_dry_run_prints_native_plan(

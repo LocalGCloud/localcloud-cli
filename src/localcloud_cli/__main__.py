@@ -1,3 +1,5 @@
-from localcloud_cli.cli import main
+from localcloud_cli.entrypoint import main
 
-raise SystemExit(main())
+
+if __name__ == "__main__":
+    raise SystemExit(main())

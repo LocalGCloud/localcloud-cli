@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from .config import DEFAULT_PROJECT, DEFAULT_USER
+from .constants import DEFAULT_PROJECT, DEFAULT_USER
 from .errors import HostError
 
 

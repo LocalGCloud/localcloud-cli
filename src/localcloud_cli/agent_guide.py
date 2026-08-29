@@ -5,7 +5,7 @@ from typing import Any
 
 import yaml
 
-from .config import DEFAULT_IMAGE, DEFAULT_PROJECT, DEFAULT_USER
+from .constants import DEFAULT_IMAGE, DEFAULT_PROJECT, DEFAULT_USER
 
 # The service catalog rendered below is not maintained here: it is read from
 # the versioned snapshot of LocalCloud's own localcloud.defaults.yaml bundled

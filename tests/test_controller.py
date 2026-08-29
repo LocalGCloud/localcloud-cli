@@ -10,13 +10,13 @@ import pytest  # pyright: ignore[reportMissingImports]
 import localcloud_cli.controller as controller_module
 import localcloud_cli.endpoints as endpoints_module
 from localcloud_cli.config import (
-    DEFAULTS_CONFIG_LABEL,
     HostPaths,
     LocalCloudConfig,
     load_active_runtime,
     load_config,
     runtime_settings,
 )
+from localcloud_cli.constants import DEFAULTS_CONFIG_LABEL
 from localcloud_cli.controller import Controller
 from localcloud_cli.docker_runtime import DockerRunPlan, RuntimeRecord
 from localcloud_cli.errors import HostError
@@ -32,6 +32,7 @@ class FakeRuntime:
         self.removes: list[bool] = []
         self.remove_network_calls: list[bool] = []
         self.ready = True
+        self.ready_delay = 0.0
         self.recreation = {
             "container": "managed",
             "network": "managed",
@@ -58,6 +59,8 @@ class FakeRuntime:
             "formatted": "(Local: ID: qualified , sha256:qualified)",
         }
         self.image_details_images: list[str] = []
+        self.image_status_images: list[str] = []
+        self.ready_timeouts: list[float] = []
 
 
 
@@ -242,7 +245,15 @@ class FakeRuntime:
         self.log_calls.append((config, current, tail))
         return f"tail={tail}"
 
-    def is_ready(self, _current: RuntimeRecord) -> bool:
+    def is_ready(
+        self,
+        _current: RuntimeRecord,
+        *,
+        timeout: float = 3.0,
+    ) -> bool:
+        self.ready_timeouts.append(timeout)
+        if self.ready_delay:
+            controller_module.time.sleep(min(self.ready_delay, timeout))
         return self.ready
 
     def effective_services(self, _current: RuntimeRecord) -> tuple[str, ...] | None:
@@ -251,7 +262,8 @@ class FakeRuntime:
     def doctor(self) -> dict[str, Any]:
         return dict(self.doctor_report)
 
-    def image_status(self, _image_name: str) -> str:
+    def image_status(self, image_name: str) -> str:
+        self.image_status_images.append(image_name)
         return "available locally"
 
     def image_details(self, image_name: str) -> dict[str, Any]:
@@ -1284,14 +1296,99 @@ def test_target_returns_only_connection_context(tmp_path: Path) -> None:
     controller, runtime, paths = _controller(tmp_path)
     config = _config(tmp_path, paths=paths)
     runtime.record = _record(config)
+    resolved: list[str] = []
 
-    result = controller.target(config)
+    result = controller.target(config, on_url_resolved=resolved.append)
 
     assert result == {
         "url": "http://127.0.0.1:49080",
         "connect_url": "http://127.0.0.1:49080",
         "endpoint_map": {"24080": 49080},
     }
+    assert resolved == ["http://127.0.0.1:49080"]
+
+
+def test_target_readiness_timeout_is_bounded_and_reports_resolved_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    runtime.ready = False
+    resolved: list[str] = []
+    clock = FakeClock()
+    monkeypatch.setattr(controller_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
+
+    with pytest.raises(HostError) as caught:
+        controller.target(
+            config,
+            readiness_timeout=10.0,
+            on_url_resolved=resolved.append,
+        )
+
+    assert caught.value.code == "runtime_readiness_timeout"
+    assert caught.value.details["url"] == "http://127.0.0.1:49080"
+    assert caught.value.details["timeout_seconds"] == 10.0
+    assert resolved == ["http://127.0.0.1:49080"]
+    assert clock.now == 10.0
+    assert runtime.ready_timeouts
+    assert all(0 < timeout <= 3.0 for timeout in runtime.ready_timeouts)
+
+
+def test_target_readiness_timeout_bounds_project_catalog_request(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+
+    result = controller.target(config, readiness_timeout=10.0)
+
+    assert result["url"] == "http://127.0.0.1:49080"
+    assert FakeJavaClient.timeouts[-1] == 5.0
+
+
+def test_target_recomputes_project_budget_after_health_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    runtime.ready_delay = 2.5
+    clock = FakeClock()
+    monkeypatch.setattr(controller_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
+
+    result = controller.target(config, readiness_timeout=3.0)
+
+    assert result["url"] == "http://127.0.0.1:49080"
+    assert clock.now == 2.5
+    assert FakeJavaClient.timeouts[-1] == 0.5
+
+
+def test_target_timeout_does_not_retry_nonretryable_project_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    FakeJavaClient.catalog_error = _java_transport_error(
+        status_code=403,
+        retryable=False,
+    )
+    clock = FakeClock()
+    monkeypatch.setattr(controller_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
+
+    with pytest.raises(HostError) as caught:
+        controller.target(config, readiness_timeout=10.0)
+
+    assert caught.value.code == "project_lookup_failed"
+    assert clock.now == 0.0
 
 
 def test_target_requires_existing_project(tmp_path: Path) -> None:
@@ -1315,6 +1412,18 @@ def test_logs_and_remembered_config_use_resolved_runtime(tmp_path: Path) -> None
         (tmp_path / "localcloud.yaml").resolve()
     )
     assert controller.logs(config, tail=17)["logs"] == "tail=17"
+    assert len(runtime.preferred) == 1
+
+
+def test_mutating_command_revalidates_remembered_runtime(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+
+    controller.remembered_config(config)
+    controller.stop(config, dry_run=True)
+
+    assert len(runtime.preferred) == 2
 
 
 def test_remembered_config_marks_resolved_builtin_defaults(tmp_path: Path) -> None:
@@ -1457,13 +1566,15 @@ def test_doctor_includes_image_details(tmp_path: Path) -> None:
 
 
 def test_status_includes_image_status_for_absent_runtime(tmp_path: Path) -> None:
-    controller, _runtime, paths = _controller(tmp_path)
+    controller, runtime, paths = _controller(tmp_path)
     config = _config(tmp_path, paths=paths)
 
     result = controller.status(config)
 
     assert result["status"] == "not_created"
     assert result["container"]["image_status"] == "available locally"
+    assert runtime.image_details_images == [config.image]
+    assert runtime.image_status_images == []
 
 
 def test_status_reuses_doctor_details_for_image_not_available_locally(
@@ -1484,6 +1595,9 @@ def test_status_reuses_doctor_details_for_image_not_available_locally(
     assert result["container"]["image_details"]["formatted"] == (
         "(not available locally)"
     )
+    assert result["container"]["image_status"] == "not available locally"
+    assert runtime.image_status_images == []
+
 
 def test_start_tails_runtime_logs_with_specified_duration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

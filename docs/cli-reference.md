@@ -166,8 +166,12 @@ file appear as read-only `-v` bind mounts.
 Use `--debug` for diagnostics on stderr. For a selected or planned runtime,
 debug output includes one shell-quoted `docker run` command that can be copied
 and executed. Contiguous one-to-one published ports use Docker range syntax,
-for example `-p 127.0.0.1:24080-24093:24080-24093/tcp`, instead of one flag
+for example `-p 127.0.0.1:24080-24092:24080-24092/tcp`, instead of one flag
 per port. Dry-run plans remain on stdout and can be redirected independently.
+
+Lifecycle commands derive bindings from the LocalCloud configuration rather
+than trusting Docker image `EXPOSE` metadata. Metadata drift emits a warning;
+pass `--strict-port-validation` to turn that warning into a preflight failure.
 
 ### `guide`
 
@@ -184,7 +188,19 @@ Runs the stdio Model Context Protocol bridge for AI tools and coding environment
 ```sh
 lc mcp
 lc mcp --project-id my-project
+lc mcp --connect-timeout 30
 ```
+
+When run directly in an interactive terminal, the command reports the resolved
+LocalCloud `/mcp` endpoint on stderr before waiting for it to become ready.
+Startup waits at most 10 seconds by default; `--connect-timeout SECONDS`
+overrides that positive timeout. If the endpoint is still unavailable, the
+command exits with `mcp_connection_timeout`.
+
+Once connected, the stdio bridge remains open without a session timeout while
+it accepts requests. Pressing Ctrl-C prints `MCP connection closed.`, exits
+with status 130, and does not emit a traceback. Non-interactive MCP launchers
+receive no lifecycle text, and stdout stays reserved for JSON-RPC traffic.
 
 ## Output Modes
 

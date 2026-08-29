@@ -1,26 +1,22 @@
 from __future__ import annotations
 
 import argparse
+import math
+import os
 import sys
-import webbrowser
 from pathlib import Path
-from typing import Any
-from urllib.parse import urlencode
-import inspect
+from typing import TYPE_CHECKING, Any
 
 from . import __version__
-from .config import (
+from .constants import (
     DEFAULT_DATA_VOLUME,
     DEFAULT_IMAGE,
     DEFAULT_MEMORY,
     DEFAULT_PROJECT,
     DEFAULT_USER,
-    HostPaths,
-    LocalCloudConfig,
-    load_active_runtime,
-    load_config,
 )
 from .errors import HostError
+
 from .output import (
     LifecycleReporter,
     PanelContext,
@@ -33,6 +29,9 @@ from .output import (
     valid_field_paths,
     validate_fields,
 )
+
+if TYPE_CHECKING:
+    from .config import LocalCloudConfig
 
 ALIAS_HELP = "lc is an alias for localcloud; both commands behave identically."
 AGENT_HELP = "Coding agents: run 'localcloud guide' before using LocalCloud."
@@ -68,6 +67,14 @@ class _ExecutionObserver:
     def debug(self, message: str) -> None:
         if self.debug_enabled:
             self.reporter.write_line(f"[debug] {message}")
+
+    def warning(self, message: str) -> None:
+        line = f"Warning: {message}"
+        if self.reporter.enabled:
+            self.reporter.write_line(line)
+            return
+        self.reporter.stream.write(f"{line}\n")
+        self.reporter.stream.flush()
 
     def image_pull(
         self,
@@ -239,6 +246,8 @@ class _ExecutionObserver:
         )
 
     def doctor(self, args: argparse.Namespace) -> None:
+        from .config import load_config
+
         data_volume = getattr(args, "data_volume", None) or DEFAULT_DATA_VOLUME
         project = getattr(args, "project_id", None) or DEFAULT_PROJECT
         user = getattr(args, "user", None) or DEFAULT_USER
@@ -337,7 +346,17 @@ def main(argv: list[str] | None = None) -> int:
             reporter.fail(error.message)
         _print_error(args, error)
         return 2
-    except (KeyboardInterrupt, SystemExit):
+    except KeyboardInterrupt:
+        if args.command == "mcp":
+            if terminal_capabilities(sys.stderr).interactive:
+                print("MCP connection closed.", file=sys.stderr, flush=True)
+            # The MCP SDK can leave its stdin worker blocked after cancellation.
+            # A normal return then hangs in interpreter thread shutdown.
+            os._exit(130)
+        if reports_progress:
+            reporter.fail("LocalCloud command interrupted")
+        raise
+    except SystemExit:
         if reports_progress:
             reporter.fail("LocalCloud command interrupted")
         raise
@@ -383,21 +402,35 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
         config = _command_config(controller, args)
         if observer is not None:
             observer.config(args.command, config, args)
-        if args.command in {"start", "restart", "reset", "stop"}:
-            command = getattr(controller, args.command)
-            kwargs: dict[str, Any] = {}
-            signature = inspect.signature(command)
-            if "pull" in signature.parameters and getattr(args, "pull", False):
-                kwargs["pull"] = True
-            if "tail" in signature.parameters and hasattr(args, "tail"):
-                kwargs["tail"] = args.tail
-            if "all_projects" in signature.parameters:
-                kwargs["all_projects"] = getattr(args, "all_projects", False)
-            if "dry_run" in signature.parameters and getattr(args, "dry_run", False):
-                kwargs["dry_run"] = True
-            if observer is not None and "observer" in signature.parameters:
-                kwargs["observer"] = observer
-            return command(config, **kwargs)
+        if args.command == "start":
+            return controller.start(
+                config,
+                pull=args.pull,
+                observer=observer,
+                tail=args.tail,
+                dry_run=args.dry_run,
+            )
+        if args.command == "restart":
+            return controller.restart(
+                config,
+                pull=args.pull,
+                observer=observer,
+                tail=args.tail,
+                dry_run=args.dry_run,
+            )
+        if args.command == "reset":
+            return controller.reset(
+                config,
+                all_projects=args.all_projects,
+                observer=observer,
+                dry_run=args.dry_run,
+            )
+        if args.command == "stop":
+            return controller.stop(
+                config,
+                observer=observer,
+                dry_run=args.dry_run,
+            )
         if args.command == "status":
             return controller.status(config)
         if args.command == "logs":
@@ -405,9 +438,12 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
         if args.command == "mcp":
             from .mcp_stdio import run
 
-            return run(config)
+            return run(config, connect_timeout=args.connect_timeout)
         target = controller.target(config)
         if args.command == "console":
+            import webbrowser
+            from urllib.parse import urlencode
+
             connect_url = target.get("connect_url") or target["url"]
             url = f"{connect_url}?{urlencode({'project': config.project, 'user': config.user})}"
             details = {
@@ -448,6 +484,8 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
 
 
 def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConfig:
+    from .config import HostPaths, load_active_runtime, load_config
+
     explicit_value = getattr(args, "config", None)
     explicit = Path(explicit_value) if explicit_value is not None else None
     overrides = {
@@ -462,6 +500,7 @@ def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConf
         "image": getattr(args, "image", None),
         "services": getattr(args, "services", None),
         "skip_validation": getattr(args, "skip_config_validation", False),
+        "strict_port_validation": getattr(args, "strict_port_validation", False),
     }
     paths = getattr(controller, "paths", None) or HostPaths.from_environment()
     active_diagnostics: list[dict[str, Any]] = []
@@ -719,6 +758,14 @@ def _parser() -> argparse.ArgumentParser:
                 "LocalCloud validation disagree."
             ),
         )
+        command.add_argument(
+            "--strict-port-validation",
+            action="store_true",
+            help=(
+                "Fail before Docker mutation when image EXPOSE metadata differs "
+                "from the canonical LocalCloud capability set (default: warn and continue)"
+            ),
+        )
         if name in {"start", "restart"}:
             command.add_argument(
                 "--pull",
@@ -853,6 +900,16 @@ def _parser() -> argparse.ArgumentParser:
         description="Run the stdio MCP bridge for the selected runtime.",
     )
     _add_context(mcp)
+    mcp.add_argument(
+        "--connect-timeout",
+        type=_positive_seconds,
+        default=10.0,
+        metavar="SECONDS",
+        help=(
+            "Maximum seconds to wait for the LocalCloud MCP endpoint "
+            "(default: 10)"
+        ),
+    )
     _add_debug_option(mcp)
     return parser
 
@@ -940,6 +997,20 @@ def _add_resource_names(parser: argparse.ArgumentParser) -> None:
         metavar="NAME",
         help="Override the managed Docker network name",
     )
+
+def _positive_seconds(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            f"must be a valid number of seconds: {value!r}"
+        ) from error
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError(
+            "must be a finite number greater than zero"
+        )
+    return parsed
+
 
 def _tail_seconds(value: str) -> float:
     try:

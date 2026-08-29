@@ -6,6 +6,7 @@ import os
 import socket
 import shlex
 import time
+import warnings
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -13,13 +14,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .config import (
-    DEFAULTS_CONFIG_LABEL,
-    DEFAULT_DATA_VOLUME,
-    LocalCloudConfig,
-    runtime_settings,
-    validate_data_volume,
-)
+from .config import LocalCloudConfig, runtime_settings, validate_data_volume
+from .constants import DEFAULTS_CONFIG_LABEL, DEFAULT_DATA_VOLUME
 from .errors import HostError
 
 MANAGED_LABEL = "com.localcloud.managed"
@@ -40,7 +36,14 @@ DATA_MOUNT_DESTINATION = "/var/lib/localcloud"
 CLI_SEED_MOUNT_DESTINATION = "/etc/localcloud/cli-seed.yaml"
 CONFIG_MOUNT_DESTINATION = "/etc/localcloud/localcloud.yaml"
 GATEWAY_PORT = "24080"
-TLS_GATEWAY_PORT = "24443"
+_BASE_TCP_PORTS = tuple(range(24080, 24093))
+_DEDICATED_TLS_PORTS = (24481, 24482, 24489)
+_DNS_PORT = 24093
+_TRANSPARENT_HOST_PORTS = frozenset({53, 80, 443})
+_IMAGE_PORT_CAPABILITIES = frozenset(
+    {f"{port}/tcp" for port in (*_BASE_TCP_PORTS, 24443, *_DEDICATED_TLS_PORTS)}
+    | {f"{_DNS_PORT}/udp"}
+)
 _DEFAULT_READINESS_TIMEOUT = 120.0
 _CHILD_MANAGED_LABEL = "localcloud.managed"
 _LEGACY_LABELS = {
@@ -101,7 +104,9 @@ class RuntimeRecord:
     published_ports: PublishedPorts = field(default_factory=dict)
 
 
-PublishedPorts = dict[str, tuple[tuple[str, int | None], ...]]
+PortBinding = tuple[str, int | None]
+RequestedPorts = dict[str, tuple[PortBinding, ...]]
+PublishedPorts = dict[str, tuple[PortBinding, ...]]
 
 
 @dataclass(frozen=True)
@@ -111,7 +116,7 @@ class DockerRunPlan:
     network_name: str
     mem_limit: str | None
     volumes: Mapping[str, Mapping[str, str]]
-    ports: Mapping[str, tuple[str, int | None]]
+    ports: Mapping[str, tuple[PortBinding, ...]]
     environment: Mapping[str, str]
     labels: Mapping[str, str]
 
@@ -129,7 +134,12 @@ class DockerRunPlan:
         object.__setattr__(
             self,
             "ports",
-            MappingProxyType(dict(self.ports)),
+            MappingProxyType(
+                {
+                    port: _normalize_requested_bindings(bindings)
+                    for port, bindings in self.ports.items()
+                }
+            ),
         )
         object.__setattr__(
             self,
@@ -162,7 +172,10 @@ class DockerRunPlan:
             "environment": dict(self.environment),
             "mem_limit": self.mem_limit,
             "network": self.network_name,
-            "ports": dict(self.ports),
+            "ports": {
+                port: bindings[0] if len(bindings) == 1 else list(bindings)
+                for port, bindings in self.ports.items()
+            },
             "volumes": {
                 source: dict(mount) for source, mount in self.volumes.items()
             },
@@ -312,17 +325,24 @@ class DockerRuntime:
         published_ports = _published_ports(container)
         endpoint_map = _endpoint_map(published_ports)
         gateway = endpoint_map.get(GATEWAY_PORT)
-        tls_gateway = endpoint_map.get(TLS_GATEWAY_PORT)
-        tls_enabled = (
-            _container_environment_values(container)
-            .get("LOCALCLOUD_TLS_ENABLED", "")
-            .strip()
-            .lower()
-            == "true"
-        )
+        runtime_config = metadata.get("runtime_config")
+        tls_enabled = config.tls_enabled
+        tls_port = config.tls_port
+        if isinstance(runtime_config, Mapping):
+            if isinstance(runtime_config.get("tls_enabled"), bool):
+                tls_enabled = runtime_config["tls_enabled"]
+            if isinstance(runtime_config.get("tls_port"), int):
+                tls_port = runtime_config["tls_port"]
+        container_environment = _container_environment_values(container)
+        raw_tls_enabled = container_environment.get("LOCALCLOUD_TLS_ENABLED", "").lower()
+        if raw_tls_enabled in {"true", "false"}:
+            tls_enabled = raw_tls_enabled == "true"
+        raw_tls_port = container_environment.get("LOCALCLOUD_TLS_PORT", "")
+        if raw_tls_port.isdigit() and 1 <= int(raw_tls_port) <= 65535:
+            tls_port = int(raw_tls_port)
+        tls_gateway = endpoint_map.get(str(tls_port))
         state = _container_state(container)
         health = _container_health(container)
-        runtime_config = metadata.get("runtime_config")
         drift = (
             _runtime_drift(runtime_config, config)
             if container_ownership == "managed"
@@ -376,10 +396,10 @@ class DockerRuntime:
             local_only=local_only,
         )
         self._require_runtime_ownership_capability(config, image)
+        self._validate_image_port_metadata(config, image, observer)
         allowed_ports = _published_host_ports(replacing)
         self._port_bindings(
             config,
-            image,
             allowed_ports=allowed_ports,
         )
         replacing_id = replacing.container_id if replacing is not None else ""
@@ -465,7 +485,6 @@ class DockerRuntime:
             volumes=volumes,
             ports=self._port_bindings(
                 config,
-                image,
                 allowed_ports=_published_host_ports(replacing),
             ),
             environment=_container_environment(config, config.network_name),
@@ -506,10 +525,10 @@ class DockerRuntime:
                 "mode": str(mode),
             }
 
-        ports: dict[str, tuple[str, int | None]] = {}
+        ports: RequestedPorts = {}
         for container_port, bindings in current.published_ports.items():
             if bindings:
-                ports[container_port] = bindings[0]
+                ports[container_port] = bindings
 
         network_name = (
             current.network_name
@@ -1145,11 +1164,16 @@ class DockerRuntime:
             else str(output)
         )
 
-    def is_ready(self, runtime: RuntimeRecord) -> bool:
+    def is_ready(
+        self,
+        runtime: RuntimeRecord,
+        *,
+        timeout: float = 3.0,
+    ) -> bool:
         if runtime.state != "running" or not runtime.url:
             return False
         try:
-            response = httpx.get(f"{runtime.url}/health", timeout=3.0)
+            response = httpx.get(f"{runtime.url}/health", timeout=timeout)
             if response.status_code != 200:
                 return False
             payload = response.json()
@@ -1557,11 +1581,9 @@ class DockerRuntime:
         attrs = getattr(container, "attrs", {})
         declared = str(attrs.get("Config", {}).get("Image") or "").strip()
         container_id = str(attrs.get("Image") or "").strip()
-        configured_image = None
         configured_id = None
-        labels: dict[str, str] = {}
         try:
-            configured_image = self.client.images.get(config.image)
+            configured_id = _image_id(self.client.images.get(config.image))
         except Exception as error:
             if not _is_not_found(error):
                 raise HostError(
@@ -1569,22 +1591,6 @@ class DockerRuntime:
                     "Could not inspect the configured LocalCloud image",
                     {"image": config.image, "cause": str(error)},
                 ) from error
-        if configured_image is not None:
-            configured_id = _image_id(configured_image)
-        image_object = configured_image
-        if container_id and configured_id != container_id:
-            try:
-                image_object = self.client.images.get(container_id)
-            except Exception as error:
-                if not _is_not_found(error):
-                    raise HostError(
-                        "docker_inspect_failed",
-                        "Could not inspect the running LocalCloud image",
-                        {"image_id": container_id, "cause": str(error)},
-                    ) from error
-                image_object = None
-        if image_object is not None:
-            labels = _image_labels(image_object)
         reference_match = (
             bool(declared)
             and _normalize_image_reference(declared)
@@ -1610,7 +1616,6 @@ class DockerRuntime:
             "declared": declared or None,
             "container_id": container_id or None,
             "configured_id": configured_id,
-            "labels": labels,
         }
 
     def _classify_resource(
@@ -1909,58 +1914,82 @@ class DockerRuntime:
                 {"image": config.image, "capabilities": missing},
             )
 
-    def _port_bindings(
-        self,
+    @staticmethod
+    def _validate_image_port_metadata(
         config: LocalCloudConfig,
         image: Any,
-        *,
-        allowed_ports: set[tuple[int, str]] | None = None,
-    ) -> dict[str, tuple[str, int | None]]:
+        observer: Any | None,
+    ) -> None:
         exposed = _image_exposed_ports(image)
-        tcp_ports = sorted(
-            int(value.split("/", 1)[0])
-            for value in exposed
-            if value.endswith("/tcp")
-        )
-        if int(GATEWAY_PORT) not in tcp_ports:
+        if f"{GATEWAY_PORT}/tcp" not in exposed:
             raise HostError(
                 "invalid_image",
                 "Selected LocalCloud image does not expose 24080/tcp",
                 {"image": config.image, "exposed_ports": sorted(exposed)},
             )
+        missing = sorted(_IMAGE_PORT_CAPABILITIES - exposed)
+        unexpected = sorted(exposed - _IMAGE_PORT_CAPABILITIES)
+        if not missing and not unexpected:
+            return
+        details = {
+            "image": config.image,
+            "missing": missing,
+            "unexpected": unexpected,
+            "expected": sorted(_IMAGE_PORT_CAPABILITIES),
+            "actual": sorted(exposed),
+        }
+        message = (
+            "Docker image EXPOSE metadata differs from the canonical LocalCloud "
+            f"capability set (missing={missing}, unexpected={unexpected})"
+        )
+        if config.strict_port_validation:
+            raise HostError("image_port_metadata_mismatch", message, details)
+        _emit_warning(observer, message)
+
+    def _port_bindings(
+        self,
+        config: LocalCloudConfig,
+        *,
+        allowed_ports: set[tuple[int, str]] | None = None,
+    ) -> RequestedPorts:
+        ordinary_ports = list(_BASE_TCP_PORTS)
+        if config.tls_enabled:
+            ordinary_ports.extend((config.tls_port, *_DEDICATED_TLS_PORTS))
+        ordinary_ports = sorted(set(ordinary_ports))
         allowed = allowed_ports or set()
         canonical_free = all(
             _port_is_free(port) or (port, "tcp") in allowed
-            for port in tcp_ports
+            for port in ordinary_ports
         )
-        bindings: dict[str, tuple[str, int | None]] = {
-            f"{port}/tcp": ("127.0.0.1", port if canonical_free else None)
-            for port in tcp_ports
+        bindings: RequestedPorts = {
+            f"{port}/tcp": (("127.0.0.1", port if canonical_free else None),)
+            for port in ordinary_ports
         }
-        if config.transparent_network:
-            for host_port, container_port, protocol in (
-                (53, 24093, "udp"),
-                (80, 24095, "tcp"),
-                (443, 24094, "tcp"),
+        if not config.transparent_network:
+            return bindings
+        if not config.tls_enabled:
+            raise HostError(
+                "invalid_config",
+                "Transparent networking requires TLS to be enabled",
+                {"field": "host.transparent_network"},
+            )
+        for host_port, container_port, protocol in (
+            (53, _DNS_PORT, "udp"),
+            (80, int(GATEWAY_PORT), "tcp"),
+            (443, config.tls_port, "tcp"),
+        ):
+            kind = socket.SOCK_DGRAM if protocol == "udp" else socket.SOCK_STREAM
+            if (
+                not _port_is_free(host_port, kind)
+                and (host_port, protocol) not in allowed
             ):
-                kind = (
-                    socket.SOCK_DGRAM
-                    if protocol == "udp"
-                    else socket.SOCK_STREAM
+                raise HostError(
+                    "transparent_port_unavailable",
+                    "Transparent networking requires free host ports 53, 80, and 443",
+                    {"port": host_port, "protocol": protocol},
                 )
-                if (
-                    not _port_is_free(host_port, kind)
-                    and (host_port, protocol) not in allowed
-                ):
-                    raise HostError(
-                        "transparent_port_unavailable",
-                        "Transparent networking requires free host ports 53, 80, and 443",
-                        {"port": host_port, "protocol": protocol},
-                    )
-                bindings[f"{container_port}/{protocol}"] = (
-                    "127.0.0.1",
-                    host_port,
-                )
+            key = f"{container_port}/{protocol}"
+            bindings[key] = (*bindings.get(key, ()), ("127.0.0.1", host_port))
         return bindings
 
     def _volume_for_create(
@@ -2249,22 +2278,36 @@ def _published_ports(container: Any) -> PublishedPorts:
 
 
 def _endpoint_map(
-    published_ports: Mapping[str, tuple[tuple[str, int | None], ...]]
+    published_ports: Mapping[str, tuple[PortBinding, ...]]
 ) -> dict[str, int]:
-    selected: dict[str, tuple[int, int]] = {}
+    selected: dict[str, tuple[int, int, int]] = {}
     for container_port, bindings in sorted(published_ports.items()):
         port, _, protocol = container_port.partition("/")
-        priority = 0 if (protocol or "tcp") == "tcp" else 1
-        host_port = next(
-            (value for _host_ip, value in bindings if value is not None),
-            None,
-        )
-        if host_port is None:
+        try:
+            numeric_port = int(port)
+        except ValueError:
             continue
+        protocol_priority = 0 if (protocol or "tcp") == "tcp" else 1
+        candidates = [
+            (
+                0
+                if host_port == numeric_port
+                else 2
+                if host_port in _TRANSPARENT_HOST_PORTS
+                else 1,
+                host_port,
+            )
+            for _host_ip, host_port in bindings
+            if host_port is not None
+        ]
+        if not candidates:
+            continue
+        binding_priority, host_port = min(candidates)
+        candidate = (protocol_priority, binding_priority, host_port)
         previous = selected.get(port)
-        if previous is None or priority < previous[0]:
-            selected[port] = (priority, host_port)
-    return {port: value[1] for port, value in selected.items()}
+        if previous is None or candidate < previous:
+            selected[port] = candidate
+    return {port: value[2] for port, value in selected.items()}
 
 
 def _format_resource_create(
@@ -2405,6 +2448,39 @@ def _format_memory_limit(value: Any) -> str | None:
 
 
 
+def _normalize_requested_bindings(value: Any) -> tuple[PortBinding, ...]:
+    if (
+        isinstance(value, (tuple, list))
+        and len(value) == 2
+        and isinstance(value[0], str)
+    ):
+        values = (value,)
+    elif isinstance(value, (tuple, list)):
+        values = value
+    else:
+        raise TypeError("Docker port bindings must be a binding or binding sequence")
+    normalized: list[PortBinding] = []
+    for binding in values:
+        if not isinstance(binding, (tuple, list)) or len(binding) != 2:
+            raise TypeError("Docker port bindings must contain (host, port) pairs")
+        host_ip, host_port = binding
+        if not isinstance(host_ip, str) or (
+            host_port is not None and not isinstance(host_port, int)
+        ):
+            raise TypeError("Docker port bindings must contain string hosts and integer ports")
+        normalized.append((host_ip, host_port))
+    if not normalized:
+        raise TypeError("Docker port bindings cannot be empty")
+    return tuple(normalized)
+
+
+def _emit_warning(observer: Any | None, message: str) -> None:
+    if observer is not None and hasattr(observer, "warning"):
+        observer.warning(message)
+        return
+    warnings.warn(message, RuntimeWarning, stacklevel=2)
+
+
 def _format_port_args(ports: Mapping[str, Any]) -> list[str]:
     """Render `-p` flags, collapsing contiguous 1:1 port runs into Docker's
     `host_start-host_end:container_start-container_end` range syntax so the
@@ -2413,24 +2489,35 @@ def _format_port_args(ports: Mapping[str, Any]) -> list[str]:
     """
     parsed: list[tuple[int, str, str, int | None]] = []
     literal: list[str] = []
-    for container_port, binding in ports.items():
-        if not isinstance(binding, (tuple, list)):
-            literal.append(str(binding))
+    for container_port, raw_bindings in ports.items():
+        try:
+            requested = _normalize_requested_bindings(raw_bindings)
+        except TypeError:
+            literal.append(str(raw_bindings))
             continue
-        host_ip, host_port = binding[0], binding[1]
         port_text, _, proto = container_port.partition("/")
         try:
             port_num = int(port_text)
         except ValueError:
-            spec = (
-                f"{host_ip}:{host_port}:{container_port}"
-                if host_port is not None
-                else f"{host_ip}::{container_port}"
-            )
-            literal.append(spec)
+            for host_ip, host_port in requested:
+                spec = (
+                    f"{host_ip}:{host_port}:{container_port}"
+                    if host_port is not None
+                    else f"{host_ip}::{container_port}"
+                )
+                literal.append(spec)
             continue
-        parsed.append((port_num, proto or "tcp", str(host_ip), host_port))
-    parsed.sort(key=lambda item: (item[1], item[2], item[0]))
+        for host_ip, host_port in requested:
+            parsed.append((port_num, proto or "tcp", str(host_ip), host_port))
+    parsed.sort(
+        key=lambda item: (
+            item[1],
+            item[2],
+            item[3] is None,
+            item[3] - item[0] if item[3] is not None else 0,
+            item[0],
+        )
+    )
 
     args: list[str] = []
 
