@@ -44,6 +44,11 @@ def test_rendered_homebrew_formula_installs_and_tests_lc_alias(tmp_path: Path) -
     assert "lc is an alias for localcloud; both commands behave identically." in formula
     assert 'canonical_version = shell_output("#{bin}/localcloud --version")' in formula
     assert (
+        "/^localcloud #{Regexp.escape(version.to_s)} "
+        r"\(commit [0-9a-f]{12}, released \d{4}-\d{2}-\d{2}\)\n$/"
+        in formula
+    )
+    assert (
         'assert_equal canonical_version, shell_output("#{bin}/lc --version")'
         in formula
     )

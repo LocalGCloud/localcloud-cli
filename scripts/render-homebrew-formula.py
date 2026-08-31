@@ -107,7 +107,10 @@ def render(version: str, checksums_path: Path) -> str:
 
   test do
     canonical_version = shell_output("#{{bin}}/localcloud --version")
-    assert_equal "localcloud #{{version}}\\n", canonical_version
+    assert_match(
+      /^localcloud #{{Regexp.escape(version.to_s)}} \\(commit [0-9a-f]{{12}}, released \\d{{4}}-\\d{{2}}-\\d{{2}}\\)\\n$/,
+      canonical_version,
+    )
     assert_equal canonical_version, shell_output("#{{bin}}/lc --version")
     assert_match "LocalCloud coding-agent guide", shell_output("#{{bin}}/localcloud guide")
   end

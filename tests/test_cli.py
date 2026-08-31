@@ -9,7 +9,8 @@ from typing import Any
 
 import pytest
 
-from localcloud_cli import __version__
+import localcloud_cli
+from localcloud_cli import __version__, version_string
 from localcloud_cli.cli import (
     _command_config,
     _execute,
@@ -210,6 +211,27 @@ def test_public_version_output_is_exact(
 ) -> None:
     assert entrypoint_main(["--version"]) == 0
     assert capsys.readouterr().out == f"localcloud {__version__}\n"
+
+
+def test_version_output_includes_embedded_release_provenance(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(localcloud_cli, "__release_commit__", "0123456789ab")
+    monkeypatch.setattr(localcloud_cli, "__release_date__", "2026-08-31")
+    expected = (
+        f"localcloud {__version__} "
+        "(commit 0123456789ab, released 2026-08-31)"
+    )
+
+    assert version_string() == expected
+    assert entrypoint_main(["--version"]) == 0
+    assert capsys.readouterr().out == f"{expected}\n"
+
+    with pytest.raises(SystemExit) as caught:
+        _parser().parse_args(["--version"])
+    assert caught.value.code == 0
+    assert capsys.readouterr().out == f"{expected}\n"
 
 
 def test_guide_fast_path_preserves_cli_error_handling(

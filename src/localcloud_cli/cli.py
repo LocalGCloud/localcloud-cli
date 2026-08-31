@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import __version__
+from . import version_string
 from .constants import (
     DEFAULT_DATA_VOLUME,
     DEFAULT_IMAGE,
@@ -704,7 +704,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"%(prog)s {__version__}",
+        version=version_string(),
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser(

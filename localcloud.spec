@@ -1,11 +1,49 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from datetime import date
+import json
+import os
 from pathlib import Path
+import re
 
 from PyInstaller.utils.hooks import collect_all, copy_metadata
 
 
 project_root = Path(SPECPATH).resolve()
+
+
+release_commit = os.environ.get("LOCALCLOUD_RELEASE_COMMIT")
+release_date = os.environ.get("LOCALCLOUD_RELEASE_DATE")
+if (release_commit is None) != (release_date is None):
+    raise ValueError(
+        "LOCALCLOUD_RELEASE_COMMIT and LOCALCLOUD_RELEASE_DATE must be set together"
+    )
+
+release_metadata = {}
+if release_commit is not None and release_date is not None:
+    if re.fullmatch(r"[0-9a-f]{12}", release_commit) is None:
+        raise ValueError(
+            "LOCALCLOUD_RELEASE_COMMIT must be a 12-character lowercase SHA"
+        )
+    try:
+        parsed_release_date = date.fromisoformat(release_date)
+    except ValueError as error:
+        raise ValueError(
+            "LOCALCLOUD_RELEASE_DATE must have the form YYYY-MM-DD"
+        ) from error
+    if parsed_release_date.isoformat() != release_date:
+        raise ValueError("LOCALCLOUD_RELEASE_DATE must have the form YYYY-MM-DD")
+    release_metadata = {
+        "commit": release_commit,
+        "release_date": release_date,
+    }
+
+release_metadata_path = Path(workpath) / "_release.json"
+release_metadata_path.parent.mkdir(parents=True, exist_ok=True)
+release_metadata_path.write_text(
+    json.dumps(release_metadata, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
 
 def required_mcp_module(name):
     return (
@@ -27,7 +65,8 @@ datas += [
     (
         str(project_root / "src" / "localcloud_cli" / "defaults" / "localcloud.v1.yaml"),
         "localcloud_cli/defaults",
-    )
+    ),
+    (str(release_metadata_path), "localcloud_cli"),
 ]
 
 analysis = Analysis(

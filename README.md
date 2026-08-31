@@ -51,6 +51,12 @@ Signed release archives with Sigstore verification bundles are published for:
 - macOS 13+ on Apple Silicon and Intel;
 - Linux on x86_64 and aarch64, using glibc 2.35+ / Ubuntu 22.04+.
 
+Released binaries identify their exact source and release date:
+
+```text
+localcloud 0.1.2 (commit 0123456789ab, released 2026-08-31)
+```
+
 Windows users can follow the [Docker setup instructions](https://local.cloud/docs/getting-started/).
 
 ## Quick Start

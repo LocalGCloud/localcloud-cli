@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import runpy
 import sys
 import types
@@ -10,8 +11,9 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_spec_trims_build_only_payloads(monkeypatch: Any) -> None:
+def test_spec_trims_build_only_payloads(monkeypatch: Any, tmp_path: Path) -> None:
     calls: dict[str, Any] = {}
+    release_metadata_path = tmp_path / "build" / "_release.json"
     collected_datas = [("mcp/source.py", "mcp")]
     collected_binaries = [("mcp/native.dylib", "mcp")]
     collected_hiddenimports = ["mcp.server.stdio"]
@@ -31,6 +33,8 @@ def test_spec_trims_build_only_payloads(monkeypatch: Any) -> None:
     monkeypatch.setitem(sys.modules, "PyInstaller", types.ModuleType("PyInstaller"))
     monkeypatch.setitem(sys.modules, "PyInstaller.utils", types.ModuleType("PyInstaller.utils"))
     monkeypatch.setitem(sys.modules, "PyInstaller.utils.hooks", hooks)
+    monkeypatch.setenv("LOCALCLOUD_RELEASE_COMMIT", "0123456789ab")
+    monkeypatch.setenv("LOCALCLOUD_RELEASE_DATE", "2026-08-31")
 
     class AnalysisResult:
         pure: list[Any] = []
@@ -46,6 +50,7 @@ def test_spec_trims_build_only_payloads(monkeypatch: Any) -> None:
         str(PROJECT_ROOT / "localcloud.spec"),
         init_globals={
             "SPECPATH": str(PROJECT_ROOT),
+            "workpath": str(release_metadata_path.parent),
             "Analysis": analysis,
             "PYZ": lambda *args, **kwargs: object(),
             "EXE": lambda *args, **kwargs: object(),
@@ -93,8 +98,13 @@ def test_spec_trims_build_only_payloads(monkeypatch: Any) -> None:
                 / "localcloud.v1.yaml"
             ),
             "localcloud_cli/defaults",
-        )
+        ),
+        (str(release_metadata_path), "localcloud_cli"),
     ]
+    assert json.loads(release_metadata_path.read_text(encoding="utf-8")) == {
+        "commit": "0123456789ab",
+        "release_date": "2026-08-31",
+    }
     assert analysis_kwargs["hiddenimports"] == collected_hiddenimports
     assert analysis_kwargs["excludes"] == [
         "setuptools",

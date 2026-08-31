@@ -42,6 +42,24 @@ def test_help_documents_build_and_release_modes() -> None:
     assert "default: build for the current platform" in result.stdout
 
 
+def test_release_workflow_embeds_tag_provenance_in_native_bundles() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "fetch-depth: 0" in workflow
+    assert 'git("cat-file", "-t", tag_ref) != "tag"' in workflow
+    assert 'git("rev-parse", f"{tag_ref}^{{commit}}")' in workflow
+    assert '"for-each-ref", "--format=%(taggerdate:short)", tag_ref' in workflow
+    assert (
+        "LOCALCLOUD_RELEASE_COMMIT: "
+        "${{ needs.validate-release.outputs.release_commit }}"
+    ) in workflow
+    assert (
+        "LOCALCLOUD_RELEASE_DATE: "
+        "${{ needs.validate-release.outputs.release_date }}"
+    ) in workflow
+    assert "(commit ${RELEASE_COMMIT}, released ${RELEASE_DATE})" in workflow
+
+
 @pytest.mark.parametrize(
     "args",
     [
@@ -124,9 +142,10 @@ esac
             "FORCE_RELEASE": str(force).lower(),
             "GH_TOKEN": "test-token",
             "GITHUB_REF_NAME": "v1.2.3",
-            "GITHUB_SHA": "deadbeef",
             "IMAGE": "example/runtime:latest",
             "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
+            "RELEASE_COMMIT": "deadbeefcafe",
+            "RELEASE_DATE": "2026-08-31",
             "RELEASE_DELETED": str(deleted_release),
             "RELEASE_EXISTS": "1" if release_exists else "0",
             "TAG_MARKER": str(tag_marker),

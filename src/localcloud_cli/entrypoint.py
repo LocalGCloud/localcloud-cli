@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import sys
 
-from . import __version__
+from . import version_string
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args == ["--version"]:
-        print(f"localcloud {__version__}")
+        print(version_string())
         return 0
     if args == ["guide"]:
         try:

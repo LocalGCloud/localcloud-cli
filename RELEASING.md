@@ -115,6 +115,11 @@ publication. With `--force`, a conflicting tag is moved to the current prepared
 commit before the workflow starts. All build and signing jobs must then succeed
 before the workflow deletes the existing release and immediately recreates it.
 
+The workflow embeds the annotated tag's 12-character commit hash and tagger
+date in every native binary. `localcloud --version` reports both values alongside
+the semantic version, while source and local `--build-only` commands retain the
+semantic-version-only form.
+
 Official artifacts and their full validation are built by GitHub Actions from
 the clean tagged commit. Local preflight checks run in the current working tree,
 so confirmed local changes can still affect or fail that validation.
@@ -193,6 +198,9 @@ identical, it makes no commit.
 
 ```sh
 VERSION=0.1.0
+RELEASE_COMMIT=$(git rev-parse --short=12 "v${VERSION}^{commit}")
+RELEASE_DATE=$(git for-each-ref \
+  --format='%(taggerdate:short)' "refs/tags/v${VERSION}")
 gh release view "v${VERSION}" --repo LocalGCloud/localcloud-cli
 brew update
 brew info LocalGCloud/tap/localcloud
@@ -200,7 +208,8 @@ brew install LocalGCloud/tap/localcloud
 brew test LocalGCloud/tap/localcloud
 localcloud_version=$(localcloud --version) &&
 lc_version=$(lc --version) &&
-test "$localcloud_version" = "localcloud ${VERSION}" &&
+test "$localcloud_version" = \
+  "localcloud ${VERSION} (commit ${RELEASE_COMMIT}, released ${RELEASE_DATE})" &&
 test "$lc_version" = "$localcloud_version"
 lc doctor
 ```
