@@ -107,6 +107,7 @@ class Controller:
         config: LocalCloudConfig,
         *,
         pull: bool = False,
+        ensure_project: bool = False,
         observer: Any | None = None,
         tail: float | None = 0.0,
         dry_run: bool = False,
@@ -217,8 +218,14 @@ class Controller:
 
             commands = (
                 *commands,
-                f"[LocalCloud API] ensure project={config.project!r} "
-                f"user={config.user!r} (create only if missing)",
+                *(
+                    (
+                        f"[LocalCloud API] ensure explicitly selected "
+                        f"project={config.project!r} user={config.user!r}",
+                    )
+                    if ensure_project
+                    else ()
+                ),
                 *(
                     ("[conditional LocalCloud seed] apply when project or data is created",)
                     if config.seed_yaml is not None
@@ -281,11 +288,13 @@ class Controller:
                 assert current is not None
                 environment = current
 
-            project_created = self._ensure_project(
-                environment,
-                config,
-                deadline=deadline,
-            )
+            project_created = False
+            if ensure_project:
+                project_created = self._ensure_project(
+                    environment,
+                    config,
+                    deadline=deadline,
+                )
             if config.seed_yaml is not None and (fresh_data or project_created):
                 self._seed_project(
                     environment,
@@ -320,6 +329,7 @@ class Controller:
         config: LocalCloudConfig,
         *,
         pull: bool = False,
+        ensure_project: bool = False,
         observer: Any | None = None,
         tail: float | None = 0.0,
         dry_run: bool = False,
@@ -423,6 +433,14 @@ class Controller:
             commands = (
                 *commands,
                 *(
+                    (
+                        f"[LocalCloud API] ensure explicitly selected "
+                        f"project={config.project!r} user={config.user!r}",
+                    )
+                    if ensure_project
+                    else ()
+                ),
+                *(
                     ("[LocalCloud seed] reapply volatile seed data",)
                     if config.seed_yaml is not None
                     else ()
@@ -464,6 +482,12 @@ class Controller:
                 )
             if action != "replace":
                 self._emit_runtime_logs(observer, config, environment)
+            if ensure_project:
+                self._ensure_project(
+                    environment,
+                    config,
+                    deadline=time.monotonic() + _START_READINESS_TIMEOUT,
+                )
             if config.seed_yaml is not None:
                 self._seed_project(environment, config, volatile_only=True)
             self._tail_runtime_logs(

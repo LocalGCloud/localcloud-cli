@@ -100,54 +100,6 @@ def test_tool_error_with_empty_content_list_raises_clean_host_error(
     assert caught.value.message == "Java MCP tool failed"
 
 
-def test_missing_tool_detection_tolerates_wording_drift_and_json_rpc_code(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
-    projects = [{"project_id": PROJECT}]
-
-    def request(method: str, url: str, **kwargs: Any) -> FakeResponse:
-        payload = projects if method == "GET" else projects[0]
-        return FakeResponse(payload)
-
-    monkeypatch.setattr(java_client_module.httpx, "request", request)
-
-    def worded_differently(
-        name: str, arguments: dict[str, Any] | None = None
-    ) -> Any:
-        raise HostError(
-            "java_tool_error", f"Tool '{name}' Not Found", {"tool": name}
-        )
-
-    monkeypatch.setattr(client, "tool", worded_differently)
-    assert client.list_projects() == projects
-
-    def json_rpc_not_found(
-        name: str, arguments: dict[str, Any] | None = None
-    ) -> Any:
-        raise HostError(
-            "java_mcp_error",
-            "unregistered capability",
-            {
-                "method": "tools/call",
-                "tool": name,
-                "error": {"code": -32601, "message": "unregistered capability"},
-            },
-        )
-
-    monkeypatch.setattr(client, "tool", json_rpc_not_found)
-    assert client.list_projects() == projects
-
-    def unrelated_tool_failure(
-        name: str, arguments: dict[str, Any] | None = None
-    ) -> Any:
-        raise HostError("java_tool_error", "Invalid arguments", {"tool": name})
-
-    monkeypatch.setattr(client, "tool", unrelated_tool_failure)
-    with pytest.raises(HostError, match="Invalid arguments"):
-        client.list_projects()
-
-
 @pytest.mark.parametrize(
     ("status_code", "retryable"),
     [(403, False), (408, True), (429, True), (503, True)],
@@ -315,55 +267,68 @@ def test_project_catalog_and_selected_project_existence(
         {"project_id": PROJECT},
     ]
     calls: list[str] = []
-    monkeypatch.setattr(
-        client,
-        "tool",
-        lambda name: calls.append(name) or projects,
-    )
+
+    def request(method: str, url: str, **_kwargs: Any) -> FakeResponse:
+        calls.append(f"{method} {url}")
+        return FakeResponse(projects)
+
+    monkeypatch.setattr(java_client_module.httpx, "request", request)
 
     assert client.list_projects() == projects
     assert client.project_exists() is True
-    assert calls == ["localcloud_list_projects", "localcloud_list_projects"]
-
-
-def test_create_and_reset_project_use_selected_project(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
-    calls: list[tuple[str, dict[str, Any]]] = []
-
-    def tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        calls.append((name, arguments))
-        return {"project_id": PROJECT, "operation": name}
-
-    monkeypatch.setattr(client, "tool", tool)
-
-    assert client.create_project()["project_id"] == PROJECT
-    assert client.reset_project()["project_id"] == PROJECT
     assert calls == [
-        ("localcloud_create_project", {"project": PROJECT}),
-        ("localcloud_reset_project", {"project": PROJECT}),
+        "GET http://127.0.0.1:49080/projects",
+        "GET http://127.0.0.1:49080/projects",
     ]
 
 
-def test_project_lifecycle_falls_back_to_rest_when_mcp_tools_are_missing(
+def test_create_project_uses_lifecycle_api_and_reset_remains_an_mcp_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
+    tool_calls: list[tuple[str, dict[str, Any]]] = []
+    api_calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        tool_calls.append((name, arguments))
+        return {"project_id": PROJECT, "operation": name}
+
+    def request(method: str, url: str, **kwargs: Any) -> FakeResponse:
+        api_calls.append((method, url, kwargs))
+        return FakeResponse({"project_id": PROJECT})
+
+    monkeypatch.setattr(client, "tool", tool)
+    monkeypatch.setattr(java_client_module.httpx, "request", request)
+
+    assert client.create_project()["project_id"] == PROJECT
+    assert client.reset_project()["project_id"] == PROJECT
+    assert tool_calls == [
+        ("localcloud_reset_project", {"project": PROJECT}),
+    ]
+    assert api_calls[0][0:2] == (
+        "POST",
+        "http://127.0.0.1:49080/projects",
+    )
+    assert api_calls[0][2]["json"] == {"project_id": PROJECT}
+
+
+def test_project_lifecycle_uses_rest_without_calling_mcp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
     projects = [{"project_id": PROJECT}]
     calls: list[dict[str, Any]] = []
 
-    def missing_tool(
-        name: str, arguments: dict[str, Any] | None = None
-    ) -> Any:
-        raise HostError("java_tool_error", "Tool not found", {"tool": name})
-
     def request(method: str, url: str, **kwargs: Any) -> FakeResponse:
         calls.append({"method": method, "url": url, **kwargs})
         payload = projects if method == "GET" else projects[0]
         return FakeResponse(payload)
 
-    monkeypatch.setattr(client, "tool", missing_tool)
+    monkeypatch.setattr(
+        client,
+        "tool",
+        lambda *_args, **_kwargs: pytest.fail("project lifecycle must not call MCP"),
+    )
     monkeypatch.setattr(java_client_module.httpx, "request", request)
 
     assert client.list_projects() == projects
@@ -393,30 +358,54 @@ def test_project_lifecycle_falls_back_to_rest_when_mcp_tools_are_missing(
     ]
 
 
-def test_project_lifecycle_does_not_bypass_mcp_write_gate(
+def test_project_creation_is_independent_of_mcp_write_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
-    write_error = HostError(
-        "java_tool_error",
-        "Tool localcloud_create_project requires LOCALCLOUD_MCP_WRITE=true",
-        {"tool": "localcloud_create_project"},
+    monkeypatch.setattr(
+        client,
+        "tool",
+        lambda *_args, **_kwargs: pytest.fail("MCP write gate must not be consulted"),
     )
-
-    def blocked_tool(name: str, arguments: dict[str, Any]) -> Any:
-        raise write_error
-
-    monkeypatch.setattr(client, "tool", blocked_tool)
     monkeypatch.setattr(
         java_client_module.httpx,
         "request",
-        lambda *_args, **_kwargs: pytest.fail("REST fallback must not run"),
+        lambda *_args, **_kwargs: FakeResponse({"project_id": PROJECT}),
     )
 
-    with pytest.raises(HostError) as caught:
-        client.create_project()
+    assert client.create_project() == {"project_id": PROJECT}
 
-    assert caught.value is write_error
+
+def test_environment_uses_management_api_without_calling_mcp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
+    calls: list[dict[str, Any]] = []
+
+    def get(url: str, **kwargs: Any) -> FakeResponse:
+        calls.append({"url": url, **kwargs})
+        return FakeResponse({"GOOGLE_CLOUD_PROJECT": PROJECT})
+
+    monkeypatch.setattr(
+        client,
+        "tool",
+        lambda *_args, **_kwargs: pytest.fail("environment lookup must not call MCP"),
+    )
+    monkeypatch.setattr(java_client_module.httpx, "get", get)
+
+    assert client.environment("json") == {"GOOGLE_CLOUD_PROJECT": PROJECT}
+    assert calls == [
+        {
+            "url": "http://127.0.0.1:49080/env",
+            "params": {"format": "json", "project": PROJECT},
+            "headers": {
+                "Accept": "application/json",
+                "X-LocalCloud-Project": PROJECT,
+                "X-LocalCloud-User": USER,
+            },
+            "timeout": 60.0,
+        }
+    ]
 
 
 def test_forward_preserves_json_rpc_envelope_and_identity_headers(

@@ -40,10 +40,7 @@ def environment_config(
     output_format: str = "shell",
 ) -> Any:
     java = JavaMcpClient(environment["url"], project=project, user=user)
-    result = java.tool(
-        "localcloud_get_env",
-        {"format": output_format, "project": project},
-    )
+    result = java.environment(output_format)
     rewritten = rewrite_endpoints(result, environment.get("endpoint_map") or {})
     if output_format == "json" and isinstance(rewritten, str):
         try:

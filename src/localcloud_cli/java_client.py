@@ -9,13 +9,6 @@ from .constants import DEFAULT_PROJECT, DEFAULT_USER
 from .errors import HostError
 
 
-# JSON-RPC 2.0 standard "method not found" code; MCP servers use it for an
-# unregistered tool name. Checked in addition to the response message text so
-# tool-not-found detection isn't solely dependent on the upstream server's
-# exact wording.
-_JSONRPC_METHOD_NOT_FOUND = -32601
-
-
 def is_retryable_java_error(error: BaseException) -> bool:
     return (
         isinstance(error, HostError)
@@ -187,19 +180,6 @@ class JavaMcpClient:
         content = result.get("content", [])
         return content[0].get("text") if content else None
 
-    @staticmethod
-    def _is_missing_tool(error: HostError, name: str) -> bool:
-        rpc_error = error.details.get("error")
-        is_not_found = "not found" in error.message.lower() or (
-            isinstance(rpc_error, dict)
-            and rpc_error.get("code") == _JSONRPC_METHOD_NOT_FOUND
-        )
-        if not is_not_found:
-            return False
-        if error.details.get("tool") == name:
-            return True
-        return isinstance(rpc_error, dict) and rpc_error.get("data") == name
-
     def _project_api(
         self, method: str, payload: dict[str, Any] | None = None
     ) -> Any:
@@ -226,12 +206,7 @@ class JavaMcpClient:
             ) from error
 
     def list_projects(self) -> list[dict[str, Any]]:
-        try:
-            projects = self.tool("localcloud_list_projects")
-        except HostError as error:
-            if not self._is_missing_tool(error, "localcloud_list_projects"):
-                raise
-            projects = self._project_api("GET")
+        projects = self._project_api("GET")
         if not isinstance(projects, list) or not all(
             isinstance(project, dict) for project in projects
         ):
@@ -248,15 +223,32 @@ class JavaMcpClient:
         )
 
     def create_project(self) -> dict[str, Any]:
-        try:
-            result = self.tool(
-                "localcloud_create_project", {"project": self.project}
-            )
-        except HostError as error:
-            if not self._is_missing_tool(error, "localcloud_create_project"):
-                raise
-            result = self._project_api("POST", {"project_id": self.project})
+        result = self._project_api("POST", {"project_id": self.project})
         return self._project_result("localcloud_create_project", result)
+
+    def environment(self, output_format: str) -> Any:
+        url = f"{self.url}/env"
+        headers = self._headers()
+        headers["Accept"] = (
+            "application/json" if output_format == "json" else "text/plain"
+        )
+        try:
+            response = httpx.get(
+                url,
+                params={"format": output_format, "project": self.project},
+                headers=headers,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return response.json() if output_format == "json" else response.text
+        except Exception as error:
+            raise _transport_error(
+                "java_env_api_unavailable",
+                "Java LocalCloud environment API request failed",
+                error,
+                url=url,
+                method="GET",
+            ) from error
 
     def reset_project(self) -> dict[str, Any]:
         return self._project_result(

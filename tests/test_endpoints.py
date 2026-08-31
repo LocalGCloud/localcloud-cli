@@ -72,7 +72,7 @@ def test_validate_local_endpoints_rejects_public_google_and_non_loopback() -> No
 def test_environment_config_uses_running_environment_without_daemon_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[str, dict[str, object]]] = []
+    calls: list[str] = []
 
     class FakeJava:
         def __init__(self, url: str, project: str, user: str):
@@ -80,16 +80,14 @@ def test_environment_config_uses_running_environment_without_daemon_state(
             assert project == "agent-project-1"
             assert user == "integration-agent"
 
-        def tool(self, name: str, arguments: dict[str, object]):
-            calls.append((name, arguments))
-            return json.dumps(
-                {
-                    "LOCALCLOUD_PROJECT": "agent-project-1",
-                    "LOCALCLOUD_USER": "integration-agent",
-                    "LOCALCLOUD_PRINCIPAL": "integration-agent@localcloud.invalid",
-                    "STORAGE_EMULATOR_HOST": "http://127.0.0.1:24081",
-                }
-            )
+        def environment(self, output_format: str):
+            calls.append(output_format)
+            return {
+                "LOCALCLOUD_PROJECT": "agent-project-1",
+                "LOCALCLOUD_USER": "integration-agent",
+                "LOCALCLOUD_PRINCIPAL": "integration-agent@localcloud.invalid",
+                "STORAGE_EMULATOR_HOST": "http://127.0.0.1:24081",
+            }
 
     monkeypatch.setattr(endpoints_module, "JavaMcpClient", FakeJava)
     environment = {
@@ -107,9 +105,4 @@ def test_environment_config_uses_running_environment_without_daemon_state(
     assert result["STORAGE_EMULATOR_HOST"] == "http://127.0.0.1:49081"
     assert result["LOCALCLOUD_USER"] == "integration-agent"
     assert result["LOCALCLOUD_PRINCIPAL"] == "integration-agent@localcloud.invalid"
-    assert calls == [
-        (
-            "localcloud_get_env",
-            {"format": "json", "project": "agent-project-1"},
-        )
-    ]
+    assert calls == ["json"]

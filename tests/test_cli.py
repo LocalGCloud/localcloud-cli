@@ -30,6 +30,7 @@ class FakeController:
         self.pull_calls: list[tuple[str, bool]] = []
         self.tail_calls: list[tuple[str, float | None]] = []
         self.dry_run_calls: list[tuple[str, bool]] = []
+        self.ensure_project_calls: list[tuple[str, bool]] = []
         self.remembered: str | None = None
         self.remembered_by_volume: dict[str, str | None] = {}
 
@@ -42,12 +43,14 @@ class FakeController:
         config: Any,
         *,
         pull: bool = False,
+        ensure_project: bool = False,
         tail: float | None = None,
         observer: Any | None = None,
         dry_run: bool = False,
     ) -> dict[str, Any] | str:
         self.calls.append(("start", config))
         self.pull_calls.append(("start", pull))
+        self.ensure_project_calls.append(("start", ensure_project))
         self.tail_calls.append(("start", tail))
         self.dry_run_calls.append(("start", dry_run))
         if observer is not None and hasattr(observer, "debug"):
@@ -65,12 +68,14 @@ class FakeController:
         config: Any,
         *,
         pull: bool = False,
+        ensure_project: bool = False,
         tail: float | None = None,
         observer: Any | None = None,
         dry_run: bool = False,
     ) -> dict[str, Any] | str:
         self.calls.append(("restart", config))
         self.pull_calls.append(("restart", pull))
+        self.ensure_project_calls.append(("restart", ensure_project))
         self.tail_calls.append(("restart", tail))
         self.dry_run_calls.append(("restart", dry_run))
         if observer is not None and hasattr(observer, "debug"):
@@ -958,6 +963,37 @@ def test_debug_flag_parsing() -> None:
     assert parser.parse_args(["start"]).debug is False
     assert parser.parse_args(["restart", "--debug"]).debug is True
     assert parser.parse_args(["status", "--debug"]).debug is True
+
+
+def test_explicit_project_id_requests_api_ensure_only_for_start_and_restart() -> None:
+    _execute(_parser().parse_args(["start"]))
+    assert FakeController.instance.ensure_project_calls == [("start", False)]
+
+    _execute(
+        _parser().parse_args(
+            ["start", "--project-id", "explicit-project-1"]
+        )
+    )
+    assert FakeController.instance.ensure_project_calls == [("start", True)]
+
+    _execute(
+        _parser().parse_args(
+            ["restart", "--project-id", "explicit-project-1"]
+        )
+    )
+    assert FakeController.instance.ensure_project_calls == [("restart", True)]
+
+
+def test_debug_start_enables_container_debug_and_startup_metrics() -> None:
+    _execute(_parser().parse_args(["start", "--debug"]))
+
+    start_config = next(
+        value
+        for name, value in FakeController.instance.calls
+        if name == "start"
+    )
+    assert start_config.environment["LOCALCLOUD_LOG_LEVEL"] == "DEBUG"
+    assert start_config.environment["LOCALCLOUD_STARTUP_METRICS"] == "true"
 
 
 def test_start_dispatch_passes_tail_flag() -> None:

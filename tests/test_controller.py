@@ -478,13 +478,17 @@ class _RuntimeObserver:
         self.debug_messages.append(value)
 
 
-def test_start_creates_runtime_project_and_active_record(tmp_path: Path) -> None:
+def test_start_uses_selected_project_as_context_without_creating_it(tmp_path: Path) -> None:
     controller, runtime, paths = _controller(tmp_path)
     config = _config(
         tmp_path,
         paths=paths,
         project="new-project",
         user="agent@example.test",
+    )
+    FakeJavaClient.catalog_error = _java_transport_error(
+        status_code=403,
+        retryable=False,
     )
 
     result = controller.start(config)
@@ -505,6 +509,7 @@ def test_start_creates_runtime_project_and_active_record(tmp_path: Path) -> None
         "agent@example.test",
     ]
     assert runtime.creates == 1
+    assert FakeJavaClient.create_calls == 0
     active = load_active_runtime(paths)
     assert active is not None
     assert active.data_volume == config.data_volume
@@ -636,7 +641,7 @@ def test_start_retries_transient_project_catalog_readiness(
     monkeypatch.setattr(controller_module.time, "monotonic", clock.monotonic)
     monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
 
-    result = controller.start(config)
+    result = controller.start(config, ensure_project=True)
 
     assert result["status"] == "already_running"
     assert result["container"]["id"] == "container-existing"
@@ -705,7 +710,7 @@ def test_start_fails_immediately_for_permanent_project_error(
     )
 
     with pytest.raises(HostError) as caught:
-        controller.start(config)
+        controller.start(config, ensure_project=True)
 
     assert caught.value.code == "project_create_failed"
     cause = caught.value.details["cause"]
@@ -729,7 +734,7 @@ def test_start_project_readiness_uses_one_shared_deadline(
     monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
 
     with pytest.raises(HostError) as caught:
-        controller.start(config)
+        controller.start(config, ensure_project=True)
 
     assert caught.value.code == "runtime_readiness_timeout"
     assert caught.value.details["phase"] == "project_catalog"
@@ -756,7 +761,7 @@ def test_start_creates_project_and_applies_seed_once(
     )
     runtime.record = _record(config)
 
-    result = controller.start(config)
+    result = controller.start(config, ensure_project=True)
 
     assert result["status"] == "already_running"
     assert FakeJavaClient.create_calls == 1
@@ -786,7 +791,7 @@ def test_start_observes_project_after_transient_create_response_failure(
     FakeJavaClient.create_error = _java_transport_error()
     FakeJavaClient.create_commits_before_error = True
 
-    result = controller.start(config)
+    result = controller.start(config, ensure_project=True)
 
     assert result["status"] == "already_running"
     assert FakeJavaClient.create_calls == 1
@@ -813,7 +818,7 @@ def test_start_preserves_transient_create_failure_at_visibility_timeout(
     monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
 
     with pytest.raises(HostError) as caught:
-        controller.start(config)
+        controller.start(config, ensure_project=True)
 
     assert caught.value.code == "runtime_readiness_timeout"
     assert caught.value.details["phase"] == "project_visibility"

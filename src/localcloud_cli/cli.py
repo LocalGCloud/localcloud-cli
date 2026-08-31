@@ -4,6 +4,7 @@ import argparse
 import math
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -400,12 +401,22 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
 
     if args.command in _RUNTIME_COMMANDS:
         config = _command_config(controller, args)
+        if args.command in {"start", "restart"} and getattr(args, "debug", False):
+            config = replace(
+                config,
+                environment={
+                    **config.environment,
+                    "LOCALCLOUD_LOG_LEVEL": "DEBUG",
+                    "LOCALCLOUD_STARTUP_METRICS": "true",
+                },
+            )
         if observer is not None:
             observer.config(args.command, config, args)
         if args.command == "start":
             return controller.start(
                 config,
                 pull=args.pull,
+                ensure_project=args.project_id is not None,
                 observer=observer,
                 tail=args.tail,
                 dry_run=args.dry_run,
@@ -414,6 +425,7 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
             return controller.restart(
                 config,
                 pull=args.pull,
+                ensure_project=args.project_id is not None,
                 observer=observer,
                 tail=args.tail,
                 dry_run=args.dry_run,
@@ -723,8 +735,8 @@ def _parser() -> argparse.ArgumentParser:
     _add_output_options(cleanup, fields=False)
 
     lifecycle_help = {
-        "start": "Start the runtime selected by data volume and prepare a project",
-        "restart": "Restart the selected runtime and reapply volatile seed data",
+        "start": "Start the runtime and prepare a project only when --project-id is explicit",
+        "restart": "Restart the runtime, optionally prepare --project-id, and reapply volatile seed data",
         "reset": "Reset the selected project (use --all-projects for manual full-recreate steps)",
     }
     for name, help_text in lifecycle_help.items():
