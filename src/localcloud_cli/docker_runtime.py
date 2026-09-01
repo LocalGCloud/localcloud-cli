@@ -1268,6 +1268,17 @@ class DockerRuntime:
                                 "error": error.to_dict(),
                             }
                         )
+                    except Exception as error:
+                        invalid_ownership.append(
+                            {
+                                "kind": kind,
+                                "name": _resource_name(resource),
+                                "error": {
+                                    "code": "resource_classification_failed",
+                                    "message": str(error),
+                                },
+                            }
+                        )
         collisions = [
             {"data_volume": volume, "containers": users}
             for volume, users in sorted(volume_users.items())
@@ -2294,11 +2305,12 @@ def _endpoint_map(
                 if host_port == numeric_port
                 else 2
                 if host_port in _TRANSPARENT_HOST_PORTS
+                else 3
+                if host_port is None
                 else 1,
-                host_port,
+                host_port if host_port is not None else numeric_port,
             )
             for _host_ip, host_port in bindings
-            if host_port is not None
         ]
         if not candidates:
             continue
@@ -2652,10 +2664,14 @@ def _attached_drift(
 def _resource_labels(resource: Any, *, reload: bool = True) -> dict[str, str]:
     reload_resource = getattr(resource, "reload", None)
     if reload and callable(reload_resource):
-        reload_resource()
+        try:
+            reload_resource()
+        except Exception:
+            pass
     labels = getattr(resource, "labels", None)
     if labels is None:
-        labels = getattr(resource, "attrs", {}).get("Labels")
+        attrs = getattr(resource, "attrs", None)
+        labels = attrs.get("Labels") if isinstance(attrs, dict) else None
     return dict(labels or {})
 
 
