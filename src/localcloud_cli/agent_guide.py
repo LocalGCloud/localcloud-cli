@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
-
-import yaml
 
 from .constants import DEFAULT_IMAGE, DEFAULT_PROJECT, DEFAULT_USER
 
@@ -16,6 +15,9 @@ _DEFAULTS_FILE = Path(__file__).parent / "defaults" / "localcloud.v1.yaml"
 
 
 def _service_catalog() -> dict[str, dict[str, Any]]:
+    # Lazy-load PyYAML to avoid module import overhead on cold paths.
+    import yaml
+
     defaults = yaml.safe_load(_DEFAULTS_FILE.read_text(encoding="utf-8"))
     return defaults["services"]["catalog"]
 
@@ -31,7 +33,11 @@ def _service_inventory() -> str:
     return "\n".join(lines)
 
 
-_GUIDE = f"""LocalCloud coding-agent guide
+@lru_cache(maxsize=1)
+def render_agent_guide() -> str:
+    """Render and memoize the coding-agent guide."""
+    inventory = _service_inventory()
+    return f"""LocalCloud coding-agent guide
 
 Prerequisites
 
@@ -116,7 +122,7 @@ host:
   environment: {{}}
 services:
   enabled:
-{_service_inventory()}
+{inventory}
 YAML
 localcloud reset
 eval "$(localcloud env)"
@@ -169,5 +175,3 @@ request.
 """
 
 
-def render_agent_guide() -> str:
-    return _GUIDE
