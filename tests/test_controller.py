@@ -1134,12 +1134,15 @@ def test_stop_removes_fully_managed_ephemeral_runtime(tmp_path: Path) -> None:
     controller, runtime, paths = _controller(tmp_path)
     config = _config(tmp_path, paths=paths, yaml="host:\n  data: ephemeral\n")
     runtime.record = _record(config)
+    controller._record_active(runtime.record, config)
+    assert load_active_runtime(paths) is not None
 
     result = controller.stop(config)
 
     assert result["status"] == "stopped"
     assert result["container"]["state"] == "removed"
     assert runtime.removes == [True]
+    assert load_active_runtime(paths) is None
 
 
 def test_reset_all_rejects_attached_resources_before_mutation(

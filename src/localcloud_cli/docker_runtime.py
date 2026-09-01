@@ -2166,16 +2166,18 @@ class DockerRuntime:
             expected = {
                 MANAGED_LABEL: "true",
                 _CHILD_MANAGED_LABEL: "true",
-                CONFIG_HASH_LABEL: legacy_hash
-                if legacy_claim
-                else labels.get(CONFIG_HASH_LABEL, ""),
             }
+            if legacy_claim:
+                expected[CONFIG_HASH_LABEL] = str(legacy_hash)
+                expected[INSTANCE_LABEL] = str(legacy_instance)
+            elif CONFIG_HASH_LABEL in labels:
+                expected[CONFIG_HASH_LABEL] = labels[CONFIG_HASH_LABEL]
+
             if new_claim:
                 expected[VOLUME_NAME_LABEL] = data_volume
-            else:
-                expected[INSTANCE_LABEL] = str(legacy_instance)
+
             mismatches = _label_mismatches(labels, expected)
-            if not expected[CONFIG_HASH_LABEL]:
+            if legacy_claim and not expected.get(CONFIG_HASH_LABEL):
                 mismatches[CONFIG_HASH_LABEL] = {
                     "expected": "<non-empty>",
                     "actual": labels.get(CONFIG_HASH_LABEL),

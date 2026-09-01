@@ -1181,6 +1181,16 @@ def test_new_and_legacy_managed_children_are_cleaned_by_validated_ownership(
             },
         )
     )
+    child_no_hash = client.containers.add(
+        Resource(
+            "child-no-hash",
+            {
+                MANAGED_LABEL: "true",
+                VOLUME_NAME_LABEL: config.data_volume,
+                "localcloud.managed": "true",
+            },
+        )
+    )
     record = runtime.resolve(config)
     assert record is not None
 
@@ -1188,6 +1198,7 @@ def test_new_and_legacy_managed_children_are_cleaned_by_validated_ownership(
 
     assert new_child.removed == [{"force": True, "v": True}]
     assert legacy_child.removed == [{"force": True, "v": True}]
+    assert child_no_hash.removed == [{"force": True, "v": True}]
     assert client.volumes.values[config.data_volume].removed == []
 
 

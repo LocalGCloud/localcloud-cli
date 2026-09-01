@@ -755,6 +755,9 @@ class Controller:
                     remove_volume=True,
                     observer=observer,
                 )
+                active = load_active_runtime(self.paths)
+                if active is not None and active.data_volume == config.data_volume:
+                    clear_active_runtime(self.paths)
                 removed = replace(
                     current,
                     state="removed",
