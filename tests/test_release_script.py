@@ -44,7 +44,11 @@ def test_help_documents_build_and_release_modes() -> None:
 
 def test_release_workflow_embeds_tag_provenance_in_native_bundles() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    parsed_workflow = yaml.safe_load(workflow)
+    checkout = parsed_workflow["jobs"]["validate-release"]["steps"][0]
 
+    assert checkout["with"]["ref"] == "${{ github.ref }}"
+    assert checkout["with"]["fetch-depth"] == 0
     assert "fetch-depth: 0" in workflow
     assert 'git("cat-file", "-t", tag_ref) != "tag"' in workflow
     assert 'git("rev-parse", f"{tag_ref}^{{commit}}")' in workflow
@@ -569,6 +573,77 @@ def test_release_reuses_matching_published_tag(tmp_path: Path) -> None:
     assert git(project, "rev-parse", "refs/tags/v1.2.3").stdout.strip() == tag_object
 
 
+def test_release_rejects_matching_lightweight_tag(tmp_path: Path) -> None:
+    script, env, command_log = release_project(tmp_path)
+    project = script.parents[1]
+    git(project, "tag", "v1.2.3")
+    git(project, "push", "origin", "refs/tags/v1.2.3")
+
+    result = run_script("--release", "1.2.3", script=script, cwd=tmp_path, env=env)
+
+    assert result.returncode == 1
+    assert "local tag v1.2.3 must be annotated" in result.stderr
+    assert git(project, "cat-file", "-t", "refs/tags/v1.2.3").stdout.strip() == (
+        "commit"
+    )
+    assert_no_release_mutation(command_log)
+
+
+def test_force_release_repairs_matching_lightweight_tag(tmp_path: Path) -> None:
+    script, env, command_log = release_project(tmp_path)
+    project = script.parents[1]
+    git(project, "tag", "v1.2.3")
+    git(project, "push", "origin", "refs/tags/v1.2.3")
+    head = git(project, "rev-parse", "HEAD").stdout.strip()
+    env["GH_RELEASE_EXISTS"] = "1"
+
+    result = run_script(
+        "-f", "--release", "1.2.3", script=script, cwd=tmp_path, env=env
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Repair lightweight tag v1.2.3" in result.stdout
+    assert git(project, "cat-file", "-t", "refs/tags/v1.2.3").stdout.strip() == (
+        "tag"
+    )
+    assert git(project, "rev-parse", "v1.2.3^{}").stdout.strip() == head
+    origin = git(project, "remote", "get-url", "origin").stdout.strip()
+    remote_tag_type = subprocess.run(
+        ["git", "--git-dir", origin, "cat-file", "-t", "refs/tags/v1.2.3"],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    assert remote_tag_type == "tag"
+    assert (
+        "gh workflow run cli-release.yml "
+        "--repo LocalGCloud/localcloud-cli --ref v1.2.3 -f force=true"
+        in command_log.read_text(encoding="utf-8")
+    )
+
+
+def test_force_release_restores_matching_remote_annotated_tag(tmp_path: Path) -> None:
+    script, env, _ = release_project(tmp_path)
+    project = script.parents[1]
+    git(project, "tag", "-a", "v1.2.3", "-m", "Release LocalCloud CLI 1.2.3")
+    git(project, "push", "origin", "refs/tags/v1.2.3")
+    remote_tag_object = git(project, "rev-parse", "refs/tags/v1.2.3").stdout.strip()
+    git(project, "tag", "-d", "v1.2.3")
+    git(project, "tag", "v1.2.3")
+    env["GH_RELEASE_EXISTS"] = "1"
+
+    result = run_script(
+        "-f", "--release", "1.2.3", script=script, cwd=tmp_path, env=env
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Restore annotated tag v1.2.3 from origin" in result.stdout
+    assert (
+        git(project, "rev-parse", "refs/tags/v1.2.3").stdout.strip()
+        == remote_tag_object
+    )
+
+
 def test_existing_release_refuses_conflicting_tag(tmp_path: Path) -> None:
     script, env, command_log = release_project(tmp_path)
     project = script.parents[1]
@@ -618,7 +693,10 @@ def test_force_existing_release_retargets_conflicting_tag(tmp_path: Path) -> Non
         check=True,
     ).stdout.strip()
     assert remote_tag == head
-    assert f"Retargeted tag v1.2.3 to release commit {head}" in result.stdout
+    assert (
+        f"Retargeted tag v1.2.3 as an annotated tag at release commit {head}"
+        in result.stdout
+    )
     assert (
         "gh workflow run cli-release.yml "
         "--repo LocalGCloud/localcloud-cli --ref v1.2.3 -f force=true"

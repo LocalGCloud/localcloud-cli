@@ -239,11 +239,39 @@ prepare_tag() {
     local_tag_commit=$(
         git rev-parse -q --verify "refs/tags/$TAG^{}" 2>/dev/null || :
     )
+    local_tag_type=""
+    if [ -n "$local_tag_commit" ]; then
+        local_tag_type=$(git cat-file -t "refs/tags/$TAG")
+    fi
     published_tag_object=$(remote_tag_object "$TAG")
     published_tag_commit=$(remote_tag_commit "$TAG")
+    published_tag_type=""
+    if [ -n "$published_tag_object" ]; then
+        published_tag_peeled=$(
+            git ls-remote --tags "$SOURCE_REMOTE" "refs/tags/$TAG^{}"
+        )
+        if [ -n "$published_tag_peeled" ]; then
+            published_tag_type="tag"
+        else
+            published_tag_type="lightweight"
+        fi
+    fi
     TAG_PUSH_REQUIRED="false"
     TAG_FORCE_PUSH="false"
     TAG_REMOTE_EXPECTED=$published_tag_object
+
+    if [ -n "$local_tag_commit" ] && [ "$local_tag_type" != "tag" ] &&
+        [ "$published_tag_type" = "tag" ] &&
+        [ "$published_tag_commit" = "$head_commit" ] &&
+        [ "$FORCE_RELEASE" = "true" ]; then
+        stage "Restore annotated tag $TAG from $SOURCE_REMOTE"
+        git fetch "$SOURCE_REMOTE" \
+            "+refs/tags/$TAG:refs/tags/$TAG"
+        local_tag_commit=$(
+            git rev-parse -q --verify "refs/tags/$TAG^{}" 2>/dev/null || :
+        )
+        local_tag_type=$(git cat-file -t "refs/tags/$TAG")
+    fi
 
     if [ -n "$local_tag_commit" ] && [ "$local_tag_commit" != "$head_commit" ]; then
         [ "$FORCE_RELEASE" = "true" ] ||
@@ -254,23 +282,49 @@ prepare_tag() {
         [ "$FORCE_RELEASE" = "true" ] ||
             fail "remote tag $TAG does not point to the release commit"
     fi
+    if [ -n "$local_tag_commit" ] && [ "$local_tag_type" != "tag" ]; then
+        [ "$FORCE_RELEASE" = "true" ] ||
+            fail "local tag $TAG must be annotated"
+    fi
+    if [ -n "$published_tag_commit" ] && [ "$published_tag_type" != "tag" ]; then
+        [ "$FORCE_RELEASE" = "true" ] ||
+            fail "remote tag $TAG must be annotated"
+    fi
 
     if {
         [ -n "$local_tag_commit" ] && [ "$local_tag_commit" != "$head_commit" ]
     } || {
         [ -n "$published_tag_commit" ] &&
             [ "$published_tag_commit" != "$head_commit" ]
+    } || {
+        [ -n "$local_tag_commit" ] && [ "$local_tag_type" != "tag" ]
+    } || {
+        [ -n "$published_tag_commit" ] && [ "$published_tag_type" != "tag" ]
     }; then
-        stage "Retarget annotated tag $TAG"
+        if {
+            [ -n "$local_tag_commit" ] && [ "$local_tag_commit" != "$head_commit" ]
+        } || {
+            [ -n "$published_tag_commit" ] &&
+                [ "$published_tag_commit" != "$head_commit" ]
+        }; then
+            stage "Retarget annotated tag $TAG"
+            tag_update_action="Retargeted"
+        else
+            stage "Repair lightweight tag $TAG"
+            tag_update_action="Recreated"
+        fi
         git tag -fa "$TAG" -m "Release LocalCloud CLI $VERSION" "$head_commit"
         local_tag_commit=$head_commit
-        if [ "$published_tag_commit" != "$head_commit" ]; then
+        local_tag_type="tag"
+        if [ -n "$published_tag_commit" ] && {
+            [ "$published_tag_commit" != "$head_commit" ] ||
+                [ "$published_tag_type" != "tag" ]
+        }; then
             TAG_PUSH_REQUIRED="true"
-            if [ -n "$published_tag_commit" ]; then
-                TAG_FORCE_PUSH="true"
-            fi
+            TAG_FORCE_PUSH="true"
         fi
-        printf 'Retargeted tag %s to release commit %s\n' "$TAG" "$head_commit"
+        printf '%s tag %s as an annotated tag at release commit %s\n' \
+            "$tag_update_action" "$TAG" "$head_commit"
     fi
 
     if [ -n "$existing_release" ]; then

@@ -89,9 +89,10 @@ To intentionally replace an existing release with the prepared `main` commit:
 ```
 
 Force mode retargets conflicting local and `origin` tags to the prepared release
-commit. The remote update uses a force-with-lease check so a concurrent tag
-change is rejected rather than overwritten. It then rebuilds and signs every
-asset before the workflow deletes and recreates the GitHub release.
+commit. It also repairs a matching lightweight tag as an annotated tag before
+dispatching the workflow. The remote update uses a force-with-lease check so a
+concurrent tag change is rejected rather than overwritten. It then rebuilds and
+signs every asset before the workflow deletes and recreates the GitHub release.
 
 The script:
 
@@ -102,6 +103,8 @@ The script:
 - creates and pushes the annotated `v${VERSION}` tag for a new release;
 - rejects conflicting tags by default, or retargets them to the prepared commit
   when force replacement was explicitly requested;
+- rejects lightweight tags by default, or recreates them as annotated tags when
+  force replacement was explicitly requested;
 - dispatches and watches `cli-release.yml` when the GitHub release is absent
   or force replacement was explicitly requested;
 - verifies the exact archive, checksum, formula, and Sigstore asset set; and

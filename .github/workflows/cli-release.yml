@@ -30,6 +30,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Preserve the annotated tag object instead of fetching its peeled
+          # github.sha commit back into refs/tags/<tag>.
+          ref: ${{ github.ref }}
           fetch-depth: 0
 
       - name: Match tag and CLI version
