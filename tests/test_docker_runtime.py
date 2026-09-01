@@ -1400,6 +1400,56 @@ def test_wait_ready_rejects_nonlocal_or_unsafe_urls(url: str) -> None:
     assert caught.value.code in {"invalid_endpoint", "nonlocal_endpoint"}
 
 
+def test_resource_labels_handles_missing_labels_and_reload_failures() -> None:
+    class FailingResource:
+        def __init__(self):
+            self.attrs = {"Labels": None}
+
+        def reload(self):
+            raise NotFound("resource deleted out of band")
+
+    resource = FailingResource()
+    labels = runtime_module._resource_labels(resource, reload=True)
+    assert labels == {}
+
+    class NonDictAttrsResource:
+        def __init__(self):
+            self.attrs = None
+
+        def reload(self):
+            pass
+
+    resource2 = NonDictAttrsResource()
+    labels2 = runtime_module._resource_labels(resource2, reload=True)
+    assert labels2 == {}
+
+
+def test_doctor_catches_classify_resource_host_errors(
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+
+    class CrashingResource:
+        def __init__(self, name: str):
+            self.name = name
+            self.id = f"id-{name}"
+            self.labels = {MANAGED_LABEL: "true"}
+            self.status = "running"
+            self.attrs = {"Labels": self.labels}
+
+    crashing_volume = CrashingResource("invalid/data-volume-name")
+    client.volumes.add(crashing_volume)  # type: ignore[arg-type]
+
+    result = runtime.doctor()
+
+    assert "invalid_ownership" in result
+    invalid_entries = [
+        item for item in result["invalid_ownership"] if item.get("name") == "invalid/data-volume-name"
+    ]
+    assert len(invalid_entries) == 1
+    assert invalid_entries[0]["kind"] == "volume"
+
+
 def test_doctor_reports_collisions_invalid_ownership_and_legacy_resources(
     ready_runtime: tuple[DockerRuntime, Client],
 ) -> None:
@@ -1857,6 +1907,14 @@ def test_endpoint_map_prefers_tcp_when_protocols_share_container_port(
 
     assert resolved is not None
     assert resolved.endpoint_map["24093"] == 49093
+
+
+def test_endpoint_map_falls_back_to_container_port_when_host_port_is_none() -> None:
+    from localcloud_cli.docker_runtime import _endpoint_map
+
+    bindings = {"24080/tcp": (("127.0.0.1", None),)}
+    result = _endpoint_map(bindings)
+    assert result == {"24080": 24080}
 
 
 def test_endpoint_map_prefers_standard_binding_over_transparent_alias(
