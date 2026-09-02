@@ -24,6 +24,27 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
 - `--image` overrides `host.image` and `LOCALCLOUD_IMAGE` (default: `jaysen2apache/localcloud:latest`).
 - `--services` overrides `services.enabled` with a comma-separated list of service IDs, or `default` to use the built-in set.
 
+Docker socket access uses the tri-state `host.docker_socket` setting and defaults
+to `auto`:
+
+```yaml
+host:
+  docker_socket: auto # true forces; false is a hard opt-out
+```
+
+In `auto` mode, the CLI mounts the local Docker socket when any enabled service
+requires it: Compute Engine (`compute`), Cloud Run (`cloudrun`), GKE (`gke`), or
+Dataproc (`dataproc`). With none of those services enabled, it leaves the socket
+unmounted. `true` always requests the mount; `false` never mounts it and the
+affected service APIs report that Docker access is disabled. A required but
+missing local socket fails preflight before an existing runtime is replaced.
+
+`LOCALCLOUD_DOCKER_ACCESS` is an optional `auto`, `true`, or `false` environment
+override and is normally unset. It takes precedence over `host.docker_socket`.
+Socket access does not enable the generic workload runtime:
+`LOCALCLOUD_RUNTIME_EMBEDDED_DOCKER` remains an independent, explicit setting
+that defaults to `false`.
+
 ### `status`
 
 Inspects runtime health, Docker container state, endpoints, and ownership.
