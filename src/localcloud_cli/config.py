@@ -10,8 +10,10 @@ import threading
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import lru_cache
+from importlib import resources
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Literal, cast
 
 import yaml
 
@@ -71,6 +73,7 @@ FLAT_FIELD_REPLACEMENTS = {
 }
 RESERVED_HOST_ENVIRONMENT = {
     "LOCALCLOUD_CONFIG",
+    "LOCALCLOUD_DOCKER_ACCESS",
     "LOCALCLOUD_PROJECT",
     "LOCALCLOUD_DATA_DIR",
     "LOCALCLOUD_SERVICES",
@@ -89,6 +92,9 @@ AMBIGUOUS_PLAIN_SCALARS = {
 }
 EXACT_SPECIAL_SCALARS = {"true", "false", "null", "~"}
 _ACTIVE_RUNTIME_UNSET = object()
+DOCKER_ACCESS_ENV = "LOCALCLOUD_DOCKER_ACCESS"
+DOCKER_DEPENDENCY = "docker"
+DockerAccessMode = Literal["auto", "true", "false"]
 
 
 
@@ -217,6 +223,8 @@ class LocalCloudConfig:
     container_name: str
     network_name: str
     diagnostics: tuple[dict[str, Any], ...]
+    docker_socket_mode: DockerAccessMode = "auto"
+    effective_services: tuple[str, ...] = ()
     tls_enabled: bool = False
     tls_port: int = DEFAULT_TLS_PORT
     strict_port_validation: bool = False
@@ -241,9 +249,11 @@ def runtime_settings(config: LocalCloudConfig) -> dict[str, Any]:
         "data": config.data,
         "image": config.image,
         "memory": config.memory,
+        "docker_socket_mode": config.docker_socket_mode,
         "docker_socket": config.docker_socket,
         "transparent_network": config.transparent_network,
         "services": list(config.services) if config.services is not None else None,
+        "effective_services": list(config.effective_services),
         "environment": dict(config.environment),
         "container_name": config.container_name,
         "network_name": config.network_name,
@@ -252,6 +262,123 @@ def runtime_settings(config: LocalCloudConfig) -> dict[str, Any]:
         settings["tls_enabled"] = True
         settings["tls_port"] = config.tls_port
     return settings
+
+
+def resolve_docker_socket(
+    mode: DockerAccessMode,
+    services: tuple[str, ...] | None,
+    catalog: dict[str, dict[str, object]],
+) -> bool:
+    """Resolve whether the launcher must mount the host Docker socket."""
+    if mode == "true":
+        return True
+    if mode == "false":
+        return False
+    enabled = (
+        set(services)
+        if services is not None
+        else {
+            service_id
+            for service_id, definition in catalog.items()
+            if definition.get("defaultEnabled") is True
+        }
+    )
+    return any(
+        service_id in enabled
+        and DOCKER_DEPENDENCY
+        in definition.get("runtimeDependencies", [])
+        for service_id, definition in catalog.items()
+    )
+
+
+@lru_cache(maxsize=1)
+def _packaged_defaults() -> dict[str, object]:
+    defaults_resource = resources.files("localcloud_cli").joinpath(
+        "defaults/localcloud.v1.yaml"
+    )
+    defaults = yaml.safe_load(defaults_resource.read_text(encoding="utf-8"))
+    if not isinstance(defaults, dict):
+        raise RuntimeError("Packaged LocalCloud defaults are invalid")
+    return defaults
+
+
+@lru_cache(maxsize=1)
+def _packaged_service_catalog() -> dict[str, dict[str, object]]:
+    defaults = _packaged_defaults()
+    services = defaults.get("services")
+    catalog = services.get("catalog") if isinstance(services, dict) else None
+    if not isinstance(catalog, dict) or any(
+        not isinstance(service_id, str) or not isinstance(definition, dict)
+        for service_id, definition in catalog.items()
+    ):
+        raise RuntimeError("Packaged LocalCloud service catalog is invalid")
+    return catalog
+
+
+def _packaged_docker_access_default() -> object:
+    defaults = _packaged_defaults()
+    host = defaults.get("host")
+    if not isinstance(host, dict) or "docker_socket" not in host:
+        raise RuntimeError(
+            "Packaged LocalCloud defaults do not define host.docker_socket"
+        )
+    return host["docker_socket"]
+
+
+def _effective_service_catalog(
+    services_section: dict[object, object],
+) -> dict[str, dict[str, object]]:
+    packaged_catalog = _packaged_service_catalog()
+    catalog = copy.deepcopy(packaged_catalog)
+    overrides = services_section.get("catalog") or {}
+    if not isinstance(overrides, dict):
+        _invalid_config("services.catalog must be an object", value=overrides)
+    for service_id, override in overrides.items():
+        if not isinstance(service_id, str):
+            _invalid_config(
+                "services.catalog field names must be strings",
+                value=service_id,
+            )
+        if override is None:
+            catalog.pop(service_id, None)
+            continue
+        if not isinstance(override, dict):
+            _invalid_config(
+                "services.catalog entries must be objects",
+                field=f"services.catalog.{service_id}",
+                value=override,
+            )
+        if "runtimeDependencies" in override:
+            canonical_dependencies = packaged_catalog.get(service_id, {}).get(
+                "runtimeDependencies"
+            )
+            if override["runtimeDependencies"] != canonical_dependencies:
+                _invalid_config(
+                    "services.catalog runtimeDependencies is immutable",
+                    field=(
+                        f"services.catalog.{service_id}.runtimeDependencies"
+                    ),
+                )
+        definition = catalog.setdefault(service_id, {})
+        _overlay_mapping(definition, override)
+    return catalog
+
+
+def _overlay_mapping(
+    base: dict[str, object],
+    overlay: dict[object, object],
+) -> None:
+    for key, value in overlay.items():
+        if not isinstance(key, str):
+            _invalid_config("Configuration field names must be strings", value=key)
+        if value is None:
+            base.pop(key, None)
+        elif isinstance(value, dict) and isinstance(base.get(key), dict):
+            nested = base[key]
+            assert isinstance(nested, dict)
+            _overlay_mapping(nested, value)
+        else:
+            base[key] = copy.deepcopy(value)
 
 
 @dataclass(frozen=True)
@@ -780,6 +907,16 @@ def load_config(
         if "enabled" in services_section
         else None
     )
+    effective_catalog = _effective_service_catalog(services_section)
+    effective_services = (
+        selected_services
+        if selected_services is not None
+        else tuple(
+            service_id
+            for service_id, definition in effective_catalog.items()
+            if definition.get("defaultEnabled") is True
+        )
+    )
     seed_path, seed_yaml = _seed(
         host_value("seed", "auto"), config_path, source_directory
     )
@@ -809,14 +946,38 @@ def load_config(
         "host.memory",
         memory if memory is not None else host_value("memory", DEFAULT_MEMORY),
     )
-    docker_socket = _boolean(
-        "host.docker_socket", host_value("docker_socket", False)
+    docker_access_override = os.environ.get(DOCKER_ACCESS_ENV)
+    docker_socket_mode = _docker_access_mode(
+        DOCKER_ACCESS_ENV
+        if docker_access_override is not None
+        else "host.docker_socket",
+        docker_access_override
+        if docker_access_override is not None
+        else host_value("docker_socket", _packaged_docker_access_default()),
+    )
+    docker_socket = resolve_docker_socket(
+        docker_socket_mode,
+        selected_services,
+        effective_catalog,
     )
     transparent_network = _boolean(
         "host.transparent_network",
         host_value("transparent_network", False),
     )
     environment = _environment(host_value("environment", {}))
+    if (
+        "LOCALCLOUD_RUNTIME_EMBEDDED_DOCKER" in environment
+        and _environment_boolean(
+            "host.environment.LOCALCLOUD_RUNTIME_EMBEDDED_DOCKER",
+            environment["LOCALCLOUD_RUNTIME_EMBEDDED_DOCKER"],
+        )
+        and not docker_socket
+    ):
+        _invalid_config(
+            "LOCALCLOUD_RUNTIME_EMBEDDED_DOCKER=true requires Docker access",
+            field="host.environment.LOCALCLOUD_RUNTIME_EMBEDDED_DOCKER",
+            docker_access=docker_socket_mode,
+        )
     if tls is not None:
         environment["LOCALCLOUD_TLS_ENABLED"] = "true" if tls else "false"
 
@@ -896,6 +1057,7 @@ def load_config(
         data=str(data),
         image=image,
         memory=memory,
+        docker_socket_mode=docker_socket_mode,
         docker_socket=docker_socket,
         transparent_network=transparent_network,
         environment=environment,
@@ -905,6 +1067,7 @@ def load_config(
         container_name=selected_container,
         network_name=selected_network,
         diagnostics=tuple(diagnostics),
+        effective_services=effective_services,
     )
 
 
@@ -967,6 +1130,8 @@ def _validate_config_document(
                 "Unknown host fields",
                 fields=unknown_host,
             )
+            if "docker_socket" in host and host["docker_socket"] is None:
+                _invalid_config("host.docker_socket cannot be null")
 
     for section_name, value, allowed_fields in (
         ("tls", raw.get("tls"), TLS_FIELDS),
@@ -1263,6 +1428,20 @@ def _boolean(name: str, value: object) -> bool:
     if not isinstance(value, bool):
         _invalid_config(f"{name} must be a boolean", value=value)
     return value
+
+
+def _docker_access_mode(name: str, value: object) -> DockerAccessMode:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        if value in {"auto", "true", "false"}:
+            return cast(DockerAccessMode, value)
+    _invalid_config(
+        f"{name} must be 'auto', 'true', or 'false'",
+        field=name,
+        value=value,
+    )
+
 
 def _environment_boolean(name: str, value: str) -> bool:
     normalized = value.strip().lower()

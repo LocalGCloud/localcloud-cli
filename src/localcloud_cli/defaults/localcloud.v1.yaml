@@ -10,6 +10,7 @@ context:
   project: local-gcp-project
 
 host:
+  docker_socket: auto
   transparent_network: false
 
 tls:
@@ -248,6 +249,7 @@ services:
       minTier: community
       gcloudApiName: dataproc
       terraformEnvVar: GOOGLE_DATAPROC_CUSTOM_ENDPOINT
+      runtimeDependencies: [docker]
 
     cloudiam:
       displayName: "Cloud IAM"
@@ -344,6 +346,7 @@ services:
       minTier: pro
       gcloudApiName: container
       terraformEnvVar: GOOGLE_CONTAINER_CUSTOM_ENDPOINT
+      runtimeDependencies: [docker]
       additionalPorts:
         k3d: 24092
 
@@ -360,6 +363,7 @@ services:
       minTier: pro
       gcloudApiName: compute
       terraformEnvVar: GOOGLE_COMPUTE_CUSTOM_ENDPOINT
+      runtimeDependencies: [docker]
 
     cloudrun:
       displayName: "Cloud Run"
@@ -374,6 +378,7 @@ services:
       minTier: pro
       gcloudApiName: run
       terraformEnvVar: GOOGLE_CLOUD_RUN_CUSTOM_ENDPOINT
+      runtimeDependencies: [docker]
 
     memorystore:
       displayName: "Memorystore (Redis/Valkey)"

@@ -53,6 +53,16 @@ def test_guide_inventory_matches_canonical_service_registry() -> None:
         assert display_name == definition["displayName"]
 
 
+def test_canonical_registry_declares_docker_backed_services() -> None:
+    docker_backed = {
+        service_id
+        for service_id, definition in _canonical_services().items()
+        if "docker" in definition.get("runtimeDependencies", [])
+    }
+
+    assert docker_backed == {"compute", "cloudrun", "gke", "dataproc"}
+
+
 def test_guide_explains_volume_identity_and_catalog_first_workflow() -> None:
     guide = render_agent_guide()
 
@@ -71,6 +81,9 @@ def test_guide_explains_volume_identity_and_catalog_first_workflow() -> None:
     assert "localcloud doctor --verbose" in guide
     assert "localcloud start --verbose" in guide
     assert "`start --verbose` returns JSON" in guide
+    assert "docker_socket: auto" in guide
+    assert "automatically mounts" in guide
+    assert "hard opt-out" in guide
 
     removed_surfaces = (
         "--" + "work" + "space",

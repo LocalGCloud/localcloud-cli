@@ -1067,7 +1067,11 @@ def test_restart_replaces_container_when_services_override_changes(
     result = controller.restart(changed)
 
     assert result["status"] == "reconfigured"
-    assert result["changed_fields"] == ["services"]
+    assert result["changed_fields"] == [
+        "docker_socket",
+        "effective_services",
+        "services",
+    ]
     assert runtime.removes == [False]
     assert runtime.creates == 1
     assert runtime.restarts == 0

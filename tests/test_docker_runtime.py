@@ -33,6 +33,15 @@ from localcloud_cli.docker_runtime import (
 from localcloud_cli.errors import HostError
 
 
+@pytest.fixture(autouse=True)
+def available_docker_socket(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        runtime_module,
+        "_docker_socket_is_usable",
+        lambda: True,
+    )
+
+
 class NotFound(Exception):
     status_code = 404
 
@@ -380,7 +389,7 @@ def test_managed_create_uses_only_controller_owned_bootstrap_environment(
     assert labels[NETWORK_NAME_LABEL] == "localcloud"
     assert SERVICES_LABEL not in labels
     assert labels[DATA_LABEL] == "persistent"
-    assert environment == {}
+    assert environment == {"LOCALCLOUD_DOCKER_ACCESS": "auto"}
     network_labels = client.networks.values["localcloud"].labels
     assert network_labels[MANAGED_LABEL] == "true"
     assert network_labels[RESOURCE_ROLE_LABEL] == "network"
@@ -410,6 +419,7 @@ def test_non_default_runtime_passes_only_required_ownership_environment(
 
     environment = client.containers.run_calls[0]["environment"]
     assert environment == {
+        "LOCALCLOUD_DOCKER_ACCESS": "auto",
         "LOCALCLOUD_RUNTIME_NETWORK": "localcloud-team",
         "LOCALCLOUD_DATA_VOLUME": "localcloud-data-team",
     }
@@ -442,6 +452,47 @@ def test_managed_create_propagates_explicit_services_override(
     environment = client.containers.run_calls[0]["environment"]
 
     assert environment["LOCALCLOUD_SERVICES"] == "gcs,pubsub"
+
+
+def test_socket_mount_does_not_enable_embedded_runtime(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _write_config(
+        tmp_path,
+        "host:\n  docker_socket: auto\nservices:\n  enabled: [dataproc]\n",
+    )
+
+    plan = runtime.plan_run(config, client.images.get(config.image))
+
+    assert "/var/run/docker.sock" in plan.volumes
+    assert "LOCALCLOUD_RUNTIME_EMBEDDED_DOCKER" not in plan.environment
+    assert plan.environment["LOCALCLOUD_DOCKER_ACCESS"] == "auto"
+
+
+def test_preflight_rejects_missing_docker_socket_before_image_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = Client()
+    runtime = DockerRuntime(client=client)
+    monkeypatch.setattr(
+        runtime_module,
+        "_docker_socket_is_usable",
+        lambda: False,
+    )
+
+    with pytest.raises(HostError) as caught:
+        runtime.preflight_create(_config(tmp_path, active_runtime=None))
+
+    assert caught.value.code == "docker_socket_unavailable"
+    assert caught.value.details == {
+        "path": "/var/run/docker.sock",
+        "docker_access": "auto",
+    }
+    assert client.images.gets == []
+    assert client.images.pulls == []
 
 
 
@@ -2024,6 +2075,6 @@ def test_inspected_run_plan_is_copyable_and_collapses_port_ranges(
     assert "-m 4g" in command
     assert "-v localcloud-data:/var/lib/localcloud" in command
     assert "-p 127.0.0.1:24080-24092:24080-24092/tcp" in command
-    assert " -e " not in command
+    assert "-e LOCALCLOUD_DOCKER_ACCESS=auto" in command
     assert " -l " not in command
     assert command.endswith(config.image)

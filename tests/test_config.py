@@ -18,6 +18,8 @@ from localcloud_cli.config import (
     default_resource_names,
     load_active_runtime,
     load_config,
+    resolve_docker_socket,
+    runtime_settings,
     save_active_runtime,
     validate_data_volume,
 )
@@ -63,6 +65,285 @@ def test_zero_config_uses_shared_data_volume_defaults(tmp_path: Path) -> None:
     assert selected.network_name == "localcloud"
     assert selected.config_path is None
     assert selected.diagnostics == ()
+
+
+@pytest.mark.parametrize("service", ["compute", "cloudrun", "gke", "dataproc"])
+def test_auto_mounts_socket_for_docker_backed_service(
+    tmp_path: Path,
+    service: str,
+) -> None:
+    config_path = tmp_path / "localcloud.yaml"
+    config_path.write_text(
+        f"host:\n  docker_socket: auto\nservices:\n  enabled: [{service}]\n",
+        encoding="utf-8",
+    )
+
+    selected = load_config(
+        explicit=config_path,
+        directory=tmp_path,
+        paths=_paths(tmp_path),
+        active_runtime=None,
+    )
+
+    assert selected.docker_socket_mode == "auto"
+    assert selected.docker_socket is True
+    assert selected.effective_services == (service,)
+
+
+def test_auto_does_not_mount_socket_without_docker_backed_services(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "localcloud.yaml"
+    config_path.write_text(
+        "host:\n  docker_socket: auto\nservices:\n  enabled: [gcs, pubsub]\n",
+        encoding="utf-8",
+    )
+
+    selected = load_config(
+        explicit=config_path,
+        directory=tmp_path,
+        paths=_paths(tmp_path),
+        active_runtime=None,
+    )
+
+    assert selected.docker_socket_mode == "auto"
+    assert selected.docker_socket is False
+    assert selected.effective_services == ("gcs", "pubsub")
+
+
+@pytest.mark.parametrize(
+    ("mode", "service", "expected"),
+    (("false", "dataproc", False), ("true", "gcs", True)),
+)
+def test_explicit_docker_access_mode_controls_socket_mount(
+    tmp_path: Path,
+    mode: str,
+    service: str,
+    expected: bool,
+) -> None:
+    config_path = tmp_path / "localcloud.yaml"
+    config_path.write_text(
+        f"host:\n  docker_socket: {mode}\nservices:\n  enabled: [{service}]\n",
+        encoding="utf-8",
+    )
+
+    selected = load_config(
+        explicit=config_path,
+        directory=tmp_path,
+        paths=_paths(tmp_path),
+        active_runtime=None,
+    )
+
+    assert selected.docker_socket_mode == mode
+    assert selected.docker_socket is expected
+
+
+def test_default_services_and_catalog_override_drive_auto_socket_mount(
+    tmp_path: Path,
+) -> None:
+    defaulted = load_config(
+        directory=tmp_path,
+        paths=_paths(tmp_path),
+        active_runtime=None,
+    )
+    assert defaulted.services is None
+    assert "dataproc" in defaulted.effective_services
+    assert defaulted.docker_socket is True
+
+    config_path = tmp_path / "localcloud.yaml"
+    config_path.write_text(
+        "services:\n"
+        "  catalog:\n"
+        "    dataproc:\n"
+        "      defaultEnabled: false\n",
+        encoding="utf-8",
+    )
+    overridden = load_config(
+        explicit=config_path,
+        directory=tmp_path,
+        paths=_paths(tmp_path),
+        active_runtime=None,
+    )
+
+    assert "dataproc" not in overridden.effective_services
+    assert overridden.docker_socket is False
+
+
+def test_docker_access_environment_override_has_highest_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "localcloud.yaml"
+    config_path.write_text(
+        "host:\n  docker_socket: true\nservices:\n  enabled: [dataproc]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LOCALCLOUD_DOCKER_ACCESS", "false")
+
+    selected = load_config(
+        explicit=config_path,
+        directory=tmp_path,
+        paths=_paths(tmp_path),
+        active_runtime=None,
+    )
+
+    assert selected.docker_socket_mode == "false"
+    assert selected.docker_socket is False
+
+
+@pytest.mark.parametrize("source", ["sometimes", "1", "AUTO", '" TRUE "'])
+def test_invalid_docker_access_mode_is_rejected(
+    tmp_path: Path,
+    source: str,
+) -> None:
+    config_path = tmp_path / "localcloud.yaml"
+    config_path.write_text(
+        f"host:\n  docker_socket: {source}\n", encoding="utf-8"
+    )
+
+    with pytest.raises(HostError) as caught:
+        load_config(
+            explicit=config_path,
+            directory=tmp_path,
+            paths=_paths(tmp_path),
+            active_runtime=None,
+        )
+
+    assert caught.value.code == "invalid_config"
+    assert caught.value.details["field"] == "host.docker_socket"
+
+
+def test_invalid_docker_access_environment_override_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOCALCLOUD_DOCKER_ACCESS", "sometimes")
+
+    with pytest.raises(HostError) as caught:
+        load_config(
+            directory=tmp_path,
+            paths=_paths(tmp_path),
+            active_runtime=None,
+        )
+
+    assert caught.value.code == "invalid_config"
+    assert caught.value.details["field"] == "LOCALCLOUD_DOCKER_ACCESS"
+
+
+def test_quoted_boolean_docker_access_mode_is_accepted(tmp_path: Path) -> None:
+    config_path = tmp_path / "localcloud.yaml"
+    config_path.write_text(
+        'host:\n  docker_socket: "true"\n', encoding="utf-8"
+    )
+
+    selected = load_config(
+        explicit=config_path,
+        directory=tmp_path,
+        paths=_paths(tmp_path),
+        active_runtime=None,
+    )
+
+    assert selected.docker_socket_mode == "true"
+    assert selected.docker_socket is True
+
+
+def test_docker_runtime_dependency_cannot_be_changed_by_user_catalog(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "localcloud.yaml"
+    config_path.write_text(
+        "services:\n"
+        "  catalog:\n"
+        "    dataproc:\n"
+        "      runtimeDependencies: []\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HostError) as caught:
+        load_config(
+            explicit=config_path,
+            directory=tmp_path,
+            paths=_paths(tmp_path),
+            active_runtime=None,
+        )
+
+    assert caught.value.code == "invalid_config"
+    assert caught.value.details["field"] == (
+        "services.catalog.dataproc.runtimeDependencies"
+    )
+
+
+def test_docker_access_mode_and_effective_services_define_runtime_identity(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "localcloud.yaml"
+    config_path.write_text(
+        "host:\n  docker_socket: auto\nservices:\n  enabled: [gcs]\n",
+        encoding="utf-8",
+    )
+    automatic = load_config(
+        explicit=config_path,
+        directory=tmp_path,
+        paths=_paths(tmp_path),
+        active_runtime=None,
+    )
+    config_path.write_text(
+        "host:\n  docker_socket: false\nservices:\n  enabled: [gcs]\n",
+        encoding="utf-8",
+    )
+    disabled = load_config(
+        explicit=config_path,
+        directory=tmp_path,
+        paths=_paths(tmp_path),
+        active_runtime=None,
+    )
+
+    assert automatic.docker_socket is disabled.docker_socket is False
+    assert automatic.config_hash != disabled.config_hash
+    assert runtime_settings(automatic)["docker_socket_mode"] == "auto"
+    assert runtime_settings(automatic)["effective_services"] == ["gcs"]
+
+
+def test_resolve_docker_socket_uses_catalog_dependency_declaration() -> None:
+    catalog = {
+        "plain": {"defaultEnabled": True},
+        "nested": {
+            "defaultEnabled": False,
+            "runtimeDependencies": ["docker"],
+        },
+    }
+
+    assert resolve_docker_socket("auto", None, catalog) is False
+    assert resolve_docker_socket("auto", ("nested",), catalog) is True
+    assert resolve_docker_socket("false", ("nested",), catalog) is False
+    assert resolve_docker_socket("true", ("plain",), catalog) is True
+
+
+def test_embedded_docker_runtime_requires_effective_docker_access(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "localcloud.yaml"
+    config_path.write_text(
+        "host:\n"
+        "  docker_socket: false\n"
+        "  environment:\n"
+        "    LOCALCLOUD_RUNTIME_EMBEDDED_DOCKER: true\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HostError) as caught:
+        load_config(
+            explicit=config_path,
+            directory=tmp_path,
+            paths=_paths(tmp_path),
+            active_runtime=None,
+        )
+
+    assert caught.value.code == "invalid_config"
+    assert caught.value.details == {
+        "field": "host.environment.LOCALCLOUD_RUNTIME_EMBEDDED_DOCKER",
+        "docker_access": "false",
+    }
 
 
 def test_default_image_uses_public_latest_channel(tmp_path: Path) -> None:
@@ -674,7 +955,6 @@ def test_null_host_and_members_fall_back_to_cli_defaults(tmp_path: Path) -> None
         "  seed: null\n"
         "  image: null\n"
         "  memory: null\n"
-        "  docker_socket: null\n"
         "  environment: null\n",
         encoding="utf-8",
     )
@@ -684,10 +964,25 @@ def test_null_host_and_members_fall_back_to_cli_defaults(tmp_path: Path) -> None
     assert selected.data_volume == DEFAULT_DATA_VOLUME
     assert selected.image == DEFAULT_IMAGE
     assert selected.memory == "4g"
-    assert selected.docker_socket is False
+    assert selected.docker_socket is True
     assert selected.environment == {}
     assert selected.seed_path == seed
     assert selected.seed_yaml == "services: {}\n"
+
+
+def test_null_docker_socket_is_rejected(tmp_path: Path) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  docker_socket: null\n", encoding="utf-8"
+    )
+
+    with pytest.raises(HostError) as caught:
+        load_config(
+            directory=tmp_path,
+            paths=_paths(tmp_path),
+            active_runtime=None,
+        )
+
+    assert caught.value.code == "invalid_config"
 
 
 def test_non_null_empty_owned_values_are_rejected(tmp_path: Path) -> None:
@@ -725,6 +1020,7 @@ def test_null_services_enabled_and_invalid_passthrough_shapes_are_rejected(
     "name",
     [
         "LOCALCLOUD_CONFIG",
+        "LOCALCLOUD_DOCKER_ACCESS",
         "LOCALCLOUD_PROJECT",
         "LOCALCLOUD_DATA_DIR",
         "LOCALCLOUD_SERVICES",

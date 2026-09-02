@@ -5,6 +5,7 @@ import json
 import os
 import socket
 import shlex
+import stat
 import time
 import warnings
 from dataclasses import dataclass, field, replace
@@ -45,6 +46,7 @@ _IMAGE_PORT_CAPABILITIES = frozenset(
     | {f"{_DNS_PORT}/udp"}
 )
 _DEFAULT_READINESS_TIMEOUT = 120.0
+_DOCKER_SOCKET_PATH = "/var/run/docker.sock"
 _CHILD_MANAGED_LABEL = "localcloud.managed"
 _LEGACY_LABELS = {
     "com.localcloud." + "work" + "space",
@@ -389,6 +391,15 @@ class DockerRuntime:
         observer: Any | None = None,
         local_only: bool = False,
     ) -> tuple[Any, bool]:
+        if config.docker_socket and not _docker_socket_is_usable():
+            raise HostError(
+                "docker_socket_unavailable",
+                f"Docker socket {_DOCKER_SOCKET_PATH} is not available",
+                {
+                    "path": _DOCKER_SOCKET_PATH,
+                    "docker_access": config.docker_socket_mode,
+                },
+            )
         image, was_pulled = self._image_for_create(
             config.image,
             pull=pull,
@@ -2440,8 +2451,7 @@ def _container_environment(
     if config.data_volume != DEFAULT_DATA_VOLUME or network_name != "localcloud":
         environment["LOCALCLOUD_RUNTIME_NETWORK"] = network_name
         environment["LOCALCLOUD_DATA_VOLUME"] = config.data_volume
-    if config.docker_socket:
-        environment["LOCALCLOUD_RUNTIME_EMBEDDED_DOCKER"] = "true"
+    environment["LOCALCLOUD_DOCKER_ACCESS"] = config.docker_socket_mode
     environment.pop("LOCALCLOUD_INSTANCE", None)
     return environment
 
@@ -2831,6 +2841,13 @@ def _resolve_readiness_deadline(deadline: float | None) -> float:
     if deadline is not None:
         return deadline
     return time.monotonic() + _DEFAULT_READINESS_TIMEOUT
+
+
+def _docker_socket_is_usable() -> bool:
+    try:
+        return stat.S_ISSOCK(os.stat(_DOCKER_SOCKET_PATH).st_mode)
+    except OSError:
+        return False
 
 
 def _port_is_free(port: int, kind: int = socket.SOCK_STREAM) -> bool:

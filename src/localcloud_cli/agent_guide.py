@@ -117,7 +117,7 @@ host:
   data: persistent
   image: {DEFAULT_IMAGE}
   memory: 4g
-  docker_socket: false
+  docker_socket: auto
   transparent_network: false
   environment: {{}}
 services:
@@ -135,6 +135,12 @@ and may be overridden with `--data-volume`. `context.project` and
 `--project-id` and `--user`; they never affect Docker identity. If
 `host.image` is omitted, `LOCALCLOUD_IMAGE` wins; if that is also unset, the
 selected active runtime's recorded image wins, then the CLI default.
+
+`host.docker_socket: auto` automatically mounts the Docker socket when an
+enabled service declares that runtime dependency. Set it to `true` to always
+mount it, or `false` as a hard opt-out; Docker-backed services will then report
+that Docker access is disabled. Automatic mounting does not enable the generic
+embedded Docker workload runtime.
 
 `host.seed: auto` loads `seed.yaml` beside the selected config when it exists
 and is otherwise a no-op. Set `host.seed: disabled` to disable seeding, or
