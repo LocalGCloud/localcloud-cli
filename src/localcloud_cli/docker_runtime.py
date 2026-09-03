@@ -425,11 +425,23 @@ class DockerRuntime:
         config: LocalCloudConfig,
         replacing: RuntimeRecord | None = None,
         *,
-        pull: bool = False,
+        pull: bool | None = None,
         observer: Any | None = None,
         local_only: bool = False,
     ) -> tuple[Any, bool]:
-        if config.docker_socket and not _docker_socket_is_usable():
+        if local_only and pull is True:
+            raise HostError(
+                "dry_run_pull_conflict",
+                "Read-only image planning cannot pull images",
+                {"image": config.image},
+            )
+        effective_pull = False if local_only else (True if pull is None else pull)
+        socket_usable = False
+        try:
+            socket_usable = _docker_socket_is_usable(self.client)
+        except TypeError:
+            socket_usable = _docker_socket_is_usable()
+        if config.docker_socket and not socket_usable:
             raise HostError(
                 "docker_socket_unavailable",
                 f"Docker socket {_DOCKER_SOCKET_PATH} is not available",
@@ -440,7 +452,7 @@ class DockerRuntime:
             )
         image, was_pulled = self._image_for_create(
             config.image,
-            pull=pull,
+            pull=effective_pull,
             observer=observer,
             local_only=local_only,
         )
@@ -735,7 +747,7 @@ class DockerRuntime:
         self,
         config: LocalCloudConfig,
         *,
-        pull: bool = False,
+        pull: bool = True,
         readiness_deadline: float | None = None,
         observer: Any | None = None,
         prepared_image: tuple[Any, bool] | None = None,
@@ -1823,11 +1835,79 @@ class DockerRuntime:
         non_default = [name for name in networks if name not in {"bridge", "host", "none"}]
         return non_default[0] if non_default else (networks[0] if networks else None)
 
+    def _is_newer_image_available(
+        self,
+        image_name: str,
+        local_image: Any,
+        *,
+        observer: Any | None = None,
+    ) -> bool:
+        if "@sha256:" in image_name:
+            return False
+
+        attrs = getattr(local_image, "attrs", None)
+        if not isinstance(attrs, dict):
+            attrs = {}
+
+        local_digests: set[str] = set()
+        repo_digests = attrs.get("RepoDigests") or []
+        if isinstance(repo_digests, list):
+            for rd in repo_digests:
+                if "@" in str(rd):
+                    local_digests.add(str(rd).split("@", 1)[1].strip())
+        raw_id = getattr(local_image, "id", None) or attrs.get("Id")
+        if raw_id:
+            raw_id_str = str(raw_id).strip()
+            local_digests.add(raw_id_str)
+            local_digests.add(raw_id_str.removeprefix("sha256:").strip())
+        desc_digest = attrs.get("Descriptor", {}).get("digest")
+        if desc_digest:
+            desc_digest_str = str(desc_digest).strip()
+            local_digests.add(desc_digest_str)
+            local_digests.add(desc_digest_str.removeprefix("sha256:").strip())
+
+        get_reg_data = getattr(self.client.images, "get_registry_data", None)
+        if not callable(get_reg_data):
+            return False
+
+        try:
+            reg_data = get_reg_data(image_name)
+        except Exception as error:
+            if observer is not None and hasattr(observer, "debug"):
+                observer.debug(
+                    f"Could not check registry for updates to {image_name!r}: {error}"
+                )
+            return False
+
+        reg_attrs = getattr(reg_data, "attrs", None)
+        if not isinstance(reg_attrs, dict):
+            reg_attrs = {}
+
+        reg_digest = (
+            reg_attrs.get("Descriptor", {}).get("digest")
+            or getattr(reg_data, "id", None)
+        )
+        if not reg_digest:
+            return False
+
+        reg_digest_str = str(reg_digest).strip()
+        reg_digest_clean = reg_digest_str.removeprefix("sha256:").strip()
+        reg_digest_full = f"sha256:{reg_digest_clean}"
+
+        if (
+            reg_digest_clean in local_digests
+            or reg_digest_full in local_digests
+            or reg_digest_str in local_digests
+        ):
+            return False
+
+        return True
+
     def _image_for_create(
         self,
         image_name: str,
         *,
-        pull: bool = False,
+        pull: bool = True,
         observer: Any | None = None,
         local_only: bool = False,
     ) -> tuple[Any, bool]:
@@ -1837,20 +1917,8 @@ class DockerRuntime:
                 "Read-only image planning cannot pull images",
                 {"image": image_name},
             )
-        if pull:
-            try:
-                return self._pull_image(image_name, observer=observer), True
-            except Exception as error:
-                raise HostError(
-                    "invalid_image",
-                    "Selected LocalCloud image could not be pulled",
-                    {
-                        "image": image_name,
-                        "cause": str(error),
-                    },
-                ) from error
         try:
-            return self.client.images.get(image_name), False
+            local_image = self.client.images.get(image_name)
         except Exception as first_error:
             if not _is_not_found(first_error):
                 # Anything other than "image doesn't exist locally" (auth
@@ -1886,6 +1954,23 @@ class DockerRuntime:
                         "local_cause": str(first_error),
                     },
                 ) from error
+
+        if pull and self._is_newer_image_available(
+            image_name, local_image, observer=observer
+        ):
+            try:
+                return self._pull_image(image_name, observer=observer), True
+            except Exception as error:
+                raise HostError(
+                    "invalid_image",
+                    "Selected LocalCloud image could not be pulled",
+                    {
+                        "image": image_name,
+                        "cause": str(error),
+                    },
+                ) from error
+
+        return local_image, False
 
     def _pull_image(self, image_name: str, *, observer: Any | None = None) -> Any:
         def emit(
@@ -2929,11 +3014,98 @@ def _canonical_port_bindings(config: LocalCloudConfig) -> PublishedPorts:
     return bindings
 
 
-def _docker_socket_is_usable() -> bool:
+def _context_docker_socket_path() -> str | None:
+    current_context = os.environ.get("DOCKER_CONTEXT")
+    docker_config = os.path.expanduser("~/.docker/config.json")
+    if not current_context and os.path.exists(docker_config):
+        try:
+            with open(docker_config, "r", encoding="utf-8") as file:
+                current_context = json.load(file).get("currentContext")
+        except Exception:
+            current_context = None
+
+    if not current_context or current_context == "default":
+        return None
+
+    contexts_dir = os.path.expanduser("~/.docker/contexts/meta")
+    if not os.path.isdir(contexts_dir):
+        return None
+
+    for entry in os.scandir(contexts_dir):
+        if not entry.is_dir():
+            continue
+        meta_path = os.path.join(entry.path, "meta.json")
+        if not os.path.exists(meta_path):
+            continue
+        try:
+            with open(meta_path, "r", encoding="utf-8") as file:
+                meta = json.load(file)
+                if meta.get("Name") == current_context:
+                    endpoint = (
+                        meta.get("Endpoints", {})
+                        .get("docker", {})
+                        .get("Host", "")
+                    )
+                    if endpoint.startswith("unix://"):
+                        return endpoint.removeprefix("unix://")
+        except Exception:
+            continue
+    return None
+
+
+def _docker_socket_is_usable(client: Any | None = None) -> bool:
     try:
-        return stat.S_ISSOCK(os.stat(_DOCKER_SOCKET_PATH).st_mode)
+        if stat.S_ISSOCK(os.stat(_DOCKER_SOCKET_PATH).st_mode):
+            return True
     except OSError:
-        return False
+        pass
+
+    if client is not None:
+        adapter = getattr(getattr(client, "api", None), "_custom_adapter", None)
+        socket_path = getattr(adapter, "socket_path", None)
+        if socket_path:
+            try:
+                if stat.S_ISSOCK(os.stat(socket_path).st_mode):
+                    return True
+            except OSError:
+                pass
+
+    docker_host = os.environ.get("DOCKER_HOST", "").strip()
+    if docker_host.startswith("unix://"):
+        host_socket = docker_host.removeprefix("unix://")
+        try:
+            if stat.S_ISSOCK(os.stat(host_socket).st_mode):
+                return True
+        except OSError:
+            pass
+
+    context_socket = _context_docker_socket_path()
+    if context_socket:
+        try:
+            if stat.S_ISSOCK(os.stat(context_socket).st_mode):
+                return True
+        except OSError:
+            pass
+
+    home = os.path.expanduser("~")
+    alternate_paths = [
+        os.path.join(home, ".colima", "default", "docker.sock"),
+        os.path.join(home, ".orbstack", "run", "docker.sock"),
+        os.path.join(home, ".docker", "run", "docker.sock"),
+        os.path.join(home, ".lima", "default", "docker.sock"),
+    ]
+    xdg_runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if xdg_runtime:
+        alternate_paths.append(os.path.join(xdg_runtime, "docker.sock"))
+
+    for path in alternate_paths:
+        try:
+            if stat.S_ISSOCK(os.stat(path).st_mode):
+                return True
+        except OSError:
+            continue
+
+    return False
 
 
 def _available_tcp_port_block(

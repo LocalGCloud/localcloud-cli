@@ -119,6 +119,7 @@ class Controller:
                 "Dry-run cannot be combined with --pull because previews are strictly read-only",
                 {"image": config.image},
             )
+        effective_pull = False if dry_run else pull
         start_time = time.monotonic()
         deadline = start_time + _START_READINESS_TIMEOUT
         with (
@@ -144,78 +145,98 @@ class Controller:
                     observer.starting(config)
                 prepared_image = self.runtime.preflight_create(
                     config,
-                    pull=pull,
+                    pull=effective_pull,
                     observer=observer,
                     local_only=dry_run,
                 )
                 run_plan = self.runtime.plan_run(config, prepared_image[0])
                 commands = self.runtime.preview_create_commands(config, run_plan)
                 status = "started"
-            elif pull or self._requires_managed_replacement(current, config):
-                action = "replace"
-                reason = (
-                    "an image pull was requested"
-                    if pull
-                    else "managed runtime configuration changed"
-                )
-                _validate_replacement(current, config)
-                if (
-                    not dry_run
-                    and observer is not None
-                    and hasattr(observer, "starting")
-                ):
-                    observer.starting(config)
-                changed_fields = _changed_fields(current, config)
-                prepared_image = self.runtime.preflight_create(
-                    config,
-                    current,
-                    pull=pull,
-                    observer=observer,
-                    local_only=dry_run,
-                )
-                run_plan = self.runtime.plan_run(
-                    config,
-                    prepared_image[0],
-                    replacing=current,
-                )
-                preserve_volume = (
-                    current.data == "persistent"
-                    or current.ownership["data_volume"] == "attached"
-                )
-                preserve_network = current.network_name == config.network_name
-                commands = (
-                    *self.runtime.preview_remove_commands(
+            else:
+                requires_reconfig = self._requires_managed_replacement(current, config)
+                if effective_pull or requires_reconfig:
+                    prepared_image = self.runtime.preflight_create(
                         config,
                         current,
-                        remove_volume=not preserve_volume,
-                        remove_network=not preserve_network,
-                    ),
-                    *self.runtime.preview_create_commands(
+                        pull=effective_pull,
+                        observer=observer,
+                        local_only=dry_run,
+                    )
+                was_pulled = (
+                    prepared_image[1] if prepared_image is not None else False
+                )
+                new_image_id = (
+                    getattr(prepared_image[0], "id", None)
+                    if prepared_image is not None
+                    else None
+                )
+                image_id_changed = bool(
+                    current.ownership.get("container") == "managed"
+                    and current.image_id
+                    and new_image_id
+                    and current.image_id != new_image_id
+                )
+                is_managed = current.ownership.get("container") == "managed"
+                if is_managed and (requires_reconfig or was_pulled or image_id_changed):
+                    action = "replace"
+                    reason = (
+                        "managed runtime configuration changed"
+                        if requires_reconfig
+                        else "a newer image was pulled from registry"
+                        if was_pulled
+                        else "the configured image changed"
+                    )
+                    _validate_replacement(current, config)
+                    if (
+                        not dry_run
+                        and observer is not None
+                        and hasattr(observer, "starting")
+                    ):
+                        observer.starting(config)
+                    changed_fields = _changed_fields(current, config)
+                    run_plan = self.runtime.plan_run(
                         config,
-                        run_plan,
-                        volume_exists=preserve_volume,
-                        network_exists=True if preserve_network else None,
-                    ),
-                )
-                status = (
-                    "reconfigured"
-                    if self._requires_managed_replacement(current, config)
-                    else "started"
-                )
-            elif current.state != "running":
-                action = "start"
-                reason = "the selected container is stopped"
-                target = current.name or current.container_id or config.container_name
-                commands = (shlex.join(["docker", "start", target]),)
-                status = "started"
-            elif not self.runtime.is_ready(current):
-                action = "wait"
-                reason = "the selected container is running but not ready"
-                status = "already_running"
-            else:
-                action = "reuse"
-                reason = "the selected container is already running and ready"
-                status = "already_running"
+                        prepared_image[0],
+                        replacing=current,
+                    )
+                    preserve_volume = (
+                        current.data == "persistent"
+                        or current.ownership["data_volume"] == "attached"
+                    )
+                    preserve_network = current.network_name == config.network_name
+                    commands = (
+                        *self.runtime.preview_remove_commands(
+                            config,
+                            current,
+                            remove_volume=not preserve_volume,
+                            remove_network=not preserve_network,
+                        ),
+                        *self.runtime.preview_create_commands(
+                            config,
+                            run_plan,
+                            volume_exists=preserve_volume,
+                            network_exists=True if preserve_network else None,
+                        ),
+                    )
+                    status = (
+                        "reconfigured"
+                        if requires_reconfig
+                        else "started"
+                    )
+                elif current.state != "running":
+                    action = "start"
+                    reason = "the selected container is stopped"
+                    target = current.name or current.container_id or config.container_name
+                    commands = (shlex.join(["docker", "start", target]),)
+                    status = "started"
+                elif not self.runtime.is_ready(current):
+                    action = "wait"
+                    reason = "the selected container is running but not ready"
+                    status = "already_running"
+                else:
+                    action = "reuse"
+                    reason = "the selected container is already running and ready"
+                    status = "already_running"
 
             commands = (
                 *commands,
@@ -263,7 +284,7 @@ class Controller:
                 environment = self._replace(
                     current,
                     config,
-                    pull=pull,
+                    pull=effective_pull,
                     readiness_deadline=deadline,
                     observer=observer,
                     prepared_image=prepared_image,
@@ -343,6 +364,7 @@ class Controller:
                 "Dry-run cannot be combined with --pull because previews are strictly read-only",
                 {"image": config.image},
             )
+        effective_pull = False if dry_run else pull
         start_time = time.monotonic()
         with (
             nullcontext()
@@ -370,79 +392,104 @@ class Controller:
                 reason = "no container uses the selected data volume"
                 prepared_image = self.runtime.preflight_create(
                     config,
-                    pull=pull,
+                    pull=effective_pull,
                     observer=observer,
                     local_only=dry_run,
                 )
                 run_plan = self.runtime.plan_run(config, prepared_image[0])
                 commands = self.runtime.preview_create_commands(config, run_plan)
                 status = "restarted"
-            elif (
-                pull
-                or self._requires_managed_replacement(current, config)
-                or image_changed
-                or port_layout_changed
-            ):
-                action = "replace"
-                reason = (
-                    "an image pull was requested"
-                    if pull
-                    else "the configured image changed"
-                    if image_changed
-                    else "the managed runtime uses noncanonical host ports"
-                    if port_layout_changed
-                    else "managed runtime configuration changed"
-                )
-                _validate_replacement(current, config)
-                changed_fields = _changed_fields(current, config)
-                if port_layout_changed:
-                    changed_fields = sorted({*changed_fields, "ports"})
-                prepared_image = self.runtime.preflight_create(
-                    config,
-                    current,
-                    pull=pull,
-                    observer=observer,
-                    local_only=dry_run,
-                )
-                run_plan = self.runtime.plan_run(
-                    config,
-                    prepared_image[0],
-                    replacing=current,
-                )
-                preserve_volume = (
-                    current.data == "persistent"
-                    or current.ownership["data_volume"] == "attached"
-                )
-                preserve_network = current.network_name == config.network_name
-                commands = (
-                    *self.runtime.preview_remove_commands(
-                        config,
-                        current,
-                        remove_volume=not preserve_volume,
-                        remove_network=not preserve_network,
-                    ),
-                    *self.runtime.preview_create_commands(
-                        config,
-                        run_plan,
-                        volume_exists=preserve_volume,
-                        network_exists=True if preserve_network else None,
-                    ),
-                )
-                status = (
-                    "reconfigured"
-                    if self._requires_managed_replacement(current, config)
+            else:
+                requires_reconfig = self._requires_managed_replacement(current, config)
+                if (
+                    effective_pull
+                    or requires_reconfig
                     or image_changed
                     or port_layout_changed
-                    else "restarted"
+                ):
+                    prepared_image = self.runtime.preflight_create(
+                        config,
+                        current,
+                        pull=effective_pull,
+                        observer=observer,
+                        local_only=dry_run,
+                    )
+                was_pulled = (
+                    prepared_image[1] if prepared_image is not None else False
                 )
-            else:
-                action = "restart"
-                reason = "the selected container is conforming"
-                target = current.name or current.container_id or config.container_name
-                commands = (
-                    shlex.join(["docker", "restart", "-t", "20", target]),
+                new_image_id = (
+                    getattr(prepared_image[0], "id", None)
+                    if prepared_image is not None
+                    else None
                 )
-                status = "restarted"
+                image_id_differs = image_changed or bool(
+                    current.ownership.get("container") == "managed"
+                    and current.image_id
+                    and new_image_id
+                    and current.image_id != new_image_id
+                )
+                is_managed = current.ownership.get("container") == "managed"
+                if is_managed and (
+                    was_pulled
+                    or requires_reconfig
+                    or image_id_differs
+                    or port_layout_changed
+                ):
+                    action = "replace"
+                    reason = (
+                        "managed runtime configuration changed"
+                        if requires_reconfig
+                        else "the configured image changed"
+                        if image_id_differs and not was_pulled
+                        else "a newer image was pulled from registry"
+                        if was_pulled
+                        else "the managed runtime uses noncanonical host ports"
+                        if port_layout_changed
+                        else "managed runtime configuration changed"
+                    )
+                    _validate_replacement(current, config)
+                    changed_fields = _changed_fields(current, config)
+                    if port_layout_changed:
+                        changed_fields = sorted({*changed_fields, "ports"})
+                    run_plan = self.runtime.plan_run(
+                        config,
+                        prepared_image[0],
+                        replacing=current,
+                    )
+                    preserve_volume = (
+                        current.data == "persistent"
+                        or current.ownership["data_volume"] == "attached"
+                    )
+                    preserve_network = current.network_name == config.network_name
+                    commands = (
+                        *self.runtime.preview_remove_commands(
+                            config,
+                            current,
+                            remove_volume=not preserve_volume,
+                            remove_network=not preserve_network,
+                        ),
+                        *self.runtime.preview_create_commands(
+                            config,
+                            run_plan,
+                            volume_exists=preserve_volume,
+                            network_exists=True if preserve_network else None,
+                        ),
+                    )
+                    status = (
+                        "reconfigured"
+                        if requires_reconfig
+                        or image_id_differs
+                        or port_layout_changed
+                        else "restarted"
+                    )
+                else:
+                    action = "restart"
+                    reason = "the selected container is conforming"
+                    target = current.name or current.container_id or config.container_name
+                    commands = (
+                        shlex.join(["docker", "restart", "-t", "20", target]),
+                    )
+                    status = "restarted"
 
             commands = (
                 *commands,
@@ -485,7 +532,7 @@ class Controller:
                 environment = self._replace(
                     current,
                     config,
-                    pull=pull,
+                    pull=effective_pull,
                     observer=observer,
                     prepared_image=prepared_image,
                     run_plan=run_plan,

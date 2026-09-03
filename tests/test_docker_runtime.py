@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -32,6 +34,8 @@ from localcloud_cli.docker_runtime import (
     DockerRuntime,
 )
 from localcloud_cli.errors import HostError
+
+_real_docker_socket_is_usable = runtime_module._docker_socket_is_usable
 
 
 @pytest.fixture(autouse=True)
@@ -195,11 +199,20 @@ class Image:
         }
 
 
+class RegistryData:
+    def __init__(self, digest: str | None = None):
+        self.attrs = {
+            "Descriptor": {"digest": digest} if digest else {},
+        }
+        self.id = digest
+
+
 class Images:
     def __init__(self):
         self.by_name: dict[str, Image] = {}
         self.gets: list[str] = []
         self.pulls: list[str] = []
+        self.registry_data: dict[str, Any] = {}
 
     def add(self, name: str, image: Image) -> Image:
         self.by_name[name] = image
@@ -211,6 +224,11 @@ class Images:
         if name not in self.by_name:
             raise NotFound(name)
         return self.by_name[name]
+
+    def get_registry_data(self, name: str) -> Any:
+        if name in self.registry_data:
+            return self.registry_data[name]
+        raise NotFound(name)
 
     def pull(self, name: str) -> Image:
         self.pulls.append(name)
@@ -494,6 +512,142 @@ def test_preflight_rejects_missing_docker_socket_before_image_work(
     }
     assert client.images.gets == []
     assert client.images.pulls == []
+
+
+def _temp_unix_socket() -> tuple[socket.socket, str]:
+    path = f"/tmp/lc_t_{os.getpid()}_{time.time_ns()}.sock"
+    server = socket.socket(socket.AF_UNIX)
+    server.bind(path)
+    return server, path
+
+
+def test_docker_socket_is_usable_detects_custom_adapter_socket(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server, sock_path = _temp_unix_socket()
+    try:
+        class FakeAdapter:
+            socket_path = str(sock_path)
+
+        class FakeApi:
+            _custom_adapter = FakeAdapter()
+
+        class FakeDockerClient:
+            api = FakeApi()
+
+        monkeypatch.setattr(runtime_module, "_DOCKER_SOCKET_PATH", str(tmp_path / "nonexistent.sock"))
+        monkeypatch.delenv("DOCKER_HOST", raising=False)
+        monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path / "empty_home"))
+
+        assert _real_docker_socket_is_usable(FakeDockerClient()) is True
+        assert _real_docker_socket_is_usable(None) is False
+    finally:
+        server.close()
+        try:
+            os.unlink(sock_path)
+        except OSError:
+            pass
+
+
+def test_docker_socket_is_usable_detects_docker_host_socket(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server, sock_path = _temp_unix_socket()
+    try:
+        monkeypatch.setattr(runtime_module, "_DOCKER_SOCKET_PATH", str(tmp_path / "nonexistent.sock"))
+        monkeypatch.setenv("DOCKER_HOST", f"unix://{sock_path}")
+        monkeypatch.setenv("HOME", str(tmp_path / "empty_home"))
+
+        assert _real_docker_socket_is_usable() is True
+    finally:
+        server.close()
+        try:
+            os.unlink(sock_path)
+        except OSError:
+            pass
+
+
+def test_docker_socket_is_usable_detects_docker_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    docker_dir = home / ".docker"
+    contexts_dir = docker_dir / "contexts" / "meta" / "colima_ctx"
+    contexts_dir.mkdir(parents=True)
+    server, sock_path = _temp_unix_socket()
+    try:
+        (docker_dir / "config.json").write_text(
+            json.dumps({"currentContext": "colima"}), encoding="utf-8"
+        )
+        (contexts_dir / "meta.json").write_text(
+            json.dumps({
+                "Name": "colima",
+                "Endpoints": {"docker": {"Host": f"unix://{sock_path}"}},
+            }),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(runtime_module, "_DOCKER_SOCKET_PATH", str(tmp_path / "nonexistent.sock"))
+        monkeypatch.delenv("DOCKER_HOST", raising=False)
+        monkeypatch.setenv("HOME", str(home))
+
+        assert _real_docker_socket_is_usable() is True
+    finally:
+        server.close()
+        try:
+            os.unlink(sock_path)
+        except OSError:
+            pass
+
+
+def test_docker_socket_is_usable_returns_false_when_no_socket(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runtime_module, "_DOCKER_SOCKET_PATH", str(tmp_path / "nonexistent.sock"))
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "empty_home"))
+
+    assert _real_docker_socket_is_usable() is False
+
+
+def test_preflight_passes_when_alternate_socket_is_usable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server, sock_path = _temp_unix_socket()
+    try:
+        class FakeAdapter:
+            socket_path = str(sock_path)
+
+        class FakeApi:
+            _custom_adapter = FakeAdapter()
+
+        client = Client()
+        client.api = FakeApi()
+        runtime = DockerRuntime(client=client)
+
+        monkeypatch.setattr(runtime_module, "_DOCKER_SOCKET_PATH", str(tmp_path / "nonexistent.sock"))
+        monkeypatch.delenv("DOCKER_HOST", raising=False)
+        monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path / "empty_home"))
+        monkeypatch.setattr(runtime_module, "_docker_socket_is_usable", _real_docker_socket_is_usable)
+
+        prepared, was_pulled = runtime.preflight_create(
+            _config(tmp_path, active_runtime=None), pull=False
+        )
+        assert prepared is not None
+    finally:
+        server.close()
+        try:
+            os.unlink(sock_path)
+        except OSError:
+            pass
 
 
 
@@ -1933,6 +2087,7 @@ def test_create_reuses_prepared_image_without_pulling_again(
 ) -> None:
     runtime, client = ready_runtime
     config = _config(tmp_path)
+    client.images.registry_data[config.image] = RegistryData("sha256:newer-digest")
     prepared = runtime.preflight_create(config, pull=True)
 
     record = runtime.create(config, prepared_image=prepared)
@@ -1940,16 +2095,70 @@ def test_create_reuses_prepared_image_without_pulling_again(
     assert record.image_status == "pulled from registry"
     assert client.images.pulls == [config.image]
 
-def test_create_with_explicit_pull_forces_images_pull(
+
+def test_create_pulls_when_newer_image_available_on_registry(
     tmp_path: Path,
     ready_runtime: tuple[DockerRuntime, Client],
 ) -> None:
     runtime, client = ready_runtime
     config = _config(tmp_path)
+    client.images.registry_data[config.image] = RegistryData("sha256:newer-digest")
     record = runtime.create(config, pull=True)
 
     assert record.image_status == "pulled from registry"
     assert client.images.pulls == [config.image]
+
+
+def test_create_skips_pull_when_image_is_already_latest(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    local_img = client.images.get(config.image)
+    client.images.registry_data[config.image] = RegistryData(local_img.id)
+    record = runtime.create(config, pull=True)
+
+    assert record.image_status == "available locally"
+    assert client.images.pulls == []
+
+
+def test_create_with_no_pull_uses_local_image_even_if_newer_remote_exists(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    client.images.registry_data[config.image] = RegistryData("sha256:newer-digest")
+    record = runtime.create(config, pull=False)
+
+    assert record.image_status == "available locally"
+    assert client.images.pulls == []
+
+
+def test_is_newer_image_available_logic(
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    local_img = client.images.add("myimage:latest", Image("sha256:local-digest-12345"))
+
+    # When remote matches local id -> False
+    client.images.registry_data["myimage:latest"] = RegistryData("sha256:local-digest-12345")
+    assert runtime._is_newer_image_available("myimage:latest", local_img) is False
+
+    # When remote differs -> True
+    client.images.registry_data["myimage:latest"] = RegistryData("sha256:newer-remote-digest")
+    assert runtime._is_newer_image_available("myimage:latest", local_img) is True
+
+    # When image has pinned digest (@sha256:) -> False
+    assert runtime._is_newer_image_available("myimage@sha256:pinned", local_img) is False
+
+    # When registry raises error -> False
+    def failing_reg_data(_name: str) -> Any:
+        raise ConnectionError("offline")
+
+    client.images.get_registry_data = failing_reg_data  # type: ignore[assignment]
+    assert runtime._is_newer_image_available("myimage:latest", local_img) is False
 
 
 def test_preflight_create_pull_failure_raises_host_error(
@@ -1958,6 +2167,7 @@ def test_preflight_create_pull_failure_raises_host_error(
 ) -> None:
     runtime, client = ready_runtime
     config = _config(tmp_path)
+    client.images.registry_data[config.image] = RegistryData("sha256:newer-digest")
 
     def failing_pull(_name: str) -> None:
         raise RuntimeError("network down")
@@ -2209,9 +2419,9 @@ def test_endpoint_map_prefers_tcp_when_protocols_share_container_port(
 def test_endpoint_map_falls_back_to_container_port_when_host_port_is_none() -> None:
     from localcloud_cli.docker_runtime import _endpoint_map
 
-    bindings = {"24080/tcp": (("127.0.0.1", None),)}
+    bindings = {"5365/tcp": (("127.0.0.1", None),)}
     result = _endpoint_map(bindings)
-    assert result == {"24080": 24080}
+    assert result == {"5365": 5365}
 
 
 def test_endpoint_map_prefers_standard_binding_over_transparent_alias(

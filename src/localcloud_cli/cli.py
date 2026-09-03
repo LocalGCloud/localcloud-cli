@@ -465,9 +465,16 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
         if observer is not None:
             observer.config(args.command, config, args)
         if args.command == "start":
+            pull = args.pull
+            if args.dry_run:
+                pull = (
+                    True
+                    if getattr(args, "pull_explicit", False) and args.pull
+                    else False
+                )
             return controller.start(
                 config,
-                pull=args.pull,
+                pull=pull,
                 ensure_project=args.project_id is not None,
                 observer=observer,
                 tail=args.tail,
@@ -481,9 +488,16 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
                 ),
             )
         if args.command == "restart":
+            pull = args.pull
+            if args.dry_run:
+                pull = (
+                    True
+                    if getattr(args, "pull_explicit", False) and args.pull
+                    else False
+                )
             return controller.restart(
                 config,
-                pull=args.pull,
+                pull=pull,
                 ensure_project=args.project_id is not None,
                 observer=observer,
                 tail=args.tail,
@@ -757,6 +771,18 @@ def _result_failure_message(
     return None
 
 
+class _SmartPullAction(argparse.BooleanOptionalAction):
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: Any,
+        option_string: str | None = None,
+    ) -> None:
+        super().__call__(parser, namespace, values, option_string)
+        setattr(namespace, "pull_explicit", True)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="localcloud",
@@ -855,12 +881,12 @@ def _parser() -> argparse.ArgumentParser:
             )
             command.add_argument(
                 "--pull",
-                action=argparse.BooleanOptionalAction,
-                default=False,
+                action=_SmartPullAction,
+                default=True,
                 help=(
-                    "Pull the latest image from the registry before running (default: --no-pull)"
+                    "Check for a newer image on the registry and pull if available before running (default: --pull)"
                     if name == "start"
-                    else "Pull the latest image from the registry before restarting (default: --no-pull)"
+                    else "Check for a newer image on the registry and pull if available before restarting (default: --pull)"
                 ),
             )
             command.add_argument(

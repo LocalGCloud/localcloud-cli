@@ -897,10 +897,10 @@ def test_main_cleanup_partial_returns_failure_with_result(
 
 def test_restart_and_start_pull_flags() -> None:
     parser = _parser()
-    assert parser.parse_args(["restart"]).pull is False
+    assert parser.parse_args(["restart"]).pull is True
     assert parser.parse_args(["restart", "--no-pull"]).pull is False
     assert parser.parse_args(["restart", "--pull"]).pull is True
-    assert parser.parse_args(["start"]).pull is False
+    assert parser.parse_args(["start"]).pull is True
     assert parser.parse_args(["start", "--no-pull"]).pull is False
     assert parser.parse_args(["start", "--pull"]).pull is True
 
@@ -913,13 +913,26 @@ def test_restart_dispatch_passes_pull_flag() -> None:
     assert FakeController.instance.pull_calls[-1] == ("restart", False)
 
     _execute(_parser().parse_args(["restart"]))
-    assert FakeController.instance.pull_calls[-1] == ("restart", False)
+    assert FakeController.instance.pull_calls[-1] == ("restart", True)
 
     _execute(_parser().parse_args(["start", "--pull"]))
     assert FakeController.instance.pull_calls[-1] == ("start", True)
 
-    _execute(_parser().parse_args(["start"]))
+    _execute(_parser().parse_args(["start", "--no-pull"]))
     assert FakeController.instance.pull_calls[-1] == ("start", False)
+
+    _execute(_parser().parse_args(["start"]))
+    assert FakeController.instance.pull_calls[-1] == ("start", True)
+
+
+def test_dry_run_pull_flag_dispatch() -> None:
+    # Dry run without explicit --pull should pass pull=False
+    _execute(_parser().parse_args(["start", "--dry-run"]))
+    assert FakeController.instance.pull_calls[-1] == ("start", False)
+
+    # Dry run with explicit --pull passes pull=True (for controller to reject)
+    _execute(_parser().parse_args(["start", "--dry-run", "--pull"]))
+    assert FakeController.instance.pull_calls[-1] == ("start", True)
 
 def test_restart_and_start_tls_flags() -> None:
     parser = _parser()

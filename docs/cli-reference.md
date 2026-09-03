@@ -23,6 +23,7 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
 - `--memory` overrides `host.memory` (default: `4g`).
 - `--image` overrides `host.image` and `LOCALCLOUD_IMAGE` (default: `jaysen2apache/localcloud:latest`).
 - `--services` overrides `services.enabled` with a comma-separated list of service IDs, or `default` to use the built-in set.
+- `--pull` is enabled by default: checks for a newer image on Docker Hub and pulls only if an update is available. `--no-pull` uses the locally available image only (pulling only if absent locally).
 - New runtimes prefer the canonical host ports. If that complete set is unavailable,
   the CLI proposes one contiguous mapping from `5508-5539`, then `5821-5840`,
   then `5322-5342`, and asks before creating the container. It never scans the
@@ -100,11 +101,11 @@ lc logs --tail 500
 Restarts the LocalCloud runtime and reapplies volatile seed data without deleting persistent volume state.
 
 ```sh
-# Fast in-place restart (default: --no-pull)
+# Smart restart with remote image check (default: --pull)
 lc restart
 
-# Pull the latest image before restarting
-lc restart --pull
+# Fast in-place restart without checking the remote registry
+lc restart --no-pull
 
 # Restart with TLS
 lc restart --tls
