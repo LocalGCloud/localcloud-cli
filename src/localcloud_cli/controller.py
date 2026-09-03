@@ -111,6 +111,7 @@ class Controller:
         observer: Any | None = None,
         tail: float | None = 0.0,
         dry_run: bool = False,
+        confirm_port_mapping: Callable[[DockerRunPlan], bool] | None = None,
     ) -> dict[str, Any] | str:
         if dry_run and pull:
             raise HostError(
@@ -244,6 +245,7 @@ class Controller:
             _debug_plan(observer, plan, self.runtime, config)
             if dry_run:
                 return plan.render()
+            _confirm_alternative_port_mapping(run_plan, confirm_port_mapping)
 
             if action == "create":
                 deadline = time.monotonic() + _START_READINESS_TIMEOUT
@@ -333,6 +335,7 @@ class Controller:
         observer: Any | None = None,
         tail: float | None = 0.0,
         dry_run: bool = False,
+        confirm_port_mapping: Callable[[DockerRunPlan], bool] | None = None,
     ) -> dict[str, Any] | str:
         if dry_run and pull:
             raise HostError(
@@ -357,6 +360,11 @@ class Controller:
                 and current.image_id
                 and current.configured_image_id != current.image_id
             )
+            port_layout_changed = bool(
+                current is not None
+                and current.ownership["container"] == "managed"
+                and not self.runtime.has_canonical_ports(config, current)
+            )
             if current is None:
                 action = "create"
                 reason = "no container uses the selected data volume"
@@ -373,6 +381,7 @@ class Controller:
                 pull
                 or self._requires_managed_replacement(current, config)
                 or image_changed
+                or port_layout_changed
             ):
                 action = "replace"
                 reason = (
@@ -380,10 +389,14 @@ class Controller:
                     if pull
                     else "the configured image changed"
                     if image_changed
+                    else "the managed runtime uses noncanonical host ports"
+                    if port_layout_changed
                     else "managed runtime configuration changed"
                 )
                 _validate_replacement(current, config)
                 changed_fields = _changed_fields(current, config)
+                if port_layout_changed:
+                    changed_fields = sorted({*changed_fields, "ports"})
                 prepared_image = self.runtime.preflight_create(
                     config,
                     current,
@@ -419,6 +432,7 @@ class Controller:
                     "reconfigured"
                     if self._requires_managed_replacement(current, config)
                     or image_changed
+                    or port_layout_changed
                     else "restarted"
                 )
             else:
@@ -458,6 +472,7 @@ class Controller:
             _debug_plan(observer, plan, self.runtime, config)
             if dry_run:
                 return plan.render()
+            _confirm_alternative_port_mapping(run_plan, confirm_port_mapping)
 
             if action == "create":
                 environment = self.runtime.create(
@@ -1732,6 +1747,42 @@ def _debug_plan(
         run_plan = runtime.inspect_run_plan(config, plan.current)
     if run_plan is not None:
         observer.debug(run_plan.command())
+
+
+def _confirm_alternative_port_mapping(
+    run_plan: DockerRunPlan | None,
+    confirm: Callable[[DockerRunPlan], bool] | None,
+) -> None:
+    if run_plan is None:
+        return
+    mappings = run_plan.alternative_port_mappings()
+    if not mappings:
+        return
+    details = {
+        "mappings": [
+            {
+                "host_ip": host_ip,
+                "host_port": host_port,
+                "container_port": container_port,
+                "protocol": protocol,
+            }
+            for host_ip, host_port, container_port, protocol
+            in mappings
+        ],
+        "override": "--accept-dynamic-ports",
+    }
+    if confirm is None:
+        raise HostError(
+            "port_mapping_confirmation_required",
+            "Canonical LocalCloud host ports are unavailable; confirm the proposed alternative mapping",
+            details,
+        )
+    if not confirm(run_plan):
+        raise HostError(
+            "port_mapping_declined",
+            "The LocalCloud runtime change was cancelled before replacing the container",
+            details,
+        )
 
 
 def _validate_unready_recovery(

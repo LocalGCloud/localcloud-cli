@@ -76,7 +76,7 @@ class RunningController:
             on_url_resolved("http://127.0.0.1:49080")
         return {
             "url": "http://127.0.0.1:49080",
-            "endpoint_map": {"24080": 49080, "24081": 49081},
+            "endpoint_map": {"5365": 49080, "5366": 49081},
         }
 
 
@@ -437,8 +437,8 @@ def test_tool_and_resource_content_rewrites_dynamic_endpoints() -> None:
                     {
                         "type": "text",
                         "text": (
-                            '{"endpoint":"http://127.0.0.1:24081",'
-                            '"port":24081,"env_var":"STORAGE_EMULATOR_HOST"}'
+                            '{"endpoint":"http://127.0.0.1:5366",'
+                            '"port":5366,"env_var":"STORAGE_EMULATOR_HOST"}'
                         ),
                     }
                 ]
@@ -452,7 +452,7 @@ def test_tool_and_resource_content_rewrites_dynamic_endpoints() -> None:
                         "uri": "localcloud://services/gcs",
                         "mimeType": "application/json",
                         "text": (
-                            '{"endpoint":"http://localhost:24081",'
+                            '{"endpoint":"http://localhost:5366",'
                             '"env_var":"STORAGE_EMULATOR_HOST"}'
                         ),
                     }

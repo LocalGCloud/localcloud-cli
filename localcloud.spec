@@ -9,7 +9,68 @@ import re
 from PyInstaller.utils.hooks import collect_all, copy_metadata
 
 
+import subprocess
+
+
 project_root = Path(SPECPATH).resolve()
+
+
+def _resolve_git_release_metadata(root: Path) -> tuple[str | None, str | None]:
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=str(root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if re.fullmatch(r"[0-9a-f]{12}", commit) is None:
+            return None, None
+
+        tag = subprocess.run(
+            ["git", "tag", "--points-at", "HEAD"],
+            cwd=str(root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+        release_date = None
+        if tag:
+            first_tag = tag.splitlines()[0].strip()
+            tag_date = subprocess.run(
+                [
+                    "git",
+                    "for-each-ref",
+                    "--format=%(taggerdate:short)",
+                    f"refs/tags/{first_tag}",
+                ],
+                cwd=str(root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", tag_date):
+                release_date = tag_date
+
+        if release_date is None:
+            commit_date = subprocess.run(
+                ["git", "log", "-1", "--format=%cs", "HEAD"],
+                cwd=str(root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", commit_date):
+                release_date = commit_date
+
+        return commit, release_date
+    except Exception:
+        return None, None
 
 
 release_commit = os.environ.get("LOCALCLOUD_RELEASE_COMMIT")
@@ -18,6 +79,9 @@ if (release_commit is None) != (release_date is None):
     raise ValueError(
         "LOCALCLOUD_RELEASE_COMMIT and LOCALCLOUD_RELEASE_DATE must be set together"
     )
+
+if release_commit is None and release_date is None:
+    release_commit, release_date = _resolve_git_release_metadata(project_root)
 
 release_metadata = {}
 if release_commit is not None and release_date is not None:

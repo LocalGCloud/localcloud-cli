@@ -82,11 +82,17 @@ VERSION=0.1.0
 ./scripts/release.sh --release "$VERSION"
 ```
 
-To intentionally replace an existing release with the prepared `main` commit:
+To replace an existing, uncompleted release attempt with the prepared `main` commit:
 
 ```sh
+VERSION=0.1.0
 ./scripts/release.sh -f --release "$VERSION"
 ```
+
+> [!WARNING]
+> **Published releases are immutable.** Never use `-f` to release new code under an already-published version tag.
+> Replacing GitHub release assets changes their SHA-256 checksums, which causes `brew install` to fail with a checksum mismatch for all Homebrew users who have cached the tap or downloads.
+> Always bump `__version__` in `src/localcloud_cli/__init__.py` to the next patch version (e.g. `0.1.3`) for new code or fixes.
 
 Force mode retargets conflicting local and `origin` tags to the prepared release
 commit. It also repairs a matching lightweight tag as an annotated tag before
@@ -118,10 +124,10 @@ publication. With `--force`, a conflicting tag is moved to the current prepared
 commit before the workflow starts. All build and signing jobs must then succeed
 before the workflow deletes the existing release and immediately recreates it.
 
-The workflow embeds the annotated tag's 12-character commit hash and tagger
-date in every native binary. `localcloud --version` reports both values alongside
-the semantic version, while source and local `--build-only` commands retain the
-semantic-version-only form.
+The build embeds the 12-character commit hash and release date in every native
+binary built within Git (or from annotated release tags in CI). `localcloud --version`
+reports both values alongside the semantic version, while running directly from
+Python source (`uv run lc --version`) retains the semantic-version-only form.
 
 Official artifacts and their full validation are built by GitHub Actions from
 the clean tagged commit. Local preflight checks run in the current working tree,
@@ -161,7 +167,7 @@ git diff --exit-code -- THIRD_PARTY_NOTICES
 uv run --frozen --extra release python -m PyInstaller --clean --noconfirm localcloud.spec
 install -m 0755 scripts/localcloud-launcher.sh dist/localcloud
 uv run --frozen python scripts/check-startup-feedback.py dist/localcloud --timeout 2.0
-test "$(./dist/localcloud --version)" = "localcloud ${VERSION}"
+case "$(./dist/localcloud --version)" in "localcloud ${VERSION}"*) ;; *) exit 1 ;; esac
 ./dist/localcloud --help >/dev/null
 ./dist/localcloud guide >/dev/null
 

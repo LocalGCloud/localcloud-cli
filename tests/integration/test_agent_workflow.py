@@ -100,11 +100,11 @@ def _read_seeded_data(
         "X-LocalCloud-User": DEFAULT_USER,
     }
     gcs_url = (
-        f"http://127.0.0.1:{int(current.endpoint_map['24081'])}"
+        f"http://127.0.0.1:{int(current.endpoint_map['5366'])}"
         "/storage/v1/b/demo-bucket"
     )
     bigquery_url = (
-        f"http://127.0.0.1:{int(current.endpoint_map['24087'])}"
+        f"http://127.0.0.1:{int(current.endpoint_map['5372'])}"
         f"/bigquery/v2/projects/{_SEEDED_PROJECT}/datasets/app_analytics"
     )
     with httpx.Client(headers=headers) as client:

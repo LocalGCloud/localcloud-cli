@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 import httpx
 
 from .config import LocalCloudConfig, runtime_settings, validate_data_volume
-from .constants import DEFAULTS_CONFIG_LABEL, DEFAULT_DATA_VOLUME
+from .constants import DEFAULTS_CONFIG_LABEL, DEFAULT_DATA_VOLUME, DEFAULT_TLS_PORT
 from .errors import HostError
 
 MANAGED_LABEL = "com.localcloud.managed"
@@ -36,17 +36,25 @@ CONFIG_SCHEMA_CAPABILITY = "1"
 DATA_MOUNT_DESTINATION = "/var/lib/localcloud"
 CLI_SEED_MOUNT_DESTINATION = "/etc/localcloud/cli-seed.yaml"
 CONFIG_MOUNT_DESTINATION = "/etc/localcloud/localcloud.yaml"
-GATEWAY_PORT = "24080"
-_BASE_TCP_PORTS = tuple(range(24080, 24093))
-_DEDICATED_TLS_PORTS = (24481, 24482, 24489)
-_DNS_PORT = 24093
+GATEWAY_PORT = "5365"
+_BASE_TCP_PORTS = tuple(range(5365, 5377))
+_DEDICATED_TLS_PORTS = (5380, 5381, 5382)
+_DNS_PORT = 5378
 _TRANSPARENT_HOST_PORTS = frozenset({53, 80, 443})
 _IMAGE_PORT_CAPABILITIES = frozenset(
-    {f"{port}/tcp" for port in (*_BASE_TCP_PORTS, 24443, *_DEDICATED_TLS_PORTS)}
+    {
+        f"{port}/tcp"
+        for port in (*_BASE_TCP_PORTS, DEFAULT_TLS_PORT, *_DEDICATED_TLS_PORTS)
+    }
     | {f"{_DNS_PORT}/udp"}
 )
 _DEFAULT_READINESS_TIMEOUT = 120.0
 _DOCKER_SOCKET_PATH = "/var/run/docker.sock"
+_FALLBACK_TCP_PORT_RANGES = (
+    range(5508, 5540),
+    range(5821, 5841),
+    range(5322, 5343),
+)
 _CHILD_MANAGED_LABEL = "localcloud.managed"
 _LEGACY_LABELS = {
     "com.localcloud." + "work" + "space",
@@ -107,6 +115,7 @@ class RuntimeRecord:
 
 
 PortBinding = tuple[str, int | None]
+PortMapping = tuple[str, int, int, str]
 RequestedPorts = dict[str, tuple[PortBinding, ...]]
 PublishedPorts = dict[str, tuple[PortBinding, ...]]
 
@@ -182,6 +191,35 @@ class DockerRunPlan:
                 source: dict(mount) for source, mount in self.volumes.items()
             },
         }
+
+    def alternative_port_mappings(
+        self,
+    ) -> tuple[PortMapping, ...]:
+        """Return explicit noncanonical TCP host bindings for confirmation."""
+        primary_mappings: list[PortMapping] = []
+        for container_spec, bindings in sorted(
+            self.ports.items(), key=lambda item: _port_spec_sort_key(item[0])
+        ):
+            port_text, _, protocol_text = container_spec.partition("/")
+            protocol = protocol_text or "tcp"
+            if protocol != "tcp":
+                continue
+            try:
+                container_port = int(port_text)
+            except ValueError:
+                continue
+            for host_ip, host_port in bindings:
+                if host_port is not None and host_port not in _TRANSPARENT_HOST_PORTS:
+                    primary_mappings.append(
+                        (host_ip, host_port, container_port, protocol)
+                    )
+                    break
+        if all(
+            host_port == container_port
+            for _host_ip, host_port, container_port, _protocol in primary_mappings
+        ):
+            return ()
+        return tuple(primary_mappings)
 
 
 class DockerRuntime:
@@ -500,6 +538,19 @@ class DockerRuntime:
             ),
             environment=_container_environment(config, config.network_name),
             labels=labels,
+        )
+
+    def has_canonical_ports(
+        self,
+        config: LocalCloudConfig,
+        runtime: RuntimeRecord,
+    ) -> bool:
+        expected = _canonical_port_bindings(config)
+        if runtime.published_ports.keys() != expected.keys():
+            return False
+        return all(
+            sorted(runtime.published_ports[port]) == sorted(bindings)
+            for port, bindings in expected.items()
         )
 
     def inspect_run_plan(
@@ -1946,11 +1997,22 @@ class DockerRuntime:
         if f"{GATEWAY_PORT}/tcp" not in exposed:
             raise HostError(
                 "invalid_image",
-                "Selected LocalCloud image does not expose 24080/tcp",
+                "Selected LocalCloud image does not expose 5365/tcp",
                 {"image": config.image, "exposed_ports": sorted(exposed)},
             )
         missing = sorted(_IMAGE_PORT_CAPABILITIES - exposed)
         unexpected = sorted(exposed - _IMAGE_PORT_CAPABILITIES)
+        if missing:
+            raise HostError(
+                "invalid_image",
+                "Selected LocalCloud image is missing required port capabilities",
+                {
+                    "image": config.image,
+                    "missing": missing,
+                    "expected": sorted(_IMAGE_PORT_CAPABILITIES),
+                    "actual": sorted(exposed),
+                },
+            )
         if not missing and not unexpected:
             return
         details = {
@@ -1974,18 +2036,20 @@ class DockerRuntime:
         *,
         allowed_ports: set[tuple[int, str]] | None = None,
     ) -> RequestedPorts:
-        ordinary_ports = list(_BASE_TCP_PORTS)
-        if config.tls_enabled:
-            ordinary_ports.extend((config.tls_port, *_DEDICATED_TLS_PORTS))
-        ordinary_ports = sorted(set(ordinary_ports))
+        ordinary_ports = _ordinary_tcp_ports(config)
         allowed = allowed_ports or set()
         canonical_free = all(
             _port_is_free(port) or (port, "tcp") in allowed
             for port in ordinary_ports
         )
+        host_ports = (
+            ordinary_ports
+            if canonical_free
+            else _available_tcp_port_block(len(ordinary_ports), allowed)
+        )
         bindings: RequestedPorts = {
-            f"{port}/tcp": (("127.0.0.1", port if canonical_free else None),)
-            for port in ordinary_ports
+            f"{container_port}/tcp": (("127.0.0.1", host_port),)
+            for container_port, host_port in zip(ordinary_ports, host_ports)
         }
         if not config.transparent_network:
             return bindings
@@ -2121,7 +2185,7 @@ class DockerRuntime:
         if not runtime.url:
             raise HostError(
                 "gateway_not_published",
-                "LocalCloud runtime does not publish 24080/tcp",
+                "LocalCloud runtime does not publish 5365/tcp",
                 {
                     "data_volume": runtime.data_volume,
                     "container_id": runtime.container_id,
@@ -2843,11 +2907,68 @@ def _resolve_readiness_deadline(deadline: float | None) -> float:
     return time.monotonic() + _DEFAULT_READINESS_TIMEOUT
 
 
+def _ordinary_tcp_ports(config: LocalCloudConfig) -> tuple[int, ...]:
+    ports = list(_BASE_TCP_PORTS)
+    if config.tls_enabled:
+        ports.extend((config.tls_port, *_DEDICATED_TLS_PORTS))
+    return tuple(sorted(set(ports)))
+
+
+def _canonical_port_bindings(config: LocalCloudConfig) -> PublishedPorts:
+    bindings: PublishedPorts = {
+        f"{port}/tcp": (("127.0.0.1", port),)
+        for port in _ordinary_tcp_ports(config)
+    }
+    if not config.transparent_network:
+        return bindings
+    gateway_key = f"{GATEWAY_PORT}/tcp"
+    tls_key = f"{config.tls_port}/tcp"
+    bindings[gateway_key] = (*bindings[gateway_key], ("127.0.0.1", 80))
+    bindings[tls_key] = (*bindings[tls_key], ("127.0.0.1", 443))
+    bindings[f"{_DNS_PORT}/udp"] = (("127.0.0.1", 53),)
+    return bindings
+
+
 def _docker_socket_is_usable() -> bool:
     try:
         return stat.S_ISSOCK(os.stat(_DOCKER_SOCKET_PATH).st_mode)
     except OSError:
         return False
+
+
+def _available_tcp_port_block(
+    count: int,
+    allowed_ports: set[tuple[int, str]],
+) -> tuple[int, ...]:
+    for allowed_range in _FALLBACK_TCP_PORT_RANGES:
+        last_start = allowed_range.stop - count
+        for start in range(allowed_range.start, last_start + 1):
+            candidates = tuple(range(start, start + count))
+            if all(
+                (port, "tcp") in allowed_ports or _port_is_free(port)
+                for port in candidates
+            ):
+                return candidates
+    raise HostError(
+        "alternative_ports_unavailable",
+        "No complete alternative LocalCloud host-port set is available",
+        {
+            "ranges": [
+                [allowed_range.start, allowed_range.stop - 1]
+                for allowed_range in _FALLBACK_TCP_PORT_RANGES
+            ],
+            "required_ports": count,
+        },
+    )
+
+
+def _port_spec_sort_key(spec: str) -> tuple[int, str]:
+    port_text, _, protocol = spec.partition("/")
+    try:
+        port = int(port_text)
+    except ValueError:
+        port = 65536
+    return port, protocol or "tcp"
 
 
 def _port_is_free(port: int, kind: int = socket.SOCK_STREAM) -> bool:

@@ -111,3 +111,82 @@ def test_spec_trims_build_only_payloads(monkeypatch: Any, tmp_path: Path) -> Non
         "distutils",
         "_distutils_hack",
     ]
+
+
+def test_spec_autodiscovers_git_metadata_when_env_vars_missing(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    release_metadata_path = tmp_path / "build" / "_release.json"
+    hooks = types.ModuleType("PyInstaller.utils.hooks")
+    hooks.collect_all = lambda *a, **kw: ([], [], [])  # type: ignore[attr-defined]
+    hooks.copy_metadata = lambda *a, **kw: []  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "PyInstaller", types.ModuleType("PyInstaller"))
+    monkeypatch.setitem(sys.modules, "PyInstaller.utils", types.ModuleType("PyInstaller.utils"))
+    monkeypatch.setitem(sys.modules, "PyInstaller.utils.hooks", hooks)
+    monkeypatch.delenv("LOCALCLOUD_RELEASE_COMMIT", raising=False)
+    monkeypatch.delenv("LOCALCLOUD_RELEASE_DATE", raising=False)
+
+    class AnalysisResult:
+        pure: list[Any] = []
+        scripts: list[Any] = []
+        binaries: list[Any] = []
+        datas: list[Any] = []
+
+    runpy.run_path(
+        str(PROJECT_ROOT / "localcloud.spec"),
+        init_globals={
+            "SPECPATH": str(PROJECT_ROOT),
+            "workpath": str(release_metadata_path.parent),
+            "Analysis": lambda *a, **kw: AnalysisResult(),
+            "PYZ": lambda *args, **kwargs: object(),
+            "EXE": lambda *args, **kwargs: object(),
+            "COLLECT": lambda *args, **kwargs: object(),
+        },
+    )
+
+    data = json.loads(release_metadata_path.read_text(encoding="utf-8"))
+    import re
+    assert re.fullmatch(r"[0-9a-f]{12}", data["commit"]) is not None
+    assert re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", data["release_date"]) is not None
+
+
+def test_spec_falls_back_to_empty_when_git_fails(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    import subprocess
+    release_metadata_path = tmp_path / "build" / "_release.json"
+    hooks = types.ModuleType("PyInstaller.utils.hooks")
+    hooks.collect_all = lambda *a, **kw: ([], [], [])  # type: ignore[attr-defined]
+    hooks.copy_metadata = lambda *a, **kw: []  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "PyInstaller", types.ModuleType("PyInstaller"))
+    monkeypatch.setitem(sys.modules, "PyInstaller.utils", types.ModuleType("PyInstaller.utils"))
+    monkeypatch.setitem(sys.modules, "PyInstaller.utils.hooks", hooks)
+    monkeypatch.delenv("LOCALCLOUD_RELEASE_COMMIT", raising=False)
+    monkeypatch.delenv("LOCALCLOUD_RELEASE_DATE", raising=False)
+
+    def failing_subprocess_run(*args: Any, **kwargs: Any) -> Any:
+        raise FileNotFoundError("git not found")
+
+    monkeypatch.setattr(subprocess, "run", failing_subprocess_run)
+
+    class AnalysisResult:
+        pure: list[Any] = []
+        scripts: list[Any] = []
+        binaries: list[Any] = []
+        datas: list[Any] = []
+
+    runpy.run_path(
+        str(PROJECT_ROOT / "localcloud.spec"),
+        init_globals={
+            "SPECPATH": str(PROJECT_ROOT),
+            "workpath": str(release_metadata_path.parent),
+            "Analysis": lambda *a, **kw: AnalysisResult(),
+            "PYZ": lambda *args, **kwargs: object(),
+            "EXE": lambda *args, **kwargs: object(),
+            "COLLECT": lambda *args, **kwargs: object(),
+        },
+    )
+
+    data = json.loads(release_metadata_path.read_text(encoding="utf-8"))
+    assert data == {}
+

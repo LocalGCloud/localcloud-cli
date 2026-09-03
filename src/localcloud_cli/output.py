@@ -1263,6 +1263,26 @@ class LifecycleReporter:
                 self._panel_settled = True
             self.stream.write(f"{trimmed}\n")
             self.stream.flush()
+
+    def prompt(
+        self,
+        lines: Sequence[str],
+        question: str,
+        *,
+        input_stream: TextIO,
+    ) -> str:
+        """Pause lifecycle animation and read one interactive response."""
+        self._stop_worker()
+        with self._lock:
+            if self.capabilities.cursor and self._rows:
+                self._clear_frame()
+            self._restore_cursor()
+            for line in lines:
+                self.stream.write(f"{line.rstrip()}\n")
+            self.stream.write(question)
+            self.stream.flush()
+        return input_stream.readline().strip()
+
     def succeed(self, message: str) -> None:
         self._finish("Done", message, "success")
 

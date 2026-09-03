@@ -70,7 +70,7 @@ def _psql(container, database: str, sql: str) -> list[str]:
             "-h",
             "127.0.0.1",
             "-p",
-            "24090",
+            "5375",
             "-U",
             "localcloud",
             "-d",
@@ -189,9 +189,9 @@ def test_full_olap_sdk_fault_checkpoint_restore_and_cleanup(tmp_path: Path) -> N
             "uptime_seconds",
         }.issubset(metrics_response.json())
 
-        bq_endpoint = f"http://127.0.0.1:{endpoint_map['24087']}"
-        gcs_endpoint = f"http://127.0.0.1:{endpoint_map['24081']}"
-        pubsub_endpoint = f"127.0.0.1:{endpoint_map['24082']}"
+        bq_endpoint = f"http://127.0.0.1:{endpoint_map['5372']}"
+        gcs_endpoint = f"http://127.0.0.1:{endpoint_map['5366']}"
+        pubsub_endpoint = f"127.0.0.1:{endpoint_map['5367']}"
         for endpoint in (bq_endpoint, gcs_endpoint, f"http://{pubsub_endpoint}"):
             assert_loopback_url(endpoint)
 

@@ -23,6 +23,10 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
 - `--memory` overrides `host.memory` (default: `4g`).
 - `--image` overrides `host.image` and `LOCALCLOUD_IMAGE` (default: `jaysen2apache/localcloud:latest`).
 - `--services` overrides `services.enabled` with a comma-separated list of service IDs, or `default` to use the built-in set.
+- New runtimes prefer the canonical host ports. If that complete set is unavailable,
+  the CLI proposes one contiguous mapping from `5508-5539`, then `5821-5840`,
+  then `5322-5342`, and asks before creating the container. It never scans the
+  operating system's general ephemeral range.
 
 Docker socket access uses the tri-state `host.docker_socket` setting and defaults
 to `auto`:
@@ -109,6 +113,19 @@ lc restart --tls
 lc restart --memory 8g --services gcs,pubsub
 ```
 
+A managed runtime already using alternative host ports is recreated on
+`restart` so it can return to the canonical mapping when those ports are free.
+Container ports do not change. If the canonical set is still unavailable, the
+CLI displays every proposed host-to-container mapping and defaults to `No`.
+Non-interactive callers must opt in explicitly:
+
+```sh
+lc restart --accept-dynamic-ports
+```
+
+Declining, or omitting that flag without an interactive terminal, leaves the
+existing container unchanged.
+
 ### `reset`
 
 Resets emulator data and reapplies initial seed state.
@@ -178,6 +195,8 @@ Lifecycle dry runs are strictly read-only. They never pull images.
 `--dry-run --pull` is rejected because the CLI cannot know the exact
 post-pull image configuration without performing the pull. A create or
 recreate preview requires the configured image to exist locally.
+When canonical ports are unavailable, dry-run prints the exact alternative
+host-port mapping without prompting or mutating Docker.
 
 The rendered `docker run` command is the minimal operator-equivalent command:
 it omits image-inherited environment, image labels, and CLI-internal management
@@ -187,7 +206,7 @@ file appear as read-only `-v` bind mounts.
 Use `--debug` for diagnostics on stderr. For a selected or planned runtime,
 debug output includes one shell-quoted `docker run` command that can be copied
 and executed. Contiguous one-to-one published ports use Docker range syntax,
-for example `-p 127.0.0.1:24080-24092:24080-24092/tcp`, instead of one flag
+for example `-p 127.0.0.1:5365-5376:5365-5376/tcp`, instead of one flag
 per port. Dry-run plans remain on stdout and can be redirected independently.
 
 Lifecycle commands derive bindings from the LocalCloud configuration rather

@@ -6,7 +6,7 @@ import os
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TextIO
 
 from . import version_string
 from .constants import (
@@ -33,6 +33,7 @@ from .output import (
 
 if TYPE_CHECKING:
     from .config import LocalCloudConfig
+    from .docker_runtime import DockerRunPlan, PortMapping
 
 ALIAS_HELP = "lc is an alias for localcloud; both commands behave identically."
 AGENT_HELP = "Coding agents: run 'localcloud guide' before using LocalCloud."
@@ -55,15 +56,52 @@ _PULL_DOWNLOAD_STATUSES = {
 
 
 class _ExecutionObserver:
-    def __init__(self, reporter: LifecycleReporter, *, debug: bool = False):
+    def __init__(
+        self,
+        reporter: LifecycleReporter,
+        *,
+        debug: bool = False,
+        input_stream: TextIO | None = None,
+    ):
         self.reporter = reporter
         self.debug_enabled = debug
+        self.input_stream = sys.stdin if input_stream is None else input_stream
         self._seen_lines: set[str] = set()
         self._emitted_history: list[str] = []
         self._pull_image: str | None = None
         self._pull_layers: set[str] = set()
         self._pull_progress: dict[str, tuple[int, int]] = {}
         self._plain_pull_update_at: float | None = None
+
+    def confirm_port_mapping(self, run_plan: DockerRunPlan) -> bool:
+        mappings = run_plan.alternative_port_mappings()
+        try:
+            input_is_interactive = bool(self.input_stream.isatty())
+        except (AttributeError, OSError):
+            input_is_interactive = False
+        if not self.reporter.capabilities.interactive or not input_is_interactive:
+            raise HostError(
+                "port_mapping_confirmation_required",
+                "Canonical LocalCloud host ports are unavailable; rerun interactively or pass --accept-dynamic-ports",
+                {
+                    "mappings": _port_mapping_details(mappings),
+                    "override": "--accept-dynamic-ports",
+                },
+            )
+        lines = [
+            "Canonical LocalCloud host ports are unavailable.",
+            "Proposed host-to-container mappings:",
+            *(
+                f"  {host_ip}:{host_port} -> {container_port}/{protocol}"
+                for host_ip, host_port, container_port, protocol in mappings
+            ),
+        ]
+        answer = self.reporter.prompt(
+            lines,
+            "Continue with these mappings? [y/N] ",
+            input_stream=self.input_stream,
+        )
+        return answer.lower() in {"y", "yes"}
 
     def debug(self, message: str) -> None:
         if self.debug_enabled:
@@ -311,6 +349,20 @@ def _format_bytes(value: int) -> str:
     return f"{amount:.{precision}f} {unit}"
 
 
+def _port_mapping_details(
+    mappings: tuple[PortMapping, ...],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "host_ip": host_ip,
+            "host_port": host_port,
+            "container_port": container_port,
+            "protocol": protocol,
+        }
+        for host_ip, host_port, container_port, protocol in mappings
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -420,6 +472,13 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
                 observer=observer,
                 tail=args.tail,
                 dry_run=args.dry_run,
+                confirm_port_mapping=(
+                    (lambda _plan: True)
+                    if args.accept_dynamic_ports
+                    else observer.confirm_port_mapping
+                    if observer is not None
+                    else None
+                ),
             )
         if args.command == "restart":
             return controller.restart(
@@ -429,6 +488,13 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
                 observer=observer,
                 tail=args.tail,
                 dry_run=args.dry_run,
+                confirm_port_mapping=(
+                    (lambda _plan: True)
+                    if args.accept_dynamic_ports
+                    else observer.confirm_port_mapping
+                    if observer is not None
+                    else None
+                ),
             )
         if args.command == "reset":
             return controller.reset(
@@ -779,6 +845,14 @@ def _parser() -> argparse.ArgumentParser:
             ),
         )
         if name in {"start", "restart"}:
+            command.add_argument(
+                "--accept-dynamic-ports",
+                action="store_true",
+                help=(
+                    "Accept an exact alternative host-port mapping without an "
+                    "interactive confirmation when canonical ports are unavailable"
+                ),
+            )
             command.add_argument(
                 "--pull",
                 action=argparse.BooleanOptionalAction,

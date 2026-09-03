@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import socket
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -178,12 +179,12 @@ class Image:
             else {}
         )
         default_exposed = {
-            **{f"{port}/tcp": {} for port in range(24080, 24093)},
-            "24093/udp": {},
-            "24443/tcp": {},
-            "24481/tcp": {},
-            "24482/tcp": {},
-            "24489/tcp": {},
+            **{f"{port}/tcp": {} for port in range(5365, 5377)},
+            "5378/udp": {},
+            "5379/tcp": {},
+            "5380/tcp": {},
+            "5381/tcp": {},
+            "5382/tcp": {},
         }
         self.attrs = {
             "Id": image_id,
@@ -311,7 +312,7 @@ def _volume_mount(
 
 
 def _ports(gateway: int = 49080) -> dict[str, list[dict[str, str]]]:
-    return {"24080/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(gateway)}]}
+    return {"5365/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(gateway)}]}
 
 
 def _add_external(
@@ -577,7 +578,66 @@ def test_port_probe_rejects_occupied_tcp_port() -> None:
         assert runtime_module._port_is_free(port) is False
 
 
-def test_occupied_canonical_port_requests_dynamic_complete_set(
+def test_canonical_and_fallback_port_contract_is_exact() -> None:
+    assert runtime_module._BASE_TCP_PORTS == tuple(range(5365, 5377))
+    assert runtime_module._DEDICATED_TLS_PORTS == (5380, 5381, 5382)
+    assert runtime_module._DNS_PORT == 5378
+    assert runtime_module._FALLBACK_TCP_PORT_RANGES == (
+        range(5508, 5540),
+        range(5821, 5841),
+        range(5322, 5343),
+    )
+    assert "5377/tcp" not in runtime_module._IMAGE_PORT_CAPABILITIES
+
+
+def test_canonical_layout_rejects_extra_child_port_publication(
+    tmp_path: Path,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    config = _config(tmp_path)
+    published = runtime_module._canonical_port_bindings(config)
+
+    assert runtime.has_canonical_ports(
+        config,
+        SimpleNamespace(published_ports=published),
+    )
+
+    with_child = {**published, "5377/tcp": (("127.0.0.1", 5377),)}
+    assert not runtime.has_canonical_ports(
+        config,
+        SimpleNamespace(published_ports=with_child),
+    )
+
+
+def test_canonical_layout_requires_exact_transparent_aliases(tmp_path: Path) -> None:
+    runtime = DockerRuntime(client=Client())
+    config = _write_config(
+        tmp_path,
+        "host:\n  transparent_network: true\n"
+        "tls:\n  enabled: true\n",
+    )
+    published = runtime_module._canonical_port_bindings(config)
+
+    assert runtime.has_canonical_ports(
+        config,
+        SimpleNamespace(published_ports=published),
+    )
+    reversed_aliases = {**published}
+    reversed_aliases["5365/tcp"] = tuple(reversed(published["5365/tcp"]))
+    reversed_aliases["5379/tcp"] = tuple(reversed(published["5379/tcp"]))
+    assert runtime.has_canonical_ports(
+        config,
+        SimpleNamespace(published_ports=reversed_aliases),
+    )
+    missing_dns = {**published}
+    missing_dns.pop("5378/udp")
+    assert not runtime.has_canonical_ports(
+        config,
+        SimpleNamespace(published_ports=missing_dns),
+    )
+
+
+def test_occupied_canonical_port_selects_exact_alternative_complete_set(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -586,13 +646,139 @@ def test_occupied_canonical_port_requests_dynamic_complete_set(
     monkeypatch.setattr(
         runtime_module,
         "_port_is_free",
-        lambda port, *_args: port != 24080,
+        lambda port, *_args: port != 5365,
     )
 
     bindings = runtime._port_bindings(config)
 
-    assert set(bindings) == {f"{port}/tcp" for port in range(24080, 24093)}
-    assert all(binding == (("127.0.0.1", None),) for binding in bindings.values())
+    assert set(bindings) == {f"{port}/tcp" for port in range(5365, 5377)}
+    assert bindings == {
+        f"{container_port}/tcp": (("127.0.0.1", 5508 + offset),)
+        for offset, container_port in enumerate(range(5365, 5377))
+    }
+
+    plan = runtime.plan_run(config, object())
+    assert plan.alternative_port_mappings() == tuple(
+        ("127.0.0.1", 5508 + offset, container_port, "tcp")
+        for offset, container_port in enumerate(range(5365, 5377))
+    )
+
+
+def test_alternative_port_selection_skips_incomplete_blocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    config = _config(tmp_path)
+    occupied = {5365, 5510}
+    monkeypatch.setattr(
+        runtime_module,
+        "_port_is_free",
+        lambda port, *_args: port not in occupied,
+    )
+
+    bindings = runtime._port_bindings(config)
+
+    assert bindings["5365/tcp"] == (("127.0.0.1", 5511),)
+    assert bindings["5376/tcp"] == (("127.0.0.1", 5522),)
+
+
+@pytest.mark.parametrize(
+    ("occupied_ranges", "expected_start"),
+    [
+        ((range(5508, 5540),), 5821),
+        ((range(5508, 5540), range(5821, 5841)), 5322),
+    ],
+)
+def test_alternative_port_selection_spills_to_next_ordered_range(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    occupied_ranges: tuple[range, ...],
+    expected_start: int,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    config = _config(tmp_path)
+    occupied = {5365}
+    for occupied_range in occupied_ranges:
+        occupied.update(occupied_range)
+    monkeypatch.setattr(
+        runtime_module,
+        "_port_is_free",
+        lambda port, *_args: port not in occupied,
+    )
+
+    bindings = runtime._port_bindings(config)
+
+    assert bindings["5365/tcp"] == (("127.0.0.1", expected_start),)
+    assert bindings["5376/tcp"] == (("127.0.0.1", expected_start + 11),)
+
+
+def test_alternative_port_selection_never_leaves_allowlisted_ranges(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    config = _config(tmp_path)
+    occupied = {5365}
+    for allowed_range in runtime_module._FALLBACK_TCP_PORT_RANGES:
+        occupied.update(allowed_range)
+    monkeypatch.setattr(
+        runtime_module,
+        "_port_is_free",
+        lambda port, *_args: port not in occupied,
+    )
+
+    with pytest.raises(HostError) as caught:
+        runtime._port_bindings(config)
+
+    assert caught.value.code == "alternative_ports_unavailable"
+    assert caught.value.details["ranges"] == [
+        [5508, 5539],
+        [5821, 5840],
+        [5322, 5342],
+    ]
+
+
+def test_tls_alternative_mapping_uses_one_complete_allowlisted_block(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    config = _write_config(tmp_path, "tls:\n  enabled: true\n")
+    monkeypatch.setattr(
+        runtime_module,
+        "_port_is_free",
+        lambda port, *_args: port != 5365,
+    )
+
+    bindings = runtime._port_bindings(config)
+
+    assert len(bindings) == 16
+    assert "5377/tcp" not in bindings
+    assert bindings["5365/tcp"] == (("127.0.0.1", 5508),)
+    assert bindings["5382/tcp"] == (("127.0.0.1", 5523),)
+
+
+def test_alternative_mapping_displays_every_binding_when_one_is_numerically_canonical(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    config = _write_config(
+        tmp_path,
+        "tls:\n  enabled: true\n  port: 5523\n",
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "_port_is_free",
+        lambda port, *_args: port != 5365,
+    )
+
+    plan = runtime.plan_run(config, object())
+    mappings = plan.alternative_port_mappings()
+
+    assert len(mappings) == 16
+    assert ("127.0.0.1", 5523, 5523, "tcp") in mappings
 
 
 def test_tls_bindings_use_configured_gateway_and_dedicated_ports(
@@ -607,9 +793,9 @@ def test_tls_bindings_use_configured_gateway_and_dedicated_ports(
 
     bindings = runtime._port_bindings(config)
 
-    assert "24093/udp" not in bindings
+    assert "5378/udp" not in bindings
     assert bindings["25443/tcp"] == (("127.0.0.1", 25443),)
-    for port in (24481, 24482, 24489):
+    for port in (5380, 5381, 5382):
         assert bindings[f"{port}/tcp"] == (("127.0.0.1", port),)
 
 
@@ -626,33 +812,74 @@ def test_transparent_network_adds_aliases_without_replacing_standard_bindings(
 
     bindings = runtime._port_bindings(config)
 
-    assert bindings["24080/tcp"] == (
-        ("127.0.0.1", 24080),
+    assert bindings["5365/tcp"] == (
+        ("127.0.0.1", 5365),
         ("127.0.0.1", 80),
     )
     assert bindings["25443/tcp"] == (
         ("127.0.0.1", 25443),
         ("127.0.0.1", 443),
     )
-    assert bindings["24093/udp"] == (("127.0.0.1", 53),)
+    assert bindings["5378/udp"] == (("127.0.0.1", 53),)
 
     run_ports = runtime.plan_run(
         config,
         client.images.get(config.image),
     ).run_kwargs()["ports"]
-    assert run_ports["24080/tcp"] == [
-        ("127.0.0.1", 24080),
+    assert run_ports["5365/tcp"] == [
+        ("127.0.0.1", 5365),
         ("127.0.0.1", 80),
     ]
 
-def test_image_metadata_mismatch_warns_by_default(
+
+@pytest.mark.parametrize("occupied_port", [53, 80, 443])
+def test_transparent_network_rejects_fixed_host_port_collisions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    occupied_port: int,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    config = _write_config(
+        tmp_path,
+        "host:\n  transparent_network: true\n"
+        "tls:\n  enabled: true\n",
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "_port_is_free",
+        lambda port, *_args: port != occupied_port,
+    )
+
+    with pytest.raises(HostError) as caught:
+        runtime._port_bindings(config)
+
+    assert caught.value.code == "transparent_port_unavailable"
+    assert caught.value.details["port"] == occupied_port
+
+
+def test_plan_run_reclaims_ports_owned_by_replaced_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    config = _config(tmp_path)
+    published = runtime_module._canonical_port_bindings(config)
+    replacing = SimpleNamespace(published_ports=published, endpoint_map={})
+    monkeypatch.setattr(runtime_module, "_port_is_free", lambda *_args: False)
+
+    plan = runtime.plan_run(config, object(), replacing=replacing)
+
+    assert dict(plan.ports) == published
+    assert plan.alternative_port_mappings() == ()
+
+def test_unexpected_image_metadata_warns_by_default(
     tmp_path: Path,
     ready_runtime: tuple[DockerRuntime, Client],
 ) -> None:
     runtime, client = ready_runtime
     image = client.images.get(DEFAULT_IMAGE)
     exposed = dict(image.attrs["Config"]["ExposedPorts"])
-    exposed.pop("24489/tcp")
+    exposed["5999/tcp"] = {}
     client.images.add(DEFAULT_IMAGE, Image(image.id, exposed=exposed))
 
     class Observer:
@@ -666,17 +893,17 @@ def test_image_metadata_mismatch_warns_by_default(
     runtime.preflight_create(_config(tmp_path), observer=observer)
 
     assert observer.messages
-    assert "24489/tcp" in observer.messages[0]
+    assert "5999/tcp" in observer.messages[0]
 
 
-def test_strict_image_metadata_mismatch_fails_preflight(
+def test_strict_unexpected_image_metadata_fails_preflight(
     tmp_path: Path,
     ready_runtime: tuple[DockerRuntime, Client],
 ) -> None:
     runtime, client = ready_runtime
     image = client.images.get(DEFAULT_IMAGE)
     exposed = dict(image.attrs["Config"]["ExposedPorts"])
-    exposed.pop("24489/tcp")
+    exposed["5999/tcp"] = {}
     client.images.add(DEFAULT_IMAGE, Image(image.id, exposed=exposed))
 
     with pytest.raises(HostError) as caught:
@@ -687,6 +914,25 @@ def test_strict_image_metadata_mismatch_fails_preflight(
     assert caught.value.code == "image_port_metadata_mismatch"
 
 
+@pytest.mark.parametrize("missing_port", ["5366/tcp", "5378/udp", "5382/tcp"])
+def test_missing_required_image_port_capability_always_fails_preflight(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+    missing_port: str,
+) -> None:
+    runtime, client = ready_runtime
+    image = client.images.get(DEFAULT_IMAGE)
+    exposed = dict(image.attrs["Config"]["ExposedPorts"])
+    exposed.pop(missing_port)
+    client.images.add(DEFAULT_IMAGE, Image(image.id, exposed=exposed))
+
+    with pytest.raises(HostError) as caught:
+        runtime.preflight_create(_config(tmp_path))
+
+    assert caught.value.code == "invalid_image"
+    assert caught.value.details["missing"] == [missing_port]
+
+
 def test_missing_gateway_image_metadata_always_fails_preflight(
     tmp_path: Path,
     ready_runtime: tuple[DockerRuntime, Client],
@@ -694,7 +940,7 @@ def test_missing_gateway_image_metadata_always_fails_preflight(
     runtime, client = ready_runtime
     image = client.images.get(DEFAULT_IMAGE)
     exposed = dict(image.attrs["Config"]["ExposedPorts"])
-    exposed.pop("24080/tcp")
+    exposed.pop("5365/tcp")
     client.images.add(DEFAULT_IMAGE, Image(image.id, exposed=exposed))
 
     with pytest.raises(HostError) as caught:
@@ -796,8 +1042,8 @@ def test_resolve_reports_https_connect_url_when_tls_enabled(
     _add_external(
         client,
         ports={
-            "24080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49080"}],
-            "24443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49443"}],
+            "5365/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49080"}],
+            "5379/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49443"}],
         },
         environment={"LOCALCLOUD_TLS_ENABLED": "true"},
     )
@@ -817,8 +1063,8 @@ def test_resolve_connect_url_matches_http_url_when_tls_disabled(
     _add_external(
         client,
         ports={
-            "24080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49080"}],
-            "24443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49443"}],
+            "5365/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49080"}],
+            "5379/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49443"}],
         },
         environment={"LOCALCLOUD_TLS_ENABLED": "false"},
     )
@@ -1349,7 +1595,7 @@ def test_wait_ready_uses_health_and_fails_immediately_when_container_exits(
 
     with pytest.raises(HostError) as caught:
         DockerRuntime.wait_ready(
-            "http://127.0.0.1:24080",
+            "http://127.0.0.1:5365",
             deadline=1.0,
             container=container,
         )
@@ -1382,7 +1628,7 @@ def test_wait_ready_streams_logs_to_observer(
         lambda _url, **_kwargs: MockResponse(),
     )
     result = DockerRuntime.wait_ready(
-        "http://127.0.0.1:24080",
+        "http://127.0.0.1:5365",
         deadline=runtime_module.time.monotonic() + 5.0,
         container=container,
         observer=observer,
@@ -1422,7 +1668,7 @@ def test_wait_ready_bounds_requests_and_sleep_by_absolute_deadline(
 
     with pytest.raises(HostError) as caught:
         DockerRuntime.wait_ready(
-            "http://127.0.0.1:24080",
+            "http://127.0.0.1:5365",
             deadline=5.0,
         )
 
@@ -1436,10 +1682,10 @@ def test_wait_ready_bounds_requests_and_sleep_by_absolute_deadline(
 @pytest.mark.parametrize(
     "url",
     [
-        "http://example.com:24080",
+        "http://example.com:5365",
         "file:///tmp/socket",
-        "http://user:pass@127.0.0.1:24080",
-        "http://127.0.0.1:24080?next=example.com",
+        "http://user:pass@127.0.0.1:5365",
+        "http://127.0.0.1:5365?next=example.com",
     ],
 )
 def test_wait_ready_rejects_nonlocal_or_unsafe_urls(url: str) -> None:
@@ -1753,7 +1999,7 @@ def test_create_reports_port_conflict_when_bind_races_preflight(
     def racing_run(*_args: Any, **_kwargs: Any) -> None:
         raise RuntimeError(
             "driver failed programming external connectivity on endpoint "
-            "localcloud: Bind for 0.0.0.0:24080 failed: port is already "
+            "localcloud: Bind for 0.0.0.0:5365 failed: port is already "
             "allocated"
         )
 
@@ -1794,8 +2040,8 @@ def test_format_docker_run_produces_valid_command_string() -> None:
         mem_limit="4g",
         volumes={"localcloud-data": {"bind": "/var/lib/localcloud", "mode": "rw"}},
         ports={
-            "24080/tcp": (("127.0.0.1", 24080), ("127.0.0.1", 80)),
-            "24081/tcp": ("127.0.0.1", None),
+            "5365/tcp": (("127.0.0.1", 5365), ("127.0.0.1", 80)),
+            "5366/tcp": ("127.0.0.1", None),
         },
         environment={"LOCALCLOUD_PROJECT": "default"},
         labels={"managed": "true"},
@@ -1804,9 +2050,9 @@ def test_format_docker_run_produces_valid_command_string() -> None:
     assert "--network localcloud-net" in cmd
     assert "-m 4g" in cmd
     assert "-v localcloud-data:/var/lib/localcloud" in cmd
-    assert "-p 127.0.0.1:24080:24080/tcp" in cmd
-    assert "-p 127.0.0.1:80:24080/tcp" in cmd
-    assert "-p 127.0.0.1::24081/tcp" in cmd
+    assert "-p 127.0.0.1:5365:5365/tcp" in cmd
+    assert "-p 127.0.0.1:80:5365/tcp" in cmd
+    assert "-p 127.0.0.1::5366/tcp" in cmd
     assert "-e LOCALCLOUD_PROJECT=default" in cmd
     assert "-l managed=true" in cmd
     assert cmd.endswith("jaysen2apache/localcloud:latest")
@@ -1816,9 +2062,9 @@ def test_format_docker_run_collapses_contiguous_port_ranges() -> None:
     from localcloud_cli.docker_runtime import _format_docker_run
 
     ports = {
-        f"{port}/tcp": ("127.0.0.1", port) for port in range(24080, 24093)
+        f"{port}/tcp": ("127.0.0.1", port) for port in range(5365, 5377)
     }
-    ports["24443/tcp"] = ("127.0.0.1", 24443)
+    ports["5379/tcp"] = ("127.0.0.1", 5379)
 
     cmd = _format_docker_run(
         image="jaysen2apache/localcloud:latest",
@@ -1830,9 +2076,9 @@ def test_format_docker_run_collapses_contiguous_port_ranges() -> None:
         environment=None,
         labels=None,
     )
-    assert "-p 127.0.0.1:24080-24092:24080-24092/tcp" in cmd
-    assert "-p 127.0.0.1:24443:24443/tcp" in cmd
-    assert "24081/tcp" not in cmd
+    assert "-p 127.0.0.1:5365-5376:5365-5376/tcp" in cmd
+    assert "-p 127.0.0.1:5379:5379/tcp" in cmd
+    assert "5366/tcp" not in cmd
     assert cmd.count("-p ") == 2
 
 
@@ -1906,7 +2152,7 @@ def test_run_plan_is_shared_by_preview_and_sdk_execution(
         "image": plan.image,
         **plan.run_kwargs(),
     }
-    assert "-p 127.0.0.1:24080-24092:24080-24092/tcp" in plan.command()
+    assert "-p 127.0.0.1:5365-5376:5365-5376/tcp" in plan.command()
 
 
 def test_resolve_falls_back_to_configured_ports_for_stopped_container(
@@ -1921,10 +2167,10 @@ def test_resolve_falls_back_to_configured_ports_for_stopped_container(
     container.attrs["NetworkSettings"]["Ports"] = {}
     container.attrs["HostConfig"] = {
         "PortBindings": {
-            "24080/tcp": [
+            "5365/tcp": [
                 {"HostIp": "127.0.0.1", "HostPort": "49080"}
             ],
-            "24093/udp": [
+            "5378/udp": [
                 {"HostIp": "127.0.0.1", "HostPort": "53"}
             ],
         }
@@ -1933,8 +2179,8 @@ def test_resolve_falls_back_to_configured_ports_for_stopped_container(
     resolved = runtime.resolve(config)
 
     assert resolved is not None
-    assert resolved.endpoint_map["24080"] == 49080
-    assert resolved.published_ports["24093/udp"] == (("127.0.0.1", 53),)
+    assert resolved.endpoint_map["5365"] == 49080
+    assert resolved.published_ports["5378/udp"] == (("127.0.0.1", 53),)
 
 
 def test_endpoint_map_prefers_tcp_when_protocols_share_container_port(
@@ -1947,8 +2193,8 @@ def test_endpoint_map_prefers_tcp_when_protocols_share_container_port(
     container = client.containers.get(created.container_id)
     container.attrs["NetworkSettings"]["Ports"].update(
         {
-            "24093/udp": [{"HostIp": "127.0.0.1", "HostPort": "53"}],
-            "24093/tcp": [
+            "5378/udp": [{"HostIp": "127.0.0.1", "HostPort": "53"}],
+            "5378/tcp": [
                 {"HostIp": "127.0.0.1", "HostPort": "49093"}
             ],
         }
@@ -1957,7 +2203,7 @@ def test_endpoint_map_prefers_tcp_when_protocols_share_container_port(
     resolved = runtime.resolve(config)
 
     assert resolved is not None
-    assert resolved.endpoint_map["24093"] == 49093
+    assert resolved.endpoint_map["5378"] == 49093
 
 
 def test_endpoint_map_falls_back_to_container_port_when_host_port_is_none() -> None:
@@ -1976,16 +2222,16 @@ def test_endpoint_map_prefers_standard_binding_over_transparent_alias(
     config = _config(tmp_path)
     created = runtime.create(config)
     container = client.containers.get(created.container_id)
-    container.attrs["NetworkSettings"]["Ports"]["24080/tcp"] = [
+    container.attrs["NetworkSettings"]["Ports"]["5365/tcp"] = [
         {"HostIp": "127.0.0.1", "HostPort": "80"},
-        {"HostIp": "127.0.0.1", "HostPort": "24080"},
+        {"HostIp": "127.0.0.1", "HostPort": "5365"},
     ]
 
     resolved = runtime.resolve(config)
 
     assert resolved is not None
-    assert resolved.endpoint_map["24080"] == 24080
-    assert resolved.url == "http://127.0.0.1:24080"
+    assert resolved.endpoint_map["5365"] == 5365
+    assert resolved.url == "http://127.0.0.1:5365"
 
 
 def test_local_only_preflight_never_pulls_missing_image(
@@ -2074,7 +2320,7 @@ def test_inspected_run_plan_is_copyable_and_collapses_port_ranges(
     assert "--network localcloud" in command
     assert "-m 4g" in command
     assert "-v localcloud-data:/var/lib/localcloud" in command
-    assert "-p 127.0.0.1:24080-24092:24080-24092/tcp" in command
+    assert "-p 127.0.0.1:5365-5376:5365-5376/tcp" in command
     assert "-e LOCALCLOUD_DOCKER_ACCESS=auto" in command
     assert " -l " not in command
     assert command.endswith(config.image)

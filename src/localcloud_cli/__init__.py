@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 
 
 __version__ = "0.1.2"
@@ -20,6 +21,11 @@ def _load_release_metadata() -> tuple[str | None, str | None]:
     commit = metadata.get("commit") if isinstance(metadata, dict) else None
     release_date = metadata.get("release_date") if isinstance(metadata, dict) else None
     if not isinstance(commit, str) or not isinstance(release_date, str):
+        return None, None
+    if (
+        re.fullmatch(r"[0-9a-f]{12}", commit) is None
+        or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", release_date) is None
+    ):
         return None, None
     return commit, release_date
 

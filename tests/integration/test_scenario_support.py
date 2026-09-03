@@ -180,7 +180,7 @@ def test_packaged_seeded_resources_pass_concrete_checks_on_dynamic_ports(
         if entry["type"] == "http_json"
     )
     if scenario == "olap-application":
-        assert tcp_calls == [("127.0.0.1", endpoint_map["24090"])]
+        assert tcp_calls == [("127.0.0.1", endpoint_map["5375"])]
 
 
 def test_metadata_only_runtime_cannot_satisfy_runtime_scenario(
@@ -203,7 +203,7 @@ def test_metadata_only_runtime_cannot_satisfy_runtime_scenario(
     client = _install_definition(monkeypatch, definition)
 
     with pytest.raises(HostError) as caught:
-        verify_scenario(client, "olap-application", PROJECT, {"24080": 49080})
+        verify_scenario(client, "olap-application", PROJECT, {"5365": 49080})
 
     assert caught.value.code == "scenario_verification_failed"
     assert caught.value.details["verification_id"] == "dataproc-runtime-provider"
@@ -229,7 +229,7 @@ def test_empty_dataproc_child_probe_cannot_activate_scenario(
     client = _install_definition(monkeypatch, definition)
 
     with pytest.raises(HostError) as caught:
-        verify_scenario(client, "olap-application", PROJECT, {"24080": 49080})
+        verify_scenario(client, "olap-application", PROJECT, {"5365": 49080})
 
     assert caught.value.code == "scenario_verification_failed"
     assert caught.value.details["verification_id"] == "dataproc-spark-consoles"
@@ -252,7 +252,7 @@ def test_browse_only_false_positive_fails_with_verification_id(
         "id": "gcs-concrete-bucket",
         "service": "gcs",
         "type": "http_json",
-        "port": 24081,
+        "port": 5366,
         "path": "/storage/v1/b/${project}-expected",
         "expect": {
             "json_path": "name",
@@ -266,7 +266,7 @@ def test_browse_only_false_positive_fails_with_verification_id(
     client = _install_definition(monkeypatch, definition)
 
     with pytest.raises(HostError) as caught:
-        verify_scenario(client, "analytics-smoke", PROJECT, {"24081": 49181})
+        verify_scenario(client, "analytics-smoke", PROJECT, {"5366": 49181})
 
     assert caught.value.code == "scenario_verification_failed"
     assert caught.value.details["verification_id"] == "gcs-concrete-bucket"

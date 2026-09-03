@@ -559,6 +559,44 @@ def test_release_tags_dispatches_verifies_and_publishes_tap(tmp_path: Path) -> N
     )
 
 
+def test_release_smokes_binary_with_provenance(tmp_path: Path) -> None:
+    script, env, _ = release_project(tmp_path)
+    bin_dir = Path(env["PATH"].split(os.pathsep, maxsplit=1)[0])
+    write_executable(
+        bin_dir / "uv",
+        """#!/bin/sh
+set -eu
+previous=
+for argument in "$@"; do
+    if [ "$previous" = "--output" ]; then
+        cp THIRD_PARTY_NOTICES "$argument"
+    fi
+    previous=$argument
+done
+case " $* " in
+    *" -m PyInstaller "*)
+        mkdir -p dist/localcloud-runtime
+        cat > dist/localcloud-runtime/localcloud <<'EOF'
+#!/bin/sh
+if [ "${1:-}" = "--version" ]; then
+    printf 'localcloud %s (commit 0123456789ab, released 2026-08-31)\\n' "${CLI_VERSION:-0.1.0}"
+fi
+EOF
+        chmod +x dist/localcloud-runtime/localcloud
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+""",
+    )
+
+    result = run_script("--release", "1.2.3", script=script, cwd=tmp_path, env=env)
+
+    assert result.returncode == 0, result.stderr
+    assert "Release 1.2.3 completed." in result.stdout
+
+
 def test_release_reuses_matching_published_tag(tmp_path: Path) -> None:
     script, env, _ = release_project(tmp_path)
     project = script.parents[1]

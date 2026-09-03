@@ -15,14 +15,14 @@ host:
 
 tls:
   enabled: false
-  port: 24443
+  port: 5379
   certificate: ""
   private_key: ""
 
 server:
   data_dir: /var/lib/localcloud
   gateway:
-    port: 24080
+    port: 5365
   iam:
     mode: permissive
     policy_file: ""
@@ -37,7 +37,7 @@ server:
     sa_key_path: /credentials/sa-key.json
   postgres:
     host: localhost
-    port: 24090
+    port: 5375
     database: localcloud
     user: localcloud
     password: localcloud
@@ -51,7 +51,7 @@ services:
     gcs:
       displayName: "Cloud Storage"
       availability: available
-      port: 24081
+      port: 5366
       protocol: rest
       envVar: STORAGE_EMULATOR_HOST
       envValuePrefix: "http://"
@@ -67,7 +67,7 @@ services:
     pubsub:
       displayName: "Pub/Sub"
       availability: available
-      port: 24082
+      port: 5367
       protocol: grpc
       envVar: PUBSUB_EMULATOR_HOST
       envValuePrefix: ""
@@ -81,7 +81,7 @@ services:
     firestore:
       displayName: "Firestore"
       availability: available
-      port: 24083
+      port: 5368
       protocol: grpc
       envVar: FIRESTORE_EMULATOR_HOST
       envValuePrefix: ""
@@ -99,7 +99,7 @@ services:
     bigtable:
       displayName: "Bigtable"
       availability: available
-      port: 24084
+      port: 5369
       protocol: grpc
       envVar: BIGTABLE_EMULATOR_HOST
       envValuePrefix: ""
@@ -116,7 +116,7 @@ services:
     spanner:
       displayName: "Spanner"
       availability: available
-      port: 24085
+      port: 5370
       protocol: grpc
       envVar: SPANNER_EMULATOR_HOST
       envValuePrefix: ""
@@ -125,19 +125,19 @@ services:
       defaultEnabled: true
       minTier: pro
       gcloudApiName: spanner
-      gcloudPort: 24086
+      gcloudPort: 5371
       terraformEnvVar: GOOGLE_SPANNER_CUSTOM_ENDPOINT
       additionalPorts:
-        rest: 24086
+        rest: 5371
       healthCheck:
         type: http
-        port: 24086
+        port: 5371
         path: "/v1/projects/{projectId}/instances"
 
     bigquery:
       displayName: "BigQuery"
       availability: available
-      port: 24087
+      port: 5372
       protocol: rest
       envVar: BIGQUERY_EMULATOR_HOST
       envValuePrefix: "http://"
@@ -148,7 +148,7 @@ services:
       gcloudApiName: bigquery
       terraformEnvVar: GOOGLE_BIGQUERY_CUSTOM_ENDPOINT
       additionalPorts:
-        grpc: 24088
+        grpc: 5373
       healthCheck:
         type: http
         path: "/bigquery/v2/projects/{projectId}/datasets"
@@ -348,7 +348,7 @@ services:
       terraformEnvVar: GOOGLE_CONTAINER_CUSTOM_ENDPOINT
       runtimeDependencies: [docker]
       additionalPorts:
-        k3d: 24092
+        k3d: 5377
 
     compute:
       displayName: "Compute Engine"
@@ -383,7 +383,7 @@ services:
     memorystore:
       displayName: "Memorystore (Redis/Valkey)"
       availability: available
-      port: 24089
+      port: 5374
       protocol: redis
       envVar: REDIS_HOST
       envValuePrefix: ""
@@ -449,11 +449,11 @@ services:
       gcloudApiName: sqladmin
       terraformEnvVar: GOOGLE_SQL_CUSTOM_ENDPOINT
       additionalPorts:
-        postgres: 24090
-        mysql: 24091 # MySQL 8.4.11 LTS, shared server started on demand
+        postgres: 5375
+        mysql: 5376 # MySQL 8.4.11 LTS, shared server started on demand
 
 infrastructure:
   dns:
     displayName: "LocalCloud DNS"
-    port: 24093
+    port: 5378
     protocol: udp

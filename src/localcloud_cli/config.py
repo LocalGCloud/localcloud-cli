@@ -1001,7 +1001,7 @@ def load_config(
             "host.transparent_network requires TLS to be enabled",
             field="host.transparent_network",
         )
-    reserved_tls_ports = {*range(24080, 24094), 24481, 24482, 24489}
+    reserved_tls_ports = {*range(5365, 5379), *range(5380, 5386)}
     if transparent_network:
         reserved_tls_ports.update({53, 80, 443})
     if tls_enabled and tls_port in reserved_tls_ports:

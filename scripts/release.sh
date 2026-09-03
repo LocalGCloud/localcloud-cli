@@ -162,9 +162,14 @@ smoke_native_executable() {
     stage "Smoke native executable"
     actual_version=$(./dist/localcloud --version)
     printf '%s\n' "$actual_version"
-    if [ -n "$expected_version" ] &&
-        [ "$actual_version" != "localcloud $expected_version" ]; then
-        fail "frozen CLI version '$actual_version' does not match $expected_version"
+    if [ -n "$expected_version" ]; then
+        case $actual_version in
+            "localcloud $expected_version") ;;
+            "localcloud $expected_version (commit "[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]", released "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")") ;;
+            *)
+                fail "frozen CLI version '$actual_version' does not match $expected_version"
+                ;;
+        esac
     fi
     ./dist/localcloud --help >/dev/null
     ./dist/localcloud guide >/dev/null
@@ -497,6 +502,9 @@ release_version() {
     if [ -z "$existing_release" ] || [ "$FORCE_RELEASE" = "true" ]; then
         if [ -n "$existing_release" ]; then
             printf '\nReplacing existing GitHub release %s; preserving its tag\n' "$TAG"
+            printf 'warning: replacing release %s changes binary archive checksums.\n' "$TAG" >&2
+            printf 'warning: if %s was already published to Homebrew, users with cached taps or downloads will see checksum mismatches.\n' "$TAG" >&2
+            printf 'warning: published releases should be immutable; consider bumping the version instead.\n' >&2
         fi
         dispatch_and_watch \
             "Build and publish four native CLI archives" \

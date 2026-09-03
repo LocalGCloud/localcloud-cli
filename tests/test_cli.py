@@ -32,6 +32,7 @@ class FakeController:
         self.tail_calls: list[tuple[str, float | None]] = []
         self.dry_run_calls: list[tuple[str, bool]] = []
         self.ensure_project_calls: list[tuple[str, bool]] = []
+        self.port_confirmation_calls: list[tuple[str, bool]] = []
         self.remembered: str | None = None
         self.remembered_by_volume: dict[str, str | None] = {}
 
@@ -48,16 +49,20 @@ class FakeController:
         tail: float | None = None,
         observer: Any | None = None,
         dry_run: bool = False,
+        confirm_port_mapping: Any | None = None,
     ) -> dict[str, Any] | str:
         self.calls.append(("start", config))
         self.pull_calls.append(("start", pull))
         self.ensure_project_calls.append(("start", ensure_project))
         self.tail_calls.append(("start", tail))
         self.dry_run_calls.append(("start", dry_run))
+        self.port_confirmation_calls.append(
+            ("start", confirm_port_mapping is not None)
+        )
         if observer is not None and hasattr(observer, "debug"):
             observer.debug(
                 "docker run -d --name localcloud "
-                "-p 127.0.0.1:24080-24092:24080-24092/tcp "
+                "-p 127.0.0.1:5365-5376:5365-5376/tcp "
                 "jaysen2apache/localcloud:latest"
             )
         if dry_run:
@@ -73,16 +78,20 @@ class FakeController:
         tail: float | None = None,
         observer: Any | None = None,
         dry_run: bool = False,
+        confirm_port_mapping: Any | None = None,
     ) -> dict[str, Any] | str:
         self.calls.append(("restart", config))
         self.pull_calls.append(("restart", pull))
         self.ensure_project_calls.append(("restart", ensure_project))
         self.tail_calls.append(("restart", tail))
         self.dry_run_calls.append(("restart", dry_run))
+        self.port_confirmation_calls.append(
+            ("restart", confirm_port_mapping is not None)
+        )
         if observer is not None and hasattr(observer, "debug"):
             observer.debug(
                 "docker run -d --name localcloud "
-                "-p 127.0.0.1:24080-24092:24080-24092/tcp "
+                "-p 127.0.0.1:5365-5376:5365-5376/tcp "
                 "jaysen2apache/localcloud:latest"
             )
         if dry_run:
@@ -135,7 +144,7 @@ class FakeController:
             "data_volume": config.data_volume,
             "url": "http://127.0.0.1:49080",
             "connect_url": "http://127.0.0.1:49080",
-            "endpoint_map": {"24080": 49080},
+            "endpoint_map": {"5365": 49080},
             "project": config.project,
             "user": config.user,
         }
@@ -232,6 +241,47 @@ def test_version_output_includes_embedded_release_provenance(
         _parser().parse_args(["--version"])
     assert caught.value.code == 0
     assert capsys.readouterr().out == f"{expected}\n"
+
+
+def test_load_release_metadata_valid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "_release.json").write_text(
+        '{"commit": "0123456789ab", "release_date": "2026-08-31"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(localcloud_cli, "__file__", str(tmp_path / "__init__.py"))
+    assert localcloud_cli._load_release_metadata() == ("0123456789ab", "2026-08-31")
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{}",
+        '{"commit": "", "release_date": ""}',
+        '{"commit": "short", "release_date": "2026-08-31"}',
+        '{"commit": "0123456789ab", "release_date": "invalid-date"}',
+        '{"commit": 123, "release_date": "2026-08-31"}',
+        "not json",
+    ],
+)
+def test_load_release_metadata_invalid(
+    content: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "_release.json").write_text(content, encoding="utf-8")
+    monkeypatch.setattr(localcloud_cli, "__file__", str(tmp_path / "__init__.py"))
+    assert localcloud_cli._load_release_metadata() == (None, None)
+
+
+def test_load_release_metadata_missing_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(localcloud_cli, "__file__", str(tmp_path / "nonexistent" / "__init__.py"))
+    assert localcloud_cli._load_release_metadata() == (None, None)
 
 
 def test_guide_fast_path_preserves_cli_error_handling(
@@ -979,6 +1029,76 @@ def test_start_and_restart_tail_flags() -> None:
         parser.parse_args(["start", "--tail", "invalid"])
 
 
+def test_accept_dynamic_ports_flag_dispatches_noninteractive_confirmation() -> None:
+    args = _parser().parse_args(["restart", "--accept-dynamic-ports"])
+
+    _execute(args)
+
+    assert args.accept_dynamic_ports is True
+    assert FakeController.instance.port_confirmation_calls[-1] == (
+        "restart",
+        True,
+    )
+
+
+def test_port_mapping_confirmation_prompts_with_exact_mapping() -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    class TtyBuffer(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    output = TtyBuffer()
+    input_stream = TtyBuffer("yes\n")
+    reporter = LifecycleReporter(
+        stream=output,
+        environ={"TERM": "xterm-256color"},
+        fps=1,
+    )
+    reporter.start("Planning LocalCloud ports…")
+    observer = _ExecutionObserver(reporter, input_stream=input_stream)
+    plan = SimpleNamespace(
+        alternative_port_mappings=lambda: (
+            ("127.0.0.1", 5508, 5365, "tcp"),
+            ("127.0.0.1", 5509, 5366, "tcp"),
+        )
+    )
+
+    assert observer.confirm_port_mapping(plan) is True
+    reporter.close()
+
+    rendered = output.getvalue()
+    assert "127.0.0.1:5508 -> 5365/tcp" in rendered
+    assert "Continue with these mappings? [y/N] " in rendered
+    assert "\x1b[?25h" in rendered
+
+
+def test_port_mapping_confirmation_fails_closed_without_tty() -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    reporter = LifecycleReporter(
+        stream=io.StringIO(),
+        environ={"TERM": "dumb"},
+    )
+    observer = _ExecutionObserver(
+        reporter,
+        input_stream=io.StringIO("yes\n"),
+    )
+    plan = SimpleNamespace(
+        alternative_port_mappings=lambda: (
+            ("127.0.0.1", 5508, 5365, "tcp"),
+        )
+    )
+
+    with pytest.raises(HostError) as caught:
+        observer.confirm_port_mapping(plan)
+
+    assert caught.value.code == "port_mapping_confirmation_required"
+    assert caught.value.details["override"] == "--accept-dynamic-ports"
+
+
 def test_debug_flag_parsing() -> None:
     parser = _parser()
     assert parser.parse_args(["start", "--debug"]).debug is True
@@ -1514,7 +1634,7 @@ def test_main_start_debug_prints_copyable_ranged_docker_command(
     assert "[debug] Lifecycle action" not in captured.err
     assert "[debug] Published ports" not in captured.err
     assert "[debug] docker run -d --name localcloud" in captured.err
-    assert "24080-24092:24080-24092/tcp" in captured.err
+    assert "5365-5376:5365-5376/tcp" in captured.err
 
 
 def test_main_start_dry_run_prints_native_plan(
