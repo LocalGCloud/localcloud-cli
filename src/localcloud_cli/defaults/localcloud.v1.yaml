@@ -10,8 +10,12 @@ context:
   project: local-gcp-project
 
 host:
-  docker_socket: auto
   transparent_network: false
+  data_volume: localcloud-data
+  backup_dir: ~/.localcloud/backups
+  data: persistent
+  docker_socket: auto
+  network_name: localcloud
 
 tls:
   enabled: false
@@ -19,14 +23,24 @@ tls:
   certificate: ""
   private_key: ""
 
+mcp:
+  write: false
+  destructive: false
+  allow_remote: false
+
+updater:
+  enabled: true
+  auto_update: false
+  auto_restart_container: false
+  check_interval_hours: 24
+  image: jaysen2apache/localcloud:latest
+  prune_old_image: true
+  drain_timeout_seconds: 5
+
 server:
   data_dir: /var/lib/localcloud
   gateway:
     port: 5365
-  iam:
-    mode: permissive
-    policy_file: ""
-    log_warnings: true
   logging:
     verbosity: info
   persistence: true
@@ -43,7 +57,6 @@ server:
     password: localcloud
   api_key: ""
   license_server_url: none
-  dataproc_registry: jaysen2apache/dataproc
 
 services:
   enabled: default
@@ -51,7 +64,9 @@ services:
     gcs:
       displayName: "Cloud Storage"
       availability: available
-      port: 5366
+      resettableData: true
+      plaintextPort: 5366
+      tlsPort: 5380
       protocol: rest
       envVar: STORAGE_EMULATOR_HOST
       envValuePrefix: "http://"
@@ -63,11 +78,31 @@ services:
       terraformEnvVar: GOOGLE_STORAGE_CUSTOM_ENDPOINT
       healthCheck:
         type: tcp
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - id: emulator-process
+              component: fake-gcs-server
+              strategy: collector
+              fallback: raw-only
+              kind: supervisor
+              program: fake-gcs-server
+              streams: [stdout, stderr]
+              paths:
+                stdout: /var/log/localcloud/fake-gcs-server-stdout.log
+                stderr: /var/log/localcloud/fake-gcs-server-stderr.log
+              format: text
+              retentionProfile: external-process
+              integrationEvidence: docker/gcs-start.sh
+              integrationTest: RuntimeLogCollectorTest
 
     pubsub:
       displayName: "Pub/Sub"
       availability: available
-      port: 5367
+      resettableData: true
+      plaintextPort: 5367
+      tlsPort: 5381
       protocol: grpc
       envVar: PUBSUB_EMULATOR_HOST
       envValuePrefix: ""
@@ -77,29 +112,65 @@ services:
       minTier: community
       gcloudApiName: pubsub
       terraformEnvVar: GOOGLE_PUBSUB_CUSTOM_ENDPOINT
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - id: java-runtime
+              component: pubsub
+              strategy: direct
+              fallback: raw-only
+              kind: internal
+              paths:
+                raw: /var/log/localcloud/localcloud-server.log
+              format: json
+              retentionProfile: java-facade
+              integrationEvidence: localcloud-internal-sink
+              integrationTest: RuntimeServiceLogEmitterTest
 
     firestore:
       displayName: "Firestore"
       availability: available
-      port: 5368
+      resettableData: true
+      plaintextPort: 5368
       protocol: grpc
       envVar: FIRESTORE_EMULATOR_HOST
       envValuePrefix: ""
       type: external
       gatewayObservable: false
       # Firestore emulator seeding is not implemented yet (SeedService skips it) —
-      # keep disabled by default until seeding support lands.
+      # keep disabled by default. Firestore is also outside whole-volume
+      # recovery v1; snapshot preflight rejects it when enabled or running.
       defaultEnabled: false
       minTier: community
       gcloudApiName: firestore
       terraformEnvVar: GOOGLE_FIRESTORE_CUSTOM_ENDPOINT
       healthCheck:
         type: http
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - id: emulator-process
+              component: firestore-emulator
+              strategy: collector
+              fallback: raw-only
+              kind: supervisor
+              program: firestore-emulator
+              streams: [stdout, stderr]
+              paths:
+                stdout: /var/log/localcloud/firestore-emulator-stdout.log
+                stderr: /var/log/localcloud/firestore-emulator-stderr.log
+              format: text
+              retentionProfile: external-process
+              integrationEvidence: docker/conf/supervisord.conf
+              integrationTest: RuntimeLogCollectorTest
 
     bigtable:
       displayName: "Bigtable"
       availability: available
-      port: 5369
+      resettableData: true
+      plaintextPort: 5369
       protocol: grpc
       envVar: BIGTABLE_EMULATOR_HOST
       envValuePrefix: ""
@@ -112,11 +183,30 @@ services:
       terraformEnvVar: GOOGLE_BIGTABLE_CUSTOM_ENDPOINT
       healthCheck:
         type: tcp
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - id: emulator-process
+              component: bigtable-emulator
+              strategy: collector
+              fallback: raw-only
+              kind: supervisor
+              program: bigtable-emulator
+              streams: [stdout, stderr]
+              paths:
+                stdout: /var/log/localcloud/bigtable-emulator-stdout.log
+                stderr: /var/log/localcloud/bigtable-emulator-stderr.log
+              format: text
+              retentionProfile: external-process
+              integrationEvidence: docker/bigtable-connect.sh
+              integrationTest: RuntimeLogCollectorTest
 
     spanner:
       displayName: "Spanner"
       availability: available
-      port: 5370
+      resettableData: true
+      plaintextPort: 5370
       protocol: grpc
       envVar: SPANNER_EMULATOR_HOST
       envValuePrefix: ""
@@ -129,15 +219,43 @@ services:
       terraformEnvVar: GOOGLE_SPANNER_CUSTOM_ENDPOINT
       additionalPorts:
         rest: 5371
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - id: emulator-process
+              component: spanner-emulator
+              strategy: collector
+              fallback: raw-only
+              kind: supervisor
+              program: spanner-emulator
+              streams: [stdout, stderr]
+              paths:
+                stdout: /var/log/localcloud/spanner-emulator-stdout.log
+                stderr: /var/log/localcloud/spanner-emulator-stderr.log
+              format: text
+              retentionProfile: external-process
+              integrationEvidence: docker/conf/supervisord.conf
+              integrationTest: RuntimeLogCollectorTest
       healthCheck:
         type: http
         port: 5371
         path: "/v1/projects/{projectId}/instances"
+      # Service-owned runtime settings — user-editable in localcloud.yaml and
+      # applied by restarting this service (see service-runtime-config).
+      config:
+        backup_enabled: false
+        backup_interval_seconds: 60
+      config_descriptions:
+        backup_enabled: Retired compatibility setting. Periodic live LevelDB backup is not started; use the explicit host whole-volume snapshot command.
+        backup_interval_seconds: Retired compatibility setting retained for older overlays (positive integer, >= 10; no scheduler is started).
 
     bigquery:
       displayName: "BigQuery"
       availability: available
-      port: 5372
+      resettableData: true
+      plaintextPort: 5372
+      tlsPort: tls
       protocol: rest
       envVar: BIGQUERY_EMULATOR_HOST
       envValuePrefix: "http://"
@@ -147,17 +265,46 @@ services:
       minTier: community
       gcloudApiName: bigquery
       terraformEnvVar: GOOGLE_BIGQUERY_CUSTOM_ENDPOINT
-      additionalPorts:
-        grpc: 5373
+      grpcPort: 5373
       healthCheck:
         type: http
         path: "/bigquery/v2/projects/{projectId}/datasets"
+      # Service-owned runtime settings — user-editable in localcloud.yaml and
+      # applied by restarting this service (see service-runtime-config).
+      config:
+        memory_limit: 512MB
+        threads: 2
+        log_level: info
+      config_descriptions:
+        memory_limit: Maximum DuckDB memory available to BigQuery queries (positive size with unit, e.g. 512MB, 2GB).
+        threads: Maximum worker threads used to execute BigQuery queries (positive integer).
+        log_level: BigQuery emulator log verbosity (debug, info, warn, error).
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - id: emulator-process
+              component: bigquery-emulator
+              strategy: collector
+              fallback: raw-only
+              kind: supervisor
+              program: bigquery-emulator
+              streams: [stdout, stderr]
+              paths:
+                stdout: /var/log/localcloud/bigquery-emulator-stdout.log
+                stderr: /var/log/localcloud/bigquery-emulator-stderr.log
+              format: json
+              retentionProfile: external-process
+              integrationEvidence: docker/bigquery-start.sh
+              integrationTest: RuntimeLogCollectorTest
 
 
     sheets:
       displayName: "Google Sheets"
       availability: available
-      port: gateway
+      resettableData: true
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: rest
       envVar: SHEETS_EMULATOR_HOST
       envValuePrefix: "http://"
@@ -165,11 +312,18 @@ services:
       gatewayObservable: true
       defaultEnabled: true
       minTier: community
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: sheets, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     secretmanager:
       displayName: "Secret Manager"
       availability: available
-      port: gateway
+      resettableData: true
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: grpc
       envVar: SECRET_MANAGER_EMULATOR_HOST
       envValuePrefix: ""
@@ -179,11 +333,18 @@ services:
       minTier: community
       gcloudApiName: secretmanager
       terraformEnvVar: GOOGLE_SECRET_MANAGER_CUSTOM_ENDPOINT
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: secretmanager, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     cloudtasks:
       displayName: "Cloud Tasks"
       availability: available
-      port: gateway
+      resettableData: true
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: grpc
       envVar: CLOUD_TASKS_EMULATOR_HOST
       envValuePrefix: ""
@@ -193,11 +354,18 @@ services:
       minTier: community
       gcloudApiName: cloudtasks
       terraformEnvVar: GOOGLE_CLOUD_TASKS_CUSTOM_ENDPOINT
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: cloudtasks, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     cloudscheduler:
       displayName: "Cloud Scheduler"
       availability: available
-      port: gateway
+      resettableData: true
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: grpc
       envVar: CLOUD_SCHEDULER_EMULATOR_HOST
       envValuePrefix: ""
@@ -207,11 +375,18 @@ services:
       minTier: community
       gcloudApiName: cloudscheduler
       terraformEnvVar: GOOGLE_CLOUD_SCHEDULER_CUSTOM_ENDPOINT
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: cloudscheduler, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     cloudfunctions:
       displayName: "Cloud Functions (2nd Gen)"
       availability: available
-      port: gateway
+      resettableData: true
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: grpc
       envVar: CLOUD_FUNCTIONS_EMULATOR_HOST
       envValuePrefix: ""
@@ -221,11 +396,18 @@ services:
       minTier: community
       gcloudApiName: cloudfunctions
       terraformEnvVar: GOOGLE_CLOUD_FUNCTIONS_CUSTOM_ENDPOINT
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: cloudfunctions, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     alloydb:
       displayName: "AlloyDB"
       availability: available
-      port: gateway
+      resettableData: true
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: grpc
       envVar: ALLOYDB_EMULATOR_HOST
       envValuePrefix: ""
@@ -235,11 +417,19 @@ services:
       minTier: community
       gcloudApiName: alloydb
       terraformEnvVar: GOOGLE_ALLOYDB_CUSTOM_ENDPOINT
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: alloydb, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     dataproc:
       displayName: "Dataproc"
       availability: available
-      port: gateway
+      resettableData: true
+      runtimeDependencies: [docker]
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: grpc
       envVar: DATAPROC_EMULATOR_HOST
       envValuePrefix: ""
@@ -249,12 +439,26 @@ services:
       minTier: community
       gcloudApiName: dataproc
       terraformEnvVar: GOOGLE_DATAPROC_CUSTOM_ENDPOINT
-      runtimeDependencies: [docker]
+      # Service-owned runtime settings (moved from server.dataproc_registry).
+      # User-editable in localcloud.yaml and applied by restarting Dataproc.
+      config:
+        registry: jaysen2apache/dataproc
+        prefer_native: true
+      config_descriptions:
+        registry: Container registry / repository prefix for Dataproc cluster images (non-blank).
+        prefer_native: Prefer platform-native Dataproc images over QEMU-emulated generic images when available (boolean).
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: dataproc, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     cloudiam:
       displayName: "Cloud IAM"
       availability: available
-      port: gateway
+      resettableData: true
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: grpc
       envVar: IAM_EMULATOR_HOST
       envValuePrefix: ""
@@ -264,11 +468,28 @@ services:
       minTier: community
       gcloudApiName: iam
       terraformEnvVar: GOOGLE_IAM_CUSTOM_ENDPOINT
+      # Service-owned runtime settings (moved from server.iam). User-editable in
+      # localcloud.yaml and applied by restarting Cloud IAM.
+      config:
+        mode: open
+        policy_file: ""
+        log_warnings: true
+      config_descriptions:
+        mode: IAM mode — 'open' silently allows requests, 'permissive' allows requests with decision logging, 'strict' enforces local policy, and 'gcp-live' delegates authorization to real GCP IAM.
+        policy_file: Optional IAM policy JSON file; strict mode with no file denies every non-management request.
+        log_warnings: Log Cloud IAM operation warnings when enabled; suppressed in open mode (boolean).
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: cloudiam, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     cloudresourcemanager:
       displayName: "Cloud Resource Manager"
       availability: available
-      port: gateway
+      resettableData: false
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: rest
       envVar: CLOUD_RESOURCE_MANAGER_EMULATOR_HOST
       envValuePrefix: "http://"
@@ -278,11 +499,18 @@ services:
       minTier: community
       gcloudApiName: cloudresourcemanager
       terraformEnvVar: GOOGLE_RESOURCE_MANAGER_CUSTOM_ENDPOINT
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: cloudresourcemanager, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     serviceusage:
       displayName: "Service Usage"
       availability: available
-      port: gateway
+      resettableData: false
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: rest
       envVar: SERVICE_USAGE_EMULATOR_HOST
       envValuePrefix: "http://"
@@ -291,11 +519,18 @@ services:
       defaultEnabled: true
       minTier: community
       terraformEnvVar: GOOGLE_SERVICE_USAGE_CUSTOM_ENDPOINT
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: serviceusage, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     cloudbilling:
       displayName: "Cloud Billing"
       availability: available
-      port: gateway
+      resettableData: true
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: rest
       envVar: CLOUD_BILLING_EMULATOR_HOST
       envValuePrefix: "http://"
@@ -304,11 +539,18 @@ services:
       defaultEnabled: true
       minTier: community
       terraformEnvVar: GOOGLE_CLOUD_BILLING_CUSTOM_ENDPOINT
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: cloudbilling, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     logging:
       displayName: "Cloud Logging"
       availability: available
-      port: gateway
+      resettableData: true
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: grpc
       envVar: CLOUD_LOGGING_EMULATOR_HOST
       envValuePrefix: ""
@@ -318,11 +560,44 @@ services:
       minTier: community
       gcloudApiName: logging
       terraformEnvVar: GOOGLE_LOGGING_CUSTOM_ENDPOINT
+      config:
+        application_retention_days: 7
+        application_max_size_mb: 512
+        runtime_retention_days: 3
+        runtime_max_size_mb: 128
+        raw_retention_hours: 24
+        raw_max_size_mb: 128
+        total_max_size_mb: 768
+        warning_watermark_percent: 80
+        critical_watermark_percent: 90
+        hard_watermark_percent: 100
+        batch_guard_mb: 8
+        cleanup_interval_minutes: 60
+      config_descriptions:
+        application_retention_days: "Retain application logs for this many days."
+        application_max_size_mb: "Protected application-log storage budget in MiB."
+        runtime_retention_days: "Retain LocalCloud runtime logs for this many days."
+        runtime_max_size_mb: "LocalCloud runtime-log storage budget in MiB."
+        raw_retention_hours: "Retain container-local raw fallback logs for this many hours."
+        raw_max_size_mb: "Container-local raw fallback-log storage budget in MiB."
+        total_max_size_mb: "Hard combined budget for application, runtime, and raw logs in MiB."
+        warning_watermark_percent: "Usage percentage that reports warning pressure."
+        critical_watermark_percent: "Usage percentage that triggers aggressive runtime cleanup."
+        hard_watermark_percent: "Usage percentage that requires synchronous reclamation or drops."
+        batch_guard_mb: "Reserved headroom for one bounded batch, WAL, indexes, and rotation overhead."
+        cleanup_interval_minutes: "Interval between background retention and budget cleanup passes."
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: logging, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     monitoring:
       displayName: "Cloud Monitoring"
       availability: available
-      port: gateway
+      resettableData: true
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: grpc
       envVar: CLOUD_MONITORING_EMULATOR_HOST
       envValuePrefix: ""
@@ -332,11 +607,19 @@ services:
       minTier: community
       gcloudApiName: monitoring
       terraformEnvVar: GOOGLE_MONITORING_CUSTOM_ENDPOINT
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: monitoring, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     gke:
       displayName: "GKE"
       availability: available
-      port: gateway
+      resettableData: true
+      runtimeDependencies: [docker]
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: grpc
       envVar: GKE_EMULATOR_HOST
       envValuePrefix: ""
@@ -346,14 +629,21 @@ services:
       minTier: pro
       gcloudApiName: container
       terraformEnvVar: GOOGLE_CONTAINER_CUSTOM_ENDPOINT
-      runtimeDependencies: [docker]
       additionalPorts:
         k3d: 5377
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: gke, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     compute:
       displayName: "Compute Engine"
       availability: available
-      port: gateway
+      resettableData: true
+      runtimeDependencies: [docker]
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: rest
       envVar: COMPUTE_EMULATOR_HOST
       envValuePrefix: "http://"
@@ -363,12 +653,19 @@ services:
       minTier: pro
       gcloudApiName: compute
       terraformEnvVar: GOOGLE_COMPUTE_CUSTOM_ENDPOINT
-      runtimeDependencies: [docker]
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: compute, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     cloudrun:
       displayName: "Cloud Run"
       availability: available
-      port: gateway
+      resettableData: true
+      runtimeDependencies: [docker]
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: grpc
       envVar: CLOUD_RUN_EMULATOR_HOST
       envValuePrefix: ""
@@ -378,12 +675,18 @@ services:
       minTier: pro
       gcloudApiName: run
       terraformEnvVar: GOOGLE_CLOUD_RUN_CUSTOM_ENDPOINT
-      runtimeDependencies: [docker]
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: cloudrun, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     memorystore:
       displayName: "Memorystore (Redis/Valkey)"
       availability: available
-      port: 5374
+      resettableData: true
+      plaintextPort: 5374
+      tlsPort: 5382
       protocol: redis
       envVar: REDIS_HOST
       envValuePrefix: ""
@@ -392,11 +695,43 @@ services:
       defaultEnabled: true
       minTier: community
       terraformEnvVar: GOOGLE_REDIS_CUSTOM_ENDPOINT
+      # Service-owned runtime settings — user-editable in localcloud.yaml and
+      # applied by restarting this service (see service-runtime-config).
+      config:
+        max_memory: 512mb
+        max_memory_policy: noeviction
+        databases: 16
+        append_fsync: everysec
+      config_descriptions:
+        max_memory: Valkey maxmemory ceiling (positive size with unit, e.g. 256mb, 1gb).
+        max_memory_policy: Eviction policy when max_memory is reached (noeviction, allkeys-lru, allkeys-lfu, volatile-lru, volatile-lfu, allkeys-random, volatile-random, volatile-ttl).
+        databases: Number of logical Valkey databases (positive integer).
+        append_fsync: AOF fsync policy (everysec, always, no).
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - id: emulator-process
+              component: valkey
+              strategy: collector
+              fallback: raw-only
+              kind: supervisor
+              program: valkey
+              streams: [stdout, stderr]
+              paths:
+                stdout: /var/log/localcloud/valkey-stdout.log
+                stderr: /var/log/localcloud/valkey-stderr.log
+              format: text
+              retentionProfile: external-process
+              integrationEvidence: docker/valkey-start.sh
+              integrationTest: RuntimeLogCollectorTest
 
     workflows:
       displayName: "Cloud Workflows"
       availability: available
-      port: gateway
+      resettableData: true
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: grpc
       envVar: WORKFLOWS_EMULATOR_HOST
       envValuePrefix: ""
@@ -406,11 +741,18 @@ services:
       minTier: community
       gcloudApiName: workflows
       terraformEnvVar: GOOGLE_WORKFLOWS_CUSTOM_ENDPOINT
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: workflows, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     vertexai:
       displayName: "Vertex AI"
       availability: available
-      port: gateway
+      resettableData: true
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: rest
       envVar: AIPLATFORM_EMULATOR_HOST
       envValuePrefix: "http://"
@@ -420,25 +762,45 @@ services:
       minTier: pro
       gcloudApiName: aiplatform
       terraformEnvVar: GOOGLE_VERTEX_AI_CUSTOM_ENDPOINT
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: vertexai, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     kms:
       displayName: "Cloud KMS"
       availability: available
-      port: gateway
-      protocol: rest
+      resettableData: true
+      plaintextPort: gateway
+      tlsPort: tls
+      protocol: grpc+rest
       envVar: CLOUD_KMS_EMULATOR_HOST
-      envValuePrefix: "http://"
+      envValuePrefix: ""
       type: facade
       gatewayObservable: true
-      defaultEnabled: false
+      defaultEnabled: true
       minTier: pro
       gcloudApiName: cloudkms
       terraformEnvVar: GOOGLE_KMS_CUSTOM_ENDPOINT
+      config:
+        root_key_file: /var/lib/localcloud/kms/kms-root.key
+        lifecycle_poll_interval_ms: 1000
+      config_descriptions:
+        root_key_file: Absolute container path to the LocalCloud KMS root key. The default is protected by the persistent state volume; an explicit external path such as /etc/localcloud/kms-root.key must be backed up separately.
+        lifecycle_poll_interval_ms: Poll interval for durable key rotation, scheduled destruction, and ImportJob expiry processing. Valid range is 100 to 60000 milliseconds.
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: kms, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
     cloudsql:
       displayName: "Cloud SQL"
       availability: available
-      port: gateway
+      resettableData: true
+      plaintextPort: gateway
+      tlsPort: tls
       protocol: rest
       envVar: CLOUD_SQL_EMULATOR_HOST
       envValuePrefix: "http://"
@@ -450,10 +812,87 @@ services:
       terraformEnvVar: GOOGLE_SQL_CUSTOM_ENDPOINT
       additionalPorts:
         postgres: 5375
-        mysql: 5376 # MySQL 8.4.11 LTS, shared server started on demand
+        mysql: 5376 # MySQL 8.4 LTS, container started on demand
+      # Service-owned runtime settings for the shared Cloud SQL MySQL data plane
+      # (one localcloud-mysql container hosts every MYSQL_* instance). User-editable in
+      # localcloud.yaml, applied by restarting Cloud SQL.
+      config:
+        mysql_enabled: true
+        mysql_autostart: false
+        mysql_image: jaysen2apache/mysql:8.4
+        mysql_max_connections: 50
+        mysql_innodb_buffer_pool_size: 64M
+        mysql_table_open_cache: 200
+      config_descriptions:
+        mysql_enabled: Enable MySQL engine support in Cloud SQL (boolean). When false, only PostgreSQL instances can be created.
+        mysql_autostart: Automatically pull and start the MySQL companion container on LocalCloud boot if mysql_enabled is true (boolean). If false, container starts lazily on demand or via UI.
+        mysql_image: Container image for the Cloud SQL MySQL data plane.
+        mysql_max_connections: Maximum client connections to the shared Cloud SQL MySQL server (positive integer).
+        mysql_innodb_buffer_pool_size: InnoDB buffer pool size for the shared Cloud SQL MySQL server (positive size with unit, e.g. 64M, 256M).
+        mysql_table_open_cache: Table cache size for the shared Cloud SQL MySQL server (positive integer).
+      observability:
+        logs:
+          resourceType: localcloud_service
+          sources:
+            - {id: java-runtime, component: cloudsql, strategy: direct, fallback: raw-only, kind: internal, paths: {raw: /var/log/localcloud/localcloud-server.log}, format: json, retentionProfile: java-facade, integrationEvidence: localcloud-internal-sink, integrationTest: RuntimeServiceLogEmitterTest}
 
 infrastructure:
   dns:
     displayName: "LocalCloud DNS"
     port: 5378
     protocol: udp
+
+# Image-owned operational sources that do not represent user-facing GCP services.
+observability:
+  infrastructure:
+    postgresql:
+      logs:
+        resourceType: localcloud_service
+        sources:
+          - id: database-process
+            component: postgresql
+            strategy: collector
+            fallback: raw-only
+            kind: supervisor
+            program: postgresql
+            streams: [stdout, stderr]
+            paths:
+              stdout: /var/log/localcloud/postgresql-stdout.log
+              stderr: /var/log/localcloud/postgresql-stderr.log
+            format: text
+            retentionProfile: infrastructure
+            integrationEvidence: docker/postgres-start.sh
+            integrationTest: RuntimeLogCollectorTest
+    supervisor:
+      logs:
+        resourceType: localcloud_service
+        sources:
+          - id: supervisor-activity
+            component: supervisord
+            strategy: collector
+            fallback: raw-only
+            kind: file
+            paths:
+              activity: /var/log/localcloud/supervisord.log
+            format: text
+            retentionProfile: infrastructure
+            integrationEvidence: docker/conf/supervisord.conf
+            integrationTest: RuntimeLogCollectorTest
+    dns:
+      logs:
+        resourceType: localcloud_service
+        sources:
+          - id: dns-process
+            component: dnsmasq
+            strategy: collector
+            fallback: raw-only
+            kind: supervisor
+            program: dnsmasq
+            streams: [stdout, stderr]
+            paths:
+              stdout: /var/log/localcloud/dnsmasq.out.log
+              stderr: /var/log/localcloud/dnsmasq.err.log
+            format: text
+            retentionProfile: infrastructure
+            integrationEvidence: docker/conf/network/dnsmasq.conf
+            integrationTest: RuntimeLogCollectorTest

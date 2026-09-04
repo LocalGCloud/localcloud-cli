@@ -727,7 +727,7 @@ def _success_message(args: argparse.Namespace, result: Any) -> str:
     if command == "restart":
         return "LocalCloud is ready"
     if command == "doctor":
-        return "LocalCloud checks completed"
+        return "LocalCloud is ready to start"
     if command == "cleanup":
         return (
             "LocalCloud cleanup dry-run completed"

@@ -520,11 +520,11 @@ def test_wide_panel_structure_and_color_coding() -> None:
     lines = render_panel(context, 100, color=ColorMode.TRUECOLOR)
     plain_text = "\n".join(strip_ansi(line) for line in lines)
     assert "LocalCloud overview" in plain_text
-    assert "Tips & Commands" in plain_text
+    assert "Top commands" in plain_text
     assert "localcloud (or lc)" in plain_text
     assert "status | start | stop | restart" in plain_text
     assert "eval $(lc env)" in plain_text
-    assert "Featured services" in plain_text
+    assert "Supported Services" in plain_text
     assert "● Storage" in plain_text
     assert "○ Firestore" in plain_text
     assert "● Pub/Sub" in plain_text
@@ -661,3 +661,57 @@ def test_reporter_panel_settles_above_log_stream() -> None:
     done_pos = plain.find("Done")
 
     assert panel_pos < log1_pos < log2_pos < done_pos
+
+
+def test_doctor_summary_shows_docker_command_path_and_omits_cli_version() -> None:
+    payload = {
+        "status": "ok",
+        "docker": "29.7.2",
+        "docker_command_path": "/opt/homebrew/bin/docker",
+        "cli_version": "0.1.2",
+    }
+    summary = render_summary("doctor", payload)
+    assert "Docker  29.7.2 (/opt/homebrew/bin/docker)" in summary
+    assert "Docker command path" not in summary
+    assert "CLI version" not in summary
+
+    colored = render_summary("doctor", payload, color=ColorMode.ANSI16)
+    assert "\x1b[97m29.7.2\x1b[0m\x1b[90m (/opt/homebrew/bin/docker)\x1b[0m" in colored
+
+
+def test_doctor_summary_allows_explicit_cli_version_field() -> None:
+    payload = {
+        "status": "ok",
+        "docker": "29.7.2",
+        "docker_command_path": "/opt/homebrew/bin/docker",
+        "cli_version": "0.1.2",
+    }
+    summary = render_summary("doctor", payload, ["cli_version"])
+    assert "CLI version  0.1.2" in summary
+
+
+def test_panel_shows_config_path_when_present_and_built_in_defaults_when_absent() -> None:
+    context_with_config = PanelContext(
+        data_volume="localcloud-data",
+        project="local-gcp-project",
+        user="local-developer",
+        services="default",
+        data="persistent",
+        config="/custom/path/localcloud.yaml",
+    )
+    lines_with = render_panel(context_with_config, 100, color=ColorMode.NONE)
+    text_with = "\n".join(lines_with)
+    assert "/custom/path/localcloud.yaml" in text_with
+    assert "built-in defaults" not in text_with
+
+    context_without_config = PanelContext(
+        data_volume="localcloud-data",
+        project="local-gcp-project",
+        user="local-developer",
+        services="default",
+        data="persistent",
+        config=None,
+    )
+    lines_without = render_panel(context_without_config, 100, color=ColorMode.NONE)
+    text_without = "\n".join(lines_without)
+    assert "built-in defaults" in text_without

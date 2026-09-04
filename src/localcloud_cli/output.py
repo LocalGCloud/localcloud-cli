@@ -158,8 +158,7 @@ _COMMON_FIELDS = (
 )
 _DOCTOR_FIELDS = (
     FieldSpec("status", "Status", "status"),
-    FieldSpec("docker", "Docker"),
-    FieldSpec("cli_version", "CLI version", "muted"),
+    FieldSpec("docker", "Docker", "docker"),
     FieldSpec("default_image", "Image", "image"),
     FieldSpec("legacy_resources", "Legacy resources", "warning"),
     FieldSpec("legacy_host_state", "Legacy host state", "warning"),
@@ -167,6 +166,10 @@ _DOCTOR_FIELDS = (
     FieldSpec("warning", "Warning", "warning"),
 )
 _DOCTOR_EXTRA_FIELDS = (
+    FieldSpec("cli_version", "CLI version", "muted"),
+    FieldSpec("docker_command_path", "Docker command path", "muted"),
+    FieldSpec("docker_path", "Docker path"),
+    FieldSpec("docker_command", "Docker command"),
     FieldSpec("active_runtime", "Active runtime", "muted"),
     FieldSpec("active_runtime_diagnostics", "Active diagnostics", "warning"),
     FieldSpec("image_details", "Image details", "muted"),
@@ -431,6 +434,10 @@ def render_summary(
             formatted = _resolve_path(payload, "container.image_details.formatted")
             if formatted is not _MISSING and formatted:
                 value = f"{value} {formatted}"
+        if command == "doctor" and field.path == "docker":
+            docker_cmd_path = _resolve_path(payload, "docker_command_path")
+            if docker_cmd_path is not _MISSING and docker_cmd_path:
+                value = f"{value} ({docker_cmd_path})"
         if field.style == "status":
             value = _human_status(value)
         resolved.append((field, value))
@@ -457,7 +464,7 @@ def render_summary(
                 else _wrap_visible(strip_ansi(logical_line), value_width)
             )
             for value_line in value_lines:
-                if field.style == "image":
+                if field.style in {"image", "docker"}:
                     rendered_value = _render_image_value(value_line, color)
                 else:
                     rendered_value = style_text(value_line, role, color)
@@ -880,12 +887,37 @@ def _format_services_summary(
     )
 
 
+def _format_config_value(config_path: str | Path | None) -> str:
+    if not config_path:
+        return "built-in defaults"
+    raw_str = str(config_path).strip()
+    if not raw_str or raw_str == "built-in defaults":
+        return "built-in defaults"
+    path = Path(config_path)
+    try:
+        resolved = path.resolve()
+        cwd = Path.cwd().resolve()
+        if resolved.is_relative_to(cwd):
+            rel = resolved.relative_to(cwd)
+            return f"./{rel}" if str(rel) != "." else str(rel)
+    except Exception:
+        pass
+    try:
+        resolved = path.resolve()
+        home = Path.home().resolve()
+        if resolved.is_relative_to(home):
+            return f"~/{resolved.relative_to(home)}"
+    except Exception:
+        pass
+    return raw_str
+
+
 def _panel_context_rows(
     context: PanelContext,
     width: int,
     color: ColorMode,
 ) -> list[str]:
-    config_name = Path(context.config).name if context.config else "built-in defaults"
+    config_name = _format_config_value(context.config)
     return [
         _format_context_line(
             "Data Volume", context.data_volume, "g_yellow", width, color
@@ -1021,7 +1053,7 @@ def _wide_panel(
         )
 
     right_rows: list[str] = []
-    tips_header = " Tips & Commands"
+    tips_header = " Top commands"
     right_rows.append(
         style_text(tips_header, "section_header", color, bold=True)
         + " " * max(0, right_width - visible_width(tips_header))
@@ -1053,7 +1085,7 @@ def _wide_panel(
             + " " * max(0, right_width - visible_width(row_plain))
         )
     right_rows.append(style_text("─" * right_width, "muted", color))
-    services_header = " Featured services"
+    services_header = " Supported Services"
     right_rows.append(
         style_text(services_header, "section_header", color, bold=True)
         + " " * max(0, right_width - visible_width(services_header))
@@ -1067,7 +1099,7 @@ def _wide_panel(
         style_text(context_header, "section_header", color, bold=True)
         + " " * max(0, right_width - visible_width(context_header))
     )
-    config_name = Path(context.config).name if context.config else "built-in defaults"
+    config_name = _format_config_value(context.config)
     right_rows.append(
         _format_context_pair(
             "Data Volume",

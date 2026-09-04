@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import shutil
 import socket
 import shlex
 import stat
@@ -37,7 +38,7 @@ DATA_MOUNT_DESTINATION = "/var/lib/localcloud"
 CLI_SEED_MOUNT_DESTINATION = "/etc/localcloud/cli-seed.yaml"
 CONFIG_MOUNT_DESTINATION = "/etc/localcloud/localcloud.yaml"
 GATEWAY_PORT = "5365"
-_BASE_TCP_PORTS = tuple(range(5365, 5377))
+_BASE_TCP_PORTS = tuple(range(5365, 5376))
 _DEDICATED_TLS_PORTS = (5380, 5381, 5382)
 _DNS_PORT = 5378
 _TRANSPARENT_HOST_PORTS = frozenset({53, 80, 443})
@@ -458,6 +459,11 @@ class DockerRuntime:
         )
         self._require_runtime_ownership_capability(config, image)
         self._validate_image_port_metadata(config, image, observer)
+        if not _port_is_free(5376):
+            _emit_warning(
+                observer,
+                "Host port 5376/tcp is already in use; Cloud SQL MySQL companion container will not be able to bind when started",
+            )
         allowed_ports = _published_host_ports(replacing)
         self._port_bindings(
             config,
@@ -1362,11 +1368,15 @@ class DockerRuntime:
             version = self.client.version()
         except Exception:
             version = {}
+        docker_command_path = shutil.which("docker")
         result: dict[str, Any] = {
             "status": "ok",
             "docker": version.get("Version")
             or version.get("version")
             or "available",
+            "docker_command_path": docker_command_path,
+            "docker_path": docker_command_path,
+            "docker_command": docker_command_path,
             "legacy_resources": legacy,
             "volume_collisions": collisions,
             "invalid_ownership": invalid_ownership,

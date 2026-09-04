@@ -10,11 +10,14 @@ import pytest  # pyright: ignore[reportMissingImports]
 import localcloud_cli.controller as controller_module
 import localcloud_cli.endpoints as endpoints_module
 from localcloud_cli.config import (
+    ACTIVE_RUNTIME_SCHEMA_VERSION,
+    ActiveRuntime,
     HostPaths,
     LocalCloudConfig,
     load_active_runtime,
     load_config,
     runtime_settings,
+    save_active_runtime,
 )
 from localcloud_cli.constants import DEFAULTS_CONFIG_LABEL
 from localcloud_cli.controller import Controller
@@ -130,7 +133,7 @@ class FakeRuntime:
         config: LocalCloudConfig,
         runtime: RuntimeRecord,
     ) -> bool:
-        expected = set(range(5365, 5377))
+        expected = set(range(5365, 5376))
         if config.tls_enabled:
             expected.update((config.tls_port, 5380, 5381, 5382))
         return all(
@@ -481,7 +484,7 @@ def _record(
         published_ports=published_ports
         or {
             f"{port}/tcp": (("127.0.0.1", port),)
-            for port in range(5365, 5377)
+            for port in range(5365, 5376)
         },
     )
 
@@ -870,7 +873,7 @@ def test_start_waits_for_running_same_volume_container_without_restart(
         },
         published_ports={
             f"{port}/tcp": (("127.0.0.1", 5508 + offset),)
-            for offset, port in enumerate(range(5365, 5377))
+            for offset, port in enumerate(range(5365, 5376))
         },
     )
     runtime.ready = False
@@ -1061,7 +1064,7 @@ def test_restart_replaces_managed_runtime_with_noncanonical_ports(
         config,
         published_ports={
             f"{port}/tcp": (("127.0.0.1", 5508 + offset),)
-            for offset, port in enumerate(range(5365, 5377))
+            for offset, port in enumerate(range(5365, 5376))
         },
     )
 
@@ -1081,7 +1084,7 @@ def test_restart_requires_confirmation_before_alternative_port_replacement(
     config = _config(tmp_path, paths=paths)
     alternative_ports = {
         f"{port}/tcp": (("127.0.0.1", 5508 + offset),)
-        for offset, port in enumerate(range(5365, 5377))
+        for offset, port in enumerate(range(5365, 5376))
     }
     runtime.record = _record(config, published_ports=alternative_ports)
     runtime.planned_ports = alternative_ports
@@ -1107,7 +1110,7 @@ def test_start_requires_confirmation_before_alternative_port_create(
     config = _config(tmp_path, paths=paths)
     runtime.planned_ports = {
         f"{port}/tcp": (("127.0.0.1", 5508 + offset),)
-        for offset, port in enumerate(range(5365, 5377))
+        for offset, port in enumerate(range(5365, 5376))
     }
 
     with pytest.raises(HostError) as caught:
@@ -1124,7 +1127,7 @@ def test_restart_declined_alternative_mapping_does_not_mutate_docker(
     config = _config(tmp_path, paths=paths)
     alternative_ports = {
         f"{port}/tcp": (("127.0.0.1", 5508 + offset),)
-        for offset, port in enumerate(range(5365, 5377))
+        for offset, port in enumerate(range(5365, 5376))
     }
     runtime.record = _record(config, published_ports=alternative_ports)
     runtime.planned_ports = alternative_ports
@@ -1144,7 +1147,7 @@ def test_restart_dry_run_prints_alternative_mapping_without_confirmation(
     config = _config(tmp_path, paths=paths)
     alternative_ports = {
         f"{port}/tcp": (("127.0.0.1", 5508 + offset),)
-        for offset, port in enumerate(range(5365, 5377))
+        for offset, port in enumerate(range(5365, 5376))
     }
     runtime.record = _record(config, published_ports=alternative_ports)
     runtime.planned_ports = alternative_ports
@@ -1158,7 +1161,7 @@ def test_restart_dry_run_prints_alternative_mapping_without_confirmation(
     )
 
     assert isinstance(result, str)
-    assert "127.0.0.1:5508-5519:5365-5376/tcp" in result
+    assert "127.0.0.1:5508-5518:5365-5375/tcp" in result
     assert runtime.removes == []
     assert runtime.creates == 0
 
@@ -1168,7 +1171,7 @@ def test_restart_accepts_confirmed_alternative_mapping(tmp_path: Path) -> None:
     config = _config(tmp_path, paths=paths)
     alternative_ports = {
         f"{port}/tcp": (("127.0.0.1", 5508 + offset),)
-        for offset, port in enumerate(range(5365, 5377))
+        for offset, port in enumerate(range(5365, 5376))
     }
     runtime.record = _record(config, published_ports=alternative_ports)
     runtime.planned_ports = alternative_ports
@@ -1643,6 +1646,26 @@ def test_doctor_reports_malformed_active_state_without_failing(
     assert result["active_runtime"] is None
     assert result["active_runtime_diagnostics"][0]["code"] == "invalid_active_runtime"
     assert "malformed" in result["warning"]
+
+
+def test_doctor_reports_stale_active_state_warning(tmp_path: Path) -> None:
+    controller, _runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+    active = ActiveRuntime(
+        schema_version=ACTIVE_RUNTIME_SCHEMA_VERSION,
+        data_volume="default",
+        image="jaysen2apache/localcloud:latest",
+        container_id="c" * 12,
+        container_name="localcloud-default",
+        network_name="localcloud-default",
+    )
+    save_active_runtime(paths, active)
+
+    result = controller.doctor()
+
+    assert result["status"] == "ok"
+    assert result["active_runtime"]["state"] == "stale"
+    assert "Last active container info is stale at ~/.localcloud/active.json" in result["warning"]
 
 
 def _seed_cleanup_state(paths: HostPaths, runtime: FakeRuntime) -> None:

@@ -207,7 +207,7 @@ file appear as read-only `-v` bind mounts.
 Use `--debug` for diagnostics on stderr. For a selected or planned runtime,
 debug output includes one shell-quoted `docker run` command that can be copied
 and executed. Contiguous one-to-one published ports use Docker range syntax,
-for example `-p 127.0.0.1:5365-5376:5365-5376/tcp`, instead of one flag
+for example `-p 127.0.0.1:5365-5375:5365-5375/tcp`, instead of one flag
 per port. Dry-run plans remain on stdout and can be redirected independently.
 
 Lifecycle commands derive bindings from the LocalCloud configuration rather

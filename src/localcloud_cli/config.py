@@ -45,15 +45,18 @@ CONFIG_FIELDS = {
     "host",
     "tls",
     "mcp",
+    "updater",
     "server",
     "services",
     "infrastructure",
+    "observability",
 }
 CONTEXT_FIELDS = {"project", "user"}
 TLS_FIELDS = {"enabled", "port", "certificate", "private_key"}
 MCP_FIELDS = {"write", "destructive", "allow_remote"}
 HOST_CONFIG_FIELDS = {
     "data_volume",
+    "backup_dir",
     "seed",
     "data",
     "image",

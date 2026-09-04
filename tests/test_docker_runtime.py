@@ -183,7 +183,7 @@ class Image:
             else {}
         )
         default_exposed = {
-            **{f"{port}/tcp": {} for port in range(5365, 5377)},
+            **{f"{port}/tcp": {} for port in range(5365, 5376)},
             "5378/udp": {},
             "5379/tcp": {},
             "5380/tcp": {},
@@ -733,7 +733,7 @@ def test_port_probe_rejects_occupied_tcp_port() -> None:
 
 
 def test_canonical_and_fallback_port_contract_is_exact() -> None:
-    assert runtime_module._BASE_TCP_PORTS == tuple(range(5365, 5377))
+    assert runtime_module._BASE_TCP_PORTS == tuple(range(5365, 5376))
     assert runtime_module._DEDICATED_TLS_PORTS == (5380, 5381, 5382)
     assert runtime_module._DNS_PORT == 5378
     assert runtime_module._FALLBACK_TCP_PORT_RANGES == (
@@ -741,6 +741,7 @@ def test_canonical_and_fallback_port_contract_is_exact() -> None:
         range(5821, 5841),
         range(5322, 5343),
     )
+    assert "5376/tcp" not in runtime_module._IMAGE_PORT_CAPABILITIES
     assert "5377/tcp" not in runtime_module._IMAGE_PORT_CAPABILITIES
 
 
@@ -805,16 +806,16 @@ def test_occupied_canonical_port_selects_exact_alternative_complete_set(
 
     bindings = runtime._port_bindings(config)
 
-    assert set(bindings) == {f"{port}/tcp" for port in range(5365, 5377)}
+    assert set(bindings) == {f"{port}/tcp" for port in range(5365, 5376)}
     assert bindings == {
         f"{container_port}/tcp": (("127.0.0.1", 5508 + offset),)
-        for offset, container_port in enumerate(range(5365, 5377))
+        for offset, container_port in enumerate(range(5365, 5376))
     }
 
     plan = runtime.plan_run(config, object())
     assert plan.alternative_port_mappings() == tuple(
         ("127.0.0.1", 5508 + offset, container_port, "tcp")
-        for offset, container_port in enumerate(range(5365, 5377))
+        for offset, container_port in enumerate(range(5365, 5376))
     )
 
 
@@ -834,7 +835,8 @@ def test_alternative_port_selection_skips_incomplete_blocks(
     bindings = runtime._port_bindings(config)
 
     assert bindings["5365/tcp"] == (("127.0.0.1", 5511),)
-    assert bindings["5376/tcp"] == (("127.0.0.1", 5522),)
+    assert bindings["5375/tcp"] == (("127.0.0.1", 5521),)
+    assert "5376/tcp" not in bindings
 
 
 @pytest.mark.parametrize(
@@ -864,7 +866,8 @@ def test_alternative_port_selection_spills_to_next_ordered_range(
     bindings = runtime._port_bindings(config)
 
     assert bindings["5365/tcp"] == (("127.0.0.1", expected_start),)
-    assert bindings["5376/tcp"] == (("127.0.0.1", expected_start + 11),)
+    assert bindings["5375/tcp"] == (("127.0.0.1", expected_start + 10),)
+    assert "5376/tcp" not in bindings
 
 
 def test_alternative_port_selection_never_leaves_allowlisted_ranges(
@@ -907,10 +910,11 @@ def test_tls_alternative_mapping_uses_one_complete_allowlisted_block(
 
     bindings = runtime._port_bindings(config)
 
-    assert len(bindings) == 16
+    assert len(bindings) == 15
+    assert "5376/tcp" not in bindings
     assert "5377/tcp" not in bindings
     assert bindings["5365/tcp"] == (("127.0.0.1", 5508),)
-    assert bindings["5382/tcp"] == (("127.0.0.1", 5523),)
+    assert bindings["5382/tcp"] == (("127.0.0.1", 5522),)
 
 
 def test_alternative_mapping_displays_every_binding_when_one_is_numerically_canonical(
@@ -920,7 +924,7 @@ def test_alternative_mapping_displays_every_binding_when_one_is_numerically_cano
     runtime = DockerRuntime(client=Client())
     config = _write_config(
         tmp_path,
-        "tls:\n  enabled: true\n  port: 5523\n",
+        "tls:\n  enabled: true\n  port: 5522\n",
     )
     monkeypatch.setattr(
         runtime_module,
@@ -931,8 +935,8 @@ def test_alternative_mapping_displays_every_binding_when_one_is_numerically_cano
     plan = runtime.plan_run(config, object())
     mappings = plan.alternative_port_mappings()
 
-    assert len(mappings) == 16
-    assert ("127.0.0.1", 5523, 5523, "tcp") in mappings
+    assert len(mappings) == 15
+    assert ("127.0.0.1", 5522, 5522, "tcp") in mappings
 
 
 def test_tls_bindings_use_configured_gateway_and_dedicated_ports(
@@ -2272,7 +2276,7 @@ def test_format_docker_run_collapses_contiguous_port_ranges() -> None:
     from localcloud_cli.docker_runtime import _format_docker_run
 
     ports = {
-        f"{port}/tcp": ("127.0.0.1", port) for port in range(5365, 5377)
+        f"{port}/tcp": ("127.0.0.1", port) for port in range(5365, 5376)
     }
     ports["5379/tcp"] = ("127.0.0.1", 5379)
 
@@ -2286,7 +2290,7 @@ def test_format_docker_run_collapses_contiguous_port_ranges() -> None:
         environment=None,
         labels=None,
     )
-    assert "-p 127.0.0.1:5365-5376:5365-5376/tcp" in cmd
+    assert "-p 127.0.0.1:5365-5375:5365-5375/tcp" in cmd
     assert "-p 127.0.0.1:5379:5379/tcp" in cmd
     assert "5366/tcp" not in cmd
     assert cmd.count("-p ") == 2
@@ -2362,7 +2366,7 @@ def test_run_plan_is_shared_by_preview_and_sdk_execution(
         "image": plan.image,
         **plan.run_kwargs(),
     }
-    assert "-p 127.0.0.1:5365-5376:5365-5376/tcp" in plan.command()
+    assert "-p 127.0.0.1:5365-5375:5365-5375/tcp" in plan.command()
 
 
 def test_resolve_falls_back_to_configured_ports_for_stopped_container(
@@ -2530,7 +2534,7 @@ def test_inspected_run_plan_is_copyable_and_collapses_port_ranges(
     assert "--network localcloud" in command
     assert "-m 4g" in command
     assert "-v localcloud-data:/var/lib/localcloud" in command
-    assert "-p 127.0.0.1:5365-5376:5365-5376/tcp" in command
+    assert "-p 127.0.0.1:5365-5375:5365-5375/tcp" in command
     assert "-e LOCALCLOUD_DOCKER_ACCESS=auto" in command
     assert " -l " not in command
     assert command.endswith(config.image)

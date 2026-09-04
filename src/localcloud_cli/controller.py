@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 import shlex
+import shutil
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -1003,6 +1004,11 @@ class Controller:
         legacy_host_state, legacy_locks = self._legacy_host_state()
         result["legacy_host_state"] = legacy_host_state
         result["cli_version"] = __version__
+        if "docker_command_path" not in result or result["docker_command_path"] is None:
+            docker_cmd = shutil.which("docker")
+            result["docker_command_path"] = docker_cmd
+            result["docker_path"] = docker_cmd
+            result["docker_command"] = docker_cmd
         image_details = self.runtime.image_details(DEFAULT_IMAGE)
         result["default_image"] = f"{DEFAULT_IMAGE} {image_details['formatted']}"
         result["image_details"] = image_details
@@ -1014,7 +1020,7 @@ class Controller:
             )
         if active_status is not None and active_status["state"] != "current":
             warnings.append(
-                "The active runtime record is stale or invalid; Docker state will be revalidated before use."
+                "Last active container info is stale at ~/.localcloud/active.json"
             )
         if legacy_host_state or legacy_locks:
             warnings.append(

@@ -62,7 +62,7 @@ class FakeController:
         if observer is not None and hasattr(observer, "debug"):
             observer.debug(
                 "docker run -d --name localcloud "
-                "-p 127.0.0.1:5365-5376:5365-5376/tcp "
+                "-p 127.0.0.1:5365-5375:5365-5375/tcp "
                 "jaysen2apache/localcloud:latest"
             )
         if dry_run:
@@ -91,7 +91,7 @@ class FakeController:
         if observer is not None and hasattr(observer, "debug"):
             observer.debug(
                 "docker run -d --name localcloud "
-                "-p 127.0.0.1:5365-5376:5365-5376/tcp "
+                "-p 127.0.0.1:5365-5375:5365-5375/tcp "
                 "jaysen2apache/localcloud:latest"
             )
         if dry_run:
@@ -1647,7 +1647,7 @@ def test_main_start_debug_prints_copyable_ranged_docker_command(
     assert "[debug] Lifecycle action" not in captured.err
     assert "[debug] Published ports" not in captured.err
     assert "[debug] docker run -d --name localcloud" in captured.err
-    assert "5365-5376:5365-5376/tcp" in captured.err
+    assert "5365-5375:5365-5375/tcp" in captured.err
 
 
 def test_main_start_dry_run_prints_native_plan(
@@ -1678,3 +1678,12 @@ def test_main_start_when_already_running_reports_guidance_and_skips_panel(
     captured = capsys.readouterr()
     assert "LocalCloud runtime is already running" in captured.err
     assert "LocalCloud v" not in captured.err
+
+
+def test_main_doctor_success_message(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert main(["doctor"]) == 0
+    captured = capsys.readouterr()
+    assert "LocalCloud is ready to start" in captured.err
