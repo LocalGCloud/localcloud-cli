@@ -402,12 +402,8 @@ class Controller:
                 status = "restarted"
             else:
                 requires_reconfig = self._requires_managed_replacement(current, config)
-                if (
-                    effective_pull
-                    or requires_reconfig
-                    or image_changed
-                    or port_layout_changed
-                ):
+                is_managed = current.ownership.get("container") == "managed"
+                if is_managed:
                     prepared_image = self.runtime.preflight_create(
                         config,
                         current,
@@ -415,27 +411,19 @@ class Controller:
                         observer=observer,
                         local_only=dry_run,
                     )
-                was_pulled = (
-                    prepared_image[1] if prepared_image is not None else False
-                )
-                new_image_id = (
-                    getattr(prepared_image[0], "id", None)
-                    if prepared_image is not None
-                    else None
-                )
-                image_id_differs = image_changed or bool(
-                    current.ownership.get("container") == "managed"
-                    and current.image_id
-                    and new_image_id
-                    and current.image_id != new_image_id
-                )
-                is_managed = current.ownership.get("container") == "managed"
-                if is_managed and (
-                    was_pulled
-                    or requires_reconfig
-                    or image_id_differs
-                    or port_layout_changed
-                ):
+                    was_pulled = (
+                        prepared_image[1] if prepared_image is not None else False
+                    )
+                    new_image_id = (
+                        getattr(prepared_image[0], "id", None)
+                        if prepared_image is not None
+                        else None
+                    )
+                    image_id_differs = image_changed or bool(
+                        current.image_id
+                        and new_image_id
+                        and current.image_id != new_image_id
+                    )
                     action = "replace"
                     reason = (
                         "managed runtime configuration changed"
@@ -446,7 +434,7 @@ class Controller:
                         if was_pulled
                         else "the managed runtime uses noncanonical host ports"
                         if port_layout_changed
-                        else "managed runtime configuration changed"
+                        else "restart recreates the managed runtime with the current image"
                     )
                     _validate_replacement(current, config)
                     changed_fields = _changed_fields(current, config)
@@ -485,7 +473,7 @@ class Controller:
                     )
                 else:
                     action = "restart"
-                    reason = "the selected container is conforming"
+                    reason = "the selected container is attached and cannot be replaced"
                     target = current.name or current.container_id or config.container_name
                     commands = (
                         shlex.join(["docker", "restart", "-t", "20", target]),

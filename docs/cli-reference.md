@@ -4,6 +4,22 @@
 
 ## Commands
 
+### `update`
+
+```bash
+localcloud update
+# Equivalent: lc update
+```
+
+Updates the CLI to the latest release through its original installation channel.
+Script installations reuse `https://local.cloud/install.sh`, preserving their
+installation directory and shell configuration. Homebrew installations run
+`brew upgrade localcloud`. Source and manual installations receive instructions
+for updating through their original installation method.
+
+This command does not require Docker or change containers, volumes, or runtime
+configuration. It streams installer/Homebrew output and returns their exit status.
+
 ### `start`
 
 Starts the container runtime on the selected data volume and initializes the project context.
@@ -71,8 +87,9 @@ eval "$(lc env)"
 # Output a JSON payload
 lc env --format json
 
-# Generate Terraform/OpenTofu provider endpoint configuration
-lc env --format terraform
+# Export Terraform/OpenTofu provider endpoint variables into the current shell.
+# The output is shell, not HCL - eval it, do not redirect it into a .tf file.
+eval "$(lc env --format terraform)"
 
 # Generate Docker Compose environment variables
 lc env --format docker-compose
@@ -98,14 +115,14 @@ lc logs --tail 500
 
 ### `restart`
 
-Restarts the LocalCloud runtime and reapplies volatile seed data without deleting persistent volume state.
+Stops the running container and starts with the image (preserving persistent volume state and reapplying volatile seed data). Unlike `start`, `restart` does not check the remote registry by default (`--no-pull`), using the currently available local image (e.g. `latest`).
 
 ```sh
-# Smart restart with remote image check (default: --pull)
+# Restart container using the currently available image (default: --no-pull)
 lc restart
 
-# Fast in-place restart without checking the remote registry
-lc restart --no-pull
+# Check for a newer image on the remote registry before restarting
+lc restart --pull
 
 # Restart with TLS
 lc restart --tls
@@ -277,7 +294,7 @@ Example result:
   "container": {
     "name": "localcloud",
     "state": "running",
-    "url": "http://127.0.0.1:49080"
+    "url": "http://127.0.0.1:5365"
   },
   "services": ["gcs", "pubsub"]
 }

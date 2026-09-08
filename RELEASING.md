@@ -52,15 +52,13 @@ the field.
 
 In `LocalGCloud/localcloud-cli`:
 
-1. Set `__version__` in `src/localcloud_cli/__init__.py` to the release version.
-2. Update `uv.lock` if package metadata or dependencies changed.
-3. Regenerate `THIRD_PARTY_NOTICES` when locked dependencies changed.
-4. Review, commit, and push the prepared source to `main`.
+1. Update `uv.lock` if package metadata or dependencies changed.
+2. Regenerate `THIRD_PARTY_NOTICES` when locked dependencies changed.
+3. Ensure your local branch is `main` and up to date with `origin/main`.
 
-Release automation never edits or commits tracked files. It requires `main`
-whose `HEAD` already equals `origin/main`. A dirty working tree is listed with
-a warning and requires explicit `yes` confirmation; those local changes are
-not included in the published release.
+Note: You do not need to manually edit `__version__` in `src/localcloud_cli/__init__.py`. Running `./scripts/release.sh --release VERSION` will automatically update the version in `src/localcloud_cli/__init__.py`, commit the change (`chore(release): bump version to VERSION`), and push it to `origin/main` before running tests and tagging.
+
+A dirty working tree is listed with a warning and requires explicit `yes` confirmation; those local changes are not included in the published release.
 
 To build and smoke-test a pre-extracted one-folder bundle for the current host
 without publishing anything:
@@ -102,6 +100,7 @@ signs every asset before the workflow deletes and recreates the GitHub release.
 
 The script:
 
+- automatically updates `__version__` in `src/localcloud_cli/__init__.py`, commits, and pushes to `origin/main` if the version does not already match `VERSION`;
 - validates the branch, remote revision, committed version, lockfile, and
   notices;
 - warns and asks for confirmation when the local working tree is dirty;

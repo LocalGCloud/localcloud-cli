@@ -1039,7 +1039,7 @@ def test_restart_with_pull_replaces_runtime_and_requests_image_pull(
     assert runtime.restarts == 0
 
 
-def test_restart_without_pull_restarts_existing_container(
+def test_restart_without_pull_replaces_runtime_without_image_pull(
     tmp_path: Path,
 ) -> None:
     controller, runtime, paths = _controller(tmp_path)
@@ -1049,10 +1049,26 @@ def test_restart_without_pull_restarts_existing_container(
     result = controller.restart(config, pull=False)
 
     assert result["status"] == "restarted"
-    assert runtime.preflight_pulls == []
-    assert runtime.removes == []
-    assert runtime.creates == 0
-    assert runtime.restarts == 1
+    assert runtime.preflight_pulls == [False]
+    assert runtime.removes == [False]
+    assert runtime.creates == 1
+    assert runtime.restarts == 0
+
+
+def test_restart_defaults_to_replacing_runtime_without_image_pull(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+
+    result = controller.restart(config)
+
+    assert result["status"] == "restarted"
+    assert runtime.preflight_pulls == [False]
+    assert runtime.removes == [False]
+    assert runtime.creates == 1
+    assert runtime.restarts == 0
 
 
 def test_restart_replaces_managed_runtime_with_noncanonical_ports(

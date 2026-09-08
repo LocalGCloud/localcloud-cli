@@ -246,7 +246,8 @@ case " $* " in
 #!/bin/sh
 printf 'binary %s\\n' "$*" >> "$COMMAND_LOG"
 if [ "${1:-}" = "--version" ]; then
-    printf 'localcloud %s\n' "${CLI_VERSION:-0.1.0}"
+    version=$(git show HEAD:src/localcloud_cli/__init__.py 2>/dev/null | grep -m 1 '__version__' | cut -d '"' -f 2)
+    printf 'localcloud %s\n' "${version:-${CLI_VERSION:-0.1.0}}"
 fi
 EOF
         chmod +x dist/localcloud-runtime/localcloud
@@ -504,13 +505,42 @@ def test_release_requires_head_at_origin_main(tmp_path: Path) -> None:
     assert_no_release_mutation(command_log)
 
 
-def test_release_requires_matching_source_version(tmp_path: Path) -> None:
+def test_release_automatically_bumps_source_version(tmp_path: Path) -> None:
     script, env, command_log = release_project(tmp_path, source_version="1.2.2")
+    project = script.parents[1]
+
+    result = run_script("--release", "1.2.3", script=script, cwd=tmp_path, env=env)
+
+    assert result.returncode == 0, result.stderr
+    init_content = (project / "src" / "localcloud_cli" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    assert '__version__ = "1.2.3"' in init_content
+    head = git(project, "rev-parse", "HEAD").stdout.strip()
+    origin = git(project, "remote", "get-url", "origin").stdout.strip()
+    remote_head = subprocess.run(
+        ["git", "--git-dir", origin, "rev-parse", "main^{}"],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    assert head == remote_head
+    assert git(project, "rev-parse", "v1.2.3^{}").stdout.strip() == head
+    commit_msg = git(project, "log", "-1", "--pretty=%s").stdout.strip()
+    assert commit_msg == "chore(release): bump version to 1.2.3"
+
+
+def test_release_fails_if_init_py_has_uncommitted_changes(tmp_path: Path) -> None:
+    script, env, command_log = release_project(tmp_path, source_version="1.2.2")
+    project = script.parents[1]
+    (project / "src" / "localcloud_cli" / "__init__.py").write_text(
+        '__version__ = "1.2.2-dirty"\n', encoding="utf-8"
+    )
 
     result = run_script("--release", "1.2.3", script=script, cwd=tmp_path, env=env)
 
     assert result.returncode == 1
-    assert "source version 1.2.2 does not match 1.2.3" in result.stderr
+    assert "src/localcloud_cli/__init__.py has uncommitted changes" in result.stderr
     assert_no_release_mutation(command_log)
 
 

@@ -66,24 +66,40 @@ func main() {
 
 ## Terraform and OpenTofu
 
-Generate provider endpoint bindings:
+`--format terraform` emits shell `export` statements for the `GOOGLE_*_CUSTOM_ENDPOINT`
+variables that the Google provider reads. Evaluate them into the shell that runs
+`terraform` or `tofu`; do not redirect them into a `.tf` file, because the output is
+shell, not HCL.
 
 ```sh
-lc env --format terraform > localcloud.tf
+eval "$(lc env --format terraform)"
+terraform apply
 ```
 
-The generated providers point Google Cloud resources to LocalCloud loopback ports:
+The exported variables point Google Cloud resources at LocalCloud loopback ports:
 
-```hcl
-provider "google" {
-  project      = "local-gcp-project"
-  access_token = "localcloud-emulator-token"
-
-  storage_custom_endpoint   = "http://127.0.0.1:49080/storage/v1/"
-  pubsub_custom_endpoint    = "http://127.0.0.1:49085/"
-  firestore_custom_endpoint = "http://127.0.0.1:49084/"
-}
+```sh
+export GOOGLE_STORAGE_CUSTOM_ENDPOINT="http://127.0.0.1:5366/storage/v1/"
+export GOOGLE_BIGTABLE_CUSTOM_ENDPOINT="http://127.0.0.1:5369/"
+export GOOGLE_SPANNER_CUSTOM_ENDPOINT="http://127.0.0.1:5371/v1/"
+export GOOGLE_BIGQUERY_CUSTOM_ENDPOINT="http://127.0.0.1:5372/"
+export GOOGLE_SECRET_MANAGER_CUSTOM_ENDPOINT="http://127.0.0.1:5365/v1/"
+export GOOGLE_IAM_CUSTOM_ENDPOINT="http://127.0.0.1:5365/v1/"
+export GOOGLE_KMS_CUSTOM_ENDPOINT="http://127.0.0.1:5365/v1/"
+export GOOGLE_PROJECT="local-gcp-project"
+export GOOGLE_OAUTH_ACCESS_TOKEN="localcloud-user.…"
+export GOOGLE_OAUTH_CUSTOM_ENDPOINT="http://127.0.0.1:5365/oauth2/"
+export GOOGLE_APPLICATION_CREDENTIALS="/dev/null"
+# …one entry per enabled service
 ```
+
+Ports are the ones the selected runtime actually publishes. A runtime that had to
+fall back to an alternative host-port mapping emits those ports instead, so always
+regenerate rather than hard-coding values.
+
+The Google provider reads all of these from the environment — project, credentials,
+and per-service endpoints — so the provider block needs no LocalCloud-specific
+arguments of its own.
 
 ## AI Coding Agents and MCP
 

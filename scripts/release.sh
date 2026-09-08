@@ -460,7 +460,6 @@ release_version() {
     remote_commit=$(git rev-parse "$SOURCE_REMOTE/$SOURCE_BRANCH")
     [ "$head_commit" = "$remote_commit" ] ||
         fail "HEAD must equal $SOURCE_REMOTE/$SOURCE_BRANCH before release"
-    confirm_release_tree_state "$head_commit"
 
     committed_version_source=$(
         git show "$head_commit:src/localcloud_cli/__init__.py"
@@ -471,6 +470,41 @@ release_version() {
     )
     [ -n "$source_version" ] ||
         fail "source version is missing from release commit $head_commit"
+
+    if [ "$source_version" != "$VERSION" ]; then
+        stage "Automatically bump version to $VERSION in src/localcloud_cli/__init__.py"
+        if ! git diff --quiet -- src/localcloud_cli/__init__.py || \
+            ! git diff --cached --quiet -- src/localcloud_cli/__init__.py; then
+            fail "src/localcloud_cli/__init__.py has uncommitted changes; commit or stash them first"
+        fi
+        python_runner="python3"
+        if ! command -v python3 >/dev/null 2>&1; then
+            python_runner="python"
+        fi
+        "$python_runner" -c "
+from pathlib import Path
+import re
+p = Path('src/localcloud_cli/__init__.py')
+content = p.read_text(encoding='utf-8')
+new_content, count = re.subn(
+    r'^__version__ = \"[^\"]*\"',
+    f'__version__ = \"$VERSION\"',
+    content,
+    flags=re.MULTILINE,
+)
+if count != 1:
+    raise SystemExit('failed to update __version__ in src/localcloud_cli/__init__.py')
+p.write_text(new_content, encoding='utf-8')
+"
+        git add src/localcloud_cli/__init__.py
+        git commit -m "chore(release): bump version to $VERSION"
+        git push "$SOURCE_REMOTE" "$SOURCE_BRANCH"
+        head_commit=$(git rev-parse HEAD)
+        remote_commit=$(git rev-parse "$SOURCE_REMOTE/$SOURCE_BRANCH")
+        source_version=$VERSION
+    fi
+
+    confirm_release_tree_state "$head_commit"
     [ "$source_version" = "$VERSION" ] ||
         fail "source version $source_version does not match $VERSION"
 

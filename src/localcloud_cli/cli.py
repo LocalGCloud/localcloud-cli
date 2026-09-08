@@ -385,6 +385,10 @@ def main(argv: list[str] | None = None) -> int:
     if reports_progress:
         reporter.start(_initial_task(args))
     try:
+        if args.command == "update":
+            from .update import update
+
+            update()
         result = _execute(args, observer=_ExecutionObserver(reporter, debug=debug))
         failure_message = _result_failure_message(args, result)
         if reports_progress:
@@ -800,6 +804,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser(
+        "update",
+        help="Update the CLI to the latest release",
+        description=(
+            "Update the CLI through its script installer or Homebrew. "
+            "Containers, volumes, and runtime configuration are unchanged."
+        ),
+    )
+    commands.add_parser(
         "guide",
         help="Print guidance for coding agents using LocalCloud",
         description="Print guidance for coding agents using LocalCloud.",
@@ -882,11 +894,11 @@ def _parser() -> argparse.ArgumentParser:
             command.add_argument(
                 "--pull",
                 action=_SmartPullAction,
-                default=True,
+                default=(name == "start"),
                 help=(
                     "Check for a newer image on the registry and pull if available before running (default: --pull)"
                     if name == "start"
-                    else "Check for a newer image on the registry and pull if available before restarting (default: --pull)"
+                    else "Check for a newer image on the registry and pull if available before restarting (default: --no-pull)"
                 ),
             )
             command.add_argument(

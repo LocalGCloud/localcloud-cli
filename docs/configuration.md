@@ -65,35 +65,38 @@ If the CLI's host or context checks disagree with what a newer LocalCloud image 
 
 ## Available Services
 
-| Service ID | Google Cloud service | Default status |
-| :--- | :--- | :--- |
-| `gcs` | Cloud Storage | Enabled |
-| `pubsub` | Pub/Sub | Enabled |
-| `firestore` | Firestore | Disabled |
-| `bigtable` | Bigtable | Enabled |
-| `spanner` | Spanner | Enabled |
-| `bigquery` | BigQuery | Enabled |
-| `sheets` | Google Sheets | Enabled |
-| `secretmanager` | Secret Manager | Enabled |
-| `cloudtasks` | Cloud Tasks | Enabled |
-| `cloudscheduler` | Cloud Scheduler | Enabled |
-| `cloudfunctions` | Cloud Functions (2nd Gen) | Enabled |
-| `alloydb` | AlloyDB | Enabled |
-| `dataproc` | Dataproc | Enabled |
-| `cloudiam` | Cloud IAM | Enabled |
-| `cloudresourcemanager` | Cloud Resource Manager | Enabled |
-| `serviceusage` | Service Usage | Enabled |
-| `cloudbilling` | Cloud Billing | Enabled |
-| `logging` | Cloud Logging | Enabled |
-| `monitoring` | Cloud Monitoring | Enabled |
-| `gke` | GKE | Disabled |
-| `compute` | Compute Engine | Disabled |
-| `cloudrun` | Cloud Run | Disabled |
-| `memorystore` | Memorystore (Redis/Valkey) | Enabled |
-| `workflows` | Cloud Workflows | Enabled |
-| `vertexai` | Vertex AI | Disabled |
-| `kms` | Cloud KMS | Disabled |
-| `cloudsql` | Cloud SQL | Enabled |
+The catalog ships **27 services**, 22 of them enabled by default. Tier gating is
+enforced by the container at startup, not by the CLI.
+
+| Service ID | Google Cloud service | Default | Tier |
+| :--- | :--- | :--- | :--- |
+| `gcs` | Cloud Storage | Enabled | Community |
+| `pubsub` | Pub/Sub | Enabled | Community |
+| `firestore` | Firestore | Disabled | Community |
+| `bigtable` | Bigtable | Enabled | Pro |
+| `spanner` | Spanner | Enabled | Pro |
+| `bigquery` | BigQuery | Enabled | Community |
+| `sheets` | Google Sheets | Enabled | Community |
+| `secretmanager` | Secret Manager | Enabled | Community |
+| `cloudtasks` | Cloud Tasks | Enabled | Community |
+| `cloudscheduler` | Cloud Scheduler | Enabled | Community |
+| `cloudfunctions` | Cloud Functions (2nd Gen) | Enabled | Community |
+| `alloydb` | AlloyDB | Enabled | Community |
+| `dataproc` | Dataproc | Enabled | Community |
+| `cloudiam` | Cloud IAM | Enabled | Community |
+| `cloudresourcemanager` | Cloud Resource Manager | Enabled | Community |
+| `serviceusage` | Service Usage | Enabled | Community |
+| `cloudbilling` | Cloud Billing | Enabled | Community |
+| `logging` | Cloud Logging | Enabled | Community |
+| `monitoring` | Cloud Monitoring | Enabled | Community |
+| `gke` | GKE | Disabled | Pro |
+| `compute` | Compute Engine | Disabled | Pro |
+| `cloudrun` | Cloud Run | Disabled | Pro |
+| `memorystore` | Memorystore (Redis/Valkey) | Enabled | Community |
+| `workflows` | Cloud Workflows | Enabled | Community |
+| `vertexai` | Vertex AI | Disabled | Pro |
+| `kms` | Cloud KMS | Enabled | Pro |
+| `cloudsql` | Cloud SQL | Enabled | Community |
 
 ## Runtime Identity and Multi-Project Context
 
@@ -101,7 +104,10 @@ LocalCloud separates durable container storage from logical Google Cloud project
 
 ### Data volumes (`--data-volume`)
 
-A named Docker volume provides durable identity. The default `localcloud-data` volume is mounted at `/var/lib/localcloud`. Multiple isolated environments can run concurrently on dynamic loopback ports:
+A named Docker volume provides durable identity. The default `localcloud-data` volume is mounted at `/var/lib/localcloud`. Multiple isolated environments can run concurrently. Only one runtime can hold the
+canonical `5365-5375` range, so additional runtimes are offered a contiguous
+alternative from `5508-5539`, then `5821-5840`, then `5322-5342`. Always read the
+actual ports from `lc env` or `lc status` rather than assuming them:
 
 ```sh
 lc start --data-volume test-e2e
