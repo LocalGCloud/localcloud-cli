@@ -7,7 +7,7 @@
 27 Google Cloud–compatible services in one Docker container, driven from your terminal.
 No billing account, no credentials, no network round trip.
 
-[![Version](https://img.shields.io/badge/version-0.1.3-4285F4?style=flat-square)](https://github.com/LocalGCloud/localcloud-cli/releases)
+[![Version](https://img.shields.io/badge/version-0.1.4-4285F4?style=flat-square)](https://github.com/LocalGCloud/localcloud-cli/releases)
 [![CLI](https://img.shields.io/badge/CLI-localcloud%20%7C%20lc-34A853?style=flat-square)](https://local.cloud)
 [![Runtime](https://img.shields.io/badge/runtime-Docker-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com)
 [![Protocol](https://img.shields.io/badge/protocol-MCP-FBBC04?style=flat-square)](https://modelcontextprotocol.io)
@@ -27,7 +27,7 @@ libraries it already uses, just pointed at loopback.
 
 ```console
 $ lc doctor
-╭── LocalCloud v0.1.3 ───────────────────────────────────────────────────────────────────────╮
+╭── LocalCloud v0.1.4 ───────────────────────────────────────────────────────────────────────╮
 │                            │ Top commands                                                  │
 │ Checking LocalCloud setup  │  localcloud (or lc)    status | start | stop | restart        │
 │                            │  eval $(lc env)        Exports env vars that redirect cloud s…│
@@ -105,6 +105,16 @@ brew upgrade localcloud     # upgrade
 brew uninstall localcloud   # remove
 ```
 
+### Upgrading
+
+Update the CLI to the latest release:
+
+```sh
+lc update
+```
+
+`lc update` detects how LocalCloud was installed (script installer or Homebrew) and upgrades the CLI in place. For Homebrew, `brew upgrade localcloud` also works.
+
 ### Standalone binaries
 
 Signed release archives with Sigstore verification bundles are published for:
@@ -121,7 +131,7 @@ Windows users can run the container directly — see the
 
 ```console
 $ lc --version
-localcloud 0.1.3 (commit 0123456789ab, released 2026-08-31)
+localcloud 0.1.4 (commit 0123456789ab, released 2026-09-08)
 ```
 
 Release builds embed their exact source commit and release date, so a binary can always be traced back.
@@ -249,10 +259,11 @@ gcloud storage ls
 lc console   # open the web console for the selected project
 lc status    # runtime health, endpoints, and ownership
 lc logs      # recent runtime logs
+lc restart   # recreate runtime with current local image (--pull to check registry)
 lc stop      # stop the container; the data volume is untouched
 ```
 
-Your data survives `stop`. `lc start` brings it back exactly as it was.
+Your data survives `stop` and `restart`. `lc start` brings it back exactly as it was.
 
 ## How it works
 
@@ -375,7 +386,7 @@ lc start --services default
 | `lc env` | Generate SDK, Terraform, or Docker Compose configuration |
 | `lc console` | Open the web console for the selected project and user |
 | `lc logs` | Print recent runtime logs |
-| `lc restart` | Restart the runtime and reapply volatile seed data |
+| `lc restart` | Restart runtime with local image (default: `--no-pull`; `--pull` to check registry) |
 | `lc reset` | Reset the selected project (`--all-projects` prints manual recreate steps) |
 | `lc stop` | Stop the runtime without deleting persistent data |
 | `lc cleanup` | Remove malformed Docker resources, stale runtime state, and legacy files |
@@ -474,6 +485,13 @@ lc stop  --data-volume ci-$GITHUB_RUN_ID
 ```sh
 lc start --dry-run          # every planned Docker and LocalCloud mutation, in order
 lc restart --dry-run
+```
+
+**Restart with local image vs pull.** By default, `lc restart` recreates the container using the currently available local Docker image without checking the remote registry. Use `--pull` to check for and fetch newer remote images.
+
+```sh
+lc restart                  # fast restart with current local image (e.g. after building locally)
+lc restart --pull           # check registry, pull newest image if available, then recreate
 ```
 
 **Reset one project without losing the others.**

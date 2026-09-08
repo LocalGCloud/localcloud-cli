@@ -90,7 +90,7 @@ VERSION=0.1.0
 > [!WARNING]
 > **Published releases are immutable.** Never use `-f` to release new code under an already-published version tag.
 > Replacing GitHub release assets changes their SHA-256 checksums, which causes `brew install` to fail with a checksum mismatch for all Homebrew users who have cached the tap or downloads.
-> Always bump `__version__` in `src/localcloud_cli/__init__.py` to the next patch version (e.g. `0.1.3`) for new code or fixes.
+> Always bump `__version__` in `src/localcloud_cli/__init__.py` to the next patch version (e.g. `0.1.4`) for new code or fixes.
 
 Force mode retargets conflicting local and `origin` tags to the prepared release
 commit. It also repairs a matching lightweight tag as an annotated tag before
