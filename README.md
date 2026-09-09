@@ -173,8 +173,10 @@ Services      alloydb, bigquery, bigtable, cloudbilling, cloudfunctions, cloudia
 ```
 
 `start` checks the registry for a newer image by default (`--no-pull` to skip), publishes the canonical
-loopback ports, waits for service readiness, and tails logs for five seconds. Running it again on a live
-runtime is safe.
+ports on all host interfaces, waits for service readiness, and tails logs for five seconds.
+Use `lc start --local-only` to bind published ports to `127.0.0.1` instead.
+Pass `--local-only` on subsequent `start`, `restart`, and `reset` commands to keep that binding.
+Running `start` again on a live runtime is safe.
 
 ### 3. Configure your shell
 

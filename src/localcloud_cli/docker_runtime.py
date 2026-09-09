@@ -567,7 +567,15 @@ class DockerRuntime:
         if runtime.published_ports.keys() != expected.keys():
             return False
         return all(
-            sorted(runtime.published_ports[port]) == sorted(bindings)
+            {
+                (
+                    ""
+                    if not config.local_only and host_ip in {"0.0.0.0", "::"}
+                    else host_ip,
+                    host_port,
+                )
+                for host_ip, host_port in runtime.published_ports[port]
+            } == set(bindings)
             for port, bindings in expected.items()
         )
 
@@ -2132,18 +2140,19 @@ class DockerRuntime:
         allowed_ports: set[tuple[int, str]] | None = None,
     ) -> RequestedPorts:
         ordinary_ports = _ordinary_tcp_ports(config)
+        host_ip = "127.0.0.1" if config.local_only else ""
         allowed = allowed_ports or set()
         canonical_free = all(
-            _port_is_free(port) or (port, "tcp") in allowed
+            _port_is_free(port, socket.SOCK_STREAM, host_ip) or (port, "tcp") in allowed
             for port in ordinary_ports
         )
         host_ports = (
             ordinary_ports
             if canonical_free
-            else _available_tcp_port_block(len(ordinary_ports), allowed)
+            else _available_tcp_port_block(len(ordinary_ports), allowed, host_ip)
         )
         bindings: RequestedPorts = {
-            f"{container_port}/tcp": (("127.0.0.1", host_port),)
+            f"{container_port}/tcp": ((host_ip, host_port),)
             for container_port, host_port in zip(ordinary_ports, host_ports)
         }
         if not config.transparent_network:
@@ -2161,7 +2170,7 @@ class DockerRuntime:
         ):
             kind = socket.SOCK_DGRAM if protocol == "udp" else socket.SOCK_STREAM
             if (
-                not _port_is_free(host_port, kind)
+                not _port_is_free(host_port, kind, host_ip)
                 and (host_port, protocol) not in allowed
             ):
                 raise HostError(
@@ -2170,7 +2179,7 @@ class DockerRuntime:
                     {"port": host_port, "protocol": protocol},
                 )
             key = f"{container_port}/{protocol}"
-            bindings[key] = (*bindings.get(key, ()), ("127.0.0.1", host_port))
+            bindings[key] = (*bindings.get(key, ()), (host_ip, host_port))
         return bindings
 
     def _volume_for_create(
@@ -2681,10 +2690,13 @@ def _format_port_args(ports: Mapping[str, Any]) -> list[str]:
             port_num = int(port_text)
         except ValueError:
             for host_ip, host_port in requested:
+                host_prefix = (
+                    f"[{host_ip}]:" if ":" in host_ip else f"{host_ip}:" if host_ip else ""
+                )
                 spec = (
-                    f"{host_ip}:{host_port}:{container_port}"
+                    f"{host_prefix}{host_port}:{container_port}"
                     if host_port is not None
-                    else f"{host_ip}::{container_port}"
+                    else f"{host_prefix}:{container_port}"
                 )
                 literal.append(spec)
             continue
@@ -2706,17 +2718,20 @@ def _format_port_args(ports: Mapping[str, Any]) -> list[str]:
         if not run:
             return
         _, proto, host_ip, _ = run[0]
+        host_prefix = (
+            f"[{host_ip}]:" if ":" in host_ip else f"{host_ip}:" if host_ip else ""
+        )
         if len(run) == 1:
             port_num, _, _, host_port = run[0]
             spec = (
-                f"{host_ip}:{host_port}:{port_num}"
+                f"{host_prefix}{host_port}:{port_num}"
                 if host_port is not None
-                else f"{host_ip}::{port_num}"
+                else f"{host_prefix}:{port_num}"
             )
         else:
             start_port, start_host = run[0][0], run[0][3]
             end_port, end_host = run[-1][0], run[-1][3]
-            spec = f"{host_ip}:{start_host}-{end_host}:{start_port}-{end_port}"
+            spec = f"{host_prefix}{start_host}-{end_host}:{start_port}-{end_port}"
         args.extend(["-p", f"{spec}/{proto}"])
 
     run: list[tuple[int, str, str, int | None]] = []
@@ -3010,17 +3025,18 @@ def _ordinary_tcp_ports(config: LocalCloudConfig) -> tuple[int, ...]:
 
 
 def _canonical_port_bindings(config: LocalCloudConfig) -> PublishedPorts:
+    host_ip = "127.0.0.1" if config.local_only else ""
     bindings: PublishedPorts = {
-        f"{port}/tcp": (("127.0.0.1", port),)
+        f"{port}/tcp": ((host_ip, port),)
         for port in _ordinary_tcp_ports(config)
     }
     if not config.transparent_network:
         return bindings
     gateway_key = f"{GATEWAY_PORT}/tcp"
     tls_key = f"{config.tls_port}/tcp"
-    bindings[gateway_key] = (*bindings[gateway_key], ("127.0.0.1", 80))
-    bindings[tls_key] = (*bindings[tls_key], ("127.0.0.1", 443))
-    bindings[f"{_DNS_PORT}/udp"] = (("127.0.0.1", 53),)
+    bindings[gateway_key] = (*bindings[gateway_key], (host_ip, 80))
+    bindings[tls_key] = (*bindings[tls_key], (host_ip, 443))
+    bindings[f"{_DNS_PORT}/udp"] = ((host_ip, 53),)
     return bindings
 
 
@@ -3121,13 +3137,15 @@ def _docker_socket_is_usable(client: Any | None = None) -> bool:
 def _available_tcp_port_block(
     count: int,
     allowed_ports: set[tuple[int, str]],
+    host_ip: str,
 ) -> tuple[int, ...]:
     for allowed_range in _FALLBACK_TCP_PORT_RANGES:
         last_start = allowed_range.stop - count
         for start in range(allowed_range.start, last_start + 1):
             candidates = tuple(range(start, start + count))
             if all(
-                (port, "tcp") in allowed_ports or _port_is_free(port)
+                (port, "tcp") in allowed_ports
+                or _port_is_free(port, socket.SOCK_STREAM, host_ip)
                 for port in candidates
             ):
                 return candidates
@@ -3153,10 +3171,12 @@ def _port_spec_sort_key(spec: str) -> tuple[int, str]:
     return port, protocol or "tcp"
 
 
-def _port_is_free(port: int, kind: int = socket.SOCK_STREAM) -> bool:
+def _port_is_free(
+    port: int, kind: int = socket.SOCK_STREAM, host_ip: str = "127.0.0.1"
+) -> bool:
     with socket.socket(socket.AF_INET, kind) as probe:
         try:
-            probe.bind(("127.0.0.1", port))
+            probe.bind((host_ip or "0.0.0.0", port))
             return True
         except OSError:
             return False

@@ -950,6 +950,21 @@ def test_restart_and_start_tls_flags() -> None:
     assert parser.parse_args(["start", "--tls"]).tls is True
 
 
+@pytest.mark.parametrize("command", ["start", "restart", "reset"])
+def test_local_only_flag_reaches_runtime_config(command: str) -> None:
+    configs = []
+    for flags, expected in (([], False), (["--local-only"], True)):
+        args = _parser().parse_args([command, *flags])
+        assert args.local_only is expected
+        _execute(args)
+        config = FakeController.instance.calls[-1][1]
+        if command == "reset":
+            config, _all_projects = config
+        assert config.local_only is expected
+        configs.append(config)
+    assert configs[0].config_hash != configs[1].config_hash
+
+
 def test_start_and_restart_tls_dispatch_defaults_to_disabled() -> None:
     _execute(_parser().parse_args(["start"]))
     _, config = FakeController.instance.calls[-1]

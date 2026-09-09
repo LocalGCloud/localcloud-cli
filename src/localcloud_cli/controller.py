@@ -1249,6 +1249,7 @@ class Controller:
                     config.project,
                     "--user",
                     config.user,
+                    *(["--local-only"] if config.local_only else []),
                 ]
             )
         )

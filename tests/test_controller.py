@@ -938,6 +938,25 @@ def test_reconfiguration_preflight_preserves_current_runtime_on_failure(
     assert runtime.record is not None
 
 
+@pytest.mark.parametrize("command", ["start", "restart", "reset"])
+@pytest.mark.parametrize("local_only", [False, True])
+def test_changing_local_only_replaces_managed_container_and_preserves_volume(
+    tmp_path: Path, command: str, local_only: bool
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    original = replace(_config(tmp_path, paths=paths), local_only=not local_only)
+    runtime.record = _record(original)
+    changed = replace(original, local_only=local_only)
+
+    getattr(controller, command)(changed)
+
+    assert runtime.removes == [False]
+    assert runtime.creates == 1
+    assert runtime.record.runtime_settings["local_only"] is local_only
+    steps = controller._manual_purge_steps(changed, runtime.record)
+    assert ("--local-only" in steps[-1]) is local_only
+
+
 
 def test_managed_container_on_attached_volume_can_be_reconfigured(
     tmp_path: Path,

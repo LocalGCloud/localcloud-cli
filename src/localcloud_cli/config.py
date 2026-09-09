@@ -231,6 +231,7 @@ class LocalCloudConfig:
     tls_enabled: bool = False
     tls_port: int = DEFAULT_TLS_PORT
     strict_port_validation: bool = False
+    local_only: bool = False
 
     def __post_init__(self) -> None:
         encoded = json.dumps(
@@ -255,6 +256,7 @@ def runtime_settings(config: LocalCloudConfig) -> dict[str, Any]:
         "docker_socket_mode": config.docker_socket_mode,
         "docker_socket": config.docker_socket,
         "transparent_network": config.transparent_network,
+        "local_only": config.local_only,
         "services": list(config.services) if config.services is not None else None,
         "effective_services": list(config.effective_services),
         "environment": dict(config.environment),
@@ -834,6 +836,7 @@ def load_config(
     active_diagnostics: tuple[dict[str, Any], ...] = (),
     skip_validation: bool = False,
     strict_port_validation: bool = False,
+    local_only: bool = False,
 ) -> LocalCloudConfig:
     source_directory = _source_directory(directory)
     host_paths = paths if paths is not None else HostPaths.from_environment()
@@ -1067,6 +1070,7 @@ def load_config(
         tls_enabled=tls_enabled,
         tls_port=tls_port,
         strict_port_validation=strict_port_validation,
+        local_only=local_only,
         container_name=selected_container,
         network_name=selected_network,
         diagnostics=tuple(diagnostics),

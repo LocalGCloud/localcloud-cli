@@ -26,6 +26,7 @@ Starts the container runtime on the selected data volume and initializes the pro
 
 ```sh
 lc start
+lc start --local-only
 lc start --project-id my-project
 lc start --data-volume isolated-data --user alice
 lc start ./custom-config.yaml
@@ -36,6 +37,14 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
 - Creates project contexts when they do not exist.
 - Waits up to 60 seconds for container health and service readiness.
 - TLS is disabled by default. `--tls` enables it; `--no-tls` overrides an enabled configuration value.
+- Docker ports omit the host IP by default (`-p 5365:5365`), using Docker's default
+  bind address, normally all host interfaces. `--local-only` binds every published
+  port to `127.0.0.1` (`-p 127.0.0.1:5365:5365`), including TLS ports,
+  alternative host ports, and transparent-network aliases. SDK endpoints still use localhost.
+- `--local-only` is available on `start`, `restart`, and `reset`; pass it each time
+  to keep localhost-only publishing. Changing the option recreates a managed
+  container while preserving its persistent data volume. Attached containers keep
+  their existing bindings.
 - `--memory` overrides `host.memory` (default: `4g`).
 - `--image` overrides `host.image` and `LOCALCLOUD_IMAGE` (default: `jaysen2apache/localcloud:latest`).
 - `--services` overrides `services.enabled` with a comma-separated list of service IDs, or `default` to use the built-in set.
@@ -126,6 +135,9 @@ lc restart --pull
 
 # Restart with TLS
 lc restart --tls
+
+# Restart with ports accessible only from this machine
+lc restart --local-only
 
 # Restart with different memory and services
 lc restart --memory 8g --services gcs,pubsub

@@ -92,7 +92,7 @@ class _ExecutionObserver:
             "Canonical LocalCloud host ports are unavailable.",
             "Proposed host-to-container mappings:",
             *(
-                f"  {host_ip}:{host_port} -> {container_port}/{protocol}"
+                f"  {host_ip + ':' if host_ip else ''}{host_port} -> {container_port}/{protocol}"
                 for host_ip, host_port, container_port, protocol in mappings
             ),
         ]
@@ -597,6 +597,7 @@ def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConf
         "services": getattr(args, "services", None),
         "skip_validation": getattr(args, "skip_config_validation", False),
         "strict_port_validation": getattr(args, "strict_port_validation", False),
+        "local_only": getattr(args, "local_only", False),
     }
     paths = getattr(controller, "paths", None) or HostPaths.from_environment()
     active_diagnostics: list[dict[str, Any]] = []
@@ -881,6 +882,11 @@ def _parser() -> argparse.ArgumentParser:
                 "Fail before Docker mutation when image EXPOSE metadata differs "
                 "from the canonical LocalCloud capability set (default: warn and continue)"
             ),
+        )
+        command.add_argument(
+            "--local-only",
+            action="store_true",
+            help="Publish Docker ports on 127.0.0.1 only (default: all host interfaces)",
         )
         if name in {"start", "restart"}:
             command.add_argument(
