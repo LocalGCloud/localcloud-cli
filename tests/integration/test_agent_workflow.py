@@ -250,7 +250,7 @@ def _guard_against_runtime_mutation(
             method,
             forbidden(f"DockerRuntime.{method}"),
         )
-    for method in ("create_project", "seed_project", "reset_project"):
+    for method in ("create_project", "reset_project"):
         monkeypatch.setattr(
             JavaMcpClient,
             method,

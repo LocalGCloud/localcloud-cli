@@ -31,35 +31,6 @@ class FakeResponse:
         return self.payload
 
 
-def test_seed_project_calls_authoritative_java_tool(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
-    calls: list[tuple[str, dict[str, Any]]] = []
-    monkeypatch.setattr(
-        client,
-        "tool",
-        lambda name, arguments: calls.append((name, arguments))
-        or {"status": "seeded"},
-    )
-
-    assert client.seed_project("services: {}") == {"status": "seeded"}
-    assert client.seed_project(
-        "services: {pubsub: {topics: []}}", volatile_only=True
-    ) == {"status": "seeded"}
-    assert calls == [
-        (
-            "localcloud_seed_project",
-            {"yaml": "services: {}", "volatileOnly": False},
-        ),
-        (
-            "localcloud_seed_project",
-            {
-                "yaml": "services: {pubsub: {topics: []}}",
-                "volatileOnly": True,
-            },
-        ),
-    ]
 
 def test_rpc_transport_sends_selected_project_and_caller_headers(
     monkeypatch: pytest.MonkeyPatch,

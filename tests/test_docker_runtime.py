@@ -19,7 +19,7 @@ from localcloud_cli.docker_runtime import (
     CONFIG_SCHEMA_LABEL,
     CONFIG_HASH_LABEL,
     CONFIG_LABEL,
-    CLI_SEED_MOUNT_DESTINATION,
+    LEGACY_SEED_MOUNT_DESTINATION,
     CONFIG_MOUNT_DESTINATION,
     CONFIG_PATH_LABEL,
     DATA_LABEL,
@@ -703,7 +703,7 @@ def test_selected_config_is_mounted_read_only_and_forwards_resolved_services(
     assert _config(tmp_path).config_hash == original_hash
 
 
-def test_user_seed_file_is_mounted_as_cli_seed_sentinel(
+def test_seed_files_are_never_mounted(
     tmp_path: Path,
     ready_runtime: tuple[DockerRuntime, Client],
 ) -> None:
@@ -718,11 +718,26 @@ def test_user_seed_file_is_mounted_as_cli_seed_sentinel(
 
     runtime.create(config)
 
-    mounted = client.containers.run_calls[0]["volumes"][str(seed.resolve())]
-    assert mounted == {
-        "bind": CLI_SEED_MOUNT_DESTINATION,
-        "mode": "ro",
-    }
+    volumes = client.containers.run_calls[0]["volumes"]
+    assert str(seed.resolve()) not in volumes
+    assert not any(mount["bind"] == LEGACY_SEED_MOUNT_DESTINATION for mount in volumes.values())
+
+
+
+def test_discovers_legacy_seed_mount_for_safe_replacement(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    created = runtime.create(config)
+    container = client.containers.get(created.container_id)
+    container.attrs["Mounts"].append({
+        "Type": "bind", "Source": str(tmp_path / "seed.yaml"),
+        "Destination": LEGACY_SEED_MOUNT_DESTINATION, "RW": False,
+    })
+    assert runtime.resolve(config).legacy_seed_mount is True
+
 
 def test_port_probe_rejects_occupied_tcp_port() -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:

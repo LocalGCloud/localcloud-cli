@@ -130,7 +130,6 @@ class Controller:
         ):
             current = self._resolve_runtime(config)
             changed_fields: list[str] = []
-            fresh_data = False
             prepared_image: tuple[Any, bool] | None = None
             run_plan: DockerRunPlan | None = None
             commands: tuple[str, ...] = ()
@@ -249,11 +248,6 @@ class Controller:
                     if ensure_project
                     else ()
                 ),
-                *(
-                    ("[conditional LocalCloud seed] apply when project or data is created",)
-                    if config.seed_yaml is not None
-                    else ()
-                ),
                 "[host state] record active runtime",
             )
             plan = _LifecyclePlan(
@@ -279,7 +273,6 @@ class Controller:
                     run_plan=run_plan,
                 )
                 self._emit_runtime_logs(observer, config, environment)
-                fresh_data = environment.volume_created
             elif action == "replace":
                 deadline = time.monotonic() + _START_READINESS_TIMEOUT
                 environment = self._replace(
@@ -291,7 +284,6 @@ class Controller:
                     prepared_image=prepared_image,
                     run_plan=run_plan,
                 )
-                fresh_data = environment.volume_created
             elif action in {"start", "wait"}:
                 if observer is not None and hasattr(observer, "starting"):
                     observer.starting(config)
@@ -312,23 +304,11 @@ class Controller:
                 assert current is not None
                 environment = current
 
-            project_created = False
             if ensure_project:
-                project_created = self._ensure_project(
+                self._ensure_project(
                     environment,
                     config,
                     deadline=deadline,
-                )
-            if config.seed_yaml is not None and (fresh_data or project_created):
-                self._seed_project(
-                    environment,
-                    config,
-                    timeout=self._remaining_readiness(
-                        deadline,
-                        config,
-                        environment,
-                        "seed",
-                    ),
                 )
             self._record_active(environment, config)
             if status != "already_running":
@@ -490,11 +470,6 @@ class Controller:
                     if ensure_project
                     else ()
                 ),
-                *(
-                    ("[LocalCloud seed] reapply volatile seed data",)
-                    if config.seed_yaml is not None
-                    else ()
-                ),
                 "[host state] record active runtime",
             )
             plan = _LifecyclePlan(
@@ -539,8 +514,6 @@ class Controller:
                     config,
                     deadline=time.monotonic() + _START_READINESS_TIMEOUT,
                 )
-            if config.seed_yaml is not None:
-                self._seed_project(environment, config, volatile_only=True)
             self._tail_runtime_logs(
                 observer, config, environment, tail=tail, start_time=start_time
             )
@@ -672,11 +645,6 @@ class Controller:
             commands = (
                 *commands,
                 f"[LocalCloud API] reset project={config.project!r} user={config.user!r}",
-                *(
-                    ("[LocalCloud seed] apply configured seed data",)
-                    if config.seed_yaml is not None
-                    else ()
-                ),
             )
             plan = _LifecyclePlan(
                 action="reset-project",
@@ -733,8 +701,6 @@ class Controller:
                         "cause": str(error),
                     },
                 ) from error
-            if config.seed_yaml is not None:
-                self._seed_project(environment, config)
             return self._payload(
                 "reset",
                 environment,
@@ -1215,7 +1181,7 @@ class Controller:
     ) -> bool:
         return (
             current.ownership["container"] == "managed"
-            and current.config_hash != config.config_hash
+            and (current.config_hash != config.config_hash or current.legacy_seed_mount)
         )
 
     @staticmethod
@@ -1553,43 +1519,6 @@ class Controller:
             ),
             {"data_volume": environment.data_volume, "project": project},
         )
-
-    @staticmethod
-    def _seed_project(
-        environment: RuntimeRecord,
-        config: LocalCloudConfig,
-        *,
-        volatile_only: bool = False,
-        timeout: float = 60.0,
-    ) -> None:
-        try:
-            JavaMcpClient(
-                _runtime_url(environment),
-                config.project,
-                config.user,
-                timeout=timeout,
-            ).seed_project(
-                config.seed_yaml or "", volatile_only=volatile_only
-            )
-        except Exception as error:
-            cause = (
-                error.to_dict()
-                if isinstance(error, HostError)
-                else {
-                    "type": type(error).__name__,
-                    "message": str(error),
-                }
-            )
-            raise HostError(
-                "seed_failed",
-                "LocalCloud project seed could not be applied",
-                {
-                    "data_volume": config.data_volume,
-                    "project": config.project,
-                    "seed": str(config.seed_path) if config.seed_path else None,
-                    "cause": cause,
-                },
-            ) from error
 
     def _record_active(
         self, environment: RuntimeRecord, config: LocalCloudConfig

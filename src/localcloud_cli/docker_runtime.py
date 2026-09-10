@@ -35,7 +35,7 @@ RUNTIME_OWNERSHIP_CAPABILITY = "data-volume-v1"
 CONFIG_SCHEMA_LABEL = "com.localcloud.config-schema"
 CONFIG_SCHEMA_CAPABILITY = "1"
 DATA_MOUNT_DESTINATION = "/var/lib/localcloud"
-CLI_SEED_MOUNT_DESTINATION = "/etc/localcloud/cli-seed.yaml"
+LEGACY_SEED_MOUNT_DESTINATION = "/etc/localcloud/cli-seed.yaml"
 CONFIG_MOUNT_DESTINATION = "/etc/localcloud/localcloud.yaml"
 GATEWAY_PORT = "5365"
 _BASE_TCP_PORTS = tuple(range(5365, 5376))
@@ -109,6 +109,7 @@ class RuntimeRecord:
     data: str = ""
     labels: dict[str, str] = field(default_factory=dict)
     drift: dict[str, dict[str, Any]] = field(default_factory=dict)
+    legacy_seed_mount: bool = False
     volume_created: bool = False
     network_created: bool = False
     image_status: str = ""
@@ -419,6 +420,10 @@ class DockerRuntime:
             labels=labels,
             drift=drift,
             published_ports=published_ports,
+            legacy_seed_mount=any(
+                item.get("Destination") == LEGACY_SEED_MOUNT_DESTINATION
+                for item in _container_mounts(container)
+            ),
         )
 
     def preflight_create(
@@ -533,11 +538,6 @@ class DockerRuntime:
         if config.config_path is not None:
             volumes[str(config.config_path)] = {
                 "bind": CONFIG_MOUNT_DESTINATION,
-                "mode": "ro",
-            }
-        if config.seed_path is not None:
-            volumes[str(config.seed_path)] = {
-                "bind": CLI_SEED_MOUNT_DESTINATION,
                 "mode": "ro",
             }
         labels = {

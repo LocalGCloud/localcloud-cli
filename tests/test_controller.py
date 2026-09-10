@@ -775,7 +775,7 @@ def test_start_project_readiness_uses_one_shared_deadline(
     assert clock.now == 60.0
 
 
-def test_start_creates_project_and_applies_seed_once(
+def test_start_creates_project_without_applying_seed(
     tmp_path: Path,
 ) -> None:
     controller, runtime, paths = _controller(tmp_path)
@@ -794,10 +794,7 @@ def test_start_creates_project_and_applies_seed_once(
 
     assert result["status"] == "already_running"
     assert FakeJavaClient.create_calls == 1
-    assert FakeJavaClient.seed_attempts == 1
-    assert FakeJavaClient.seeds == [
-        ("new-project", config.seed_yaml, False)
-    ]
+    assert FakeJavaClient.seed_attempts == 0
     assert runtime.creates == 0
     assert runtime.starts == 0
     assert runtime.restarts == 0
@@ -824,10 +821,7 @@ def test_start_observes_project_after_transient_create_response_failure(
 
     assert result["status"] == "already_running"
     assert FakeJavaClient.create_calls == 1
-    assert FakeJavaClient.seed_attempts == 1
-    assert FakeJavaClient.seeds == [
-        ("new-project", config.seed_yaml, False)
-    ]
+    assert FakeJavaClient.seed_attempts == 0
 
 
 def test_start_preserves_transient_create_failure_at_visibility_timeout(
@@ -1648,22 +1642,26 @@ def test_remembered_config_marks_resolved_builtin_defaults(tmp_path: Path) -> No
     assert controller.remembered_config(config) == DEFAULTS_CONFIG_LABEL
 
 
-def test_failed_seed_does_not_update_active_runtime(tmp_path: Path) -> None:
-    controller, _runtime, paths = _controller(tmp_path)
-    (tmp_path / "seed.yaml").write_text(
-        "projects:\n  - projectId: local-gcp-project\n", encoding="utf-8"
-    )
-    config = _config(
-        tmp_path, paths=paths, yaml="host:\n  seed: seed.yaml\n"
-    )
+@pytest.mark.parametrize("command", ["start", "restart", "reset"])
+def test_lifecycle_does_not_call_seed_api(tmp_path: Path, command: str) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    (tmp_path / "seed.yaml").write_bytes(b"\xff")
+    config = _config(tmp_path, paths=paths, yaml="host:\n  seed: missing.yaml\n")
+    runtime.record = _record(config)
     FakeJavaClient.fail_seed = True
+    getattr(controller, command)(config)
+    assert FakeJavaClient.seed_attempts == 0
 
-    with pytest.raises(HostError) as caught:
-        controller.start(config)
 
-    assert caught.value.code == "seed_failed"
-    assert FakeJavaClient.seed_attempts == 1
-    assert load_active_runtime(paths) is None
+@pytest.mark.parametrize("command", ["start", "restart"])
+def test_lifecycle_removes_legacy_seed_mount_and_preserves_volume(tmp_path: Path, command: str) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = replace(_record(config), legacy_seed_mount=True)
+    getattr(controller, command)(config)
+    assert runtime.creates == 1
+    assert runtime.removes == [False]
+    assert FakeJavaClient.seed_attempts == 0
 
 
 def test_doctor_reports_malformed_active_state_without_failing(

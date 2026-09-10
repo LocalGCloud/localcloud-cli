@@ -499,7 +499,7 @@ lc restart --pull           # check registry, pull newest image if available, th
 **Reset one project without losing the others.**
 
 ```sh
-lc reset                    # resets the selected project and reapplies its seed
+lc reset                    # clears the selected project; reseed from the Console
 lc reset --all-projects     # prints manual recreate steps; deletes nothing
 ```
 
@@ -580,6 +580,12 @@ Write and destructive operations are gated behind the `LOCALCLOUD_MCP_WRITE` and
 
 ## Configuration
 
+Sample data is owned by container startup and the Console Re-seed Data action.
+The CLI does not discover, mount, or apply seed files. Existing `host.seed`
+settings are ignored; use `server.auto_seed: false` to disable container bootstrap.
+Managed containers with an old CLI seed mount are recreated on start/restart
+with their existing data volume preserved.
+
 Everything above works with zero configuration. When you want a versioned, shared setup, drop a
 `localcloud.yaml` beside your project:
 
@@ -592,7 +598,6 @@ host:
   data_volume: payments-data
   memory: 8g
   data: persistent
-  seed: auto
   docker_socket: auto
 services:
   enabled:

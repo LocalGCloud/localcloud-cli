@@ -113,7 +113,6 @@ context:
   user: {DEFAULT_USER}
 host:
   data_volume: localcloud-data
-  seed: auto
   data: persistent
   image: {DEFAULT_IMAGE}
   memory: 4g
@@ -142,16 +141,14 @@ mount it, or `false` as a hard opt-out; Docker-backed services will then report
 that Docker access is disabled. Automatic mounting does not enable the generic
 embedded Docker workload runtime.
 
-`host.seed: auto` loads `seed.yaml` beside the selected config when it exists
-and is otherwise a no-op. Set `host.seed: disabled` to disable seeding, or
-provide an existing path relative to the config file. The selected file is
-mounted read-only for the container; server/catalog values apply on restart
-without being copied into Docker labels.
+Sample data is managed by container startup and the Console Re-seed Data action.
+The CLI does not discover, mount, or apply seed files. Legacy `host.seed`
+settings are ignored. Use `server.auto_seed: false` to disable container bootstrap.
 
 Project and runtime lifecycle
 
-`localcloud reset` resets only the selected project and reapplies its configured
-seed, preserving every other project on the selected data volume.
+`localcloud reset` clears only the selected project, preserving every other
+project on the selected data volume. Use Console Re-seed Data to reload samples.
 `localcloud reset --all-projects` does not mutate anything. It prints the manual
 steps to recreate every project on the volume (stop, `docker volume rm -f`,
 start) and exits non-zero, because localcloud never deletes a Docker data volume

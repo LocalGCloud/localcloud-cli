@@ -609,39 +609,19 @@ def test_runtime_settings_change_hash(tmp_path: Path) -> None:
     assert first.config_hash != services.config_hash
 
 
-def test_seed_auto_resolves_beside_selected_config(tmp_path: Path) -> None:
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    config = config_dir / "custom.yaml"
-    config.write_text("host:\n  seed: auto\n", encoding="utf-8")
-    seed = config_dir / "seed.yaml"
-    seed.write_text("projects: []\n", encoding="utf-8")
-
-    selected = load_config(
-        explicit=config, directory=tmp_path, paths=_paths(tmp_path)
-    )
-    assert selected.seed_path == seed.resolve()
-    assert selected.seed_yaml == "projects: []\n"
+@pytest.mark.parametrize("legacy_seed", ["auto", "disabled", "missing.yaml"])
+def test_seed_files_are_not_loaded_by_cli(tmp_path: Path, legacy_seed: str) -> None:
+    (tmp_path / "seed.yaml").write_bytes(b"\xff")
+    config = tmp_path / "localcloud.yaml"
+    config.write_text(f"host:\n  seed: {legacy_seed}\n", encoding="utf-8")
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
+    assert not hasattr(selected, "seed_path")
+    assert not hasattr(selected, "seed_yaml")
+    config.unlink()
+    load_config(directory=tmp_path, paths=_paths(tmp_path))
 
 
-def test_local_seed_auto_and_null_disable(tmp_path: Path) -> None:
-    seed = tmp_path / "seed.yaml"
-    seed.write_text("projects: []\n", encoding="utf-8")
-    paths = _paths(tmp_path)
-    assert load_config(directory=tmp_path, paths=paths).seed_path == seed.resolve()
-
-    (tmp_path / "localcloud.yaml").write_text(
-        "host:\n  seed: disabled\n", encoding="utf-8"
-    )
-    selected = load_config(directory=tmp_path, paths=paths)
-    assert selected.seed_path is None
-    assert selected.seed_yaml is None
-
-
-@pytest.mark.parametrize(
-    "value",
-    ["", "-bad", "bad/name", "has space", "a" * 256],
-)
+@pytest.mark.parametrize("value", ["", "-bad", "bad/name", "has space", "a" * 256])
 def test_invalid_data_volume_fails_before_use(value: str) -> None:
     with pytest.raises(HostError) as caught:
         validate_data_volume(value)
@@ -876,7 +856,7 @@ def test_removed_flat_schema_returns_exact_namespace_migration_map(
     }
     assert caught.value.details["seed_null_migration"] == {
         "from": "seed: null",
-        "replacement": "host.seed: disabled",
+        "replacement": "server.auto_seed: false",
     }
 
 
@@ -917,7 +897,6 @@ def test_namespaced_schema_preserves_host_model_and_context_precedence(
     assert selected.user == "namespaced-user"
     assert selected.data_volume == "namespaced-data"
     assert selected.services == ("pubsub", "gcs")
-    assert selected.seed_path is None
     assert selected.data == "ephemeral"
     assert selected.memory == "6g"
     assert selected.docker_socket is True
@@ -946,8 +925,6 @@ def test_null_host_and_members_fall_back_to_cli_defaults(tmp_path: Path) -> None
     )
     assert selected.data_volume == DEFAULT_DATA_VOLUME
     assert selected.memory == "4g"
-    assert selected.seed_path == seed
-    assert selected.seed_yaml == "services: {}\n"
 
     (tmp_path / "localcloud.yaml").write_text(
         "host:\n"
@@ -966,8 +943,6 @@ def test_null_host_and_members_fall_back_to_cli_defaults(tmp_path: Path) -> None
     assert selected.memory == "4g"
     assert selected.docker_socket is True
     assert selected.environment == {}
-    assert selected.seed_path == seed
-    assert selected.seed_yaml == "services: {}\n"
 
 
 def test_null_docker_socket_is_rejected(tmp_path: Path) -> None:

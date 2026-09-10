@@ -841,7 +841,7 @@ def _parser() -> argparse.ArgumentParser:
 
     lifecycle_help = {
         "start": "Start the runtime and prepare a project only when --project-id is explicit",
-        "restart": "Restart the runtime, optionally prepare --project-id, and reapply volatile seed data",
+        "restart": "Restart the runtime and optionally prepare --project-id",
         "reset": "Reset the selected project (use --all-projects for manual full-recreate steps)",
     }
     for name, help_text in lifecycle_help.items():

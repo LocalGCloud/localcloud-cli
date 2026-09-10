@@ -57,7 +57,7 @@ MCP_FIELDS = {"write", "destructive", "allow_remote"}
 HOST_CONFIG_FIELDS = {
     "data_volume",
     "backup_dir",
-    "seed",
+    "seed",  # Retired CLI option; accepted but ignored for existing configs.
     "data",
     "image",
     "memory",
@@ -215,8 +215,6 @@ class LocalCloudConfig:
     project: str
     user: str
     services: tuple[str, ...] | None
-    seed_path: Path | None
-    seed_yaml: str | None
     data: str
     image: str
     memory: str
@@ -923,9 +921,6 @@ def load_config(
             if definition.get("defaultEnabled") is True
         )
     )
-    seed_path, seed_yaml = _seed(
-        host_value("seed", "auto"), config_path, source_directory
-    )
     data = host_value("data", "persistent")
     if data not in {"persistent", "ephemeral"}:
         _invalid_config(
@@ -1058,8 +1053,6 @@ def load_config(
         project=selected_project,
         user=selected_user,
         services=selected_services,
-        seed_path=seed_path,
-        seed_yaml=seed_yaml,
         data=str(data),
         image=image,
         memory=memory,
@@ -1218,7 +1211,7 @@ def _reject_flat_config(raw: dict[object, object]) -> None:
     if "seed" in removed and raw.get("seed") is None:
         details["seed_null_migration"] = {
             "from": "seed: null",
-            "replacement": "host.seed: disabled",
+            "replacement": "server.auto_seed: false",
         }
     raise HostError(
         "removed_flat_config",
@@ -1396,39 +1389,6 @@ def _services(value: object) -> tuple[str, ...] | None:
             seen.add(service)
     return tuple(normalized)
 
-
-def _seed(
-    value: object, config_path: Path | None, directory: Path
-) -> tuple[Path | None, str | None]:
-    if not isinstance(value, str) or not value.strip():
-        _invalid_config(
-            "host.seed must be 'auto', 'disabled', or a file path", value=value
-        )
-
-    selected = value.strip()
-    if selected == "disabled":
-        return None, None
-    base = config_path.parent if config_path is not None else directory
-    if selected == "auto":
-        path = base / "seed.yaml"
-        if not path.exists():
-            return None, None
-    else:
-        path = Path(selected).expanduser()
-        if not path.is_absolute():
-            path = base / path
-
-    resolved = path.resolve()
-    if not resolved.is_file():
-        _invalid_config(f"Seed file does not exist: {resolved}", seed=str(resolved))
-    try:
-        return resolved, resolved.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        raise HostError(
-            "invalid_config",
-            f"Unable to read seed file: {resolved}",
-            {"seed": str(resolved), "reason": str(exc)},
-        ) from exc
 
 
 def _boolean(name: str, value: object) -> bool:

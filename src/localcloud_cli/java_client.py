@@ -264,9 +264,3 @@ class JavaMcpClient:
                 {"tool": tool, "project": self.project},
             )
         return result
-
-    def seed_project(self, yaml: str, *, volatile_only: bool = False) -> Any:
-        return self.tool(
-            "localcloud_seed_project",
-            {"yaml": yaml, "volatileOnly": volatile_only},
-        )
