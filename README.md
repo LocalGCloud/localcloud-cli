@@ -426,7 +426,7 @@ Service selection is marked with `●` (on) and `○` (off) as well as color, so
 | `0` | Success |
 | `1` | Completed with failures (for example `cleanup` partial), or an unexpected internal error |
 | `2` | LocalCloud error — invalid input, Docker problem, or a failed operation. Rendered as `Error [code] message` |
-| `130` | `lc mcp` interrupted with Ctrl-C |
+| `130` | Command interrupted with Ctrl-C |
 
 ## Recipes
 

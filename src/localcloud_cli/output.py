@@ -160,6 +160,7 @@ _DOCTOR_FIELDS = (
     FieldSpec("status", "Status", "status"),
     FieldSpec("docker", "Docker", "docker"),
     FieldSpec("default_image", "Image", "image"),
+    FieldSpec("ports", "Ports", "ports"),
     FieldSpec("legacy_resources", "Legacy resources", "warning"),
     FieldSpec("legacy_host_state", "Legacy host state", "warning"),
     FieldSpec("legacy_locks", "Legacy locks", "warning"),
@@ -170,6 +171,8 @@ _DOCTOR_EXTRA_FIELDS = (
     FieldSpec("docker_command_path", "Docker command path", "muted"),
     FieldSpec("docker_path", "Docker path"),
     FieldSpec("docker_command", "Docker command"),
+    FieldSpec("ports", "Ports", "ports"),
+    FieldSpec("port_availability", "Port availability", "muted"),
     FieldSpec("active_runtime", "Active runtime", "muted"),
     FieldSpec("active_runtime_diagnostics", "Active diagnostics", "warning"),
     FieldSpec("image_details", "Image details", "muted"),
@@ -199,6 +202,9 @@ _EXTRA_COMMON = (
     FieldSpec("container.state", "State", "status"),
     FieldSpec("container.image_status", "Image status", "status"),
     FieldSpec("container.actual_image", "Actual image", "muted"),
+    FieldSpec("ports", "Ports", "ports"),
+    FieldSpec("port_availability", "Port availability", "muted"),
+    FieldSpec("port_mappings", "Port mappings", "muted"),
     FieldSpec("data", "Data", "muted"),
     FieldSpec("network.name", "Network", "muted"),
     FieldSpec("mount.source", "Mounted volume", "muted"),
@@ -230,7 +236,11 @@ DEFAULT_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
         FieldSpec(field.path, field.label, "image")
         if field.path == "container.configured_image"
         else field
-        for field in _COMMON_FIELDS
+        for field in (
+            *_COMMON_FIELDS[:8],
+            FieldSpec("ports", "Ports", "ports"),
+            *_COMMON_FIELDS[8:],
+        )
         if field.path
         not in {
             "project",
@@ -257,6 +267,8 @@ ALLOWED_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
 
 
 def strip_ansi(value: str) -> str:
+    if "\x1b" not in value:
+        return value
     return _ANSI.sub("", value)
 
 
@@ -285,7 +297,8 @@ def truncate_visible(value: str, width: int) -> str:
     plain = strip_ansi(value)
     if width <= 0:
         return ""
-    if visible_width(plain) <= width:
+    total = sum(_character_width(char) for char in plain)
+    if total <= width:
         return plain
     if width == 1:
         return "…"
@@ -299,6 +312,7 @@ def truncate_visible(value: str, width: int) -> str:
         result.append(char)
         used += char_width
     return "".join(result) + "…"
+
 
 
 def terminal_capabilities(stream: TextIO, environ: Mapping[str, str] | None = None) -> TerminalCapabilities:
@@ -380,15 +394,20 @@ def _wrap_visible(value: str, width: int) -> list[str]:
         return [""]
     lines: list[str] = []
     remaining = value
-    while visible_width(remaining) > width:
+    while True:
         used = 0
         cut = 0
+        overflow = False
         for index, char in enumerate(remaining):
             char_width = _character_width(char)
             if index and used + char_width > width:
+                overflow = True
                 break
             used += char_width
             cut = index + 1
+        if not overflow:
+            lines.append(remaining)
+            break
         candidate = remaining[:cut]
         comma_break = candidate.rfind(", ")
         space_break = candidate.rfind(" ")
@@ -400,8 +419,8 @@ def _wrap_visible(value: str, width: int) -> list[str]:
             split = cut
         lines.append(remaining[:split].rstrip())
         remaining = remaining[split:].lstrip()
-    lines.append(remaining)
     return lines
+
 
 
 def render_summary(
@@ -428,8 +447,20 @@ def render_summary(
     resolved: list[tuple[FieldSpec, Any]] = []
     for field in fields:
         value = _resolve_path(payload, field.path)
+        if value is _MISSING and field.path == "ports":
+            port_avail = _resolve_path(payload, "port_availability")
+            port_maps = _resolve_path(payload, "port_mappings")
+            if port_avail is not _MISSING and isinstance(port_avail, Mapping):
+                value = _format_port_availability(port_avail)
+            elif port_maps is not _MISSING and isinstance(port_maps, (list, tuple)):
+                value = _format_port_mappings(port_maps)
         if value is _MISSING or value is None or value == [] or value == {}:
             continue
+        if field.path == "ports":
+            if isinstance(value, Mapping):
+                value = _format_port_availability(value)
+            elif isinstance(value, (list, tuple)):
+                value = _format_port_mappings(value)
         if command == "status" and field.path == "container.configured_image":
             formatted = _resolve_path(payload, "container.image_details.formatted")
             if formatted is not _MISSING and formatted:
@@ -466,12 +497,116 @@ def render_summary(
             for value_line in value_lines:
                 if field.style in {"image", "docker"}:
                     rendered_value = _render_image_value(value_line, color)
+                elif field.style == "ports":
+                    rendered_value = _render_ports_value(value_line, color)
                 else:
                     rendered_value = style_text(value_line, role, color)
                 rendered_label = label if first_line else " " * label_width
                 lines.append(f"{rendered_label}  {rendered_value}")
                 first_line = False
     return "\n".join(lines)
+
+
+def _format_port_numbers(ports: Sequence[int]) -> str:
+    if not ports:
+        return ""
+    sorted_ports = sorted(set(ports))
+    ranges: list[str] = []
+    start = sorted_ports[0]
+    prev = start
+    for p in sorted_ports[1:]:
+        if p == prev + 1:
+            prev = p
+        else:
+            ranges.append(f"{start}-{prev}" if prev > start else str(start))
+            start = p
+            prev = p
+    ranges.append(f"{start}-{prev}" if prev > start else str(start))
+    return ", ".join(ranges)
+
+
+def _format_port_availability(diag: Mapping[str, Any]) -> str:
+    status = diag.get("status", "available")
+    canonical = diag.get("canonical_ports", ())
+    canon_str = _format_port_numbers(canonical) or "5365-5375"
+    if status == "in_use_by_localcloud":
+        lc_ports = diag.get("localcloud_ports", ())
+        containers = sorted(
+            {
+                p.get("container")
+                for p in lc_ports
+                if isinstance(p, Mapping) and p.get("container")
+            }
+        )
+        c_desc = f"in use by {', '.join(containers)}" if containers else "in use by LocalCloud"
+        return f"{canon_str} ({c_desc})"
+    if status == "available":
+        return f"{canon_str} (available)"
+    if status == "conflict_with_alternative":
+        alt = diag.get("alternative_range", ())
+        alt_str = _format_port_numbers(alt)
+        occupied = diag.get("occupied_ports", ())
+        occ_nums = [
+            p.get("port")
+            for p in occupied
+            if isinstance(p, Mapping) and "port" in p
+        ]
+        occ_str = f" occupied: {', '.join(map(str, occ_nums))};" if occ_nums else ""
+        return f"{canon_str} (conflict;{occ_str} fallback {alt_str} available)"
+    if status == "conflict":
+        occupied = diag.get("occupied_ports", ())
+        occ_nums = [
+            p.get("port")
+            for p in occupied
+            if isinstance(p, Mapping) and "port" in p
+        ]
+        occ_str = f" ({', '.join(map(str, occ_nums))} in use)" if occ_nums else ""
+        return f"{canon_str} (conflict{occ_str}; no fallback range available)"
+    return canon_str
+
+
+def _format_port_mappings(mappings: Sequence[Mapping[str, Any]]) -> str:
+    if not mappings:
+        return ""
+    host_ports: list[int] = []
+    container_ports: list[int] = []
+    same = True
+    for m in mappings:
+        hp = m.get("host_port")
+        cp_str = m.get("container_port")
+        try:
+            cp = int(cp_str) if cp_str is not None else None
+        except (ValueError, TypeError):
+            cp = None
+        if hp is not None:
+            host_ports.append(hp)
+        if cp is not None:
+            container_ports.append(cp)
+        if hp != cp:
+            same = False
+
+    if not host_ports:
+        return ""
+
+    host_str = _format_port_numbers(host_ports)
+    if same:
+        return host_str
+    container_str = _format_port_numbers(container_ports)
+    if container_str and container_str != host_str:
+        return f"{host_str} -> {container_str}"
+    return host_str
+
+
+def _render_ports_value(value: str, color: ColorMode) -> str:
+    if "conflict" in value.lower():
+        return style_text(value, "warning", color)
+    split = value.find(" (")
+    if split == -1:
+        return style_text(value, "primary", color)
+    name, suffix = value[:split], value[split:]
+    if "available" in suffix:
+        return style_text(name, "primary", color) + style_text(suffix, "success", color)
+    return style_text(name, "primary", color) + style_text(suffix, "muted", color)
 
 
 def _render_image_value(value: str, color: ColorMode) -> str:

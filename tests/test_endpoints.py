@@ -69,6 +69,16 @@ def test_validate_local_endpoints_rejects_public_google_and_non_loopback() -> No
             validate_local_endpoints(value)
 
 
+def test_validate_local_endpoints_allows_descriptive_urls() -> None:
+    # Descriptive non-endpoint fields should not trigger nonlocal_endpoint
+    value = {
+        "description": "See docs at https://example.com/guide",
+        "url": "http://127.0.0.1:5366",
+    }
+    validate_local_endpoints(value)
+
+
+
 def test_environment_config_uses_running_environment_without_daemon_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

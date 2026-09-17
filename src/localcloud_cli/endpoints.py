@@ -74,25 +74,67 @@ def rewrite_endpoints(value: Any, endpoint_map: dict[str, Any]) -> Any:
     return HOST_PORT.sub(replace, value)
 
 
-def validate_local_endpoints(value: Any) -> None:
-    serialized = json.dumps(value, sort_keys=True) if not isinstance(value, str) else value
-    if REAL_GOOGLE.search(serialized):
+def _validate_url_target(raw: str) -> None:
+    if REAL_GOOGLE.search(raw):
         raise HostError(
             "real_google_endpoint",
             "Generated environment references a real Google endpoint",
         )
-    for match in re.finditer(r"https?://[^\s\"']+", serialized):
-        raw = match.group(0).rstrip("\\,}")
-        try:
-            parsed = urlsplit(raw)
-        except ValueError as error:
-            raise HostError("invalid_endpoint", "Generated environment contains an invalid URL", {"url": raw}) from error
-        if parsed.hostname and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+    try:
+        parsed = urlsplit(raw)
+    except ValueError as error:
+        raise HostError("invalid_endpoint", "Generated environment contains an invalid URL", {"url": raw}) from error
+    if parsed.hostname and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        raise HostError(
+            "nonlocal_endpoint",
+            "Generated environment contains a non-loopback endpoint",
+            {"url": raw},
+        )
+
+
+def validate_local_endpoints(value: Any, *, in_endpoint_context: bool = True) -> None:
+    if isinstance(value, str):
+        if REAL_GOOGLE.search(value):
             raise HostError(
-                "nonlocal_endpoint",
-                "Generated environment contains a non-loopback endpoint",
-                {"url": raw},
+                "real_google_endpoint",
+                "Generated environment references a real Google endpoint",
             )
+        if in_endpoint_context:
+            for match in re.finditer(r"https?://[^\s\"']+", value):
+                raw = match.group(0).rstrip("\\,}")
+                _validate_url_target(raw)
+        else:
+            for line in value.splitlines():
+                assignment_match = ENDPOINT_CONFIG_ASSIGNMENT.search(line)
+                if assignment_match and _is_endpoint_env_key(assignment_match.group("key")):
+                    for match in re.finditer(r"https?://[^\s\"']+", line):
+                        _validate_url_target(match.group(0).rstrip("\\,}"))
+                elif re.match(r"^\s*https?://", line.strip()):
+                    for match in re.finditer(r"https?://[^\s\"']+", line):
+                        _validate_url_target(match.group(0).rstrip("\\,}"))
+        return
+
+    if isinstance(value, dict):
+        for key, child in value.items():
+            key_str = str(key)
+            if REAL_GOOGLE.search(key_str):
+                raise HostError(
+                    "real_google_endpoint",
+                    "Generated environment references a real Google endpoint",
+                )
+            child_is_endpoint = (
+                _is_endpoint_value_key(key_str)
+                or _is_endpoint_env_key(key_str)
+            )
+            validate_local_endpoints(child, in_endpoint_context=child_is_endpoint)
+        return
+
+
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            validate_local_endpoints(item, in_endpoint_context=in_endpoint_context)
+        return
+
 
 
 def transform_endpoint_payload(

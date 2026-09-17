@@ -152,18 +152,33 @@ class Collection:
     def list(self, **kwargs: Any) -> list[Resource]:
         self.list_calls.append(kwargs)
         filters = kwargs.get("filters") or {}
+        results = list(self.values.values())
         volume = filters.get("volume")
-        if volume is None:
-            return list(self.values.values())
-        selected = {str(item) for item in volume} if isinstance(volume, list) else {str(volume)}
-        return [
-            resource
-            for resource in self.values.values()
-            if any(
-                str(mount.get("Name") or "") in selected
-                for mount in resource.attrs.get("Mounts", [])
+        if volume is not None:
+            selected = {str(item) for item in volume} if isinstance(volume, list) else {str(volume)}
+            results = [
+                resource
+                for resource in results
+                if any(
+                    str(mount.get("Name") or "") in selected
+                    for mount in resource.attrs.get("Mounts", [])
+                )
+            ]
+        label_filter = filters.get("label")
+        if label_filter is not None:
+            labels_to_check = (
+                [str(item) for item in label_filter]
+                if isinstance(label_filter, list)
+                else [str(label_filter)]
             )
-        ]
+            for spec in labels_to_check:
+                if "=" in spec:
+                    k, v = spec.split("=", 1)
+                    results = [r for r in results if r.labels.get(k) == v]
+                else:
+                    results = [r for r in results if spec in r.labels]
+        return results
+
 
 
 class Image:
@@ -1140,6 +1155,53 @@ def test_unexpected_image_metadata_warns_by_default(
     assert "5999/tcp" in observer.messages[0]
 
 
+def test_preflight_create_warns_when_port_5376_in_use(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    monkeypatch.setattr(runtime_module, "_port_is_free", lambda port, *args, **kwargs: port != 5376)
+
+    class Observer:
+        def __init__(self) -> None:
+            self.messages: list[str] = []
+
+        def warning(self, message: str) -> None:
+            self.messages.append(message)
+
+    observer = Observer()
+    runtime.preflight_create(_config(tmp_path), observer=observer)
+
+    assert any("5376/tcp is already in use" in msg for msg in observer.messages)
+
+
+def test_preflight_create_does_not_warn_on_5376_when_replacing_in_dry_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    config = _config(tmp_path)
+    monkeypatch.setattr(runtime_module, "_port_is_free", lambda port, *args, **kwargs: port != 5376)
+    replacing = SimpleNamespace(
+        container_id="c-old",
+        ownership={"container": "managed"},
+        published_ports={},
+        endpoint_map={},
+    )
+
+    class Observer:
+        def __init__(self) -> None:
+            self.messages: list[str] = []
+
+        def warning(self, message: str) -> None:
+            self.messages.append(message)
+
+    observer = Observer()
+    runtime.preflight_create(config, replacing=replacing, local_only=True, observer=observer)
+
+    assert not any("5376/tcp is already in use" in msg for msg in observer.messages)
+
+
 def test_strict_unexpected_image_metadata_fails_preflight(
     tmp_path: Path,
     ready_runtime: tuple[DockerRuntime, Client],
@@ -1730,6 +1792,32 @@ def test_new_and_legacy_managed_children_are_cleaned_by_validated_ownership(
     assert new_child.removed == [{"force": True, "v": True}]
     assert legacy_child.removed == [{"force": True, "v": True}]
     assert client.volumes.values[config.data_volume].removed == []
+
+
+def test_stop_managed_runtime_cleans_up_managed_children(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    created = runtime.create(config)
+    new_child = client.containers.add(
+        Resource(
+            "new-child",
+            {
+                MANAGED_LABEL: "true",
+                VOLUME_NAME_LABEL: config.data_volume,
+                CONFIG_HASH_LABEL: config.config_hash,
+                "localcloud.managed": "true",
+            },
+        )
+    )
+    record = runtime.resolve(config)
+    assert record is not None
+
+    runtime.stop(config, record)
+
+    assert new_child.removed == [{"force": True, "v": True}]
 
 
 def test_incomplete_new_child_ownership_blocks_parent_cleanup(

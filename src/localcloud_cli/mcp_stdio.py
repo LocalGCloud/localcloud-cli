@@ -233,6 +233,11 @@ async def _run_sdk(
                             parsed = types.jsonrpc_message_adapter.validate_python(
                                 fallback
                             )
-                        except Exception:
+                        except Exception as fallback_error:
+                            sys.stderr.write(
+                                f"[localcloud mcp] Failed to validate error fallback message: {fallback_error}\n"
+                            )
+                            sys.stderr.flush()
                             continue
+
                     await write_stream.send(SessionMessage(parsed))

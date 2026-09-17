@@ -755,7 +755,8 @@ def test_mcp_connect_timeout_defaults_and_requires_positive_finite_seconds() -> 
             parser.parse_args(["mcp", "--connect-timeout", invalid])
 
 
-def test_main_non_mcp_interrupt_still_propagates(
+def test_main_non_mcp_interrupt_exits_cleanly(
+    capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def interrupt(_self: FakeController, _config: Any) -> dict[str, Any]:
@@ -763,8 +764,34 @@ def test_main_non_mcp_interrupt_still_propagates(
 
     monkeypatch.setattr(FakeController, "status", interrupt)
 
-    with pytest.raises(KeyboardInterrupt):
-        main(["status"])
+    assert main(["status"]) == 130
+    captured = capsys.readouterr()
+    assert "interrupted" in captured.err.lower()
+
+
+def test_main_progress_command_interrupt_exits_cleanly(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupt(_self: FakeController, _config: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(FakeController, "start", interrupt)
+
+    assert main(["start"]) == 130
+    captured = capsys.readouterr()
+    assert "interrupted" in captured.err.lower()
+
+
+def test_entrypoint_main_interrupt_exits_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupt(_args: list[str]) -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("localcloud_cli.cli.main", interrupt)
+
+    assert entrypoint_main(["status"]) == 130
 
 
 def test_main_returns_concise_host_error_by_default(
@@ -1317,6 +1344,32 @@ def test_observer_starting_transition_skips_artwork_panel() -> None:
 
     assert reporter._panel is None
     assert "Starting LocalCloud container on data volume: 'localcloud-data'" in reporter._message
+    assert "LocalCloud v" not in stream.getvalue()
+
+
+def test_execution_observer_stopping_updates_task_message() -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    config = SimpleNamespace(
+        data_volume="localcloud-data",
+        project="local-gcp-project",
+    )
+    current = SimpleNamespace(
+        name="localcloud",
+        container_id="c123456",
+    )
+    stream = _TtyBuffer()
+    reporter = LifecycleReporter(
+        stream=stream,
+        environ={"TERM": "xterm", "NO_COLOR": "1"},
+    )
+
+    _ExecutionObserver(reporter).stopping(config, current)
+    reporter.succeed("Done")
+
+    assert reporter._panel is None
+    assert "Found running container 'localcloud'; stopping it…" in reporter._message
     assert "LocalCloud v" not in stream.getvalue()
 
 

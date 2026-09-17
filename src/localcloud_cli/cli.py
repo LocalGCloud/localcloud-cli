@@ -278,6 +278,13 @@ class _ExecutionObserver:
         )
         self.reporter.update(message, panel)
 
+    def stopping(self, config: LocalCloudConfig, current: Any = None) -> None:
+        target = getattr(current, "name", None) or getattr(current, "container_id", None)
+        detail = f" {target!r}" if target else ""
+        self.reporter.update(
+            f"Found running container{detail}; stopping it…"
+        )
+
     def starting(self, config: LocalCloudConfig) -> None:
         self.reporter.update(
             "Starting LocalCloud container on data volume: "
@@ -412,7 +419,9 @@ def main(argv: list[str] | None = None) -> int:
             os._exit(130)
         if reports_progress:
             reporter.fail("LocalCloud command interrupted")
-        raise
+        else:
+            print("LocalCloud command interrupted.", file=sys.stderr, flush=True)
+        return 130
     except SystemExit:
         if reports_progress:
             reporter.fail("LocalCloud command interrupted")

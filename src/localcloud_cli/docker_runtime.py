@@ -464,12 +464,13 @@ class DockerRuntime:
         )
         self._require_runtime_ownership_capability(config, image)
         self._validate_image_port_metadata(config, image, observer)
-        if not _port_is_free(5376):
-            _emit_warning(
-                observer,
-                "Host port 5376/tcp is already in use; Cloud SQL MySQL companion container will not be able to bind when started",
-            )
         allowed_ports = _published_host_ports(replacing)
+        if not _port_is_free(5376) and (5376, "tcp") not in allowed_ports:
+            if not (local_only and replacing is not None and replacing.ownership.get("container") == "managed"):
+                _emit_warning(
+                    observer,
+                    "Host port 5376/tcp is already in use; Cloud SQL MySQL companion container will not be able to bind when started",
+                )
         self._port_bindings(
             config,
             allowed_ports=allowed_ports,
@@ -757,7 +758,20 @@ class DockerRuntime:
             )
         return tuple(commands)
 
+    @staticmethod
+    def preview_start_commands(target: str) -> tuple[str, ...]:
+        return (shlex.join(["docker", "start", target]),)
+
+    @staticmethod
+    def preview_restart_commands(target: str, timeout: int = 20) -> tuple[str, ...]:
+        return (shlex.join(["docker", "restart", "-t", str(timeout), target]),)
+
+    @staticmethod
+    def preview_stop_commands(target: str, timeout: int = 20) -> tuple[str, ...]:
+        return (shlex.join(["docker", "stop", "-t", str(timeout), target]),)
+
     def create(
+
         self,
         config: LocalCloudConfig,
         *,
@@ -1047,6 +1061,15 @@ class DockerRuntime:
                         "cause": str(error),
                     },
                 ) from error
+        if current.ownership.get("container") == "managed":
+            failures: list[dict[str, Any]] = []
+            self._remove_children(config.data_volume, container, current, failures)
+            if failures:
+                raise HostError(
+                    "cleanup_failed",
+                    "Managed child-container cleanup was incomplete",
+                    {"data_volume": config.data_volume, "failures": failures},
+                )
         updated = self.resolve(
             config,
             preferred_container_id=current.container_id,
@@ -1406,6 +1429,88 @@ class DockerRuntime:
             result["warning"] = " ".join(warnings)
         return result
 
+    def port_diagnostics(
+        self,
+        *,
+        tls_enabled: bool = False,
+        tls_port: int | None = None,
+        local_only: bool = True,
+    ) -> dict[str, Any]:
+        """Check port availability for LocalCloud and report diagnostics."""
+        ports = list(_BASE_TCP_PORTS)
+        if tls_enabled:
+            effective_tls_port = tls_port if tls_port is not None else DEFAULT_TLS_PORT
+            ports.extend((effective_tls_port, *_DEDICATED_TLS_PORTS))
+        canonical_ports = tuple(sorted(set(ports)))
+        host_ip = "127.0.0.1" if local_only else ""
+
+        # Find running LocalCloud containers and their port bindings.
+        lc_port_owners: dict[int, str] = {}
+        try:
+            for container in self.client.containers.list(
+                all=False,
+                filters={"label": MANAGED_LABEL},
+            ):
+                labels = _resource_labels(container)
+                if MANAGED_LABEL not in labels:
+                    continue
+
+                name = _resource_name(container) or "unknown"
+                for port_spec, bindings in (
+                    _published_ports(container).items()
+                ):
+                    port_text, _, _proto = port_spec.partition("/")
+                    try:
+                        int(port_text)
+                    except ValueError:
+                        continue
+                    for _hip, hp in bindings:
+                        if hp is not None:
+                            lc_port_owners[hp] = name
+        except Exception:
+            pass
+
+        occupied: list[dict[str, Any]] = []
+        localcloud_ports: list[dict[str, Any]] = []
+        for port in canonical_ports:
+            if port in lc_port_owners:
+                localcloud_ports.append(
+                    {"port": port, "container": lc_port_owners[port]}
+                )
+            elif not _port_is_free(port, socket.SOCK_STREAM, host_ip):
+                occupied.append({"port": port, "status": "in_use"})
+
+        all_canonical_available = not occupied
+        has_lc_container = bool(localcloud_ports)
+
+        alternative_range: list[int] | None = None
+        if occupied and not has_lc_container:
+            try:
+                alt = _available_tcp_port_block(
+                    len(canonical_ports), set(), host_ip
+                )
+                alternative_range = list(alt)
+            except HostError:
+                alternative_range = None
+
+        if has_lc_container:
+            status = "in_use_by_localcloud"
+        elif all_canonical_available:
+            status = "available"
+        elif alternative_range is not None:
+            status = "conflict_with_alternative"
+        else:
+            status = "conflict"
+
+        return {
+            "canonical_ports": list(canonical_ports),
+            "all_canonical_available": all_canonical_available,
+            "occupied_ports": occupied,
+            "localcloud_ports": localcloud_ports,
+            "alternative_range": alternative_range,
+            "status": status,
+        }
+
     def cleanup_resources(
         self, invalid: list[dict[str, Any]]
     ) -> dict[str, Any]:
@@ -1542,7 +1647,15 @@ class DockerRuntime:
                 f"(timeout {timeout:.1f}s)"
             )
 
-        def _emit_logs() -> None:
+        last_log_emit = 0.0
+        _LOG_EMIT_INTERVAL = 2.0
+
+        def _emit_logs(*, force: bool = False) -> None:
+            nonlocal last_log_emit
+            now = time.monotonic()
+            if not force and (now - last_log_emit) < _LOG_EMIT_INTERVAL:
+                return
+            last_log_emit = now
             if (
                 container is not None
                 and observer is not None
@@ -1555,7 +1668,8 @@ class DockerRuntime:
                 except Exception:
                     pass
 
-        _emit_logs()
+        _emit_logs(force=True)
+
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -2307,7 +2421,10 @@ class DockerRuntime:
         dry_run: bool = False,
     ) -> list[Any]:
         try:
-            containers = self.client.containers.list(all=True)
+            containers = self.client.containers.list(
+                all=True,
+                filters={"label": f"{_CHILD_MANAGED_LABEL}=true"},
+            )
         except Exception as error:
             failures.append(
                 {

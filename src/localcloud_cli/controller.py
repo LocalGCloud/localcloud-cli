@@ -102,8 +102,58 @@ class Controller:
             require=require,
         )
 
+    def _plan_replacement(
+        self,
+        current: RuntimeRecord,
+        config: LocalCloudConfig,
+        image_name: str,
+    ) -> tuple[DockerRunPlan, tuple[str, ...]]:
+        run_plan = self.runtime.plan_run(
+            config,
+            image_name,
+            replacing=current,
+        )
+        preserve_volume = (
+            current.data == "persistent"
+            or current.ownership["data_volume"] == "attached"
+        )
+        preserve_network = current.network_name == config.network_name
+        commands = (
+            *self.runtime.preview_remove_commands(
+                config,
+                current,
+                remove_volume=not preserve_volume,
+                remove_network=not preserve_network,
+            ),
+            *self.runtime.preview_create_commands(
+                config,
+                run_plan,
+                volume_exists=preserve_volume,
+                network_exists=True if preserve_network else None,
+            ),
+        )
+        return run_plan, commands
+
+    def _preview_start(self, target: str) -> tuple[str, ...]:
+        fn = getattr(self.runtime, "preview_start_commands", None)
+        if callable(fn):
+            return fn(target)
+        return (shlex.join(["docker", "start", target]),)
+
+    def _preview_restart(self, target: str, timeout: int = 20) -> tuple[str, ...]:
+        fn = getattr(self.runtime, "preview_restart_commands", None)
+        if callable(fn):
+            return fn(target, timeout=timeout)
+        return (shlex.join(["docker", "restart", "-t", str(timeout), target]),)
+
+    def _preview_stop(self, target: str, timeout: int = 20) -> tuple[str, ...]:
+        fn = getattr(self.runtime, "preview_stop_commands", None)
+        if callable(fn):
+            return fn(target, timeout=timeout)
+        return (shlex.join(["docker", "stop", "-t", str(timeout), target]),)
 
     def start(
+
         self,
         config: LocalCloudConfig,
         *,
@@ -194,30 +244,12 @@ class Controller:
                     ):
                         observer.starting(config)
                     changed_fields = _changed_fields(current, config)
-                    run_plan = self.runtime.plan_run(
-                        config,
-                        prepared_image[0],
-                        replacing=current,
+                    run_plan, commands = self._plan_replacement(
+                        current, config, prepared_image[0]
                     )
-                    preserve_volume = (
-                        current.data == "persistent"
-                        or current.ownership["data_volume"] == "attached"
-                    )
-                    preserve_network = current.network_name == config.network_name
-                    commands = (
-                        *self.runtime.preview_remove_commands(
-                            config,
-                            current,
-                            remove_volume=not preserve_volume,
-                            remove_network=not preserve_network,
-                        ),
-                        *self.runtime.preview_create_commands(
-                            config,
-                            run_plan,
-                            volume_exists=preserve_volume,
-                            network_exists=True if preserve_network else None,
-                        ),
-                    )
+
+
+
                     status = (
                         "reconfigured"
                         if requires_reconfig
@@ -227,8 +259,10 @@ class Controller:
                     action = "start"
                     reason = "the selected container is stopped"
                     target = current.name or current.container_id or config.container_name
-                    commands = (shlex.join(["docker", "start", target]),)
+                    commands = self._preview_start(target)
                     status = "started"
+
+
                 elif not self.runtime.is_ready(current):
                     action = "wait"
                     reason = "the selected container is running but not ready"
@@ -353,6 +387,16 @@ class Controller:
             else data_volume_lock(self.paths, config.data_volume)
         ):
             current = self._resolve_runtime(config)
+            is_managed = (
+                current is not None
+                and current.ownership.get("container") == "managed"
+            )
+            if not dry_run and is_managed and current is not None and current.state == "running":
+                if observer is not None and hasattr(observer, "stopping"):
+                    observer.stopping(config, current)
+                current = self.runtime.stop(config, current, observer=observer)
+                if observer is not None and hasattr(observer, "starting"):
+                    observer.starting(config)
             changed_fields: list[str] = []
             prepared_image: tuple[Any, bool] | None = None
             run_plan: DockerRunPlan | None = None
@@ -420,30 +464,13 @@ class Controller:
                     changed_fields = _changed_fields(current, config)
                     if port_layout_changed:
                         changed_fields = sorted({*changed_fields, "ports"})
-                    run_plan = self.runtime.plan_run(
-                        config,
-                        prepared_image[0],
-                        replacing=current,
+                    if image_id_differs:
+                        changed_fields = sorted({*changed_fields, "image"})
+                    run_plan, commands = self._plan_replacement(
+                        current, config, prepared_image[0]
                     )
-                    preserve_volume = (
-                        current.data == "persistent"
-                        or current.ownership["data_volume"] == "attached"
-                    )
-                    preserve_network = current.network_name == config.network_name
-                    commands = (
-                        *self.runtime.preview_remove_commands(
-                            config,
-                            current,
-                            remove_volume=not preserve_volume,
-                            remove_network=not preserve_network,
-                        ),
-                        *self.runtime.preview_create_commands(
-                            config,
-                            run_plan,
-                            volume_exists=preserve_volume,
-                            network_exists=True if preserve_network else None,
-                        ),
-                    )
+
+
                     status = (
                         "reconfigured"
                         if requires_reconfig
@@ -455,10 +482,10 @@ class Controller:
                     action = "restart"
                     reason = "the selected container is attached and cannot be replaced"
                     target = current.name or current.container_id or config.container_name
-                    commands = (
-                        shlex.join(["docker", "restart", "-t", "20", target]),
-                    )
+                    commands = self._preview_restart(target, timeout=20)
+
                     status = "restarted"
+
 
             commands = (
                 *commands,
@@ -599,43 +626,23 @@ class Controller:
                     observer=observer,
                     local_only=dry_run,
                 )
-                run_plan = self.runtime.plan_run(
-                    config,
-                    prepared_image[0],
-                    replacing=current,
+                run_plan, commands = self._plan_replacement(
+                    current, config, prepared_image[0]
                 )
-                preserve_volume = (
-                    current.data == "persistent"
-                    or current.ownership["data_volume"] == "attached"
-                )
-                preserve_network = current.network_name == config.network_name
-                commands = (
-                    *self.runtime.preview_remove_commands(
-                        config,
-                        current,
-                        remove_volume=not preserve_volume,
-                        remove_network=not preserve_network,
-                    ),
-                    *self.runtime.preview_create_commands(
-                        config,
-                        run_plan,
-                        volume_exists=preserve_volume,
-                        network_exists=True if preserve_network else None,
-                    ),
-                )
+
             elif current.state != "running":
                 action = "start"
                 reason = "the selected container is stopped"
                 target = current.name or current.container_id or config.container_name
-                commands = (shlex.join(["docker", "start", target]),)
+                commands = self._preview_start(target)
             elif not self.runtime.is_ready(current):
                 _validate_unready_recovery(current, config)
                 action = "recover"
                 reason = "the managed container is running but not ready"
                 target = current.name or current.container_id or config.container_name
-                commands = (
-                    shlex.join(["docker", "restart", "-t", "20", target]),
-                )
+                commands = self._preview_restart(target, timeout=20)
+
+
             else:
                 action = "no-op"
                 reason = "the selected container is already running and ready"
@@ -751,11 +758,11 @@ class Controller:
                 plan = _LifecyclePlan(
                     action="stop",
                     reason="the selected container is running",
-                    commands=(
-                        shlex.join(["docker", "stop", "-t", "20", target]),
-                    ),
+                    commands=self._preview_stop(target, timeout=20),
+
                     current=current,
                 )
+
             _debug_plan(observer, plan, self.runtime, config)
             if dry_run:
                 return plan.render()
@@ -967,6 +974,22 @@ class Controller:
         result["default_image"] = f"{DEFAULT_IMAGE} {image_details['formatted']}"
         result["image_details"] = image_details
         result["legacy_locks"] = legacy_locks
+        # Port availability diagnostics.
+        try:
+            local_config = load_config(directory=Path.cwd(), paths=self.paths)
+            tls_enabled = local_config.tls_enabled
+            tls_port = local_config.tls_port
+            local_only = local_config.local_only
+        except (HostError, Exception):
+            tls_enabled = False
+            tls_port = None
+            local_only = True
+        port_diag = self.runtime.port_diagnostics(
+            tls_enabled=tls_enabled,
+            tls_port=tls_port,
+            local_only=local_only,
+        )
+        result["port_availability"] = port_diag
         warnings = [result.get("warning", "")]
         if active_diagnostics:
             warnings.append(
@@ -974,11 +997,22 @@ class Controller:
             )
         if active_status is not None and active_status["state"] != "current":
             warnings.append(
-                "Last active container info is stale at ~/.localcloud/active.json"
+                f"Last active container info is stale at {self.paths.active_runtime}"
             )
         if legacy_host_state or legacy_locks:
             warnings.append(
                 "Legacy host state and locks are present; run 'localcloud cleanup' (or 'lc cleanup') to remove them."
+            )
+        if port_diag["status"] == "conflict":
+            warnings.append(
+                "Canonical LocalCloud ports are unavailable and no alternative port range was found; "
+                "free ports in the range 5365-5375 or one of the fallback ranges before starting."
+            )
+        elif port_diag["status"] == "conflict_with_alternative":
+            alt = port_diag["alternative_range"]
+            warnings.append(
+                f"Canonical LocalCloud ports are unavailable; an alternative range "
+                f"{alt[0]}-{alt[-1]} will be used when starting."
             )
         warning = " ".join(item for item in warnings if item).strip()
         if warning:
@@ -1685,6 +1719,29 @@ class Controller:
             result["reset_scope"] = reset_scope
         if logs is not None:
             result["logs"] = logs
+        # Port information: show active mappings for running containers,
+        # or port availability diagnostics for absent/stopped containers.
+        if environment is not None and environment.state == "running":
+            mappings: list[dict[str, Any]] = []
+            for port_spec, bindings in sorted(
+                environment.published_ports.items()
+            ):
+                port_text, _, protocol = port_spec.partition("/")
+                for host_ip, host_port in bindings:
+                    if host_port is not None:
+                        mappings.append({
+                            "host_ip": host_ip or "0.0.0.0",
+                            "host_port": host_port,
+                            "container_port": port_text,
+                            "protocol": protocol or "tcp",
+                        })
+            result["port_mappings"] = mappings
+        elif environment is None or environment.state != "running":
+            result["port_availability"] = self.runtime.port_diagnostics(
+                tls_enabled=config.tls_enabled,
+                tls_port=config.tls_port,
+                local_only=config.local_only,
+            )
         return result
 
     def _absent_payload(

@@ -285,6 +285,22 @@ class FakeRuntime:
     def doctor(self) -> dict[str, Any]:
         return dict(self.doctor_report)
 
+    def port_diagnostics(
+        self,
+        *,
+        tls_enabled: bool = False,
+        tls_port: int | None = None,
+        local_only: bool = True,
+    ) -> dict[str, Any]:
+        return {
+            "canonical_ports": list(range(5365, 5376)),
+            "all_canonical_available": True,
+            "occupied_ports": [],
+            "localcloud_ports": [],
+            "alternative_range": None,
+            "status": "available",
+        }
+
     def image_status(self, image_name: str) -> str:
         self.image_status_images.append(image_name)
         return "available locally"
@@ -499,12 +515,20 @@ class _RuntimeObserver:
     def __init__(self) -> None:
         self.logs: list[str] = []
         self.debug_messages: list[str] = []
+        self.stopping_calls: list[tuple[LocalCloudConfig, Any]] = []
+        self.starting_calls: list[LocalCloudConfig] = []
 
     def runtime_logs(self, value: str) -> None:
         self.logs.append(value)
 
     def debug(self, value: str) -> None:
         self.debug_messages.append(value)
+
+    def stopping(self, config: LocalCloudConfig, current: Any = None) -> None:
+        self.stopping_calls.append((config, current))
+
+    def starting(self, config: LocalCloudConfig) -> None:
+        self.starting_calls.append(config)
 
 
 def test_start_uses_selected_project_as_context_without_creating_it(tmp_path: Path) -> None:
@@ -1698,7 +1722,91 @@ def test_doctor_reports_stale_active_state_warning(tmp_path: Path) -> None:
 
     assert result["status"] == "ok"
     assert result["active_runtime"]["state"] == "stale"
-    assert "Last active container info is stale at ~/.localcloud/active.json" in result["warning"]
+    assert "Last active container info is stale at" in result["warning"]
+    assert "active-runtime.json" in result["warning"]
+
+
+def test_doctor_includes_port_availability(tmp_path: Path) -> None:
+    controller, _runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+
+    result = controller.doctor()
+
+    assert result["status"] == "ok"
+    assert "port_availability" in result
+    port_avail = result["port_availability"]
+    assert port_avail["status"] == "available"
+    assert port_avail["all_canonical_available"] is True
+    assert port_avail["occupied_ports"] == []
+    assert port_avail["localcloud_ports"] == []
+    assert isinstance(port_avail["canonical_ports"], list)
+    assert len(port_avail["canonical_ports"]) > 0
+
+
+def test_doctor_port_conflict_warning(tmp_path: Path) -> None:
+    """When FakeRuntime reports port conflicts, doctor should include a warning."""
+    controller, runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+
+    # Override port_diagnostics to simulate a conflict with alternative range.
+    original_port_diagnostics = runtime.port_diagnostics
+
+    def _conflicting_port_diagnostics(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "canonical_ports": list(range(5365, 5376)),
+            "all_canonical_available": False,
+            "occupied_ports": [{"port": 5365, "status": "in_use"}],
+            "localcloud_ports": [],
+            "alternative_range": [5508, 5509, 5510, 5511, 5512, 5513, 5514, 5515, 5516, 5517, 5518],
+            "status": "conflict_with_alternative",
+        }
+
+    runtime.port_diagnostics = _conflicting_port_diagnostics  # type: ignore[assignment]
+
+    result = controller.doctor()
+
+    assert result["port_availability"]["status"] == "conflict_with_alternative"
+    assert "alternative range" in result["warning"]
+    assert "5508" in result["warning"]
+
+
+def test_status_absent_includes_port_availability(tmp_path: Path) -> None:
+    controller, _runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+
+    config = _config(tmp_path, paths=paths)
+    result = controller.status(config)
+
+    assert result["status"] == "not_created"
+    assert "port_availability" in result
+    port_avail = result["port_availability"]
+    assert port_avail["status"] == "available"
+    assert isinstance(port_avail["canonical_ports"], list)
+
+
+def test_status_running_includes_port_mappings(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(
+        config,
+        state="running",
+        published_ports={
+            "5365/tcp": (("127.0.0.1", 5365),),
+            "5366/tcp": (("127.0.0.1", 5366),),
+        },
+    )
+
+    result = controller.status(config)
+
+    assert result["status"] == "running"
+    assert "port_mappings" in result
+    assert "port_availability" not in result
+    mappings = result["port_mappings"]
+    assert len(mappings) == 2
+    assert mappings[0]["host_port"] == 5365
+    assert mappings[0]["container_port"] == "5365"
+    assert mappings[0]["protocol"] == "tcp"
 
 
 def _seed_cleanup_state(paths: HostPaths, runtime: FakeRuntime) -> None:
@@ -2046,3 +2154,38 @@ def test_replacement_preview_inspects_different_target_network(
     assert runtime.preview_remove_network == [True]
     assert isinstance(plan, str)
     assert runtime.preview_network_exists[-1] is None
+
+
+def test_restart_stops_running_managed_container_before_preflight_and_creation(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config, state="running")
+    observer = _RuntimeObserver()
+
+    result = controller.restart(config, observer=observer)
+
+    assert result["status"] == "restarted"
+    assert len(observer.stopping_calls) == 1
+    assert observer.stopping_calls[0][0] == config
+    assert observer.stopping_calls[0][1].container_id == "container-existing"
+    assert config in observer.starting_calls
+    assert runtime.stops == 1
+    assert runtime.creates == 1
+
+
+def test_restart_does_not_stop_already_stopped_container(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config, state="exited")
+    observer = _RuntimeObserver()
+
+    result = controller.restart(config, observer=observer)
+
+    assert result["status"] == "restarted"
+    assert observer.stopping_calls == []
+    assert runtime.stops == 0
+    assert runtime.creates == 1

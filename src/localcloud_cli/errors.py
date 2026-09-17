@@ -20,3 +20,28 @@ class HostError(Exception):
             "message": self.message,
             "details": self.details,
         }
+
+
+class DockerError(HostError):
+    """Errors originating from Docker interaction or daemon state."""
+
+
+class ConfigError(HostError):
+    """Errors originating from invalid or unresolvable configuration."""
+
+
+class ReadinessError(HostError):
+    """Errors originating from container readiness timeouts or failures."""
+
+
+class EndpointError(HostError):
+    """Errors originating from invalid or non-loopback endpoints."""
+
+
+class OwnershipError(HostError):
+    """Errors originating from container or resource ownership mismatches."""
+
+
+class StateError(HostError):
+    """Errors originating from active runtime state serialization or locking."""
+
