@@ -50,6 +50,19 @@ def _transport_error(
     return HostError(code, message, details)
 
 
+_ORIGINAL_HTTPX_GET = httpx.get
+_ORIGINAL_HTTPX_POST = httpx.post
+_ORIGINAL_HTTPX_REQUEST = httpx.request
+_SHARED_CLIENT: httpx.Client | None = None
+
+
+def get_shared_http_client() -> httpx.Client:
+    global _SHARED_CLIENT
+    if _SHARED_CLIENT is None or _SHARED_CLIENT.is_closed:
+        _SHARED_CLIENT = httpx.Client()
+    return _SHARED_CLIENT
+
+
 class JavaMcpClient:
     """Thin HTTP client for lifecycle calls delegated to the authoritative Java MCP."""
 
@@ -65,6 +78,15 @@ class JavaMcpClient:
         self.user = user
         self.timeout = timeout
         self._ids = itertools.count(1)
+
+    def _http_request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        if method == "POST" and httpx.post is not _ORIGINAL_HTTPX_POST:
+            return httpx.post(url, **kwargs)
+        if method == "GET" and httpx.get is not _ORIGINAL_HTTPX_GET:
+            return httpx.get(url, **kwargs)
+        if httpx.request is not _ORIGINAL_HTTPX_REQUEST:
+            return httpx.request(method, url, **kwargs)
+        return get_shared_http_client().request(method, url, **kwargs)
 
     def forward(self, message: dict[str, Any]) -> dict[str, Any] | None:
         return self._post_mcp(message, allow_empty=True)
@@ -112,7 +134,8 @@ class JavaMcpClient:
     ) -> dict[str, Any] | None:
         method = str(message.get("method") or "")
         try:
-            response = httpx.post(
+            response = self._http_request(
+                "POST",
                 f"{self.url}/mcp",
                 json=message,
                 headers=self._headers(),
@@ -193,7 +216,7 @@ class JavaMcpClient:
         if payload is not None:
             request_args["json"] = payload
         try:
-            response = httpx.request(method, url, **request_args)
+            response = self._http_request(method, url, **request_args)
             response.raise_for_status()
             return response.json()
         except Exception as error:
@@ -233,7 +256,8 @@ class JavaMcpClient:
             "application/json" if output_format == "json" else "text/plain"
         )
         try:
-            response = httpx.get(
+            response = self._http_request(
+                "GET",
                 url,
                 params={"format": output_format, "project": self.project},
                 headers=headers,

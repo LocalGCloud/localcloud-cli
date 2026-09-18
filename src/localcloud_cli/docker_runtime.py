@@ -19,6 +19,15 @@ import httpx
 from .config import LocalCloudConfig, runtime_settings, validate_data_volume
 from .constants import DEFAULTS_CONFIG_LABEL, DEFAULT_DATA_VOLUME, DEFAULT_TLS_PORT
 from .errors import HostError
+from .java_client import get_shared_http_client
+
+_ORIGINAL_HTTPX_GET = httpx.get
+
+
+def _http_get(url: str, **kwargs: Any) -> httpx.Response:
+    if httpx.get is not _ORIGINAL_HTTPX_GET:
+        return httpx.get(url, **kwargs)
+    return get_shared_http_client().get(url, **kwargs)
 
 MANAGED_LABEL = "com.localcloud.managed"
 INSTANCE_LABEL = "com.localcloud.instance"  # Legacy child cleanup only.
@@ -226,6 +235,7 @@ class DockerRunPlan:
 
 class DockerRuntime:
     def __init__(self, client: Any | None = None):
+        self._resolved_image_details: dict[str, dict[str, Any]] = {}
         if client is not None:
             self.client = client
             return
@@ -236,7 +246,6 @@ class DockerRuntime:
                 self.client = docker.from_env(use_context=True)
             except TypeError:
                 self.client = docker.from_env()
-            self.client.ping()
         except Exception as error:
             raise HostError(
                 "docker_unavailable",
@@ -251,6 +260,7 @@ class DockerRuntime:
         *,
         require: bool = False,
     ) -> RuntimeRecord | None:
+        self._resolved_image_details.clear()
         data_volume = validate_data_volume(config.data_volume)
         volume = self._get_optional(self.client.volumes, data_volume, "volume")
         containers = self._list_containers(data_volume)
@@ -1253,7 +1263,25 @@ class DockerRuntime:
     ) -> str:
         if tail < 0:
             raise HostError("invalid_tail", "Log tail must be zero or greater")
-        container, current = self._mutation_target(config, runtime)
+        container_id = str(runtime.container_id or "")
+        if not container_id:
+            raise HostError(
+                "container_missing",
+                "Runtime record has no immutable container ID",
+                {"data_volume": config.data_volume},
+            )
+        try:
+            container = self.client.containers.get(container_id)
+        except Exception as error:
+            raise HostError(
+                "container_missing",
+                "Selected LocalCloud container no longer exists or cannot be inspected",
+                {
+                    "data_volume": config.data_volume,
+                    "container_id": container_id,
+                    "cause": str(error),
+                },
+            ) from error
         try:
             kwargs: dict[str, Any] = {"tail": tail, "timestamps": True}
             if since is not None:
@@ -1265,7 +1293,7 @@ class DockerRuntime:
                 "Could not read LocalCloud runtime logs",
                 {
                     "data_volume": config.data_volume,
-                    "container_id": current.container_id,
+                    "container_id": container_id,
                     "cause": str(error),
                 },
             ) from error
@@ -1284,7 +1312,7 @@ class DockerRuntime:
         if runtime.state != "running" or not runtime.url:
             return False
         try:
-            response = httpx.get(f"{runtime.url}/health", timeout=timeout)
+            response = _http_get(f"{runtime.url}/health", timeout=timeout)
             if response.status_code != 200:
                 return False
             payload = response.json()
@@ -1302,7 +1330,7 @@ class DockerRuntime:
         if runtime.state != "running" or not runtime.url:
             return None
         try:
-            response = httpx.get(f"{runtime.url}/services", timeout=3.0)
+            response = _http_get(f"{runtime.url}/services", timeout=3.0)
             if response.status_code != 200:
                 return None
             payload = response.json()
@@ -1370,6 +1398,7 @@ class DockerRuntime:
                             role,
                             data_volume or "invalid/data-volume",
                             allow_legacy_volume=kind == "volume",
+                            resource_labels=labels,
                         )
                     except HostError as error:
                         invalid_ownership.append(
@@ -1548,6 +1577,8 @@ class DockerRuntime:
         return {"removed": removed, "failures": failures}
 
     def image_status(self, image_name: str) -> str:
+        if image_name in self._resolved_image_details:
+            return "available locally"
         try:
             self.client.images.get(image_name)
             return "available locally"
@@ -1585,28 +1616,35 @@ class DockerRuntime:
             "formatted": formatted,
         }
 
+    def _image_details_from_image(self, image: Any) -> dict[str, Any]:
+        attrs = getattr(image, "attrs", None)
+        raw_id = getattr(image, "id", None) or (
+            attrs.get("Id") if isinstance(attrs, dict) else None
+        )
+        short_id = self._short_id_from_raw(raw_id)
+        sha = None
+        if isinstance(attrs, dict):
+            repo_digests = attrs.get("RepoDigests") or []
+            if isinstance(repo_digests, list):
+                for rd in repo_digests:
+                    if "@" in str(rd):
+                        sha = str(rd).split("@", 1)[1]
+                        break
+            if not sha:
+                desc_digest = attrs.get("Descriptor", {}).get("digest")
+                if desc_digest:
+                    sha = str(desc_digest)
+        sha = self._normalize_sha(sha, raw_id)
+        return self._image_details_result("Local", short_id, sha)
+
     def image_details(self, image_name: str) -> dict[str, Any]:
+        if image_name in self._resolved_image_details:
+            return dict(self._resolved_image_details[image_name])
         try:
             image = self.client.images.get(image_name)
-            attrs = getattr(image, "attrs", None)
-            raw_id = getattr(image, "id", None) or (
-                attrs.get("Id") if isinstance(attrs, dict) else None
-            )
-            short_id = self._short_id_from_raw(raw_id)
-            sha = None
-            if isinstance(attrs, dict):
-                repo_digests = attrs.get("RepoDigests") or []
-                if isinstance(repo_digests, list):
-                    for rd in repo_digests:
-                        if "@" in str(rd):
-                            sha = str(rd).split("@", 1)[1]
-                            break
-                if not sha:
-                    desc_digest = attrs.get("Descriptor", {}).get("digest")
-                    if desc_digest:
-                        sha = str(desc_digest)
-            sha = self._normalize_sha(sha, raw_id)
-            return self._image_details_result("Local", short_id, sha)
+            details = self._image_details_from_image(image)
+            self._resolved_image_details[image_name] = details
+            return dict(details)
         except Exception:
             try:
                 reg_data = self.client.images.get_registry_data(image_name)
@@ -1696,7 +1734,7 @@ class DockerRuntime:
             if remaining <= 0:
                 break
             try:
-                response = httpx.get(
+                response = _http_get(
                     f"{normalized}/health",
                     timeout=min(3.0, remaining),
                 )
@@ -1800,7 +1838,9 @@ class DockerRuntime:
         container_id = str(attrs.get("Image") or "").strip()
         configured_id = None
         try:
-            configured_id = _image_id(self.client.images.get(config.image))
+            image_obj = self.client.images.get(config.image)
+            configured_id = _image_id(image_obj)
+            self._resolved_image_details[config.image] = self._image_details_from_image(image_obj)
         except Exception as error:
             if not _is_not_found(error):
                 raise HostError(
@@ -2127,6 +2167,7 @@ class DockerRuntime:
         progress_enabled = observer is not None and hasattr(observer, "image_pull")
         if not progress_enabled or not callable(pull_stream):
             image = self.client.images.pull(image_name)
+            self._resolved_image_details.clear()
             emit("Pull complete")
             return image
 
@@ -2173,6 +2214,7 @@ class DockerRuntime:
             )
 
         image = self.client.images.get(image_name)
+        self._resolved_image_details.clear()
         emit("Pull complete")
         return image
 
@@ -2371,7 +2413,6 @@ class DockerRuntime:
             )
         try:
             container = self.client.containers.get(container_id)
-            container.reload()
         except Exception as error:
             raise HostError(
                 "container_missing",
@@ -2962,7 +3003,7 @@ def _attached_drift(
     }
 
 
-def _resource_labels(resource: Any, *, reload: bool = True) -> dict[str, str]:
+def _resource_labels(resource: Any, *, reload: bool = False) -> dict[str, str]:
     reload_resource = getattr(resource, "reload", None)
     if reload and callable(reload_resource):
         try:

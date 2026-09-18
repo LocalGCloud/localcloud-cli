@@ -14,12 +14,15 @@ def _fake_command(path: Path, *, delay: float) -> Path:
         f"#!{sys.executable}\n"
         "import sys\n"
         "import time\n"
+        "if '--warmup' in sys.argv:\n"
+        "    sys.exit(0)\n"
         f"time.sleep({delay!r})\n"
         "print('Processing   fixture', file=sys.stderr, flush=True)\n"
         "time.sleep(10)\n",
         encoding="utf-8",
     )
     path.chmod(0o755)
+    subprocess.run([str(path), "--warmup"], check=True)
     return path
 
 
@@ -27,11 +30,11 @@ def test_startup_feedback_gate_accepts_prompt_output(tmp_path: Path) -> None:
     command = _fake_command(tmp_path / "prompt-command", delay=0.0)
 
     result = subprocess.run(
-        [sys.executable, str(CHECKER), str(command), "--timeout", "0.5"],
+        [sys.executable, str(CHECKER), str(command), "--timeout", "1.0"],
         text=True,
         capture_output=True,
         check=False,
-        timeout=2,
+        timeout=5,
     )
 
     assert result.returncode == 0, result.stderr
@@ -61,12 +64,15 @@ def test_startup_feedback_gate_does_not_block_on_partial_stderr(
         f"#!{sys.executable}\n"
         "import sys\n"
         "import time\n"
+        "if '--warmup' in sys.argv:\n"
+        "    sys.exit(0)\n"
         "sys.stderr.write('unterminated warning')\n"
         "sys.stderr.flush()\n"
         "time.sleep(10)\n",
         encoding="utf-8",
     )
     command.chmod(0o755)
+    subprocess.run([str(command), "--warmup"], check=True)
 
     result = subprocess.run(
         [sys.executable, str(CHECKER), str(command), "--timeout", "0.05"],

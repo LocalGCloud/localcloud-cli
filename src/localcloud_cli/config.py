@@ -312,10 +312,16 @@ def resolve_docker_socket(
 
 @lru_cache(maxsize=1)
 def _packaged_defaults() -> dict[str, object]:
-    defaults_resource = resources.files("localcloud_cli").joinpath(
-        "defaults/localcloud.v1.yaml"
+    json_resource = resources.files("localcloud_cli").joinpath(
+        "defaults/localcloud.v1.json"
     )
-    defaults = yaml.safe_load(defaults_resource.read_text(encoding="utf-8"))
+    try:
+        defaults = json.loads(json_resource.read_text(encoding="utf-8"))
+    except Exception:
+        defaults_resource = resources.files("localcloud_cli").joinpath(
+            "defaults/localcloud.v1.yaml"
+        )
+        defaults = yaml.safe_load(defaults_resource.read_text(encoding="utf-8"))
     if not isinstance(defaults, dict):
         raise RuntimeError("Packaged LocalCloud defaults are invalid")
     return defaults
@@ -348,10 +354,12 @@ def _effective_service_catalog(
     services_section: dict[object, object],
 ) -> dict[str, dict[str, object]]:
     packaged_catalog = _packaged_service_catalog()
-    catalog = copy.deepcopy(packaged_catalog)
     overrides = services_section.get("catalog") or {}
     if not isinstance(overrides, dict):
         _invalid_config("services.catalog must be an object", value=overrides)
+    if not overrides:
+        return {key: dict(val) for key, val in packaged_catalog.items()}
+    catalog = copy.deepcopy(packaged_catalog)
     for service_id, override in overrides.items():
         if not isinstance(service_id, str):
             _invalid_config(
