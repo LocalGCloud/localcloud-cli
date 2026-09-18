@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 from importlib.metadata import distribution
 from pathlib import Path
 from types import SimpleNamespace
@@ -214,11 +215,23 @@ def test_version_output_is_exact(capsys: pytest.CaptureFixture[str]) -> None:
     assert caught.value.code == 0
     assert capsys.readouterr().out == f"localcloud {__version__}\n"
 
+    with pytest.raises(SystemExit) as caught:
+        _parser().parse_args(["-v"])
+
+    assert caught.value.code == 0
+    assert capsys.readouterr().out == f"localcloud {__version__}\n"
+
 
 def test_public_version_output_is_exact(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     assert entrypoint_main(["--version"]) == 0
+    assert capsys.readouterr().out == f"localcloud {__version__}\n"
+
+    assert entrypoint_main(["-v"]) == 0
+    assert capsys.readouterr().out == f"localcloud {__version__}\n"
+
+    assert main(["-v"]) == 0
     assert capsys.readouterr().out == f"localcloud {__version__}\n"
 
 
@@ -237,8 +250,16 @@ def test_version_output_includes_embedded_release_provenance(
     assert entrypoint_main(["--version"]) == 0
     assert capsys.readouterr().out == f"{expected}\n"
 
+    assert entrypoint_main(["-v"]) == 0
+    assert capsys.readouterr().out == f"{expected}\n"
+
     with pytest.raises(SystemExit) as caught:
         _parser().parse_args(["--version"])
+    assert caught.value.code == 0
+    assert capsys.readouterr().out == f"{expected}\n"
+
+    with pytest.raises(SystemExit) as caught:
+        _parser().parse_args(["-v"])
     assert caught.value.code == 0
     assert capsys.readouterr().out == f"{expected}\n"
 
@@ -1761,3 +1782,66 @@ def test_main_doctor_success_message(
     assert main(["doctor"]) == 0
     captured = capsys.readouterr()
     assert "LocalCloud is ready to start" in captured.err
+
+
+def test_main_without_args_defaults_to_help_and_includes_required_note(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main([]) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "usage: localcloud [-h] [-v] <command> ..." in captured.out
+    assert "-v, --version" in captured.out
+    assert "<command>      one of the <command> is required" in captured.out
+    assert "Note: One of the <command> is required." in captured.out
+    assert "localcloud: error: the following arguments are required: command" not in captured.err
+
+
+def test_main_none_argv_defaults_to_help(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["localcloud"])
+    assert main() == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "usage: localcloud [-h] [-v] <command> ..." in captured.out
+    assert "-v, --version" in captured.out
+    assert "Note: One of the <command> is required." in captured.out
+
+
+def test_entrypoint_main_without_args_defaults_to_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert entrypoint_main([]) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "usage: localcloud [-h] [-v] <command> ..." in captured.out
+    assert "-v, --version" in captured.out
+    assert "Note: One of the <command> is required." in captured.out
+
+
+def test_parser_without_args_defaults_to_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as caught:
+        _parser().parse_args([])
+
+    assert caught.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage: localcloud [-h] [-v] <command> ..." in captured.out
+    assert "-v, --version" in captured.out
+    assert "<command>      one of the <command> is required" in captured.out
+    assert "Note: One of the <command> is required." in captured.out
+
+
+def test_help_flags_include_command_required_note(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["-h"]) == 0
+    help_h = capsys.readouterr().out
+    assert "Note: One of the <command> is required." in help_h
+
+    assert main(["--help"]) == 0
+    help_long = capsys.readouterr().out
+    assert "Note: One of the <command> is required." in help_long
+

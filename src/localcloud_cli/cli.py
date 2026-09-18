@@ -4,9 +4,10 @@ import argparse
 import math
 import os
 import sys
+import textwrap
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TextIO
+from typing import TYPE_CHECKING, Any, Sequence, TextIO
 
 from . import version_string
 from .constants import (
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
 
 ALIAS_HELP = "lc is an alias for localcloud; both commands behave identically."
 AGENT_HELP = "Coding agents: run 'localcloud guide' before using LocalCloud."
+COMMAND_REQUIRED_NOTE = "Note: One of the <command> is required."
 _RUNTIME_COMMANDS = {
     "start", "restart", "reset", "stop", "status", "logs", "console", "env", "mcp"
 }
@@ -372,7 +374,10 @@ def _port_mapping_details(
 
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 0
     try:
         fields = parse_fields(getattr(args, "fields", None))
         validate_fields(args.command, fields)
@@ -797,22 +802,51 @@ class _SmartPullAction(argparse.BooleanOptionalAction):
         setattr(namespace, "pull_explicit", True)
 
 
+class _HelpFormatter(argparse.HelpFormatter):
+    def _fill_text(self, text: str, width: int, indent: str) -> str:
+        return "\n\n".join(
+            textwrap.fill(para, width, initial_indent=indent, subsequent_indent=indent)
+            for para in text.split("\n\n")
+        )
+
+
+class _LocalCloudParser(argparse.ArgumentParser):
+    def parse_args(
+        self,
+        args: Sequence[str] | None = None,
+        namespace: argparse.Namespace | None = None,
+    ) -> argparse.Namespace:
+        if args is None:
+            args = sys.argv[1:]
+        if not args:
+            args = ["-h"]
+        return super().parse_args(args, namespace)
+
+
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _LocalCloudParser(
         prog="localcloud",
         description=(
             "Run Google Cloud-compatible services locally in Docker. Manage "
             "LocalCloud runtimes by Docker data volume, project context, SDK "
             "environments, and the MCP bridge."
         ),
-        epilog=f"{ALIAS_HELP} {AGENT_HELP}",
+        epilog=f"{COMMAND_REQUIRED_NOTE}\n\n{ALIAS_HELP} {AGENT_HELP}",
+        formatter_class=_HelpFormatter,
     )
     parser.add_argument(
+        "-v",
         "--version",
         action="version",
         version=version_string(),
     )
-    commands = parser.add_subparsers(dest="command", required=True)
+    commands = parser.add_subparsers(
+        dest="command",
+        required=True,
+        metavar="<command>",
+        help="one of the <command> is required",
+        parser_class=argparse.ArgumentParser,
+    )
     commands.add_parser(
         "update",
         help="Update the CLI to the latest release",

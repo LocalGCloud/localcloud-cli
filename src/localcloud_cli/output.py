@@ -853,24 +853,58 @@ def _gradient_escape(position: float, rgb: tuple[int, int, int], color: ColorMod
     return f"\x1b[38;5;{ramp[index]}m" if color is ColorMode.ANSI256 else f"\x1b[{ramp[index]}m"
 
 
-_ALL_SERVICES_ROW1 = (
+_ALL_SUPPORTED_SERVICES = (
     ("storage", "Storage", "g_blue", True),
-    ("firestore", "Firestore", "g_blue", False),
     ("pubsub", "Pub/Sub", "g_red", True),
-    ("bigquery", "BigQuery", "g_yellow", True),
-    ("secrets", "Secrets", "g_green", True),
-)
-_ALL_SERVICES_ROW2 = (
+    ("firestore", "Firestore", "g_blue", False),
+    ("bigtable", "Bigtable", "g_blue", True),
     ("spanner", "Spanner", "g_blue", True),
+    ("bigquery", "BigQuery", "g_yellow", True),
     ("cloudsql", "Cloud SQL", "g_blue", True),
-    ("tasks", "Tasks", "g_red", True),
-    ("logging", "Logging", "g_green", True),
+    ("alloydb", "AlloyDB", "g_blue", True),
+    ("memorystore", "Memorystore", "g_red", True),
     ("dataproc", "Dataproc", "g_yellow", True),
+    ("tasks", "Tasks", "g_red", True),
+    ("scheduler", "Scheduler", "g_blue", True),
+    ("functions", "Functions", "g_yellow", True),
+    ("cloudrun", "Cloud Run", "g_blue", False),
+    ("compute", "Compute", "g_blue", False),
+    ("gke", "GKE", "g_blue", False),
+    ("workflows", "Workflows", "g_blue", True),
+    ("vertexai", "Vertex AI", "g_yellow", False),
+    ("sheets", "Sheets", "g_green", True),
+    ("kms", "KMS", "g_yellow", True),
+    ("secrets", "Secrets", "g_green", True),
+    ("iam", "IAM", "g_yellow", True),
+    ("logging", "Logging", "g_green", True),
+    ("monitoring", "Monitoring", "g_green", True),
+    ("resourcemanager", "Resource Mgr", "g_blue", True),
+    ("serviceusage", "Service Usage", "g_blue", True),
+    ("billing", "Billing", "g_green", True),
 )
+_ALL_SERVICES_ROW1 = _ALL_SUPPORTED_SERVICES[:14]
+_ALL_SERVICES_ROW2 = _ALL_SUPPORTED_SERVICES[14:]
 _SERVICE_ALIASES = {
     "gcs": "storage",
     "secretmanager": "secrets",
     "cloudtasks": "tasks",
+    "cloudscheduler": "scheduler",
+    "cloudfunctions": "functions",
+    "cloudrun": "cloudrun",
+    "run": "cloudrun",
+    "computeengine": "compute",
+    "gce": "compute",
+    "cloudiam": "iam",
+    "cloudresourcemanager": "resourcemanager",
+    "crm": "resourcemanager",
+    "cloudbilling": "billing",
+    "cloudlogging": "logging",
+    "cloudmonitoring": "monitoring",
+    "redis": "memorystore",
+    "valkey": "memorystore",
+    "cloudworkflows": "workflows",
+    "vertex": "vertexai",
+    "cloudkms": "kms",
     "sql": "cloudsql",
 }
 
@@ -880,9 +914,9 @@ def _normalize_service(value: str) -> str:
     return _SERVICE_ALIASES.get(normalized, normalized)
 
 
-def _resolve_services_rows(
+def _resolve_all_services(
     services: str | Sequence[str],
-) -> tuple[list[tuple[str, str, bool]], list[tuple[str, str, bool]]]:
+) -> list[tuple[str, str, bool]]:
     enabled: set[str] | None
     if isinstance(services, str):
         service_list = [
@@ -895,21 +929,22 @@ def _resolve_services_rows(
     if not service_list or service_list == ["default"]:
         enabled = None
     elif service_list == ["all"]:
-        enabled = {
-            key for key, _, _, _ in (*_ALL_SERVICES_ROW1, *_ALL_SERVICES_ROW2)
-        }
+        enabled = {key for key, _, _, _ in _ALL_SUPPORTED_SERVICES}
     else:
         enabled = set(service_list)
 
-    def build_row(
-        row: Sequence[tuple[str, str, str, bool]],
-    ) -> list[tuple[str, str, bool]]:
-        return [
-            (name, role, default_enabled if enabled is None else key in enabled)
-            for key, name, role, default_enabled in row
-        ]
+    return [
+        (name, role, default_enabled if enabled is None else key in enabled)
+        for key, name, role, default_enabled in _ALL_SUPPORTED_SERVICES
+    ]
 
-    return build_row(_ALL_SERVICES_ROW1), build_row(_ALL_SERVICES_ROW2)
+
+def _resolve_services_rows(
+    services: str | Sequence[str],
+) -> tuple[list[tuple[str, str, bool]], list[tuple[str, str, bool]]]:
+    all_resolved = _resolve_all_services(services)
+    mid = (len(all_resolved) + 1) // 2
+    return all_resolved[:mid], all_resolved[mid:]
 
 
 def _format_services_row(
@@ -1000,9 +1035,9 @@ def _format_services_summary(
     width: int,
     color: ColorMode,
 ) -> str:
-    first, second = _resolve_services_rows(services)
-    selected = sum(1 for _, _, enabled in (*first, *second) if enabled)
-    off = len(first) + len(second) - selected
+    all_svcs = _resolve_all_services(services)
+    selected = sum(1 for _, _, enabled in all_svcs if enabled)
+    off = len(all_svcs) - selected
     prefix = "  Featured: "
     selected_text = f"● {selected} selected"
     off_text = f"○ {off} off"
@@ -1165,6 +1200,7 @@ def _wide_panel(
 ) -> list[str]:
     split_width = 28
     right_width = box_width - split_width - 3
+    inside_width = box_width - 2
 
     heading = truncate_visible(context.heading, split_width - 2)
     left_rows = [
@@ -1175,17 +1211,22 @@ def _wide_panel(
     for line in render_cloud(phase=phase, progress=progress, color=color):
         left_rows.append(_centered(line, split_width))
     left_rows.append(" " * split_width)
-    for value, role in (
-        (context.project, "g_blue"),
-        (context.data_volume, "g_yellow"),
-        (context.user, "g_green"),
-    ):
-        left_rows.append(
-            _centered(
-                style_text(truncate_visible(value, split_width - 2), role, color),
-                split_width,
-            )
-        )
+
+    all_services = _resolve_all_services(context.services)
+    enabled_count = sum(1 for _, _, enabled in all_services if enabled)
+    disabled_count = len(all_services) - enabled_count
+
+    badge_services = style_text(f"{len(all_services)} GCP Services", "welcome", color, bold=True)
+    badge_status = (
+        style_text("●", "success", color)
+        + style_text(f" {enabled_count} active ", "cmd_desc", color)
+        + style_text("·", "muted", color)
+        + style_text(" ○", "muted", color)
+        + style_text(f" {disabled_count} opt", "muted", color)
+    )
+    left_rows.append(_centered(badge_services, split_width))
+    left_rows.append(_centered(badge_status, split_width))
+    left_rows.append(" " * split_width)
 
     right_rows: list[str] = []
     tips_header = " Top commands"
@@ -1201,7 +1242,7 @@ def _wide_panel(
             "Exports env vars that redirect cloud service calls to localcloud.",
         ),
     )
-    command_column_width = 24
+    command_column_width = 22 if right_width < 60 else 24
     for command, role, description in commands:
         command_budget = max(1, command_column_width - 2)
         rendered_command = truncate_visible(command, command_budget)
@@ -1220,48 +1261,56 @@ def _wide_panel(
             + " " * max(0, right_width - visible_width(row_plain))
         )
     right_rows.append(style_text("─" * right_width, "muted", color))
-    services_header = " Supported Services"
-    right_rows.append(
-        style_text(services_header, "section_header", color, bold=True)
-        + " " * max(0, right_width - visible_width(services_header))
-    )
-    first_services, second_services = _resolve_services_rows(context.services)
-    right_rows.append(_format_services_row(first_services, right_width, color))
-    right_rows.append(_format_services_row(second_services, right_width, color))
-    right_rows.append(style_text("─" * right_width, "muted", color))
     context_header = " Context"
     right_rows.append(
         style_text(context_header, "section_header", color, bold=True)
         + " " * max(0, right_width - visible_width(context_header))
     )
     config_name = _format_config_value(context.config)
-    right_rows.append(
-        _format_context_pair(
-            "Data Volume",
-            context.data_volume,
-            "g_yellow",
-            "Project",
-            context.project,
-            "g_blue",
-            right_width,
-            color,
+    if right_width >= 60:
+        right_rows.append(
+            _format_context_pair(
+                "Data Volume",
+                context.data_volume,
+                "g_yellow",
+                "Project",
+                context.project,
+                "g_blue",
+                right_width,
+                color,
+            )
         )
-    )
-    right_rows.append(
-        _format_context_pair(
-            "User",
-            context.user,
-            "g_green",
-            "Config",
-            config_name,
-            "ctx_config",
-            right_width,
-            color,
+        right_rows.append(
+            _format_context_pair(
+                "User",
+                context.user,
+                "g_green",
+                "Config",
+                config_name,
+                "ctx_config",
+                right_width,
+                color,
+            )
         )
-    )
-    right_rows.append(
-        _format_context_line("Data", context.data, "primary", right_width, color)
-    )
+        right_rows.append(
+            _format_context_line("Data", context.data, "primary", right_width, color)
+        )
+    else:
+        right_rows.append(
+            _format_context_line("Project", context.project, "g_blue", right_width, color)
+        )
+        right_rows.append(
+            _format_context_line("Data Volume", context.data_volume, "g_yellow", right_width, color)
+        )
+        right_rows.append(
+            _format_context_line("User", context.user, "g_green", right_width, color)
+        )
+        right_rows.append(
+            _format_context_line("Config", config_name, "ctx_config", right_width, color)
+        )
+        right_rows.append(
+            _format_context_line("Data", context.data, "primary", right_width, color)
+        )
 
     row_count = max(len(left_rows), len(right_rows))
     left_rows.extend([" " * split_width] * (row_count - len(left_rows)))
@@ -1270,7 +1319,53 @@ def _wide_panel(
     lines = [_border_title(box_width, color)]
     for left, right in zip(left_rows, right_rows):
         lines.append(f"{border}{left}{border}{right}{border}")
-    lines.append(_border_bottom(box_width, color, split_width))
+
+    # Mid junction divider between top tier and bottom tier
+    mid_sep = style_text(
+        "├" + "─" * split_width + "┴" + "─" * right_width + "┤",
+        "muted",
+        color,
+    )
+    lines.append(mid_sep)
+
+    # Bottom Tier: Supported Services (Full Width)
+    svc_hdr_plain = f" Supported Services (● {enabled_count} enabled · ○ {disabled_count} disabled)"
+    svc_hdr = (
+        style_text(" Supported Services", "section_header", color, bold=True)
+        + style_text(" (", "muted", color)
+        + style_text("●", "success", color)
+        + style_text(f" {enabled_count} enabled", "cmd_desc", color)
+        + style_text(" · ", "muted", color)
+        + style_text("○", "muted", color)
+        + style_text(f" {disabled_count} disabled)", "muted", color)
+    )
+    svc_hdr += " " * max(0, inside_width - visible_width(svc_hdr_plain))
+    lines.append(f"{border}{svc_hdr}{border}")
+
+    num_cols = 6 if inside_width >= 90 else (5 if inside_width >= 72 else 4)
+    prefix = "  "
+    avail = inside_width - len(prefix)
+    col_w = avail // num_cols
+    for i in range(0, len(all_services), num_cols):
+        chunk = all_services[i:i + num_cols]
+        line_styled = prefix
+        line_plain = prefix
+        for j, (name, role, enabled) in enumerate(chunk):
+            bullet = "●" if enabled else "○"
+            item_plain = f"{bullet} {name}"
+            st_b = style_text(bullet, role if enabled else "muted", color)
+            st_n = name if enabled else style_text(name, "muted", color)
+            item_styled = f"{st_b} {st_n}"
+            if j < len(chunk) - 1:
+                pad = " " * max(1, col_w - len(item_plain))
+                item_plain += pad
+                item_styled += pad
+            line_plain += item_plain
+            line_styled += item_styled
+        pad_end = " " * max(0, inside_width - visible_width(line_plain))
+        lines.append(f"{border}{line_styled}{pad_end}{border}")
+
+    lines.append(_border_bottom(box_width, color))
     lines.append(_footer_tip(box_width, color))
     return lines
 

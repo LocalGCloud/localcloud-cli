@@ -395,7 +395,7 @@ def test_40_column_panel_preserves_full_artwork_and_context() -> None:
         assert artwork_line.strip() in plain_text
     for label in ("Data Volume:", "Project:", "User:", "Config:", "Data:", "Featured:"):
         assert label in plain_text
-    assert "● 3 selected · ○ 7 off" in plain_text
+    assert "● 3 selected · ○ 24 off" in plain_text
     assert {visible_width(line) for line in lines} == {38}
 
 
@@ -525,11 +525,34 @@ def test_wide_panel_structure_and_color_coding() -> None:
     assert "status | start | stop | restart" in plain_text
     assert "eval $(lc env)" in plain_text
     assert "Supported Services" in plain_text
+    assert "27 GCP Services" in plain_text
+    assert "● 22 active · ○ 5 opt" in plain_text
+    # Check default enabled services
     assert "● Storage" in plain_text
-    assert "○ Firestore" in plain_text
     assert "● Pub/Sub" in plain_text
     assert "● BigQuery" in plain_text
     assert "● Secrets" in plain_text
+    assert "● Cloud SQL" in plain_text
+    assert "● AlloyDB" in plain_text
+    assert "● Memorystore" in plain_text
+    assert "● Dataproc" in plain_text
+    assert "● Spanner" in plain_text
+    assert "● Workflows" in plain_text
+    assert "● Sheets" in plain_text
+    assert "● KMS" in plain_text
+    assert "● IAM" in plain_text
+    assert "● Logging" in plain_text
+    assert "● Monitoring" in plain_text
+    assert "● Resource Mgr" in plain_text
+    assert "● Service Usage" in plain_text
+    assert "● Billing" in plain_text
+    # Check default disabled services
+    assert "○ Firestore" in plain_text
+    assert "○ Cloud Run" in plain_text
+    assert "○ Compute" in plain_text
+    assert "○ GKE" in plain_text
+    assert "○ Vertex AI" in plain_text
+    # Check Context fields
     assert "Config" in plain_text
     assert "Data Volume:" in plain_text
     assert "localcloud-data" in plain_text
@@ -537,6 +560,13 @@ def test_wide_panel_structure_and_color_coding() -> None:
     assert "local-gcp-project" in plain_text
     assert "User:" in plain_text
     assert "local-developer" in plain_text
+    # Verify that project, volume, and developer are NOT in the left setup pane
+    split_lines = [strip_ansi(line) for line in lines if line.count("│") >= 2]
+    left_columns = [line.split("│")[1] for line in split_lines if len(line.split("│")) > 2]
+    assert not any("local-gcp-project" in col for col in left_columns)
+    assert not any("localcloud-data" in col for col in left_columns)
+    assert not any("local-developer" in col for col in left_columns)
+
     assert "Tip: Run localcloud guide" in plain_text
     assert all(visible_width(line) == 98 for line in lines)
 
@@ -558,6 +588,27 @@ def test_custom_services_rendering_in_panel() -> None:
     assert "○ Firestore" in plain_text
     assert "○ BigQuery" in plain_text
     assert all(visible_width(line) == 98 for line in lines)
+
+
+def test_80_column_wide_panel_structure() -> None:
+    context = PanelContext(
+        data_volume="localcloud-data",
+        project="local-gcp-project",
+        user="local-developer",
+        services="default",
+        data="persistent",
+        config=None,
+    )
+    lines = render_panel(context, 80, color=ColorMode.NONE)
+    plain_text = "\n".join(lines)
+    assert "27 GCP Services" in plain_text
+    assert "● 22 active · ○ 5 opt" in plain_text
+    assert "Supported Services" in plain_text
+    assert "● Storage" in plain_text
+    assert "○ Firestore" in plain_text
+    assert "○ Cloud Run" in plain_text
+    assert "○ Vertex AI" in plain_text
+    assert all(visible_width(line) == 78 for line in lines)
 
 
 def test_cloud_color_modes_emit_appropriate_escape_codes() -> None:

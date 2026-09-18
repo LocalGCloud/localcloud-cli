@@ -27,20 +27,27 @@ libraries it already uses, just pointed at loopback.
 
 ```console
 $ lc doctor
-╭── LocalCloud v0.1.4 ───────────────────────────────────────────────────────────────────────╮
-│                            │ Top commands                                                  │
-│ Checking LocalCloud setup  │  localcloud (or lc)    status | start | stop | restart        │
-│                            │  eval $(lc env)        Exports env vars that redirect cloud s…│
-│           ╭────╮           │───────────────────────────────────────────────────────────────│
-│        ╭──╯    ╰──╮        │ Supported Services                                            │
-│       ╭─╯        ╰─╮       │  ● Storage    ○ Firestore   ● Pub/Sub   ● BigQuery   ● Secrets│
-│      ╭╯            ╰╮      │  ● Spanner    ● Cloud SQL    ● Tasks    ● Logging   ● Dataproc│
-│      ╰──────────────╯      │───────────────────────────────────────────────────────────────│
-│                            │ Context                                                       │
-│     local-gcp-project      │  Data Volume: localcloud-data       Project: local-gcp-project│
-│      localcloud-data       │  User: local-developer               Config: built-in defaults│
-│      local-developer       │  Data: persistent                                             │
-╰────────────────────────────┴───────────────────────────────────────────────────────────────╯
+╭── LocalCloud v0.1.5 ────────────────────────────────────────────────────────────────────────╮
+│                            │ Top commands                                                   │
+│ Checking LocalCloud setup  │  localcloud (or lc)    status | start | stop | restart         │
+│                            │  eval $(lc env)        Exports env vars that redirect cloud se…│
+│           ╭────╮           │────────────────────────────────────────────────────────────────│
+│        ╭──╯    ╰──╮        │ Context                                                        │
+│       ╭─╯        ╰─╮       │  Data Volume: localcloud-data        Project: local-gcp-project│
+│      ╭╯            ╰╮      │  User: local-developer                Config: built-in defaults│
+│      ╰──────────────╯      │  Data: persistent                                              │
+│                            │                                                                │
+│      27 GCP Services       │                                                                │
+│   ● 22 active · ○ 5 opt    │                                                                │
+│                            │                                                                │
+├────────────────────────────┴────────────────────────────────────────────────────────────────┤
+│ Supported Services (● 22 enabled · ○ 5 disabled)                                            │
+│  ● Storage      ● Pub/Sub      ○ Firestore    ● Bigtable     ● Spanner      ● BigQuery      │
+│  ● Cloud SQL    ● AlloyDB      ● Memorystore  ● Dataproc     ● Tasks        ● Scheduler     │
+│  ● Functions    ○ Cloud Run    ○ Compute      ○ GKE          ● Workflows    ○ Vertex AI     │
+│  ● Sheets       ● KMS          ● Secrets      ● IAM          ● Logging      ● Monitoring    │
+│  ● Resource Mgr ● Service Usage ● Billing                                                   │
+╰─────────────────────────────────────────────────────────────────────────────────────────────╯
  Tip: Run localcloud guide for AI agent workflows, or lc for the fast alias.
 
 Status  OK

@@ -10,7 +10,9 @@ from . import version_string
 def main(argv: list[str] | None = None) -> int:
     try:
         args = list(sys.argv[1:] if argv is None else argv)
-        if args == ["--version"]:
+        if not args:
+            args = ["-h"]
+        if args in (["--version"], ["-v"]):
             print(version_string())
             return 0
         if args == ["guide"]:
