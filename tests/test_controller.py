@@ -121,8 +121,8 @@ class FakeRuntime:
             },
             ports=self.planned_ports
             or {
-                "5365/tcp": (("127.0.0.1", 5365),),
-                "5366/tcp": (("127.0.0.1", 5366),),
+                "5380/tcp": (("127.0.0.1", 5380),),
+                "5381/tcp": (("127.0.0.1", 5381),),
             },
             environment=config.environment,
             labels={},
@@ -133,9 +133,9 @@ class FakeRuntime:
         config: LocalCloudConfig,
         runtime: RuntimeRecord,
     ) -> bool:
-        expected = set(range(5365, 5376))
+        expected = set(range(5380, 5406))
         if config.tls_enabled:
-            expected.update((config.tls_port, 5380, 5381, 5382))
+            expected.update((config.tls_port, 5392, 5393, 5394))
         return all(
             any(
                 host_port == port
@@ -293,7 +293,7 @@ class FakeRuntime:
         local_only: bool = True,
     ) -> dict[str, Any]:
         return {
-            "canonical_ports": list(range(5365, 5376)),
+            "canonical_ports": list(range(5380, 5406)),
             "all_canonical_available": True,
             "occupied_ports": [],
             "localcloud_ports": [],
@@ -473,7 +473,7 @@ def _record(
         health="healthy" if state == "running" else None,
         url="http://127.0.0.1:49080",
         connect_url="http://127.0.0.1:49080",
-        endpoint_map={"5365": 49080},
+        endpoint_map={"5380": 49080},
         network_name=config.network_name or "localcloud",
         mount={
             "type": "volume",
@@ -500,7 +500,7 @@ def _record(
         published_ports=published_ports
         or {
             f"{port}/tcp": (("127.0.0.1", port),)
-            for port in range(5365, 5376)
+            for port in range(5380, 5406)
         },
     )
 
@@ -602,7 +602,7 @@ def test_start_debug_emits_one_copyable_ranged_run_command(
         if message.startswith("docker run ")
     ]
     assert len(commands) == 1
-    assert "5365-5366:5365-5366/tcp" in commands[0]
+    assert "5380-5381:5380-5381/tcp" in commands[0]
     assert not any(
         message.startswith(("Lifecycle action", "Published ports"))
         for message in observer.debug_messages
@@ -891,7 +891,7 @@ def test_start_waits_for_running_same_volume_container_without_restart(
         },
         published_ports={
             f"{port}/tcp": (("127.0.0.1", 5508 + offset),)
-            for offset, port in enumerate(range(5365, 5376))
+            for offset, port in enumerate(range(5380, 5406))
         },
     )
     runtime.ready = False
@@ -1117,7 +1117,7 @@ def test_restart_replaces_managed_runtime_with_noncanonical_ports(
         config,
         published_ports={
             f"{port}/tcp": (("127.0.0.1", 5508 + offset),)
-            for offset, port in enumerate(range(5365, 5376))
+            for offset, port in enumerate(range(5380, 5406))
         },
     )
 
@@ -1137,7 +1137,7 @@ def test_restart_requires_confirmation_before_alternative_port_replacement(
     config = _config(tmp_path, paths=paths)
     alternative_ports = {
         f"{port}/tcp": (("127.0.0.1", 5508 + offset),)
-        for offset, port in enumerate(range(5365, 5376))
+        for offset, port in enumerate(range(5380, 5406))
     }
     runtime.record = _record(config, published_ports=alternative_ports)
     runtime.planned_ports = alternative_ports
@@ -1149,7 +1149,7 @@ def test_restart_requires_confirmation_before_alternative_port_replacement(
     assert caught.value.details["mappings"][0] == {
         "host_ip": "127.0.0.1",
         "host_port": 5508,
-        "container_port": 5365,
+        "container_port": 5380,
         "protocol": "tcp",
     }
     assert runtime.removes == []
@@ -1163,7 +1163,7 @@ def test_start_requires_confirmation_before_alternative_port_create(
     config = _config(tmp_path, paths=paths)
     runtime.planned_ports = {
         f"{port}/tcp": (("127.0.0.1", 5508 + offset),)
-        for offset, port in enumerate(range(5365, 5376))
+        for offset, port in enumerate(range(5380, 5406))
     }
 
     with pytest.raises(HostError) as caught:
@@ -1180,7 +1180,7 @@ def test_restart_declined_alternative_mapping_does_not_mutate_docker(
     config = _config(tmp_path, paths=paths)
     alternative_ports = {
         f"{port}/tcp": (("127.0.0.1", 5508 + offset),)
-        for offset, port in enumerate(range(5365, 5376))
+        for offset, port in enumerate(range(5380, 5406))
     }
     runtime.record = _record(config, published_ports=alternative_ports)
     runtime.planned_ports = alternative_ports
@@ -1200,7 +1200,7 @@ def test_restart_dry_run_prints_alternative_mapping_without_confirmation(
     config = _config(tmp_path, paths=paths)
     alternative_ports = {
         f"{port}/tcp": (("127.0.0.1", 5508 + offset),)
-        for offset, port in enumerate(range(5365, 5376))
+        for offset, port in enumerate(range(5380, 5406))
     }
     runtime.record = _record(config, published_ports=alternative_ports)
     runtime.planned_ports = alternative_ports
@@ -1214,7 +1214,7 @@ def test_restart_dry_run_prints_alternative_mapping_without_confirmation(
     )
 
     assert isinstance(result, str)
-    assert "127.0.0.1:5508-5518:5365-5375/tcp" in result
+    assert "127.0.0.1:5508-5533:5380-5405/tcp" in result
     assert runtime.removes == []
     assert runtime.creates == 0
 
@@ -1224,7 +1224,7 @@ def test_restart_accepts_confirmed_alternative_mapping(tmp_path: Path) -> None:
     config = _config(tmp_path, paths=paths)
     alternative_ports = {
         f"{port}/tcp": (("127.0.0.1", 5508 + offset),)
-        for offset, port in enumerate(range(5365, 5376))
+        for offset, port in enumerate(range(5380, 5406))
     }
     runtime.record = _record(config, published_ports=alternative_ports)
     runtime.planned_ports = alternative_ports
@@ -1535,7 +1535,7 @@ def test_target_returns_only_connection_context(tmp_path: Path) -> None:
     assert result == {
         "url": "http://127.0.0.1:49080",
         "connect_url": "http://127.0.0.1:49080",
-        "endpoint_map": {"5365": 49080},
+        "endpoint_map": {"5380": 49080},
     }
     assert resolved == ["http://127.0.0.1:49080"]
 
@@ -1753,11 +1753,11 @@ def test_doctor_port_conflict_warning(tmp_path: Path) -> None:
 
     def _conflicting_port_diagnostics(**kwargs: Any) -> dict[str, Any]:
         return {
-            "canonical_ports": list(range(5365, 5376)),
+            "canonical_ports": list(range(5380, 5406)),
             "all_canonical_available": False,
-            "occupied_ports": [{"port": 5365, "status": "in_use"}],
+            "occupied_ports": [{"port": 5380, "status": "in_use"}],
             "localcloud_ports": [],
-            "alternative_range": [5508, 5509, 5510, 5511, 5512, 5513, 5514, 5515, 5516, 5517, 5518],
+            "alternative_range": list(range(5508, 5534)),
             "status": "conflict_with_alternative",
         }
 
@@ -1792,8 +1792,8 @@ def test_status_running_includes_port_mappings(tmp_path: Path) -> None:
         config,
         state="running",
         published_ports={
-            "5365/tcp": (("127.0.0.1", 5365),),
-            "5366/tcp": (("127.0.0.1", 5366),),
+            "5380/tcp": (("127.0.0.1", 5380),),
+            "5381/tcp": (("127.0.0.1", 5381),),
         },
     )
 
@@ -1804,8 +1804,8 @@ def test_status_running_includes_port_mappings(tmp_path: Path) -> None:
     assert "port_availability" not in result
     mappings = result["port_mappings"]
     assert len(mappings) == 2
-    assert mappings[0]["host_port"] == 5365
-    assert mappings[0]["container_port"] == "5365"
+    assert mappings[0]["host_port"] == 5380
+    assert mappings[0]["container_port"] == "5380"
     assert mappings[0]["protocol"] == "tcp"
 
 
@@ -2024,7 +2024,7 @@ def test_start_dry_run_renders_exact_run_without_mutating(tmp_path: Path) -> Non
     assert isinstance(result, str)
     assert "# action: create" in result
     assert "docker run -d --name localcloud" in result
-    assert "-p 127.0.0.1:5365-5366:5365-5366/tcp" in result
+    assert "-p 127.0.0.1:5380-5381:5380-5381/tcp" in result
     assert runtime.creates == 0
     assert runtime.starts == 0
     assert runtime.removes == []
@@ -2098,7 +2098,7 @@ def test_reused_start_debug_reports_copyable_ranged_run_command(
         if message.startswith("docker run ")
     ]
     assert len(commands) == 1
-    assert "5365-5366:5365-5366/tcp" in commands[0]
+    assert "5380-5381:5380-5381/tcp" in commands[0]
 
 
 def test_reset_dry_run_plans_managed_unready_restart(tmp_path: Path) -> None:
@@ -2189,3 +2189,45 @@ def test_restart_does_not_stop_already_stopped_container(
     assert observer.stopping_calls == []
     assert runtime.stops == 0
     assert runtime.creates == 1
+
+
+def test_start_replaces_stopped_managed_container_when_network_is_missing(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(
+        config,
+        state="exited",
+        ownership={
+            "container": "managed",
+            "network": "missing",
+            "data_volume": "managed",
+        },
+    )
+    result = controller.start(config)
+
+    assert result["status"] == "started"
+    assert runtime.removes == [False]
+    assert runtime.creates == 1
+
+
+def test_start_missing_network_dry_run_plans_replacement_and_recreation(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(
+        config,
+        state="exited",
+        ownership={
+            "container": "managed",
+            "network": "missing",
+            "data_volume": "managed",
+        },
+    )
+    plan = controller.start(config, dry_run=True)
+
+    assert isinstance(plan, str)
+    assert runtime.preview_remove_network == [False]
+    assert runtime.preview_network_exists[-1] is None

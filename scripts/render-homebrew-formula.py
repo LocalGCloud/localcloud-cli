@@ -101,7 +101,7 @@ def render(version: str, checksums_path: Path) -> str:
         lc doctor
         lc start
 
-      Then open http://localhost:5365.
+      Then open http://localhost:5380.
     EOS
   end
 

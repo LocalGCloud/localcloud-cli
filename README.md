@@ -172,7 +172,7 @@ Project       local-gcp-project
 User          local-developer
 Image         jaysen2apache/localcloud:latest
 Image status  Available locally
-URL           http://127.0.0.1:5365
+URL           http://127.0.0.1:5380
 Services      alloydb, bigquery, bigtable, cloudbilling, cloudfunctions, cloudiam,
               cloudresourcemanager, cloudscheduler, cloudsql, cloudtasks, dataproc, gcs, kms,
               logging, memorystore, monitoring, secretmanager, serviceusage, sheets, spanner,
@@ -194,13 +194,13 @@ eval "$(lc env)"
 This exports the variables the official Google client libraries already read:
 
 ```sh
-export STORAGE_EMULATOR_HOST="http://127.0.0.1:5366"
-export BIGQUERY_EMULATOR_HOST="http://127.0.0.1:5372"
-export SPANNER_EMULATOR_HOST="127.0.0.1:5370"
-export BIGTABLE_EMULATOR_HOST="127.0.0.1:5369"
+export STORAGE_EMULATOR_HOST="http://127.0.0.1:5382"
+export BIGQUERY_EMULATOR_HOST="http://127.0.0.1:5388"
+export SPANNER_EMULATOR_HOST="127.0.0.1:5386"
+export BIGTABLE_EMULATOR_HOST="127.0.0.1:5385"
 export GOOGLE_CLOUD_PROJECT="local-gcp-project"
 export CLOUDSDK_CORE_PROJECT="local-gcp-project"
-export CLOUDSDK_API_ENDPOINT_OVERRIDES_STORAGE="http://127.0.0.1:5366/"
+export CLOUDSDK_API_ENDPOINT_OVERRIDES_STORAGE="http://127.0.0.1:5382/"
 # …one entry per enabled service, plus gcloud endpoint overrides and a local access token
 ```
 
@@ -277,19 +277,19 @@ Your data survives `stop` and `restart`. `lc start` brings it back exactly as it
 ## How it works
 
 ```
-  your code ──► google-cloud-* SDK ──► 127.0.0.1:5365-5375 ─────────┐
+  your code ──► google-cloud-* SDK ──► 127.0.0.1:5380-5405 ─────────┐
   terraform ──► GOOGLE_*_CUSTOM_ENDPOINT ───────────────────────────┤
-  AI agent  ──► lc mcp (stdio) / :5365/mcp (HTTP) ──────────────────┤
+  AI agent  ──► lc mcp (stdio) / :5380/mcp (HTTP) ──────────────────┤
                                                                     │
                       ┌─────────────────────────────────────────────┘
           ┌───────────▼─────────────────────────────────────────────┐
           │  Docker container  ·  jaysen2apache/localcloud          │
           │                                                         │
-          │   :5365  gateway · console · admin API · MCP · facades  │
-          │   :5366  Cloud Storage      :5370-71  Spanner           │
-          │   :5367  Pub/Sub            :5372-73  BigQuery          │
-          │   :5368  Firestore          :5374     Memorystore       │
-          │   :5369  Bigtable           :5375     PostgreSQL        │
+          │   :5380  gateway · console · admin API · MCP · facades  │
+          │   :5382  Cloud Storage      :5386-87  Spanner           │
+          │   :5383  Pub/Sub            :5388-89  BigQuery          │
+          │   :5384  Firestore          :5390     Memorystore       │
+          │   :5385  Bigtable           :5391     PostgreSQL        │
           └───────────────────┬─────────────────────────────────────┘
                               │
               Docker volume:  localcloud-data
@@ -314,7 +314,7 @@ Project and user are request context: switching them is instant and never touche
 
 ### Ports
 
-New runtimes prefer the canonical range `5365–5375` (plus TLS `5379–5382` and DNS `5378/udp`). If that
+New runtimes prefer the canonical range `5380–5405` (plus DNS `5410/udp`). If that
 complete set is unavailable, the CLI proposes one contiguous alternative from `5508–5539`, then
 `5821–5840`, then `5322–5342`, and asks before creating the container. It never scans the operating
 system's general ephemeral range, and `lc env` always emits the ports actually in use.
@@ -461,8 +461,8 @@ provider reads — evaluate them into your shell, do not redirect them into a `.
 ```console
 $ eval "$(lc env --format terraform)"
 $ env | grep GOOGLE_ | head -4
-GOOGLE_STORAGE_CUSTOM_ENDPOINT=http://127.0.0.1:5366/storage/v1/
-GOOGLE_BIGQUERY_CUSTOM_ENDPOINT=http://127.0.0.1:5372/
+GOOGLE_STORAGE_CUSTOM_ENDPOINT=http://127.0.0.1:5382/storage/v1/
+GOOGLE_BIGQUERY_CUSTOM_ENDPOINT=http://127.0.0.1:5388/
 GOOGLE_PROJECT=local-gcp-project
 GOOGLE_OAUTH_ACCESS_TOKEN=localcloud-user.bG9jYWwtZGV2ZWxvcGVy…
 
@@ -559,7 +559,7 @@ $ lc start --verbose | jq .mcp
   "command": "localcloud",
   "args": ["mcp", "--data-volume", "localcloud-data",
            "--project-id", "local-gcp-project", "--user", "local-developer"],
-  "direct_url": "http://127.0.0.1:5365/mcp",
+  "direct_url": "http://127.0.0.1:5380/mcp",
   "headers": {
     "X-LocalCloud-Project": "local-gcp-project",
     "X-LocalCloud-User": "local-developer"

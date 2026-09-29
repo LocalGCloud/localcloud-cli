@@ -773,7 +773,7 @@ def test_doctor_summary_renders_port_availability_available() -> None:
         "status": "ok",
         "docker": "29.7.2",
         "port_availability": {
-            "canonical_ports": list(range(5365, 5376)),
+            "canonical_ports": list(range(5380, 5406)),
             "all_canonical_available": True,
             "occupied_ports": [],
             "localcloud_ports": [],
@@ -782,7 +782,7 @@ def test_doctor_summary_renders_port_availability_available() -> None:
         },
     }
     summary = render_summary("doctor", payload)
-    assert "Ports   5365-5375 (available)" in summary
+    assert "Ports   5380-5405 (available)" in summary
 
 
 def test_doctor_summary_renders_port_availability_in_use_by_localcloud() -> None:
@@ -790,16 +790,16 @@ def test_doctor_summary_renders_port_availability_in_use_by_localcloud() -> None
         "status": "ok",
         "docker": "29.7.2",
         "port_availability": {
-            "canonical_ports": list(range(5365, 5376)),
+            "canonical_ports": list(range(5380, 5406)),
             "all_canonical_available": True,
             "occupied_ports": [],
-            "localcloud_ports": [{"port": 5365, "container": "localcloud-default"}],
+            "localcloud_ports": [{"port": 5380, "container": "localcloud-default"}],
             "alternative_range": None,
             "status": "in_use_by_localcloud",
         },
     }
     summary = render_summary("doctor", payload)
-    assert "Ports   5365-5375 (in use by localcloud-default)" in summary
+    assert "Ports   5380-5405 (in use by localcloud-default)" in summary
 
 
 def test_doctor_summary_renders_port_availability_conflict_with_alternative() -> None:
@@ -807,16 +807,16 @@ def test_doctor_summary_renders_port_availability_conflict_with_alternative() ->
         "status": "ok",
         "docker": "29.7.2",
         "port_availability": {
-            "canonical_ports": list(range(5365, 5376)),
+            "canonical_ports": list(range(5380, 5406)),
             "all_canonical_available": False,
-            "occupied_ports": [{"port": 5365}],
+            "occupied_ports": [{"port": 5380}],
             "localcloud_ports": [],
-            "alternative_range": list(range(5508, 5519)),
+            "alternative_range": list(range(5508, 5534)),
             "status": "conflict_with_alternative",
         },
     }
     summary = render_summary("doctor", payload)
-    assert "Ports   5365-5375 (conflict; occupied: 5365; fallback 5508-5518 available)" in summary
+    assert "Ports   5380-5405 (conflict; occupied: 5380; fallback 5508-5533 available)" in summary
 
 
 def test_status_summary_renders_port_mappings_when_running() -> None:
@@ -828,11 +828,11 @@ def test_status_summary_renders_port_mappings_when_running() -> None:
         },
         "port_mappings": [
             {"host_ip": "127.0.0.1", "host_port": p, "container_port": str(p), "protocol": "tcp"}
-            for p in range(5365, 5376)
+            for p in range(5380, 5406)
         ],
     }
     summary = render_summary("status", payload)
-    assert "Ports        5365-5375" in summary
+    assert "Ports        5380-5405" in summary
 
 
 def test_status_summary_renders_port_availability_when_stopped() -> None:
@@ -843,7 +843,7 @@ def test_status_summary_renders_port_availability_when_stopped() -> None:
             "configured_image": "jaysen2apache/localcloud:latest",
         },
         "port_availability": {
-            "canonical_ports": list(range(5365, 5376)),
+            "canonical_ports": list(range(5380, 5406)),
             "all_canonical_available": True,
             "occupied_ports": [],
             "localcloud_ports": [],
@@ -852,5 +852,5 @@ def test_status_summary_renders_port_availability_when_stopped() -> None:
         },
     }
     summary = render_summary("status", payload)
-    assert "Ports        5365-5375 (available)" in summary
+    assert "Ports        5380-5405 (available)" in summary
 

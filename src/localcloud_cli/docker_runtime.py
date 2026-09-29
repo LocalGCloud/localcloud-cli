@@ -46,10 +46,10 @@ CONFIG_SCHEMA_CAPABILITY = "1"
 DATA_MOUNT_DESTINATION = "/var/lib/localcloud"
 LEGACY_SEED_MOUNT_DESTINATION = "/etc/localcloud/cli-seed.yaml"
 CONFIG_MOUNT_DESTINATION = "/etc/localcloud/localcloud.yaml"
-GATEWAY_PORT = "5365"
-_BASE_TCP_PORTS = tuple(range(5365, 5376))
-_DEDICATED_TLS_PORTS = (5380, 5381, 5382)
-_DNS_PORT = 5378
+GATEWAY_PORT = "5380"
+_BASE_TCP_PORTS = tuple(range(5380, 5406))
+_DEDICATED_TLS_PORTS = (5392, 5393, 5394)
+_DNS_PORT = 5410
 _TRANSPARENT_HOST_PORTS = frozenset({53, 80, 443})
 _IMAGE_PORT_CAPABILITIES = frozenset(
     {
@@ -350,19 +350,11 @@ class DockerRuntime:
             if network_name
             else None
         )
-        if container_ownership == "managed" and network is None:
-            raise HostError(
-                "resource_missing",
-                "Managed LocalCloud network could not be found",
-                {
-                    "data_volume": data_volume,
-                    "network": network_name,
-                    "container_id": _resource_identity(container),
-                },
-            )
         network_ownership = "attached"
         if network is not None:
             network_ownership = self._classify_resource(network, "network", data_volume)
+        elif container_ownership == "managed":
+            network_ownership = "missing"
         volume_ownership = self._classify_resource(volume, "volume", data_volume, allow_legacy_volume=True)
         ownership = {
             "container": container_ownership,
@@ -371,7 +363,11 @@ class DockerRuntime:
         }
         origin = (
             "managed"
-            if all(value == "managed" for value in ownership.values())
+            if (
+                container_ownership == "managed"
+                and volume_ownership == "managed"
+                and network_ownership in {"managed", "missing"}
+            )
             else "attached"
         )
         published_ports = _published_ports(container)
@@ -475,11 +471,11 @@ class DockerRuntime:
         self._require_runtime_ownership_capability(config, image)
         self._validate_image_port_metadata(config, image, observer)
         allowed_ports = _published_host_ports(replacing)
-        if not _port_is_free(5376) and (5376, "tcp") not in allowed_ports:
+        if not _port_is_free(5406) and (5406, "tcp") not in allowed_ports:
             if not (local_only and replacing is not None and replacing.ownership.get("container") == "managed"):
                 _emit_warning(
                     observer,
-                    "Host port 5376/tcp is already in use; Cloud SQL MySQL companion container will not be able to bind when started",
+                    "Host port 5406/tcp is already in use; Cloud SQL MySQL companion container will not be able to bind when started",
                 )
         self._port_bindings(
             config,
@@ -1175,10 +1171,31 @@ class DockerRuntime:
         )
         if resolved_ownership != "managed":
             return
+        try:
+            if hasattr(network, "reload"):
+                network.reload()
+            attached_containers = (
+                getattr(network, "attrs", {}).get("Containers")
+                or getattr(network, "containers", [])
+            )
+            if attached_containers:
+                other_containers = [
+                    cid
+                    for cid in (
+                        attached_containers.keys()
+                        if isinstance(attached_containers, dict)
+                        else [getattr(c, "id", None) for c in attached_containers]
+                    )
+                    if cid and cid != getattr(config, "container_name", None)
+                ]
+                if other_containers:
+                    return
+        except Exception:
+            pass
         _remove_verified(
             network,
             "network",
-            _base_labels(config.data_volume, "network"),
+            _removal_base_labels(network, "network", config.data_volume),
             failures,
         )
 
@@ -1904,8 +1921,9 @@ class DockerRuntime:
             and labels.get(INSTANCE_LABEL)
             and _resource_name(resource) == data_volume
         )
-        if not legacy_volume and actual_volume != data_volume:
-            raise _ownership_error(resource, role, data_volume, labels)
+        if role in {"volume", "container"}:
+            if not legacy_volume and actual_volume != data_volume:
+                raise _ownership_error(resource, role, data_volume, labels)
         if role == "container":
             missing = [label for label in _CONTAINER_METADATA_LABELS if label not in labels]
             if missing:
@@ -2256,7 +2274,7 @@ class DockerRuntime:
         if f"{GATEWAY_PORT}/tcp" not in exposed:
             raise HostError(
                 "invalid_image",
-                "Selected LocalCloud image does not expose 5365/tcp",
+                f"Selected LocalCloud image does not expose {GATEWAY_PORT}/tcp",
                 {"image": config.image, "exposed_ports": sorted(exposed)},
             )
         missing = sorted(_IMAGE_PORT_CAPABILITIES - exposed)
@@ -2444,7 +2462,7 @@ class DockerRuntime:
         if not runtime.url:
             raise HostError(
                 "gateway_not_published",
-                "LocalCloud runtime does not publish 5365/tcp",
+                f"LocalCloud runtime does not publish {GATEWAY_PORT}/tcp",
                 {
                     "data_volume": runtime.data_volume,
                     "container_id": runtime.container_id,
@@ -2714,6 +2732,11 @@ def _removal_base_labels(
             MANAGED_LABEL: "true",
             RESOURCE_ROLE_LABEL: "volume",
             INSTANCE_LABEL: labels[INSTANCE_LABEL],
+        }
+    if role == "network":
+        return {
+            MANAGED_LABEL: "true",
+            RESOURCE_ROLE_LABEL: "network",
         }
     return _base_labels(data_volume, role)
 

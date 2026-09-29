@@ -902,7 +902,7 @@ def test_namespaced_schema_preserves_host_model_and_context_precedence(
     assert selected.docker_socket is True
     assert selected.transparent_network is True
     assert selected.tls_enabled is True
-    assert selected.tls_port == 5379
+    assert selected.tls_port == 5381
 
     overridden = load_config(
         directory=tmp_path,
@@ -1017,7 +1017,7 @@ def test_tls_disabled_by_default_without_config_or_override(tmp_path: Path) -> N
     selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
     assert selected.environment == {}
     assert selected.tls_enabled is False
-    assert selected.tls_port == 5379
+    assert selected.tls_port == 5381
 
 
 def test_tls_override_false_disables_regardless_of_config(tmp_path: Path) -> None:
@@ -1048,7 +1048,7 @@ def test_tls_config_value_respected_without_cli_override(tmp_path: Path) -> None
     selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
     assert selected.environment == {"LOCALCLOUD_TLS_ENABLED": "false"}
     assert selected.tls_enabled is False
-    assert selected.tls_port == 5379
+    assert selected.tls_port == 5381
 
 
 def test_top_level_tls_and_environment_port_resolve_effective_bindings(
@@ -1068,7 +1068,10 @@ def test_top_level_tls_and_environment_port_resolve_effective_bindings(
     assert selected.tls_port == 26443
 
 
-@pytest.mark.parametrize("reserved_port", [*range(5365, 5379), *range(5380, 5386)])
+@pytest.mark.parametrize(
+    "reserved_port",
+    [5380, *range(5382, 5407), *range(5410, 5415), 5443],
+)
 def test_tls_port_rejects_public_child_dns_and_private_listener_collisions(
     tmp_path: Path,
     reserved_port: int,

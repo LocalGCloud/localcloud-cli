@@ -117,13 +117,20 @@ class Controller:
             current.data == "persistent"
             or current.ownership["data_volume"] == "attached"
         )
-        preserve_network = current.network_name == config.network_name
+        preserve_network = (
+            current.network_name == config.network_name
+            and current.ownership.get("network") == "managed"
+        )
+        remove_network = (
+            not preserve_network
+            and current.ownership.get("network") == "managed"
+        )
         commands = (
             *self.runtime.preview_remove_commands(
                 config,
                 current,
                 remove_volume=not preserve_volume,
-                remove_network=not preserve_network,
+                remove_network=remove_network,
             ),
             *self.runtime.preview_create_commands(
                 config,
@@ -230,7 +237,9 @@ class Controller:
                 if is_managed and (requires_reconfig or was_pulled or image_id_changed):
                     action = "replace"
                     reason = (
-                        "managed runtime configuration changed"
+                        "managed runtime network is missing"
+                        if current.ownership.get("network") == "missing"
+                        else "managed runtime configuration changed"
                         if requires_reconfig
                         else "a newer image was pulled from registry"
                         if was_pulled
@@ -248,11 +257,9 @@ class Controller:
                         current, config, prepared_image[0]
                     )
 
-
-
                     status = (
                         "reconfigured"
-                        if requires_reconfig
+                        if (requires_reconfig and current.ownership.get("network") != "missing")
                         else "started"
                     )
                 elif current.state != "running":
@@ -450,7 +457,9 @@ class Controller:
                     )
                     action = "replace"
                     reason = (
-                        "managed runtime configuration changed"
+                        "managed runtime network is missing"
+                        if current.ownership.get("network") == "missing"
+                        else "managed runtime configuration changed"
                         if requires_reconfig
                         else "the configured image changed"
                         if image_id_differs and not was_pulled
@@ -1006,7 +1015,7 @@ class Controller:
         if port_diag["status"] == "conflict":
             warnings.append(
                 "Canonical LocalCloud ports are unavailable and no alternative port range was found; "
-                "free ports in the range 5365-5375 or one of the fallback ranges before starting."
+                "free ports in the range 5380-5405 or one of the fallback ranges before starting."
             )
         elif port_diag["status"] == "conflict_with_alternative":
             alt = port_diag["alternative_range"]
@@ -1215,7 +1224,11 @@ class Controller:
     ) -> bool:
         return (
             current.ownership["container"] == "managed"
-            and (current.config_hash != config.config_hash or current.legacy_seed_mount)
+            and (
+                current.config_hash != config.config_hash
+                or current.legacy_seed_mount
+                or current.ownership.get("network") == "missing"
+            )
         )
 
     @staticmethod
@@ -1282,7 +1295,14 @@ class Controller:
         # always `docker network create --driver bridge <name>`), so there's
         # no need to tear it down and recreate it on every reconfigure -
         # only when the target network name actually changes.
-        preserve_network = current.network_name == config.network_name
+        preserve_network = (
+            current.network_name == config.network_name
+            and current.ownership.get("network") == "managed"
+        )
+        remove_network = (
+            not preserve_network
+            and current.ownership.get("network") == "managed"
+        )
         prepared_image = (
             prepared_image
             if prepared_image is not None
@@ -1304,7 +1324,7 @@ class Controller:
             config,
             current,
             remove_volume=not preserve_volume,
-            remove_network=not preserve_network,
+            remove_network=remove_network,
             observer=observer,
         )
         try:
@@ -1844,7 +1864,7 @@ def _validate_replacement(
                 "ownership": current.ownership,
             },
         )
-    if current.ownership["network"] != "managed":
+    if current.ownership["network"] not in {"managed", "missing"}:
         raise HostError(
             "ownership_forbidden",
             "Reconfiguration requires a managed runtime network",
@@ -1867,6 +1887,8 @@ def _changed_fields(
         for key in set(previous) | set(selected)
         if previous.get(key) != selected.get(key)
     )
+    if current.ownership.get("network") == "missing":
+        changed.add("network")
     if (
         current.configured_image_id
         and current.image_id

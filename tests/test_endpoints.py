@@ -16,11 +16,11 @@ from localcloud_cli.errors import HostError
 
 def test_rewrite_endpoints_is_recursive_and_preserves_unmapped_ports() -> None:
     value = {
-        "url": "http://localhost:5365/path",
-        "nested": ["127.0.0.1:5366", "127.0.0.1:24099"],
+        "url": "http://localhost:5380/path",
+        "nested": ["127.0.0.1:5382", "127.0.0.1:24099"],
     }
 
-    rewritten = rewrite_endpoints(value, {"5365": 49080, "5366": 49081})
+    rewritten = rewrite_endpoints(value, {"5380": 49080, "5382": 49081})
 
     assert rewritten == {
         "url": "http://127.0.0.1:49080/path",
@@ -34,14 +34,14 @@ def test_transform_endpoint_payload_rewrites_generated_endpoint_records() -> Non
             {
                 "type": "text",
                 "text": (
-                    '{"endpoint":"http://127.0.0.1:5366",'
-                    '"port":5366,"env_var":"STORAGE_EMULATOR_HOST"}'
+                    '{"endpoint":"http://127.0.0.1:5382",'
+                    '"port":5382,"env_var":"STORAGE_EMULATOR_HOST"}'
                 ),
             }
         ]
     }
 
-    transformed = transform_endpoint_payload(value, {"5366": 49081})
+    transformed = transform_endpoint_payload(value, {"5382": 49081})
 
     text = transformed["content"][0]["text"]
     assert "127.0.0.1:49081" in text
@@ -55,7 +55,7 @@ def test_transform_endpoint_payload_rejects_public_google_endpoint() -> None:
     }
 
     with pytest.raises(HostError) as caught:
-        transform_endpoint_payload(value, {"5366": 49081})
+        transform_endpoint_payload(value, {"5382": 49081})
 
     assert caught.value.code == "real_google_endpoint"
 
@@ -73,7 +73,7 @@ def test_validate_local_endpoints_allows_descriptive_urls() -> None:
     # Descriptive non-endpoint fields should not trigger nonlocal_endpoint
     value = {
         "description": "See docs at https://example.com/guide",
-        "url": "http://127.0.0.1:5366",
+        "url": "http://127.0.0.1:5382",
     }
     validate_local_endpoints(value)
 
@@ -96,13 +96,13 @@ def test_environment_config_uses_running_environment_without_daemon_state(
                 "LOCALCLOUD_PROJECT": "agent-project-1",
                 "LOCALCLOUD_USER": "integration-agent",
                 "LOCALCLOUD_PRINCIPAL": "integration-agent@localcloud.invalid",
-                "STORAGE_EMULATOR_HOST": "http://127.0.0.1:5366",
+                "STORAGE_EMULATOR_HOST": "http://127.0.0.1:5382",
             }
 
     monkeypatch.setattr(endpoints_module, "JavaMcpClient", FakeJava)
     environment = {
         "url": "http://127.0.0.1:49080",
-        "endpoint_map": {"5366": 49081},
+        "endpoint_map": {"5382": 49081},
     }
 
     result = environment_config(

@@ -105,7 +105,7 @@ LocalCloud separates durable container storage from logical Google Cloud project
 ### Data volumes (`--data-volume`)
 
 A named Docker volume provides durable identity. The default `localcloud-data` volume is mounted at `/var/lib/localcloud`. Multiple isolated environments can run concurrently. Only one runtime can hold the
-canonical `5365-5375` range, so additional runtimes are offered a contiguous
+canonical `5380-5405` range, so additional runtimes are offered a contiguous
 alternative from `5508-5539`, then `5821-5840`, then `5322-5342`. Always read the
 actual ports from `lc env` or `lc status` rather than assuming them:
 

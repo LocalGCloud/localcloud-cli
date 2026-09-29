@@ -37,9 +37,9 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
 - Creates project contexts when they do not exist.
 - Waits up to 60 seconds for container health and service readiness.
 - TLS is disabled by default. `--tls` enables it; `--no-tls` overrides an enabled configuration value.
-- Docker ports omit the host IP by default (`-p 5365:5365`), using Docker's default
+- Docker ports omit the host IP by default (`-p 5380:5380`), using Docker's default
   bind address, normally all host interfaces. `--local-only` binds every published
-  port to `127.0.0.1` (`-p 127.0.0.1:5365:5365`), including TLS ports,
+  port to `127.0.0.1` (`-p 127.0.0.1:5380:5380`), including TLS ports,
   alternative host ports, and transparent-network aliases. SDK endpoints still use localhost.
 - `--local-only` is available on `start`, `restart`, and `reset`; pass it each time
   to keep localhost-only publishing. Changing the option recreates a managed
@@ -236,7 +236,7 @@ file appear as read-only `-v` bind mounts.
 Use `--debug` for diagnostics on stderr. For a selected or planned runtime,
 debug output includes one shell-quoted `docker run` command that can be copied
 and executed. Contiguous one-to-one published ports use Docker range syntax,
-for example `-p 127.0.0.1:5365-5375:5365-5375/tcp`, instead of one flag
+for example `-p 127.0.0.1:5380-5405:5380-5405/tcp`, instead of one flag
 per port. Dry-run plans remain on stdout and can be redirected independently.
 
 Lifecycle commands derive bindings from the LocalCloud configuration rather
@@ -306,7 +306,7 @@ Example result:
   "container": {
     "name": "localcloud",
     "state": "running",
-    "url": "http://127.0.0.1:5365"
+    "url": "http://127.0.0.1:5380"
   },
   "services": ["gcs", "pubsub"]
 }

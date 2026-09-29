@@ -528,7 +528,7 @@ def _format_port_numbers(ports: Sequence[int]) -> str:
 def _format_port_availability(diag: Mapping[str, Any]) -> str:
     status = diag.get("status", "available")
     canonical = diag.get("canonical_ports", ())
-    canon_str = _format_port_numbers(canonical) or "5365-5375"
+    canon_str = _format_port_numbers(canonical) or "5380-5405"
     if status == "in_use_by_localcloud":
         lc_ports = diag.get("localcloud_ports", ())
         containers = sorted(

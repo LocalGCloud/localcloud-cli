@@ -13,7 +13,7 @@
   },
   "tls": {
     "enabled": false,
-    "port": 5379,
+    "port": 5381,
     "certificate": "",
     "private_key": ""
   },
@@ -34,7 +34,7 @@
   "server": {
     "data_dir": "/var/lib/localcloud",
     "gateway": {
-      "port": 5365
+      "port": 5380
     },
     "logging": {
       "verbosity": "info"
@@ -48,13 +48,16 @@
     },
     "postgres": {
       "host": "localhost",
-      "port": 5375,
+      "port": 5391,
       "database": "localcloud",
       "user": "localcloud",
       "password": "localcloud"
     },
     "api_key": "",
-    "license_server_url": "none"
+    "license_server_url": "none",
+    "feedback_project_url": "https://github.com/orgs/LocalGCloud/projects/2",
+    "feedback_github_repository": "LocalGCloud/LocalGCloud.github.io",
+    "feedback_github_token": ""
   },
   "services": {
     "enabled": "default",
@@ -63,13 +66,16 @@
         "displayName": "Cloud Storage",
         "availability": "available",
         "resettableData": true,
-        "plaintextPort": 5366,
-        "tlsPort": 5380,
+        "plaintextPort": 5382,
+        "tlsPort": 5392,
         "protocol": "rest",
         "envVar": "STORAGE_EMULATOR_HOST",
         "envValuePrefix": "http://",
         "type": "external",
         "gatewayObservable": true,
+        "usage": {
+          "request_count": "all"
+        },
         "defaultEnabled": true,
         "minTier": "community",
         "gcloudApiName": "storage",
@@ -109,8 +115,8 @@
         "displayName": "Pub/Sub",
         "availability": "available",
         "resettableData": true,
-        "plaintextPort": 5367,
-        "tlsPort": 5381,
+        "plaintextPort": 5383,
+        "tlsPort": 5393,
         "protocol": "grpc",
         "envVar": "PUBSUB_EMULATOR_HOST",
         "envValuePrefix": "",
@@ -136,7 +142,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -146,12 +152,15 @@
         "displayName": "Firestore",
         "availability": "available",
         "resettableData": true,
-        "plaintextPort": 5368,
+        "plaintextPort": 5384,
         "protocol": "grpc",
         "envVar": "FIRESTORE_EMULATOR_HOST",
         "envValuePrefix": "",
         "type": "external",
         "gatewayObservable": false,
+        "usage": {
+          "request_count": "none"
+        },
         "defaultEnabled": false,
         "minTier": "community",
         "gcloudApiName": "firestore",
@@ -191,14 +200,18 @@
         "displayName": "Bigtable",
         "availability": "available",
         "resettableData": true,
-        "plaintextPort": 5369,
+        "plaintextPort": 5385,
         "protocol": "grpc",
         "envVar": "BIGTABLE_EMULATOR_HOST",
         "envValuePrefix": "",
         "type": "external",
         "gatewayObservable": true,
+        "usage": {
+          "request_count": "gateway"
+        },
         "defaultEnabled": true,
         "minTier": "pro",
+        "gcloudApiName": "bigtableadmin",
         "terraformEnvVar": "GOOGLE_BIGTABLE_CUSTOM_ENDPOINT",
         "healthCheck": {
           "type": "tcp"
@@ -235,19 +248,22 @@
         "displayName": "Spanner",
         "availability": "available",
         "resettableData": true,
-        "plaintextPort": 5370,
+        "plaintextPort": 5386,
         "protocol": "grpc",
         "envVar": "SPANNER_EMULATOR_HOST",
         "envValuePrefix": "",
         "type": "external",
         "gatewayObservable": false,
+        "usage": {
+          "request_count": "gateway"
+        },
         "defaultEnabled": true,
         "minTier": "pro",
         "gcloudApiName": "spanner",
-        "gcloudPort": 5371,
+        "gcloudPort": 5387,
         "terraformEnvVar": "GOOGLE_SPANNER_CUSTOM_ENDPOINT",
         "additionalPorts": {
-          "rest": 5371
+          "rest": 5387
         },
         "observability": {
           "logs": {
@@ -278,34 +294,39 @@
         },
         "healthCheck": {
           "type": "http",
-          "port": 5371,
+          "port": 5387,
           "path": "/v1/projects/{projectId}/instances"
         },
         "config": {
           "backup_enabled": false,
-          "backup_interval_seconds": 60
+          "backup_interval_seconds": 60,
+          "remote_functions_host_port": ""
         },
         "config_descriptions": {
           "backup_enabled": "Retired compatibility setting. Periodic live LevelDB backup is not started; use the explicit host whole-volume snapshot command.",
-          "backup_interval_seconds": "Retired compatibility setting retained for older overlays (positive integer, >= 10; no scheduler is started)."
+          "backup_interval_seconds": "Retired compatibility setting retained for older overlays (positive integer, >= 10; no scheduler is started).",
+          "remote_functions_host_port": "Localhost port of an in-container Remote UDF/model adapter; empty uses deterministic test responses. Set as localhost:PORT."
         }
       },
       "bigquery": {
         "displayName": "BigQuery",
         "availability": "available",
         "resettableData": true,
-        "plaintextPort": 5372,
+        "plaintextPort": 5388,
         "tlsPort": "tls",
         "protocol": "rest",
         "envVar": "BIGQUERY_EMULATOR_HOST",
         "envValuePrefix": "http://",
         "type": "external",
         "gatewayObservable": false,
+        "usage": {
+          "request_count": "all"
+        },
         "defaultEnabled": true,
         "minTier": "community",
         "gcloudApiName": "bigquery",
         "terraformEnvVar": "GOOGLE_BIGQUERY_CUSTOM_ENDPOINT",
-        "grpcPort": 5373,
+        "grpcPort": 5389,
         "healthCheck": {
           "type": "http",
           "path": "/bigquery/v2/projects/{projectId}/datasets"
@@ -329,20 +350,15 @@
                 "component": "bigquery-emulator",
                 "strategy": "collector",
                 "fallback": "raw-only",
-                "kind": "supervisor",
-                "program": "bigquery-emulator",
-                "streams": [
-                  "stdout",
-                  "stderr"
-                ],
+                "kind": "file",
                 "paths": {
                   "stdout": "/var/log/localcloud/bigquery-emulator-stdout.log",
                   "stderr": "/var/log/localcloud/bigquery-emulator-stderr.log"
                 },
                 "format": "json",
                 "retentionProfile": "external-process",
-                "integrationEvidence": "docker/bigquery-start.sh",
-                "integrationTest": "RuntimeLogCollectorTest"
+                "integrationEvidence": "localcloud-server/src/main/java/com/localcloud/emulators/bigquery/NativeProcessDataPlane.java",
+                "integrationTest": "BigQueryPlatformTest"
               }
             ]
           }
@@ -377,7 +393,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -414,7 +430,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -451,7 +467,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -463,7 +479,7 @@
         "resettableData": true,
         "plaintextPort": "gateway",
         "tlsPort": "tls",
-        "protocol": "grpc",
+        "protocol": "grpc+rest",
         "envVar": "CLOUD_SCHEDULER_EMULATOR_HOST",
         "envValuePrefix": "",
         "type": "facade",
@@ -488,7 +504,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -505,6 +521,9 @@
         "envValuePrefix": "",
         "type": "facade",
         "gatewayObservable": true,
+        "usage": {
+          "request_count": "control_plane"
+        },
         "defaultEnabled": true,
         "minTier": "community",
         "gcloudApiName": "cloudfunctions",
@@ -525,7 +544,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -542,6 +561,9 @@
         "envValuePrefix": "",
         "type": "facade",
         "gatewayObservable": true,
+        "usage": {
+          "request_count": "control_plane"
+        },
         "defaultEnabled": true,
         "minTier": "community",
         "gcloudApiName": "alloydb",
@@ -562,7 +584,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -582,6 +604,9 @@
         "envValuePrefix": "",
         "type": "facade",
         "gatewayObservable": true,
+        "usage": {
+          "request_count": "control_plane"
+        },
         "defaultEnabled": true,
         "minTier": "community",
         "gcloudApiName": "dataproc",
@@ -610,7 +635,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -637,7 +662,7 @@
           "log_warnings": true
         },
         "config_descriptions": {
-          "mode": "IAM mode — 'open' silently allows requests, 'permissive' allows requests with decision logging, 'strict' enforces local policy, and 'gcp-live' delegates authorization to real GCP IAM.",
+          "mode": "IAM mode \u2014 'open' silently allows requests, 'permissive' allows requests with decision logging, 'strict' enforces local policy, and 'gcp-live' delegates authorization to real GCP IAM.",
           "policy_file": "Optional IAM policy JSON file; strict mode with no file denies every non-management request.",
           "log_warnings": "Log Cloud IAM operation warnings when enabled; suppressed in open mode (boolean)."
         },
@@ -657,7 +682,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -694,7 +719,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -708,6 +733,7 @@
         "tlsPort": "tls",
         "protocol": "rest",
         "envVar": "SERVICE_USAGE_EMULATOR_HOST",
+        "gcloudApiName": "serviceusage",
         "envValuePrefix": "http://",
         "type": "facade",
         "gatewayObservable": true,
@@ -730,7 +756,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -744,6 +770,7 @@
         "tlsPort": "tls",
         "protocol": "rest",
         "envVar": "CLOUD_BILLING_EMULATOR_HOST",
+        "gcloudApiName": "cloudbilling",
         "envValuePrefix": "http://",
         "type": "facade",
         "gatewayObservable": true,
@@ -766,7 +793,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -831,7 +858,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -868,7 +895,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -888,12 +915,15 @@
         "envValuePrefix": "",
         "type": "facade",
         "gatewayObservable": true,
+        "usage": {
+          "request_count": "control_plane"
+        },
         "defaultEnabled": false,
         "minTier": "pro",
         "gcloudApiName": "container",
         "terraformEnvVar": "GOOGLE_CONTAINER_CUSTOM_ENDPOINT",
         "additionalPorts": {
-          "k3d": 5377
+          "k3d": 5443
         },
         "observability": {
           "logs": {
@@ -911,7 +941,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -931,6 +961,9 @@
         "envValuePrefix": "http://",
         "type": "facade",
         "gatewayObservable": true,
+        "usage": {
+          "request_count": "control_plane"
+        },
         "defaultEnabled": false,
         "minTier": "pro",
         "gcloudApiName": "compute",
@@ -951,7 +984,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -971,6 +1004,9 @@
         "envValuePrefix": "",
         "type": "facade",
         "gatewayObservable": true,
+        "usage": {
+          "request_count": "control_plane"
+        },
         "defaultEnabled": false,
         "minTier": "pro",
         "gcloudApiName": "run",
@@ -991,7 +1027,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -1001,13 +1037,17 @@
         "displayName": "Memorystore (Redis/Valkey)",
         "availability": "available",
         "resettableData": true,
-        "plaintextPort": 5374,
-        "tlsPort": 5382,
+        "plaintextPort": 5390,
+        "tlsPort": 5394,
         "protocol": "redis",
         "envVar": "REDIS_HOST",
+        "gcloudApiName": "redis",
         "envValuePrefix": "",
         "type": "external",
         "gatewayObservable": false,
+        "usage": {
+          "request_count": "control_plane"
+        },
         "defaultEnabled": true,
         "minTier": "community",
         "terraformEnvVar": "GOOGLE_REDIS_CUSTOM_ENDPOINT",
@@ -1082,7 +1122,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -1119,7 +1159,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -1164,7 +1204,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -1181,13 +1221,16 @@
         "envValuePrefix": "http://",
         "type": "facade",
         "gatewayObservable": true,
+        "usage": {
+          "request_count": "control_plane"
+        },
         "defaultEnabled": true,
         "minTier": "community",
-        "gcloudApiName": "sqladmin",
+        "gcloudApiName": "sql",
         "terraformEnvVar": "GOOGLE_SQL_CUSTOM_ENDPOINT",
         "additionalPorts": {
-          "postgres": 5375,
-          "mysql": 5376
+          "postgres": 5391,
+          "mysql": 5406
         },
         "config": {
           "mysql_enabled": true,
@@ -1221,7 +1264,7 @@
                 "format": "json",
                 "retentionProfile": "java-facade",
                 "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "RuntimeServiceLogEmitterTest"
+                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
               }
             ]
           }
@@ -1232,7 +1275,7 @@
   "infrastructure": {
     "dns": {
       "displayName": "LocalCloud DNS",
-      "port": 5378,
+      "port": 5410,
       "protocol": "udp"
     }
   },

@@ -63,7 +63,7 @@ class FakeController:
         if observer is not None and hasattr(observer, "debug"):
             observer.debug(
                 "docker run -d --name localcloud "
-                "-p 127.0.0.1:5365-5375:5365-5375/tcp "
+                "-p 127.0.0.1:5380-5405:5380-5405/tcp "
                 "jaysen2apache/localcloud:latest"
             )
         if dry_run:
@@ -92,7 +92,7 @@ class FakeController:
         if observer is not None and hasattr(observer, "debug"):
             observer.debug(
                 "docker run -d --name localcloud "
-                "-p 127.0.0.1:5365-5375:5365-5375/tcp "
+                "-p 127.0.0.1:5380-5405:5380-5405/tcp "
                 "jaysen2apache/localcloud:latest"
             )
         if dry_run:
@@ -145,7 +145,7 @@ class FakeController:
             "data_volume": config.data_volume,
             "url": "http://127.0.0.1:49080",
             "connect_url": "http://127.0.0.1:49080",
-            "endpoint_map": {"5365": 49080},
+            "endpoint_map": {"5380": 49080},
             "project": config.project,
             "user": config.user,
         }
@@ -1142,8 +1142,8 @@ def test_port_mapping_confirmation_prompts_with_exact_mapping() -> None:
     observer = _ExecutionObserver(reporter, input_stream=input_stream)
     plan = SimpleNamespace(
         alternative_port_mappings=lambda: (
-            ("127.0.0.1", 5508, 5365, "tcp"),
-            ("127.0.0.1", 5509, 5366, "tcp"),
+            ("127.0.0.1", 5508, 5380, "tcp"),
+            ("127.0.0.1", 5509, 5381, "tcp"),
         )
     )
 
@@ -1151,7 +1151,7 @@ def test_port_mapping_confirmation_prompts_with_exact_mapping() -> None:
     reporter.close()
 
     rendered = output.getvalue()
-    assert "127.0.0.1:5508 -> 5365/tcp" in rendered
+    assert "127.0.0.1:5508 -> 5380/tcp" in rendered
     assert "Continue with these mappings? [y/N] " in rendered
     assert "\x1b[?25h" in rendered
 
@@ -1170,7 +1170,7 @@ def test_port_mapping_confirmation_fails_closed_without_tty() -> None:
     )
     plan = SimpleNamespace(
         alternative_port_mappings=lambda: (
-            ("127.0.0.1", 5508, 5365, "tcp"),
+            ("127.0.0.1", 5508, 5380, "tcp"),
         )
     )
 
@@ -1742,7 +1742,7 @@ def test_main_start_debug_prints_copyable_ranged_docker_command(
     assert "[debug] Lifecycle action" not in captured.err
     assert "[debug] Published ports" not in captured.err
     assert "[debug] docker run -d --name localcloud" in captured.err
-    assert "5365-5375:5365-5375/tcp" in captured.err
+    assert "5380-5405:5380-5405/tcp" in captured.err
 
 
 def test_main_start_dry_run_prints_native_plan(

@@ -79,16 +79,16 @@ terraform apply
 The exported variables point Google Cloud resources at LocalCloud loopback ports:
 
 ```sh
-export GOOGLE_STORAGE_CUSTOM_ENDPOINT="http://127.0.0.1:5366/storage/v1/"
-export GOOGLE_BIGTABLE_CUSTOM_ENDPOINT="http://127.0.0.1:5369/"
-export GOOGLE_SPANNER_CUSTOM_ENDPOINT="http://127.0.0.1:5371/v1/"
-export GOOGLE_BIGQUERY_CUSTOM_ENDPOINT="http://127.0.0.1:5372/"
-export GOOGLE_SECRET_MANAGER_CUSTOM_ENDPOINT="http://127.0.0.1:5365/v1/"
-export GOOGLE_IAM_CUSTOM_ENDPOINT="http://127.0.0.1:5365/v1/"
-export GOOGLE_KMS_CUSTOM_ENDPOINT="http://127.0.0.1:5365/v1/"
+export GOOGLE_STORAGE_CUSTOM_ENDPOINT="http://127.0.0.1:5382/storage/v1/"
+export GOOGLE_BIGTABLE_CUSTOM_ENDPOINT="http://127.0.0.1:5385/"
+export GOOGLE_SPANNER_CUSTOM_ENDPOINT="http://127.0.0.1:5387/v1/"
+export GOOGLE_BIGQUERY_CUSTOM_ENDPOINT="http://127.0.0.1:5388/"
+export GOOGLE_SECRET_MANAGER_CUSTOM_ENDPOINT="http://127.0.0.1:5380/v1/"
+export GOOGLE_IAM_CUSTOM_ENDPOINT="http://127.0.0.1:5380/v1/"
+export GOOGLE_KMS_CUSTOM_ENDPOINT="http://127.0.0.1:5380/v1/"
 export GOOGLE_PROJECT="local-gcp-project"
 export GOOGLE_OAUTH_ACCESS_TOKEN="localcloud-user.…"
-export GOOGLE_OAUTH_CUSTOM_ENDPOINT="http://127.0.0.1:5365/oauth2/"
+export GOOGLE_OAUTH_CUSTOM_ENDPOINT="http://127.0.0.1:5380/oauth2/"
 export GOOGLE_APPLICATION_CREDENTIALS="/dev/null"
 # …one entry per enabled service
 ```
