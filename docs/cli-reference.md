@@ -46,7 +46,7 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
   container while preserving its persistent data volume. Attached containers keep
   their existing bindings.
 - `--memory` overrides `host.memory` (default: `4g`).
-- `--image` overrides `host.image` and `LOCALCLOUD_IMAGE` (default: `jaysen2apache/localcloud:latest`).
+- `--image` overrides `host.image` and `LOCALCLOUD_IMAGE` (default: `agentcloud/localcloud:latest`).
 - `--services` overrides `services.enabled` with a comma-separated list of service IDs, or `default` to use the built-in set.
 - `--pull` is enabled by default: checks for a newer image on Docker Hub and pulls only if an update is available. `--no-pull` uses the locally available image only (pulling only if absent locally).
 - New runtimes prefer the canonical host ports. If that complete set is unavailable,

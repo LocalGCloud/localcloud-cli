@@ -349,7 +349,7 @@ def test_embedded_docker_runtime_requires_effective_docker_access(
 def test_default_image_uses_public_latest_channel(tmp_path: Path) -> None:
     selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
 
-    assert DEFAULT_IMAGE == "jaysen2apache/localcloud:latest"
+    assert DEFAULT_IMAGE == "agentcloud/localcloud:latest"
     assert selected.image == DEFAULT_IMAGE
 
 

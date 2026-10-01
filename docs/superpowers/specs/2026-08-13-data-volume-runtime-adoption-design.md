@@ -71,7 +71,7 @@ The configured image is resolved independently in this order:
 1. `image` explicitly declared in the selected project configuration;
 2. `LOCALCLOUD_IMAGE`;
 3. the image stored in the active record, but only when that active data volume was selected;
-4. `jaysen2apache/localcloud:latest`.
+4. `agentcloud/localcloud:latest`.
 
 This preserves a custom image selected through configuration or environment after `start` establishes the active runtime. Selecting a different data volume never inherits the previous volume's image.
 

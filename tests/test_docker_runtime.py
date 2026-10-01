@@ -1593,7 +1593,7 @@ def test_equivalent_reference_or_immutable_image_id_is_compatible(
     runtime, client = ready_runtime
     external = _add_external(
         client,
-        image="docker.io/jaysen2apache/localcloud:latest",
+        image="docker.io/agentcloud/localcloud:latest",
     )
     resolved = runtime.resolve(_config(tmp_path))
     assert resolved is not None
@@ -2419,7 +2419,7 @@ def test_format_docker_run_produces_valid_command_string() -> None:
     from localcloud_cli.docker_runtime import _format_docker_run
 
     cmd = _format_docker_run(
-        image="jaysen2apache/localcloud:latest",
+        image="agentcloud/localcloud:latest",
         name="localcloud",
         network_name="localcloud-net",
         mem_limit="4g",
@@ -2440,7 +2440,7 @@ def test_format_docker_run_produces_valid_command_string() -> None:
     assert "-p 127.0.0.1::5382/tcp" in cmd
     assert "-e LOCALCLOUD_PROJECT=default" in cmd
     assert "-l managed=true" in cmd
-    assert cmd.endswith("jaysen2apache/localcloud:latest")
+    assert cmd.endswith("agentcloud/localcloud:latest")
 
 
 def test_format_docker_run_collapses_contiguous_port_ranges() -> None:
@@ -2452,7 +2452,7 @@ def test_format_docker_run_collapses_contiguous_port_ranges() -> None:
     ports["5410/tcp"] = ("127.0.0.1", 5410)
 
     cmd = _format_docker_run(
-        image="jaysen2apache/localcloud:latest",
+        image="agentcloud/localcloud:latest",
         name="localcloud",
         network_name="localcloud-net",
         mem_limit="4g",

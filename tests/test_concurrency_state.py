@@ -98,3 +98,38 @@ def test_data_volume_lock_concurrent_threads(tmp_path: Path) -> None:
 
     assert not concurrency_detected
     assert len(execution_order) == 2
+
+
+def test_clear_active_runtime_by_volume(tmp_path: Path) -> None:
+    paths = HostPaths(home=tmp_path, locks=tmp_path / "locks")
+    rt1 = ActiveRuntime(
+        schema_version=3,
+        data_volume="vol-1",
+        image="localcloud:latest",
+        container_id="cid-1",
+        container_name="localcloud-vol-1",
+        network_name="localcloud-vol-1",
+    )
+    rt2 = ActiveRuntime(
+        schema_version=3,
+        data_volume="vol-2",
+        image="localcloud:latest",
+        container_id="cid-2",
+        container_name="localcloud-vol-2",
+        network_name="localcloud-vol-2",
+    )
+    save_active_runtime(paths, rt1)
+    save_active_runtime(paths, rt2)
+
+    assert load_active_runtime(paths, data_volume="vol-1") is not None
+    assert load_active_runtime(paths, data_volume="vol-2") is not None
+
+    clear_active_runtime(paths, data_volume="vol-1")
+    assert load_active_runtime(paths, data_volume="vol-1") is None
+    assert load_active_runtime(paths, data_volume="vol-2") is not None
+    assert (tmp_path / "active-runtime.json").exists()
+
+    clear_active_runtime(paths, data_volume="vol-2")
+    assert load_active_runtime(paths, data_volume="vol-2") is None
+    assert not (tmp_path / "active-runtime.json").exists()
+

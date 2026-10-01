@@ -33,7 +33,7 @@ updater:
   auto_update: false
   auto_restart_container: false
   check_interval_hours: 24
-  image: jaysen2apache/localcloud:latest
+  image: agentcloud/localcloud:latest
   prune_old_image: true
   drain_timeout_seconds: 5
 
@@ -466,7 +466,7 @@ services:
       # Service-owned runtime settings (moved from server.dataproc_registry).
       # User-editable in localcloud.yaml and applied by restarting Dataproc.
       config:
-        registry: jaysen2apache/dataproc
+        registry: agentcloud/dataproc
         prefer_native: true
       config_descriptions:
         registry: Container registry / repository prefix for Dataproc cluster images (non-blank).
@@ -856,7 +856,7 @@ services:
       config:
         mysql_enabled: true
         mysql_autostart: false
-        mysql_image: jaysen2apache/mysql:8.4
+        mysql_image: agentcloud/mysql:8.4
         mysql_max_connections: 50
         mysql_innodb_buffer_pool_size: 64M
         mysql_table_open_cache: 200

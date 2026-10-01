@@ -28,14 +28,22 @@ from .constants import (
     DEFAULT_USER,
 )
 
-from .errors import HostError
+from .errors import ConfigError, HostError
+from .state import (
+    ACTIVE_RUNTIME_FILE,
+    ACTIVE_RUNTIME_SCHEMA_VERSION,
+    ActiveRuntime,
+    DOCKER_NAME_PATTERN,
+    clear_active_runtime,
+    data_volume_lock,
+    default_resource_names,
+    load_active_runtime,
+    save_active_runtime,
+    validate_data_volume,
+)
 
-ACTIVE_RUNTIME_SCHEMA_VERSION = 3
-ACTIVE_RUNTIME_FILE = "active-runtime.json"
 LEGACY_LOCK_PATTERN = re.compile(r"^[0-9a-f]{64}\.lock$")
 LEGACY_HOST_FILES = ("state.db", "daemon.sock", "daemon.pid", "daemon.lock", "daemon.log")
-DATA_VOLUME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
-DOCKER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 PROJECT_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 USER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+@-]{0,126}$")
 ENVIRONMENT_KEY_PATTERN = re.compile(r"^LOCALCLOUD_[A-Z0-9_]+$")
@@ -197,30 +205,6 @@ def _validate_yaml_node(
         active.remove(identity)
     validated.add(identity)
 
-
-from .state import (
-    ACTIVE_RUNTIME_FILE,
-    ACTIVE_RUNTIME_SCHEMA_VERSION,
-    ActiveRuntime,
-    DATA_VOLUME_PATTERN,
-    DOCKER_NAME_PATTERN,
-    _LOCKS_GUARD,
-    _PROCESS_LOCKS,
-    _active_runtime_lock,
-    _decode_active_state,
-    _decode_runtime_entry,
-    _docker_name,
-    _file_lock,
-    _hashed_resource_name,
-    _non_blank_string,
-    _record_active_diagnostic,
-    clear_active_runtime,
-    data_volume_lock,
-    default_resource_names,
-    load_active_runtime,
-    save_active_runtime,
-    validate_data_volume,
-)
 
 
 @dataclass(frozen=True)
@@ -1160,4 +1144,4 @@ def _environment(value: object) -> dict[str, str]:
 
 
 def _invalid_config(message: str, **details: object) -> None:
-    raise HostError("invalid_config", message, details)
+    raise ConfigError("invalid_config", message, details)

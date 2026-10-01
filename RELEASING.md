@@ -1,6 +1,6 @@
 # Release LocalCloud CLI
 
-This is the operator runbook for publishing a LocalCloud CLI release. The release workflow is manual-only. It does not build, publish, or depend on the LocalCloud Docker image being present on Docker Hub. The CLI always resolves the runtime image by the mutable `jaysen2apache/localcloud:latest` tag at run time (see `DEFAULT_IMAGE` in `src/localcloud_cli/config.py`), never a pinned digest, so users always get the newest qualified image without needing to update the CLI itself.
+This is the operator runbook for publishing a LocalCloud CLI release. The release workflow is manual-only. It does not build, publish, or depend on the LocalCloud Docker image being present on Docker Hub. The CLI always resolves the runtime image by the mutable `agentcloud/localcloud:latest` tag at run time (see `DEFAULT_IMAGE` in `src/localcloud_cli/config.py`), never a pinned digest, so users always get the newest qualified image without needing to update the CLI itself.
 
 ## Access required
 
@@ -13,7 +13,7 @@ No cross-repository token is required. Each manual workflow writes only to its o
 
 ## 1. Publish the Docker runtime (independent of CLI releases)
 
-Publishing and qualifying `jaysen2apache/localcloud:latest` is managed entirely
+Publishing and qualifying `agentcloud/localcloud:latest` is managed entirely
 through the private LocalCloud repository, on its own schedule. It is not a
 prerequisite for a CLI release: the CLI release workflow no longer inspects or
 requires Docker Hub state, because the shipped CLI always pulls the runtime
@@ -36,10 +36,10 @@ You can independently confirm the public image's architecture coverage and
 ownership label at any time:
 
 ```sh
-docker buildx imagetools inspect jaysen2apache/localcloud:latest
+docker buildx imagetools inspect agentcloud/localcloud:latest
 test "$(docker image inspect \
   --format '{{ index .Config.Labels "com.localcloud.runtime-ownership" }}' \
-  jaysen2apache/localcloud:latest)" = "data-volume-v1"
+  agentcloud/localcloud:latest)" = "data-volume-v1"
 ```
 
 An older CLI can ignore new labels; a new CLI may attach to a compatible older
@@ -55,6 +55,7 @@ In `LocalGCloud/localcloud-cli`:
 1. Update `uv.lock` if package metadata or dependencies changed.
 2. Regenerate `THIRD_PARTY_NOTICES` when locked dependencies changed.
 3. Ensure your local branch is `main` and up to date with `origin/main`.
+4. Complete the [Container Lifecycle Test Runbook](docs/lifecycle-testing.md) on an isolated data volume to qualify the current runtime image and CLI operations.
 
 Note: You do not need to manually edit `__version__` in `src/localcloud_cli/__init__.py`. Running `./scripts/release.sh --release VERSION` will automatically update the version in `src/localcloud_cli/__init__.py`, commit the change (`chore(release): bump version to VERSION`), and push it to `origin/main` before running tests and tagging.
 

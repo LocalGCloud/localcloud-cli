@@ -87,11 +87,11 @@ def test_summary_uses_precise_human_status_values(
     [
         (
             "(Local: ID: qualified , sha256:qualified)",
-            "Image        jaysen2apache/localcloud:latest (Local: ID: qualified , sha256:qualified)",
+            "Image        agentcloud/localcloud:latest (Local: ID: qualified , sha256:qualified)",
         ),
         (
             "(not available locally)",
-            "Image        jaysen2apache/localcloud:latest (not available locally)",
+            "Image        agentcloud/localcloud:latest (not available locally)",
         ),
     ],
 )
@@ -102,7 +102,7 @@ def test_status_summary_shows_doctor_image_details_next_to_image(
         "status": "not_created",
         "data_volume": "localcloud-data",
         "container": {
-            "configured_image": "jaysen2apache/localcloud:latest",
+            "configured_image": "agentcloud/localcloud:latest",
             "image_status": "not available locally",
             "image_details": {"formatted": formatted},
         },
@@ -203,7 +203,7 @@ def test_summary_wraps_values_with_hanging_indent_at_visible_width() -> None:
         "status": "not_created",
         "data_volume": "localcloud-data",
         "container": {
-            "configured_image": "jaysen2apache/localcloud:latest",
+            "configured_image": "agentcloud/localcloud:latest",
             "image_details": {
                 "formatted": "(Local: ID: abcdef123456 , sha256:abcdef123456)"
             },
@@ -824,7 +824,7 @@ def test_status_summary_renders_port_mappings_when_running() -> None:
         "status": "running",
         "data_volume": "localcloud-data",
         "container": {
-            "configured_image": "jaysen2apache/localcloud:latest",
+            "configured_image": "agentcloud/localcloud:latest",
         },
         "port_mappings": [
             {"host_ip": "127.0.0.1", "host_port": p, "container_port": str(p), "protocol": "tcp"}
@@ -840,7 +840,7 @@ def test_status_summary_renders_port_availability_when_stopped() -> None:
         "status": "stopped",
         "data_volume": "localcloud-data",
         "container": {
-            "configured_image": "jaysen2apache/localcloud:latest",
+            "configured_image": "agentcloud/localcloud:latest",
         },
         "port_availability": {
             "canonical_ports": list(range(5380, 5406)),

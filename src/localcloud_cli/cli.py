@@ -400,7 +400,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "update":
             from .update import update
 
-            update()
+            return update()
         result = _execute(args, observer=_ExecutionObserver(reporter, debug=debug))
         failure_message = _result_failure_message(args, result)
         if reports_progress:
@@ -458,6 +458,10 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
         from .agent_guide import render_agent_guide
 
         return render_agent_guide()
+    if args.command == "update":
+        from .update import update
+
+        return update()
 
     from .controller import Controller
 

@@ -52,7 +52,7 @@ $ lc doctor
 
 Status  OK
 Docker  29.7.2 (/opt/homebrew/bin/docker)
-Image   jaysen2apache/localcloud:latest (Local: ID: 66026c0b0b21 ,
+Image   agentcloud/localcloud:latest (Local: ID: 66026c0b0b21 ,
         sha256:66026c0b0b21398990faafb2e4a2ec71c6c10ff27c72f7cd3461d96863486011)
 ```
 
@@ -170,7 +170,7 @@ Data volume   localcloud-data
 Origin        managed
 Project       local-gcp-project
 User          local-developer
-Image         jaysen2apache/localcloud:latest
+Image         agentcloud/localcloud:latest
 Image status  Available locally
 URL           http://127.0.0.1:5380
 Services      alloydb, bigquery, bigtable, cloudbilling, cloudfunctions, cloudiam,
@@ -283,7 +283,7 @@ Your data survives `stop` and `restart`. `lc start` brings it back exactly as it
                                                                     │
                       ┌─────────────────────────────────────────────┘
           ┌───────────▼─────────────────────────────────────────────┐
-          │  Docker container  ·  jaysen2apache/localcloud          │
+          │  Docker container  ·  agentcloud/localcloud             │
           │                                                         │
           │   :5380  gateway · console · admin API · MCP · facades  │
           │   :5382  Cloud Storage      :5386-87  Spanner           │
@@ -659,6 +659,7 @@ and `--debug` prints the exact `docker run` the CLI would use.
 | [CLI reference](docs/cli-reference.md) | Every command, flag, output mode, and field path |
 | [Configuration](docs/configuration.md) | `localcloud.yaml`, service catalog, volumes, projects, identity |
 | [Integrations](docs/integrations.md) | Python, Node, Go, Terraform/OpenTofu, and MCP client setup |
+| [Lifecycle testing](docs/lifecycle-testing.md) | End-to-end container lifecycle test runbook and verification |
 | [local.cloud/docs](https://local.cloud/docs) | Product documentation, service compatibility, and the console |
 
 ## Development
@@ -673,6 +674,8 @@ uv run --extra test python -m pytest -q -m "not docker"   # no Docker required
 
 uv run lc --help                                          # run from source
 ```
+
+For live container lifecycle qualification, follow the [Lifecycle test runbook](docs/lifecycle-testing.md).
 
 Tests that need a live Docker engine are marked `docker`; deselect them with `-m "not docker"`.
 

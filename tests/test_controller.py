@@ -1711,7 +1711,7 @@ def test_doctor_reports_stale_active_state_warning(tmp_path: Path) -> None:
     active = ActiveRuntime(
         schema_version=ACTIVE_RUNTIME_SCHEMA_VERSION,
         data_volume="default",
-        image="jaysen2apache/localcloud:latest",
+        image="agentcloud/localcloud:latest",
         container_id="c" * 12,
         container_name="localcloud-default",
         network_name="localcloud-default",

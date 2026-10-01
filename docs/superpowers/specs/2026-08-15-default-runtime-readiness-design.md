@@ -106,7 +106,7 @@ Resolved endpoint maps continue to come from Docker inspection, never from reque
 Every normal Docker-marked CLI integration test uses the default values:
 
 - data volume: `localcloud-data`;
-- image: `jaysen2apache/localcloud:latest` unless `LOCALCLOUD_IMAGE` explicitly overrides it;
+- image: `agentcloud/localcloud:latest` unless `LOCALCLOUD_IMAGE` explicitly overrides it;
 - default project and user; and
 - the endpoint map inspected from the selected default container.
 

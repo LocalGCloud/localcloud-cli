@@ -10,12 +10,13 @@ import re
 import tempfile
 import threading
 from contextlib import contextmanager
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from .constants import DEFAULT_DATA_VOLUME
-from .errors import HostError, StateError
+from .errors import HostError
 
 ACTIVE_RUNTIME_FILE = "active-runtime.json"
 ACTIVE_RUNTIME_SCHEMA_VERSION = 3
@@ -337,56 +338,113 @@ def save_active_runtime(paths: Any, runtime: ActiveRuntime) -> None:
                 for key, value in sorted(runtimes.items())
             },
         }
+        _write_active_state_file(paths, payload)
+
+
+def _write_active_state_file(paths: Any, payload: dict[str, Any]) -> None:
+    try:
+        paths.home.mkdir(mode=0o700, parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            dir=paths.home,
+            prefix=f".{ACTIVE_RUNTIME_FILE}.",
+            suffix=".tmp",
+        )
+    except OSError as error:
+        raise HostError(
+            "active_runtime_write_failed",
+            f"Could not prepare LocalCloud active runtime state under {paths.home}",
+            {"path": str(paths.home), "cause": str(error)},
+        ) from error
+    temporary = Path(temporary_name)
+    try:
         try:
-            paths.home.mkdir(mode=0o700, parents=True, exist_ok=True)
-            descriptor, temporary_name = tempfile.mkstemp(
-                dir=paths.home,
-                prefix=f".{ACTIVE_RUNTIME_FILE}.",
-                suffix=".tmp",
-            )
+            with os.fdopen(descriptor, "w", encoding="utf-8") as state_file:
+                os.chmod(temporary, 0o600)
+                json.dump(
+                    payload,
+                    state_file,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                state_file.write("\n")
+                state_file.flush()
+                os.fsync(state_file.fileno())
+            os.replace(temporary, paths.active_runtime)
+            directory_fd = os.open(paths.home, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         except OSError as error:
             raise HostError(
                 "active_runtime_write_failed",
-                f"Could not prepare LocalCloud active runtime state under {paths.home}",
-                {"path": str(paths.home), "cause": str(error)},
+                f"Could not persist LocalCloud active runtime state: {paths.active_runtime}",
+                {"path": str(paths.active_runtime), "cause": str(error)},
             ) from error
-        temporary = Path(temporary_name)
-        try:
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def clear_active_runtime(paths: Any, data_volume: str | None = None) -> None:
+    with _active_runtime_lock(paths):
+        if data_volume is None:
             try:
-                with os.fdopen(descriptor, "w", encoding="utf-8") as state_file:
-                    os.chmod(temporary, 0o600)
-                    json.dump(
-                        payload,
-                        state_file,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    )
-                    state_file.write("\n")
-                    state_file.flush()
-                    os.fsync(state_file.fileno())
-                os.replace(temporary, paths.active_runtime)
-                directory_fd = os.open(paths.home, os.O_RDONLY)
-                try:
-                    os.fsync(directory_fd)
-                finally:
-                    os.close(directory_fd)
+                paths.active_runtime.unlink(missing_ok=True)
             except OSError as error:
                 raise HostError(
                     "active_runtime_write_failed",
-                    f"Could not persist LocalCloud active runtime state: {paths.active_runtime}",
+                    f"Could not clear LocalCloud active runtime state: {paths.active_runtime}",
                     {"path": str(paths.active_runtime), "cause": str(error)},
                 ) from error
-        finally:
-            temporary.unlink(missing_ok=True)
+            return
 
-
-def clear_active_runtime(paths: Any) -> None:
-    with _active_runtime_lock(paths):
         try:
-            paths.active_runtime.unlink(missing_ok=True)
-        except OSError as error:
-            raise HostError(
-                "active_runtime_write_failed",
-                f"Could not clear LocalCloud active runtime state: {paths.active_runtime}",
-                {"path": str(paths.active_runtime), "cause": str(error)},
-            ) from error
+            encoded = paths.active_runtime.read_text(encoding="utf-8")
+            runtimes, last_active = _decode_active_state(json.loads(encoded))
+        except FileNotFoundError:
+            return
+        except (HostError, OSError, UnicodeError, ValueError, json.JSONDecodeError):
+            try:
+                paths.active_runtime.unlink(missing_ok=True)
+            except OSError as error:
+                raise HostError(
+                    "active_runtime_write_failed",
+                    f"Could not clear LocalCloud active runtime state: {paths.active_runtime}",
+                    {"path": str(paths.active_runtime), "cause": str(error)},
+                ) from error
+            return
+
+        selected_volume = validate_data_volume(data_volume)
+        if selected_volume not in runtimes:
+            return
+
+        del runtimes[selected_volume]
+        if not runtimes:
+            try:
+                paths.active_runtime.unlink(missing_ok=True)
+            except OSError as error:
+                raise HostError(
+                    "active_runtime_write_failed",
+                    f"Could not clear LocalCloud active runtime state: {paths.active_runtime}",
+                    {"path": str(paths.active_runtime), "cause": str(error)},
+                ) from error
+            return
+
+        new_last_active = (
+            next(iter(runtimes)) if last_active == selected_volume else last_active
+        )
+        payload = {
+            "schema_version": ACTIVE_RUNTIME_SCHEMA_VERSION,
+            "last_active": new_last_active,
+            "runtimes": {
+                key: {
+                    "data_volume": value.data_volume,
+                    "image": value.image,
+                    "container_id": value.container_id,
+                    "container_name": value.container_name,
+                    "network_name": value.network_name,
+                }
+                for key, value in sorted(runtimes.items())
+            },
+        }
+        _write_active_state_file(paths, payload)

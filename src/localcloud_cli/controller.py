@@ -1108,9 +1108,13 @@ class Controller:
             return result
         docker_cleanup = self.runtime.cleanup_resources(invalid_ownership)
         result["docker_resources"] = docker_cleanup["removed"]
-        result["failures"] = docker_cleanup["failures"]
         if active_stale:
-            clear_active_runtime(self.paths)
+            stale_volume = (
+                active_status.get("data_volume")
+                if active_status and not active_diagnostics
+                else None
+            )
+            clear_active_runtime(self.paths, data_volume=stale_volume)
         cleared = clear_legacy_host_state(self.paths)
         result["legacy_host_state"] = cleared["files"]
         result["legacy_locks"] = cleared["locks"]

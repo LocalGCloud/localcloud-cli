@@ -260,7 +260,7 @@ cd ..
 python3 scripts/validate-port-map.py
 ./build.sh
 
-docker image inspect jaysen2apache/localcloud:latest \
+docker image inspect agentcloud/localcloud:latest \
   --format '{{ index .Config.Labels "com.localcloud.runtime-ownership" }}'
 ```
 

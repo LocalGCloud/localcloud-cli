@@ -64,7 +64,7 @@ class FakeController:
             observer.debug(
                 "docker run -d --name localcloud "
                 "-p 127.0.0.1:5380-5405:5380-5405/tcp "
-                "jaysen2apache/localcloud:latest"
+                "agentcloud/localcloud:latest"
             )
         if dry_run:
             return "# action: create\ndocker run -d --name localcloud"
@@ -93,7 +93,7 @@ class FakeController:
             observer.debug(
                 "docker run -d --name localcloud "
                 "-p 127.0.0.1:5380-5405:5380-5405/tcp "
-                "jaysen2apache/localcloud:latest"
+                "agentcloud/localcloud:latest"
             )
         if dry_run:
             return "# action: restart\ndocker restart -t 20 localcloud"
@@ -154,7 +154,7 @@ class FakeController:
         self.calls.append(("doctor", None))
         return {
             "status": "ok",
-            "default_image": "jaysen2apache/localcloud:latest (Local: ID: qualified , sha256:qualified)",
+            "default_image": "agentcloud/localcloud:latest (Local: ID: qualified , sha256:qualified)",
         }
 
     def cleanup(self, *, confirm: bool | None = None, dry_run: bool = False) -> dict[str, Any]:
@@ -429,7 +429,7 @@ def test_stale_implicit_active_runtime_falls_back_to_default_volume(
             {
                 "schema_version": 1,
                 "data_volume": "stale-pr-data",
-                "image": "jaysen2apache/localcloud:latest",
+                "image": "agentcloud/localcloud:latest",
                 "container_id": "missing-container",
             }
         ),
@@ -459,7 +459,7 @@ def test_valid_implicit_active_runtime_with_defaults_remains_selected(
             {
                 "schema_version": 1,
                 "data_volume": "team-data",
-                "image": "jaysen2apache/localcloud:latest",
+                "image": "agentcloud/localcloud:latest",
                 "container_id": "team-container",
             }
         ),

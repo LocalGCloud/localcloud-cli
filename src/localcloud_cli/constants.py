@@ -1,7 +1,7 @@
 """Lightweight shared defaults for CLI startup and configuration."""
 
 DEFAULT_CONFIG_NAME = "localcloud.yaml"
-DEFAULT_IMAGE = "jaysen2apache/localcloud:latest"
+DEFAULT_IMAGE = "agentcloud/localcloud:latest"
 DEFAULT_MEMORY = "4g"
 DEFAULT_TLS_PORT = 5381
 DEFAULTS_CONFIG_LABEL = "<defaults>"

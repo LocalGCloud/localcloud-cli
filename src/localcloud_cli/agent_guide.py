@@ -1,25 +1,17 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from .constants import DEFAULT_IMAGE, DEFAULT_PROJECT, DEFAULT_USER
 
 # The service catalog rendered below is not maintained here: it is read from
-# the versioned snapshot of LocalCloud's own localcloud.defaults.yaml bundled
-# at defaults/localcloud.v1.yaml, so the guide can never drift from what the
-# runtime actually ships. Bump _DEFAULTS_FILE (adding a localcloud.v2.yaml
-# alongside it) when the runtime's schema version changes.
-_DEFAULTS_FILE = Path(__file__).parent / "defaults" / "localcloud.v1.yaml"
-
-
+# the versioned snapshot of LocalCloud's own defaults bundled with the package,
+# so the guide can never drift from what the runtime actually ships.
 def _service_catalog() -> dict[str, dict[str, Any]]:
-    # Lazy-load PyYAML to avoid module import overhead on cold paths.
-    import yaml
+    from .config import _packaged_service_catalog
 
-    defaults = yaml.safe_load(_DEFAULTS_FILE.read_text(encoding="utf-8"))
-    return defaults["services"]["catalog"]
+    return _packaged_service_catalog()  # type: ignore[return-value]
 
 
 def _service_inventory() -> str:
