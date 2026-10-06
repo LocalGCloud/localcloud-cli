@@ -47,12 +47,15 @@ class FakeRuntime:
         self.create_pulls: list[bool] = []
         self.preflight_error: HostError | None = None
         self.preflight_delay = 0.0
+        self.remove_delay = 0.0
         self.readiness_deadlines: list[float | None] = []
         self.prepared_images: list[tuple[Any, bool] | None] = []
         self.preview_network_exists: list[bool | None] = []
         self.preview_remove_network: list[bool] = []
         self.wait_error: HostError | None = None
         self.log_calls: list[tuple[LocalCloudConfig, RuntimeRecord, int]] = []
+        self.follow_calls: list[tuple[LocalCloudConfig, RuntimeRecord]] = []
+        self.mysql_host_ip: str | None = None
         self.doctor_report: dict[str, Any] = {"status": "ok", "warning": "runtime warning"}
         self.effective: tuple[str, ...] | None = None
         self.image_details_result: dict[str, Any] = {
@@ -86,10 +89,12 @@ class FakeRuntime:
         _config: LocalCloudConfig,
         replacing: RuntimeRecord | None = None,
         *,
-        pull: bool = False,
+        pull: bool | None = None,
         observer: Any | None = None,
         local_only: bool = False,
     ) -> tuple[Any, bool]:
+        # Mirror DockerRuntime.preflight_create: an omitted pull means pull.
+        pull = False if local_only else (True if pull is None else pull)
         if self.preflight_delay:
             controller_module.time.sleep(self.preflight_delay)
         self.preflights.append(
@@ -248,6 +253,8 @@ class FakeRuntime:
         remove_network: bool = True,
         observer: Any | None = None,
     ) -> None:
+        if self.remove_delay:
+            controller_module.time.sleep(self.remove_delay)
         self.removes.append(remove_volume)
         self.remove_network_calls.append(remove_network)
         self.record = None
@@ -263,10 +270,16 @@ class FakeRuntime:
         current: RuntimeRecord,
         *,
         tail: int,
-        since: float | None = None,
     ) -> str:
         self.log_calls.append((config, current, tail))
         return f"tail={tail}"
+
+    def follow_logs(self, config: LocalCloudConfig, current: RuntimeRecord) -> str:
+        self.follow_calls.append((config, current))
+        return "follow"
+
+    def mysql_companion_host_ip(self, _config: LocalCloudConfig) -> str | None:
+        return self.mysql_host_ip
 
     def is_ready(
         self,
@@ -291,7 +304,12 @@ class FakeRuntime:
         tls_enabled: bool = False,
         tls_port: int | None = None,
         local_only: bool = True,
+        mysql_port: int | None = None,
+        config: LocalCloudConfig | None = None,
     ) -> dict[str, Any]:
+        self.port_diagnostics_mysql_port = (
+            config.mysql_port if config is not None else mysql_port
+        )
         return {
             "canonical_ports": list(range(5380, 5406)),
             "all_canonical_available": True,
@@ -579,10 +597,9 @@ def test_start_reports_docker_logs_to_observer(tmp_path: Path) -> None:
     result = controller.start(config, observer=observer)
 
     assert result["status"] == "started"
-    assert runtime.log_calls
-    # _emit_runtime_logs uses tail=12 for the progress excerpt.
-    assert any(call[2] == 12 for call in runtime.log_calls)
-    assert observer.logs == ["tail=12"]
+    # Progress logs continue the readiness wait's cursor.
+    assert runtime.follow_calls
+    assert observer.logs == ["follow"]
     # _runtime_logs uses tail=20 for the result dict.
     assert result["logs"] == "tail=20"
 
@@ -619,10 +636,8 @@ def test_restart_reports_docker_logs_to_observer(tmp_path: Path) -> None:
     result = controller.restart(config, observer=observer)
 
     assert result["status"] == "restarted"
-    assert runtime.log_calls
-    # _emit_runtime_logs uses tail=12 for the progress excerpt.
-    assert any(call[2] == 12 for call in runtime.log_calls)
-    assert observer.logs == ["tail=12"]
+    assert runtime.follow_calls
+    assert observer.logs == ["follow"]
     # _runtime_logs uses tail=20 for the result dict.
     assert result["logs"] == "tail=20"
 
@@ -637,7 +652,8 @@ def test_restart_replacement_reports_runtime_logs_once(tmp_path: Path) -> None:
 
     assert isinstance(result, dict)
     assert result["status"] == "restarted"
-    assert observer.logs == ["tail=12"]
+    assert observer.logs == ["follow"]
+    assert len(runtime.follow_calls) == 1
 
 
 def test_start_adopts_attached_container_without_reconfiguration(
@@ -743,6 +759,25 @@ def test_start_replacement_deadline_begins_after_slow_image_pull(
     assert runtime.preflight_pulls == [True]
     assert runtime.readiness_deadlines == [155.0]
     assert runtime.prepared_images == [(None, True)]
+
+
+def test_start_replacement_deadline_begins_after_graceful_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    clock = FakeClock()
+    runtime.remove_delay = 28.0
+    monkeypatch.setattr(controller_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
+
+    result = controller.start(config, pull=True)
+
+    assert result["status"] == "started"
+    assert runtime.removes
+    assert runtime.readiness_deadlines == [88.0]
 
 
 def test_start_fails_immediately_for_permanent_project_error(
@@ -1130,6 +1165,20 @@ def test_restart_replaces_managed_runtime_with_noncanonical_ports(
     assert runtime.restarts == 0
 
 
+def test_configured_port_range_needs_no_confirmation(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, port_range="6000-6099")
+    runtime.planned_ports = {
+        f"{port}/tcp": (("127.0.0.1", 6000 + offset),)
+        for offset, port in enumerate(range(5380, 5406))
+    }
+
+    result = controller.start(config)
+
+    assert result["status"] == "started"
+    assert runtime.creates == 1
+
+
 def test_restart_requires_confirmation_before_alternative_port_replacement(
     tmp_path: Path,
 ) -> None:
@@ -1438,6 +1487,28 @@ def test_selected_project_reset_uses_attached_runtime(tmp_path: Path) -> None:
     assert runtime.removes == []
 
 
+def test_reset_replacement_never_pulls_the_image(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = replace(_record(config), config_hash="stale")
+
+    controller.reset(config)
+
+    assert runtime.removes
+    assert runtime.preflight_pulls == [False]
+    assert FakeJavaClient.reset_projects == [config.project]
+
+
+def test_reset_creation_never_pulls_the_image(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+
+    controller.reset(config)
+
+    assert runtime.creates == 1
+    assert runtime.preflight_pulls == [False]
+
+
 def test_status_uses_active_container_as_tie_break_hint(tmp_path: Path) -> None:
     controller, runtime, paths = _controller(tmp_path)
     config = _config(tmp_path, paths=paths)
@@ -1464,6 +1535,32 @@ def test_status_reports_runtime_identity_and_image(tmp_path: Path) -> None:
         "(Local: ID: qualified , sha256:qualified)"
     )
     assert result["mount"]["source"] == "team-data"
+
+
+@pytest.mark.parametrize(
+    ("host_ip", "warns"), [("0.0.0.0", True), ("127.0.0.1", False), (None, False)]
+)
+def test_local_only_status_warns_when_mysql_is_exposed(
+    tmp_path: Path, host_ip: str | None, warns: bool
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, local_only=True)
+    runtime.record = replace(_record(config), mysql_port=5406)
+    runtime.mysql_host_ip = host_ip
+
+    result = controller.status(config)
+
+    mysql = [m for m in result["port_mappings"] if m.get("service") == "cloudsql-mysql"]
+    assert mysql == [
+        {
+            "host_ip": host_ip,
+            "host_port": 5406,
+            "container_port": "5406",
+            "protocol": "tcp",
+            "service": "cloudsql-mysql",
+        }
+    ]
+    assert ("--local-only" in result.get("warning", "")) is warns
 
 
 def test_status_looks_up_details_for_the_image_it_renders(tmp_path: Path) -> None:
@@ -1905,6 +2002,20 @@ def test_doctor_includes_image_details(tmp_path: Path) -> None:
     assert "image_status" not in result
 
 
+def test_doctor_reports_the_image_and_ports_start_would_use(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LOCALCLOUD_IMAGE", "agentcloud/localcloud:0.1.2")
+
+    result = controller.doctor()
+
+    assert result["default_image"].startswith("agentcloud/localcloud:0.1.2 ")
+    assert runtime.port_diagnostics_mysql_port == 5406
+
+
 def test_status_includes_image_status_for_absent_runtime(tmp_path: Path) -> None:
     controller, runtime, paths = _controller(tmp_path)
     config = _config(tmp_path, paths=paths)
@@ -1956,7 +2067,8 @@ def test_start_tails_runtime_logs_with_specified_duration(
 
     result = controller.start(config, observer=observer, tail=1.0)
     assert result["status"] == "started"
-    assert any(call[2] == 100 for call in runtime.log_calls)
+    # One read after readiness, then the tail phase keeps following.
+    assert len(runtime.follow_calls) > 2
 
 
 def test_start_with_zero_tail_does_not_tail_after_readiness(tmp_path: Path) -> None:
@@ -1966,8 +2078,8 @@ def test_start_with_zero_tail_does_not_tail_after_readiness(tmp_path: Path) -> N
 
     result = controller.start(config, observer=observer, tail=0.0)
     assert result["status"] == "started"
-    # tail=100 is used for post-readiness tailing; tail=0 means no post-readiness calls
-    assert not any(call[2] == 100 for call in runtime.log_calls)
+    # Only the read right after readiness; tail=0 means no tail phase.
+    assert len(runtime.follow_calls) == 1
 
 
 def test_tail_runtime_logs_handles_continuous_mode_on_interrupt(tmp_path: Path) -> None:
@@ -1984,7 +2096,7 @@ def test_tail_runtime_logs_handles_continuous_mode_on_interrupt(tmp_path: Path) 
             raise KeyboardInterrupt()
         return "log line"
 
-    runtime.logs = interrupting_logs  # type: ignore[assignment]
+    runtime.follow_logs = interrupting_logs  # type: ignore[assignment]
     controller._tail_runtime_logs(observer, config, runtime.record, tail=-1.0)
     assert observer.logs == ["log line"]
 
@@ -2110,7 +2222,7 @@ def test_reset_dry_run_plans_managed_unready_restart(tmp_path: Path) -> None:
     plan = controller.reset(config, dry_run=True)
 
     assert isinstance(plan, str)
-    assert "docker restart -t 20 localcloud" in plan
+    assert "docker restart -t 30 localcloud" in plan
     assert runtime.restarts == 0
 
 

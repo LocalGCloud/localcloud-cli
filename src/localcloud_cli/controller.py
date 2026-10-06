@@ -25,7 +25,12 @@ from .config import (
     save_active_runtime,
 )
 from .constants import DEFAULTS_CONFIG_LABEL, DEFAULT_IMAGE
-from .docker_runtime import DockerRunPlan, DockerRuntime, RuntimeRecord
+from .docker_runtime import (
+    STOP_TIMEOUT_SECONDS,
+    DockerRunPlan,
+    DockerRuntime,
+    RuntimeRecord,
+)
 from .errors import HostError
 from .java_client import JavaMcpClient, is_retryable_java_error
 
@@ -147,13 +152,17 @@ class Controller:
             return fn(target)
         return (shlex.join(["docker", "start", target]),)
 
-    def _preview_restart(self, target: str, timeout: int = 20) -> tuple[str, ...]:
+    def _preview_restart(
+        self, target: str, timeout: int = STOP_TIMEOUT_SECONDS
+    ) -> tuple[str, ...]:
         fn = getattr(self.runtime, "preview_restart_commands", None)
         if callable(fn):
             return fn(target, timeout=timeout)
         return (shlex.join(["docker", "restart", "-t", str(timeout), target]),)
 
-    def _preview_stop(self, target: str, timeout: int = 20) -> tuple[str, ...]:
+    def _preview_stop(
+        self, target: str, timeout: int = STOP_TIMEOUT_SECONDS
+    ) -> tuple[str, ...]:
         fn = getattr(self.runtime, "preview_stop_commands", None)
         if callable(fn):
             return fn(target, timeout=timeout)
@@ -302,7 +311,7 @@ class Controller:
             _debug_plan(observer, plan, self.runtime, config)
             if dry_run:
                 return plan.render()
-            _confirm_alternative_port_mapping(run_plan, confirm_port_mapping)
+            _confirm_alternative_port_mapping(run_plan, confirm_port_mapping, config)
 
             if action == "create":
                 deadline = time.monotonic() + _START_READINESS_TIMEOUT
@@ -315,16 +324,16 @@ class Controller:
                 )
                 self._emit_runtime_logs(observer, config, environment)
             elif action == "replace":
-                deadline = time.monotonic() + _START_READINESS_TIMEOUT
                 environment = self._replace(
                     current,
                     config,
                     pull=effective_pull,
-                    readiness_deadline=deadline,
+                    readiness_timeout=_START_READINESS_TIMEOUT,
                     observer=observer,
                     prepared_image=prepared_image,
                     run_plan=run_plan,
                 )
+                deadline = time.monotonic() + _START_READINESS_TIMEOUT
             elif action in {"start", "wait"}:
                 if observer is not None and hasattr(observer, "starting"):
                     observer.starting(config)
@@ -491,7 +500,7 @@ class Controller:
                     action = "restart"
                     reason = "the selected container is attached and cannot be replaced"
                     target = current.name or current.container_id or config.container_name
-                    commands = self._preview_restart(target, timeout=20)
+                    commands = self._preview_restart(target)
 
                     status = "restarted"
 
@@ -519,7 +528,7 @@ class Controller:
             _debug_plan(observer, plan, self.runtime, config)
             if dry_run:
                 return plan.render()
-            _confirm_alternative_port_mapping(run_plan, confirm_port_mapping)
+            _confirm_alternative_port_mapping(run_plan, confirm_port_mapping, config)
 
             if action == "create":
                 environment = self.runtime.create(
@@ -618,8 +627,10 @@ class Controller:
             if current is None:
                 action = "create"
                 reason = "no container uses the selected data volume"
+                # reset has no --pull: like restart, it uses the local image.
                 prepared_image = self.runtime.preflight_create(
                     config,
+                    pull=False,
                     observer=observer,
                     local_only=dry_run,
                 )
@@ -632,6 +643,7 @@ class Controller:
                 prepared_image = self.runtime.preflight_create(
                     config,
                     current,
+                    pull=False,
                     observer=observer,
                     local_only=dry_run,
                 )
@@ -649,7 +661,7 @@ class Controller:
                 action = "recover"
                 reason = "the managed container is running but not ready"
                 target = current.name or current.container_id or config.container_name
-                commands = self._preview_restart(target, timeout=20)
+                commands = self._preview_restart(target)
 
 
             else:
@@ -708,14 +720,18 @@ class Controller:
             try:
                 client.reset_project()
             except Exception as error:
+                inner = error.details if isinstance(error, HostError) else {}
+                details: dict[str, Any] = {
+                    "data_volume": config.data_volume,
+                    "project": config.project,
+                    "cause": inner.get("cause") or str(error),
+                }
+                if inner.get("failures"):
+                    details["failures"] = inner["failures"]
                 raise HostError(
                     "project_reset_failed",
                     "LocalCloud project could not be reset",
-                    {
-                        "data_volume": config.data_volume,
-                        "project": config.project,
-                        "cause": str(error),
-                    },
+                    details,
                 ) from error
             return self._payload(
                 "reset",
@@ -767,7 +783,7 @@ class Controller:
                 plan = _LifecyclePlan(
                     action="stop",
                     reason="the selected container is running",
-                    commands=self._preview_stop(target, timeout=20),
+                    commands=self._preview_stop(target),
 
                     current=current,
                 )
@@ -979,24 +995,23 @@ class Controller:
             result["docker_command_path"] = docker_cmd
             result["docker_path"] = docker_cmd
             result["docker_command"] = docker_cmd
-        image_details = self.runtime.image_details(DEFAULT_IMAGE)
-        result["default_image"] = f"{DEFAULT_IMAGE} {image_details['formatted']}"
-        result["image_details"] = image_details
         result["legacy_locks"] = legacy_locks
-        # Port availability diagnostics.
+        local_config: LocalCloudConfig | None
         try:
             local_config = load_config(directory=Path.cwd(), paths=self.paths)
-            tls_enabled = local_config.tls_enabled
-            tls_port = local_config.tls_port
-            local_only = local_config.local_only
         except (HostError, Exception):
-            tls_enabled = False
-            tls_port = None
-            local_only = True
-        port_diag = self.runtime.port_diagnostics(
-            tls_enabled=tls_enabled,
-            tls_port=tls_port,
-            local_only=local_only,
+            local_config = None
+        # The image `start` would use (host.image, LOCALCLOUD_IMAGE, or the
+        # active runtime's), not only the built-in default.
+        image = local_config.image if local_config is not None else DEFAULT_IMAGE
+        image_details = self.runtime.image_details(image)
+        result["default_image"] = f"{image} {image_details['formatted']}"
+        result["image_details"] = image_details
+        # Port availability diagnostics.
+        port_diag = (
+            self.runtime.port_diagnostics(config=local_config)
+            if local_config is not None
+            else self.runtime.port_diagnostics()
         )
         result["port_availability"] = port_diag
         warnings = [result.get("warning", "")]
@@ -1012,10 +1027,18 @@ class Controller:
             warnings.append(
                 "Legacy host state and locks are present; run 'localcloud cleanup' (or 'lc cleanup') to remove them."
             )
-        if port_diag["status"] == "conflict":
+        if port_diag["status"] == "conflict" and port_diag.get("configured_range"):
+            start, end = port_diag["configured_range"]
+            warnings.append(
+                f"The configured port range {start}-{end} has no free block for "
+                "LocalCloud's ports; widen host.port_range or free ports in it."
+            )
+        elif port_diag["status"] == "conflict":
+            canonical = port_diag["canonical_ports"]
             warnings.append(
                 "Canonical LocalCloud ports are unavailable and no alternative port range was found; "
-                "free ports in the range 5380-5405 or one of the fallback ranges before starting."
+                f"free ports in the range {min(canonical)}-{max(canonical)} "
+                "or one of the fallback ranges before starting."
             )
         elif port_diag["status"] == "conflict_with_alternative":
             alt = port_diag["alternative_range"]
@@ -1141,20 +1164,17 @@ class Controller:
         observer: Any | None,
         config: LocalCloudConfig,
         environment: RuntimeRecord,
-        *,
-        tail: int = 12,
-        since: float | None = None,
-    ) -> float:
-        poll_time = time.time()
+    ) -> None:
         if observer is None or not hasattr(observer, "runtime_logs"):
-            return poll_time
+            return
+        # Continues the readiness wait's log cursor, so every line reaches
+        # the terminal and startup-error telemetry exactly once.
         try:
-            logs = self.runtime.logs(config, environment, tail=tail, since=since)
+            logs = self.runtime.follow_logs(config, environment)
         except Exception:
-            return poll_time
+            return
         if logs:
             observer.runtime_logs(logs)
-        return poll_time
 
     def _tail_runtime_logs(
         self,
@@ -1167,17 +1187,10 @@ class Controller:
     ) -> None:
         if observer is None or not hasattr(observer, "runtime_logs"):
             return
-        # `since` narrows each poll to logs produced after the previous poll,
-        # instead of re-fetching (and re-diffing) the last 100 lines every
-        # 0.5s. Only the first poll pulls a backlog; every poll after that is
-        # a cheap incremental fetch.
         if tail is None or tail < 0:
             try:
-                since: float | None = None
                 while True:
-                    since = self._emit_runtime_logs(
-                        observer, config, environment, tail=100, since=since
-                    )
+                    self._emit_runtime_logs(observer, config, environment)
                     time.sleep(0.5)
             except KeyboardInterrupt:
                 pass
@@ -1185,17 +1198,14 @@ class Controller:
         if tail <= 0:
             return
         effective_start = start_time if start_time is not None else time.monotonic()
-        since = None
         while True:
-            since = self._emit_runtime_logs(
-                observer, config, environment, tail=100, since=since
-            )
+            self._emit_runtime_logs(observer, config, environment)
             elapsed = time.monotonic() - effective_start
             remaining = tail - elapsed
             if remaining <= 0:
                 break
             time.sleep(min(0.5, remaining))
-        self._emit_runtime_logs(observer, config, environment, tail=100, since=since)
+        self._emit_runtime_logs(observer, config, environment)
 
     def _runtime_logs(
         self, config: LocalCloudConfig, environment: RuntimeRecord, *, tail: int = 20
@@ -1277,7 +1287,7 @@ class Controller:
         config: LocalCloudConfig,
         *,
         pull: bool = False,
-        readiness_deadline: float | None = None,
+        readiness_timeout: float | None = None,
         observer: Any | None = None,
         prepared_image: tuple[Any, bool] | None = None,
         run_plan: DockerRunPlan | None = None,
@@ -1330,6 +1340,13 @@ class Controller:
             remove_volume=not preserve_volume,
             remove_network=remove_network,
             observer=observer,
+        )
+        # The graceful stop inside remove() can take up to its timeout, so the
+        # new container's readiness budget starts only once it is gone.
+        readiness_deadline = (
+            None
+            if readiness_timeout is None
+            else time.monotonic() + readiness_timeout
         )
         try:
             environment = self.runtime.create(
@@ -1759,12 +1776,32 @@ class Controller:
                             "container_port": port_text,
                             "protocol": protocol or "tcp",
                         })
+            if config.mysql_port is not None and environment.mysql_port is not None:
+                # The server publishes this from its own companion container
+                # (started on demand), so its address is read, not planned.
+                mysql_host_ip = self.runtime.mysql_companion_host_ip(config)
+                mappings.append({
+                    "host_ip": mysql_host_ip,
+                    "host_port": environment.mysql_port,
+                    "container_port": str(config.mysql_port),
+                    "protocol": "tcp",
+                    "service": "cloudsql-mysql",
+                })
+                if config.local_only and mysql_host_ip not in {
+                    None,
+                    "127.0.0.1",
+                    "::1",
+                }:
+                    result["warning"] = (
+                        f"Cloud SQL MySQL is published on {mysql_host_ip}:"
+                        f"{environment.mysql_port}, not only on this machine. This "
+                        "LocalCloud image does not follow --local-only for it; "
+                        "update the image."
+                    )
             result["port_mappings"] = mappings
         elif environment is None or environment.state != "running":
             result["port_availability"] = self.runtime.port_diagnostics(
-                tls_enabled=config.tls_enabled,
-                tls_port=config.tls_port,
-                local_only=config.local_only,
+                config=config
             )
         return result
 
@@ -1804,8 +1841,11 @@ def _debug_plan(
 def _confirm_alternative_port_mapping(
     run_plan: DockerRunPlan | None,
     confirm: Callable[[DockerRunPlan], bool] | None,
+    config: LocalCloudConfig,
 ) -> None:
-    if run_plan is None:
+    # A configured port range is the user's own choice; only a mapping the CLI
+    # picked because the canonical ports were taken needs confirming.
+    if run_plan is None or config.port_range is not None:
         return
     mappings = run_plan.alternative_port_mappings()
     if not mappings:

@@ -353,6 +353,68 @@ def test_default_image_uses_public_latest_channel(tmp_path: Path) -> None:
     assert selected.image == DEFAULT_IMAGE
 
 
+@pytest.mark.parametrize(
+    ("source", "flag", "expected"),
+    [
+        ("", None, None),
+        ("host:\n  port_range: 6000-6099\n", None, (6000, 6099)),
+        ("host:\n  port_range: 6000-6099\n", "7000-7050", (7000, 7050)),
+    ],
+)
+def test_port_range_comes_from_flag_or_config(
+    tmp_path: Path,
+    source: str,
+    flag: str | None,
+    expected: tuple[int, int] | None,
+) -> None:
+    (tmp_path / "localcloud.yaml").write_text(f"version: 1\n{source}", encoding="utf-8")
+
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path), port_range=flag)
+
+    assert selected.port_range == expected
+    assert ("port_range" in runtime_settings(selected)) is (expected is not None)
+
+
+@pytest.mark.parametrize("value", ["6000", "6100-6000", "80-90", "a-b"])
+def test_invalid_port_range_is_rejected(tmp_path: Path, value: str) -> None:
+    with pytest.raises(HostError) as caught:
+        load_config(directory=tmp_path, paths=_paths(tmp_path), port_range=value)
+
+    assert caught.value.code == "invalid_config"
+
+
+@pytest.mark.parametrize(
+    ("source", "services", "expected"),
+    [
+        ("", None, 5406),
+        ("", ["gcs", "pubsub"], None),
+        (
+            (
+                "services:\n  catalog:\n    cloudsql:\n      config:\n"
+                "        mysql_enabled: false\n"
+            ),
+            None,
+            None,
+        ),
+        ("host:\n  environment:\n    LOCALCLOUD_MYSQL_PORT: '6000'\n", None, 6000),
+        ("host:\n  environment:\n    LOCALCLOUD_MYSQL_PORT: '0'\n", None, None),
+    ],
+)
+def test_mysql_port_follows_cloud_sql_mysql(
+    tmp_path: Path,
+    source: str,
+    services: list[str] | None,
+    expected: int | None,
+) -> None:
+    (tmp_path / "localcloud.yaml").write_text(f"version: 1\n{source}", encoding="utf-8")
+
+    selected = load_config(
+        directory=tmp_path, paths=_paths(tmp_path), services=services
+    )
+
+    assert selected.mysql_port == expected
+
+
 def test_data_volume_naming_is_stable_and_collision_resistant() -> None:
     assert default_resource_names(DEFAULT_DATA_VOLUME) == {
         "container": "localcloud",

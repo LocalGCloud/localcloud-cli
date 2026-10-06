@@ -253,34 +253,58 @@ def test_project_catalog_and_selected_project_existence(
     ]
 
 
-def test_create_project_uses_lifecycle_api_and_reset_remains_an_mcp_operation(
+def test_create_and_reset_project_use_lifecycle_apis_not_mcp_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
-    tool_calls: list[tuple[str, dict[str, Any]]] = []
     api_calls: list[tuple[str, str, dict[str, Any]]] = []
+    reports = [
+        {"project_id": PROJECT},
+        {"status": "success", "project": PROJECT, "seed_restored": False},
+    ]
 
-    def tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        tool_calls.append((name, arguments))
-        return {"project_id": PROJECT, "operation": name}
+    def tool(name: str, arguments: dict[str, Any]) -> None:
+        pytest.fail(f"lifecycle call used MCP tool {name}")
 
     def request(method: str, url: str, **kwargs: Any) -> FakeResponse:
         api_calls.append((method, url, kwargs))
-        return FakeResponse({"project_id": PROJECT})
+        return FakeResponse(reports.pop(0))
 
     monkeypatch.setattr(client, "tool", tool)
     monkeypatch.setattr(java_client_module.httpx, "request", request)
 
     assert client.create_project()["project_id"] == PROJECT
-    assert client.reset_project()["project_id"] == PROJECT
-    assert tool_calls == [
-        ("localcloud_reset_project", {"project": PROJECT}),
-    ]
+    assert client.reset_project()["status"] == "success"
     assert api_calls[0][0:2] == (
         "POST",
         "http://127.0.0.1:49080/projects",
     )
     assert api_calls[0][2]["json"] == {"project_id": PROJECT}
+    # The Console's reset API: no LOCALCLOUD_MCP_DESTRUCTIVE gate.
+    assert api_calls[1][0:2] == ("POST", "http://127.0.0.1:49080/reset")
+    assert api_calls[1][2]["params"] == {"project": PROJECT}
+    assert api_calls[1][2]["json"] == {"restore_seed": False}
+
+
+def test_partial_project_reset_reports_each_failed_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
+    report = {
+        "status": "partial_failure",
+        "failures": [{"service": "dataproc", "error": "cluster busy"}],
+    }
+    monkeypatch.setattr(
+        java_client_module.httpx,
+        "request",
+        lambda *_args, **_kwargs: FakeResponse(report),
+    )
+
+    with pytest.raises(HostError) as caught:
+        client.reset_project()
+
+    assert caught.value.code == "project_reset_incomplete"
+    assert caught.value.details["cause"] == "dataproc: cluster busy"
 
 
 def test_project_lifecycle_uses_rest_without_calling_mcp(

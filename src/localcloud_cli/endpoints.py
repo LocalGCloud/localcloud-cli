@@ -10,6 +10,8 @@ from .java_client import JavaMcpClient
 
 
 HOST_PORT = re.compile(r"(?P<host>localhost|127\.0\.0\.1|\[::1\])(?P<separator>:)(?P<port>\d{1,5})")
+# Every port a runtime publishes at its own number when it holds the canonical ports.
+_CANONICAL_PORTS = range(5380, 5407)
 REAL_GOOGLE = re.compile(r"(?:^|[/:.])(?:googleapis\.com|gcr\.io|pkg\.dev)(?:$|[/.:])", re.IGNORECASE)
 ENDPOINT_FIELDS = frozenset(
     {
@@ -41,7 +43,9 @@ def environment_config(
 ) -> Any:
     java = JavaMcpClient(environment["url"], project=project, user=user)
     result = java.environment(output_format)
-    rewritten = rewrite_endpoints(result, environment.get("endpoint_map") or {})
+    endpoint_map = environment.get("endpoint_map") or {}
+    rewritten = rewrite_endpoints(result, endpoint_map)
+    _validate_no_unpublished_canonical_endpoints(rewritten, endpoint_map)
     if output_format == "json" and isinstance(rewritten, str):
         try:
             rewritten = json.loads(rewritten)
@@ -274,10 +278,36 @@ def _transform_endpoint_text(value: str, endpoint_map: dict[str, Any]) -> str:
     return json.dumps(transformed, ensure_ascii=False, separators=(",", ":"))
 
 
+def _validate_no_unpublished_canonical_endpoints(
+    value: Any,
+    endpoint_map: dict[str, Any],
+) -> None:
+    """Off the canonical ports a runtime publishes only the ports its services
+    use. An endpoint on any other canonical port would reach another runtime."""
+    if all(str(port) == str(host_port) for port, host_port in endpoint_map.items()):
+        return
+    published = {str(port) for port in endpoint_map}
+    host_ports = {int(host_port) for host_port in endpoint_map.values()}
+    serialized = value if isinstance(value, str) else json.dumps(value)
+    for match in HOST_PORT.finditer(serialized):
+        port = int(match.group("port"))
+        if (
+            port in _CANONICAL_PORTS
+            and str(port) not in published
+            and port not in host_ports
+        ):
+            raise HostError(
+                "stale_endpoint",
+                "LocalCloud returned an endpoint on a port this runtime does not publish",
+                {"canonical_port": str(port)},
+            )
+
+
 def _validate_no_stale_canonical_endpoints(
     value: Any,
     endpoint_map: dict[str, Any],
 ) -> None:
+    _validate_no_unpublished_canonical_endpoints(value, endpoint_map)
     serialized = value if isinstance(value, str) else json.dumps(value)
     for canonical_port, host_port in endpoint_map.items():
         canonical = str(canonical_port)

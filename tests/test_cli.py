@@ -829,6 +829,22 @@ def test_main_returns_concise_host_error_by_default(
     assert "Error [runtime_not_running] start it" in captured.err
 
 
+def test_dry_run_sends_and_counts_no_telemetry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import localcloud_cli.telemetry as telemetry
+
+    batches: list[list[dict[str, Any]]] = []
+    monkeypatch.delenv("LOCALCLOUD_TELEMETRY")
+    monkeypatch.setattr(
+        telemetry, "_deliver", lambda events, _environment: batches.append(events) or True
+    )
+
+    assert main(["start", "--dry-run"]) == 0
+    assert batches == []
+    assert not (tmp_path / "home" / "telemetry.json").exists()
+
+
 def test_main_reports_startup_failure_to_telemetry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1246,6 +1262,14 @@ def test_debug_flag_parsing() -> None:
     assert parser.parse_args(["start"]).debug is False
     assert parser.parse_args(["restart", "--debug"]).debug is True
     assert parser.parse_args(["status", "--debug"]).debug is True
+
+
+def test_port_range_flag_parsing() -> None:
+    parser = _parser()
+    for command in ("start", "restart", "reset"):
+        args = parser.parse_args([command, "--port-range", "6000-6099"])
+        assert args.port_range == "6000-6099"
+    assert parser.parse_args(["start"]).port_range is None
 
 
 def test_explicit_project_id_requests_api_ensure_only_for_start_and_restart() -> None:

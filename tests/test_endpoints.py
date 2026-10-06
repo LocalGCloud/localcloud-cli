@@ -116,3 +116,22 @@ def test_environment_config_uses_running_environment_without_daemon_state(
     assert result["LOCALCLOUD_USER"] == "integration-agent"
     assert result["LOCALCLOUD_PRINCIPAL"] == "integration-agent@localcloud.invalid"
     assert calls == ["json"]
+
+
+def test_off_canonical_runtime_rejects_endpoints_on_ports_it_does_not_publish() -> None:
+    # A runtime off the canonical ports publishes only its services' ports.
+    endpoint_map = {"5380": 5508, "5382": 5509}
+
+    endpoints_module._validate_no_unpublished_canonical_endpoints(
+        {"STORAGE_EMULATOR_HOST": "http://127.0.0.1:5509"}, endpoint_map
+    )
+    with pytest.raises(HostError) as caught:
+        endpoints_module._validate_no_unpublished_canonical_endpoints(
+            {"FIRESTORE_EMULATOR_HOST": "127.0.0.1:5384"}, endpoint_map
+        )
+    assert caught.value.details["canonical_port"] == "5384"
+
+    # On the canonical ports nothing is remapped, so nothing is unpublished.
+    endpoints_module._validate_no_unpublished_canonical_endpoints(
+        {"FIRESTORE_EMULATOR_HOST": "127.0.0.1:5384"}, {"5380": 5380}
+    )

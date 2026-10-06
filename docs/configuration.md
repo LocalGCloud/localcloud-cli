@@ -105,14 +105,28 @@ LocalCloud separates durable container storage from logical Google Cloud project
 ### Data volumes (`--data-volume`)
 
 A named Docker volume provides durable identity. The default `localcloud-data` volume is mounted at `/var/lib/localcloud`. Multiple isolated environments can run concurrently. Only one runtime can hold the
-canonical `5380-5405` range, so additional runtimes are offered a contiguous
-alternative from `5508-5539`, then `5821-5840`, then `5322-5342`. Always read the
-actual ports from `lc env` or `lc status` rather than assuming them:
+canonical `5380-5405` range (and `5406` with Cloud SQL MySQL). Additional runtimes publish only
+the ports their enabled services use (14 with the default services, including MySQL) as one
+contiguous block from `5508-5539`, then `5821-5840`, then `5322-5342`, which fits four of them.
+Always read the actual ports from `lc env` or `lc status` rather than assuming them:
 
 ```sh
 lc start --data-volume test-e2e
 lc status --data-volume test-e2e
 ```
+
+To choose the host ports yourself, set a range. The runtime takes one block from it, even when
+the canonical ports are free; changing the range recreates the container on the next `start`:
+
+```yaml
+host:
+  port_range: 6000-6099
+```
+
+`--port-range START-END` on `start`, `restart`, and `reset` overrides `host.port_range`. Like
+`--local-only`, the flag applies to one command: pass it each time, or a later `restart` returns the
+runtime to the canonical ports when they are free. LocalCloud images that predate the setting reject
+`host.port_range` at startup (`Invalid host.port_range: unknown key`); with those, use the flag.
 
 ### Project context (`--project-id`)
 

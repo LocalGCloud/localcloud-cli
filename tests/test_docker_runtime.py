@@ -33,6 +33,7 @@ from localcloud_cli.docker_runtime import (
     SERVICES_LABEL,
     VOLUME_NAME_LABEL,
     DockerRuntime,
+    LogCursor,
 )
 from localcloud_cli.errors import HostError
 
@@ -104,13 +105,13 @@ class Resource:
         self.attrs["State"]["Status"] = "running"
 
     def stop(self, timeout: int) -> None:
-        assert timeout == 20
+        assert timeout == runtime_module.STOP_TIMEOUT_SECONDS
         self.stopped += 1
         self.status = "exited"
         self.attrs["State"]["Status"] = "exited"
 
     def restart(self, timeout: int) -> None:
-        assert timeout == 20
+        assert timeout == runtime_module.STOP_TIMEOUT_SECONDS
         self.restarted += 1
         self.status = "running"
         self.attrs["State"]["Status"] = "running"
@@ -453,6 +454,8 @@ def test_non_default_runtime_passes_only_required_ownership_environment(
         "LOCALCLOUD_DOCKER_ACCESS": "auto",
         "LOCALCLOUD_RUNTIME_NETWORK": "localcloud-team",
         "LOCALCLOUD_DATA_VOLUME": "localcloud-data-team",
+        # A per-runtime MySQL companion; the default name is the server's own.
+        "LOCALCLOUD_MYSQL_CONTAINER_NAME": "localcloud-mysql-localcloud-data-team",
     }
     assert client.volumes.values["localcloud-data-team"].labels[
         VOLUME_NAME_LABEL
@@ -799,7 +802,15 @@ def test_port_bind_address_reaches_probes_sdk_and_command(
     assert probes and all(address == host_ip for _, _, address in probes)
     assert (53, socket.SOCK_DGRAM, host_ip) in probes
     prefix = "127.0.0.1:" if local_only else ""
-    assert f"-p {prefix}{gateway_port}-{gateway_port + 25}:5380-5405/tcp" in plan.command()
+    if canonical_free:
+        assert f"-p {prefix}5380-5405:5380-5405/tcp" in plan.command()
+    else:
+        # Off the canonical ports only the ports enabled services use are published.
+        fallback = runtime_module._fallback_tcp_ports(config)
+        assert {spec for spec in plan.ports if spec.endswith("/tcp")} == {
+            f"{port}/tcp" for port in fallback
+        }
+        assert f"-p {prefix}5508-5511:5380-5383/tcp" in plan.command()
     assert f"-p {prefix}53:5410/udp" in plan.command()
     assert f"-p {prefix}80:5380/tcp" in plan.command()
     assert f"-p {prefix}443:5381/tcp" in plan.command()
@@ -818,7 +829,7 @@ def test_canonical_ports_match_selected_host_address(
         f"{port}/tcp": tuple((address, port) for address in addresses)
         for port in range(5380, 5406)
     }
-    assert runtime.has_canonical_ports(config, SimpleNamespace(published_ports=published)) is (
+    assert runtime.has_canonical_ports(config, SimpleNamespace(published_ports=published, mysql_port=5406)) is (
         (addresses == ("127.0.0.1",)) == local_only
     )
 
@@ -851,13 +862,18 @@ def test_canonical_layout_rejects_extra_child_port_publication(
 
     assert runtime.has_canonical_ports(
         config,
-        SimpleNamespace(published_ports=published),
+        SimpleNamespace(published_ports=published, mysql_port=5406),
     )
 
     with_child = {**published, "5406/tcp": (("127.0.0.1", 5406),)}
     assert not runtime.has_canonical_ports(
         config,
-        SimpleNamespace(published_ports=with_child),
+        SimpleNamespace(published_ports=with_child, mysql_port=5406),
+    )
+    # A MySQL companion left on an alternative port is not canonical either.
+    assert not runtime.has_canonical_ports(
+        config,
+        SimpleNamespace(published_ports=published, mysql_port=5534),
     )
 
 
@@ -872,20 +888,20 @@ def test_canonical_layout_requires_exact_transparent_aliases(tmp_path: Path) -> 
 
     assert runtime.has_canonical_ports(
         config,
-        SimpleNamespace(published_ports=published),
+        SimpleNamespace(published_ports=published, mysql_port=5406),
     )
     reversed_aliases = {**published}
     reversed_aliases["5380/tcp"] = tuple(reversed(published["5380/tcp"]))
     reversed_aliases["5381/tcp"] = tuple(reversed(published["5381/tcp"]))
     assert runtime.has_canonical_ports(
         config,
-        SimpleNamespace(published_ports=reversed_aliases),
+        SimpleNamespace(published_ports=reversed_aliases, mysql_port=5406),
     )
     missing_dns = {**published}
     missing_dns.pop("5410/udp")
     assert not runtime.has_canonical_ports(
         config,
-        SimpleNamespace(published_ports=missing_dns),
+        SimpleNamespace(published_ports=missing_dns, mysql_port=5406),
     )
 
 
@@ -902,17 +918,21 @@ def test_occupied_canonical_port_selects_exact_alternative_complete_set(
     )
 
     bindings = runtime._port_bindings(config)
+    fallback = runtime_module._fallback_tcp_ports(config)
 
-    assert set(bindings) == {f"{port}/tcp" for port in range(5380, 5406)}
+    assert len(fallback) < len(range(5380, 5406))
     assert bindings == {
         f"{container_port}/tcp": (("", 5508 + offset),)
-        for offset, container_port in enumerate(range(5380, 5406))
+        for offset, container_port in enumerate(fallback)
     }
 
     plan = runtime.plan_run(config, object())
-    assert plan.alternative_port_mappings() == tuple(
-        ("", 5508 + offset, container_port, "tcp")
-        for offset, container_port in enumerate(range(5380, 5406))
+    assert plan.alternative_port_mappings() == (
+        *(
+            ("", 5508 + offset, container_port, "tcp")
+            for offset, container_port in enumerate(fallback)
+        ),
+        ("", 5508 + len(fallback), 5406, "tcp"),
     )
 
 
@@ -930,9 +950,11 @@ def test_alternative_port_selection_skips_incomplete_blocks(
     )
 
     bindings = runtime._port_bindings(config)
+    fallback = runtime_module._fallback_tcp_ports(config)
 
     assert bindings["5380/tcp"] == (("", 5511),)
-    assert bindings["5405/tcp"] == (("", 5536),)
+    assert bindings[f"{fallback[-1]}/tcp"] == (("", 5511 + len(fallback) - 1),)
+    assert "5405/tcp" not in bindings
     assert "5406/tcp" not in bindings
 
 
@@ -962,9 +984,10 @@ def test_alternative_port_selection_spills_to_next_ordered_range(
     )
 
     bindings = runtime._port_bindings(config)
+    fallback = runtime_module._fallback_tcp_ports(config)
 
     assert bindings["5380/tcp"] == (("", expected_start),)
-    assert bindings["5390/tcp"] == (("", expected_start + 10),)
+    assert bindings["5390/tcp"] == (("", expected_start + fallback.index(5390)),)
     assert "5406/tcp" not in bindings
 
 
@@ -1007,12 +1030,14 @@ def test_tls_alternative_mapping_uses_one_complete_allowlisted_block(
     )
 
     bindings = runtime._port_bindings(config)
+    fallback = runtime_module._fallback_tcp_ports(config)
 
-    assert len(bindings) == 26
+    assert len(bindings) == len(fallback)
+    assert "5381/tcp" in bindings
     assert "5406/tcp" not in bindings
     assert "5407/tcp" not in bindings
     assert bindings["5380/tcp"] == (("", 5508),)
-    assert bindings["5405/tcp"] == (("", 5533),)
+    assert bindings[f"{fallback[-1]}/tcp"] == (("", 5508 + len(fallback) - 1),)
 
 
 def test_alternative_mapping_displays_every_binding_when_one_is_numerically_canonical(
@@ -1022,7 +1047,7 @@ def test_alternative_mapping_displays_every_binding_when_one_is_numerically_cano
     runtime = DockerRuntime(client=Client())
     config = _write_config(
         tmp_path,
-        "tls:\n  enabled: true\n  port: 5534\n",
+        "tls:\n  enabled: true\n  port: 5521\n",
     )
     monkeypatch.setattr(
         runtime_module,
@@ -1033,8 +1058,11 @@ def test_alternative_mapping_displays_every_binding_when_one_is_numerically_cano
     plan = runtime.plan_run(config, object())
     mappings = plan.alternative_port_mappings()
 
-    assert len(mappings) == 27
-    assert ("", 5534, 5534, "tcp") in mappings
+    # The used ports (the custom TLS port last) and the MySQL companion's port.
+    fallback = runtime_module._fallback_tcp_ports(config)
+    assert fallback[-1] == 5521
+    assert len(mappings) == len(fallback) + 1
+    assert ("", 5521, 5521, "tcp") in mappings
 
 
 def test_tls_bindings_use_configured_gateway_and_dedicated_ports(
@@ -1117,15 +1145,29 @@ def test_plan_run_reclaims_ports_owned_by_replaced_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = DockerRuntime(client=Client())
+    client = Client()
+    runtime = DockerRuntime(client=client)
     config = _config(tmp_path)
     published = runtime_module._canonical_port_bindings(config)
     replacing = SimpleNamespace(published_ports=published, endpoint_map={})
+    client.containers.add(
+        Resource(
+            "localcloud-mysql",
+            {
+                MANAGED_LABEL: "true",
+                VOLUME_NAME_LABEL: config.data_volume,
+                "localcloud.managed": "true",
+                "com.localcloud.service": "cloudsql-mysql",
+            },
+            ports={"3306/tcp": [{"HostIp": "", "HostPort": "5406"}]},
+        )
+    )
     monkeypatch.setattr(runtime_module, "_port_is_free", lambda *_args: False)
 
     plan = runtime.plan_run(config, object(), replacing=replacing)
 
     assert dict(plan.ports) == published
+    assert plan.mysql_ports == (5406, 5406)
     assert plan.alternative_port_mappings() == ()
 
 def test_unexpected_image_metadata_warns_by_default(
@@ -1152,38 +1194,55 @@ def test_unexpected_image_metadata_warns_by_default(
     assert "5999/tcp" in observer.messages[0]
 
 
-def test_preflight_create_warns_when_port_5406_in_use(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime = DockerRuntime(client=Client())
-    monkeypatch.setattr(runtime_module, "_port_is_free", lambda port, *args, **kwargs: port != 5406)
-
-    class Observer:
-        def __init__(self) -> None:
-            self.messages: list[str] = []
-
-        def warning(self, message: str) -> None:
-            self.messages.append(message)
-
-    observer = Observer()
-    runtime.preflight_create(_config(tmp_path), observer=observer)
-
-    assert any("5406/tcp is already in use" in msg for msg in observer.messages)
-
-
-def test_preflight_create_does_not_warn_on_5406_when_replacing_in_dry_run(
+def test_taken_mysql_port_moves_the_whole_set_to_one_alternative_block(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = DockerRuntime(client=Client())
     config = _config(tmp_path)
-    monkeypatch.setattr(runtime_module, "_port_is_free", lambda port, *args, **kwargs: port != 5406)
-    replacing = SimpleNamespace(
-        container_id="c-old",
-        ownership={"container": "managed"},
-        published_ports={},
-        endpoint_map={},
+    assert config.mysql_port == 5406
+    monkeypatch.setattr(
+        runtime_module, "_port_is_free", lambda port, *args, **kwargs: port != 5406
+    )
+
+    plan = runtime.plan_run(config, object())
+    mysql_host_port = 5508 + len(runtime_module._fallback_tcp_ports(config))
+
+    assert plan.ports["5380/tcp"] == (("", 5508),)
+    assert plan.mysql_ports == (5406, mysql_host_port)
+    assert plan.environment["LOCALCLOUD_MYSQL_PORT"] == str(mysql_host_port)
+    assert ("", mysql_host_port, 5406, "tcp") in plan.alternative_port_mappings()
+
+
+def test_mysql_port_is_not_planned_without_cloud_sql_mysql(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    config = _config(tmp_path, services=["gcs", "pubsub"])
+    monkeypatch.setattr(
+        runtime_module, "_port_is_free", lambda port, *args, **kwargs: port != 5406
+    )
+
+    plan = runtime.plan_run(config, object())
+
+    assert config.mysql_port is None
+    assert plan.mysql_ports is None
+    assert plan.alternative_port_mappings() == ()
+    assert "LOCALCLOUD_MYSQL_PORT" not in plan.environment
+
+
+def test_pinned_mysql_port_stays_put_when_the_set_moves(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    config = _write_config(
+        tmp_path,
+        "host:\n  environment:\n    LOCALCLOUD_MYSQL_PORT: '6000'\n",
+    )
+    monkeypatch.setattr(
+        runtime_module, "_port_is_free", lambda port, *args, **kwargs: port not in {5380, 6000}
     )
 
     class Observer:
@@ -1194,9 +1253,131 @@ def test_preflight_create_does_not_warn_on_5406_when_replacing_in_dry_run(
             self.messages.append(message)
 
     observer = Observer()
-    runtime.preflight_create(config, replacing=replacing, local_only=True, observer=observer)
+    runtime.preflight_create(config, observer=observer)
+    plan = runtime.plan_run(config, object())
 
-    assert not any("5406/tcp is already in use" in msg for msg in observer.messages)
+    assert plan.ports["5380/tcp"] == (("", 5508),)
+    assert plan.mysql_ports == (6000, 6000)
+    assert plan.environment["LOCALCLOUD_MYSQL_PORT"] == "6000"
+    assert ("", 6000, 6000, "tcp") in plan.alternative_port_mappings()
+    assert any("6000/tcp, set by LOCALCLOUD_MYSQL_PORT" in m for m in observer.messages)
+
+
+def test_mysql_companion_address_is_found_by_its_labels(tmp_path: Path) -> None:
+    client = Client()
+    runtime = DockerRuntime(client=client)
+    config = _config(tmp_path)
+    client.containers.add(
+        Resource(
+            "localcloud-mysql",
+            {
+                VOLUME_NAME_LABEL: config.data_volume,
+                "com.localcloud.service": "cloudsql-mysql",
+            },
+            ports={"3306/tcp": [{"HostIp": "127.0.0.1", "HostPort": "5406"}]},
+        )
+    )
+
+    assert runtime.mysql_companion_host_ip(config) == "127.0.0.1"
+    assert runtime.mysql_companion_host_ip(_config(tmp_path, data_volume="other")) is None
+
+
+def test_off_canonical_runtimes_publish_only_used_ports_so_four_fit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    config = _config(tmp_path)
+    size = runtime_module._fallback_block_size(config)
+    # A second off-canonical runtime takes the block after the first one.
+    occupied = {5380, *range(5508, 5508 + size)}
+    monkeypatch.setattr(
+        runtime_module, "_port_is_free", lambda port, *args, **kwargs: port not in occupied
+    )
+
+    plan = runtime.plan_run(config, object())
+
+    assert plan.ports["5380/tcp"] == (("", 5508 + size),)
+    assert sum(len(r) // size for r in runtime_module._FALLBACK_TCP_PORT_RANGES) >= 4
+
+
+def test_configured_port_range_is_used_even_when_canonical_ports_are_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    config = _config(tmp_path, port_range="6000-6099")
+    monkeypatch.setattr(runtime_module, "_port_is_free", lambda *args, **kwargs: True)
+
+    plan = runtime.plan_run(config, object())
+    fallback = runtime_module._fallback_tcp_ports(config)
+
+    assert dict(plan.ports) == {
+        f"{port}/tcp": (("", 6000 + offset),) for offset, port in enumerate(fallback)
+    }
+    assert plan.mysql_ports == (5406, 6000 + len(fallback))
+    record = SimpleNamespace(published_ports=dict(plan.ports), mysql_port=plan.mysql_ports[1])
+    assert runtime.has_canonical_ports(config, record)
+    assert not runtime.has_canonical_ports(
+        config,
+        SimpleNamespace(
+            published_ports=runtime_module._canonical_port_bindings(config),
+            mysql_port=5406,
+        ),
+    )
+
+
+def test_configured_port_range_without_room_fails_with_that_range(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    config = _config(tmp_path, port_range="6000-6004")
+    monkeypatch.setattr(runtime_module, "_port_is_free", lambda *args, **kwargs: True)
+
+    with pytest.raises(HostError) as caught:
+        runtime.plan_run(config, object())
+
+    assert caught.value.code == "alternative_ports_unavailable"
+    assert caught.value.details["ranges"] == [[6000, 6004]]
+    assert caught.value.message.endswith("needed in 6000-6004")
+    diagnostics = runtime.port_diagnostics(config=config)
+    assert diagnostics["status"] == "conflict"
+    assert diagnostics["configured_range"] == [6000, 6004]
+
+
+def test_removing_a_running_runtime_stops_it_gracefully_first(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    created = runtime.create(config)
+    parent = client.containers.values[created.name]
+
+    previews = runtime.preview_remove_commands(
+        config, created, remove_volume=False, remove_network=False
+    )
+    runtime.remove(config, created, remove_volume=False, remove_network=False)
+
+    assert previews[0] == f"docker stop -t 30 {created.name}"
+    assert parent.stopped == 1
+    assert parent.removed == [{"force": True, "v": True}]
+
+
+def test_port_diagnostics_include_the_mysql_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    monkeypatch.setattr(
+        runtime_module, "_port_is_free", lambda port, *args, **kwargs: port != 5406
+    )
+
+    diagnostics = runtime.port_diagnostics(local_only=False, mysql_port=5406)
+
+    assert diagnostics["canonical_ports"][-1] == 5406
+    assert diagnostics["occupied_ports"] == [{"port": 5406, "status": "in_use"}]
+    assert diagnostics["alternative_range"] == list(range(5508, 5535))
 
 
 def test_strict_unexpected_image_metadata_fails_preflight(
@@ -1791,7 +1972,7 @@ def test_new_and_legacy_managed_children_are_cleaned_by_validated_ownership(
     assert client.volumes.values[config.data_volume].removed == []
 
 
-def test_stop_managed_runtime_cleans_up_managed_children(
+def test_stop_keeps_managed_children_for_the_server_to_resume(
     tmp_path: Path,
     ready_runtime: tuple[DockerRuntime, Client],
 ) -> None:
@@ -1814,7 +1995,39 @@ def test_stop_managed_runtime_cleans_up_managed_children(
 
     runtime.stop(config, record)
 
-    assert new_child.removed == [{"force": True, "v": True}]
+    assert new_child.removed == []
+    assert new_child.stopped == 1
+
+
+def test_replacing_a_runtime_removes_only_its_mysql_companion(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    created = runtime.create(config)
+    child_labels = {
+        MANAGED_LABEL: "true",
+        VOLUME_NAME_LABEL: config.data_volume,
+        CONFIG_HASH_LABEL: config.config_hash,
+        "localcloud.managed": "true",
+    }
+    cluster = client.containers.add(
+        Resource("dataproc-cluster", {**child_labels, "com.localcloud.service": "dataproc"})
+    )
+    mysql = client.containers.add(
+        Resource("mysql", {**child_labels, "com.localcloud.service": "cloudsql-mysql"})
+    )
+
+    previews = runtime.preview_remove_commands(
+        config, created, remove_volume=False, remove_network=False
+    )
+    runtime.remove(config, created, remove_volume=False, remove_network=False)
+
+    assert "docker rm -f -v mysql" in previews
+    assert not any("dataproc-cluster" in command for command in previews)
+    assert mysql.removed == [{"force": True, "v": True}]
+    assert cluster.removed == []
 
 
 def test_incomplete_new_child_ownership_blocks_parent_cleanup(
@@ -1966,6 +2179,67 @@ def test_wait_ready_streams_logs_to_observer(
     assert result == {"status": "healthy"}
     assert observer.emitted
     assert "container log" in observer.emitted[0]
+
+class _GrowingLog:
+    """A container whose log grows between reads and honours `since`/`tail`."""
+
+    def __init__(self, started_at: str = "2026-10-06T04:18:00.000000000Z") -> None:
+        self.lines: list[str] = []
+        self.calls: list[dict[str, Any]] = []
+        self.attrs = {"State": {"StartedAt": started_at}}
+
+    def write(self, *stamped: str) -> None:
+        self.lines.extend(stamped)
+
+    def logs(self, **kwargs: Any) -> bytes:
+        self.calls.append(kwargs)
+        since = kwargs.get("since")
+        selected = [
+            line
+            for line in self.lines
+            if since is None
+            or runtime_module._timestamp_ns(line) / 1_000_000_000 >= since
+        ]
+        return "".join(f"{line}\n" for line in selected[-kwargs["tail"]:]).encode()
+
+
+def _stamp(second: int, nanos: int, text: str) -> str:
+    return f"2026-10-06T04:18:{second:02d}.{nanos:09d}Z {text}"
+
+
+def test_log_cursor_returns_every_line_of_a_burst_exactly_once() -> None:
+    container = _GrowingLog()
+    cursor = LogCursor.from_start(container)
+    container.write(*(_stamp(1, index, f"line {index}") for index in range(300)))
+
+    first = cursor.read(container).splitlines()
+    container.write(_stamp(1, 300, "line 300"), _stamp(2, 0, "line 301"))
+    second = cursor.read(container).splitlines()
+
+    assert [line.split(" ", 1)[1] for line in first + second] == [
+        f"line {index}" for index in range(302)
+    ]
+    assert cursor.read(container) == ""
+
+
+def test_log_cursor_skips_earlier_runs_of_a_restarted_container() -> None:
+    container = _GrowingLog(started_at="2026-10-06T04:18:05.5Z")
+    container.write(_stamp(1, 0, "previous run"), _stamp(6, 0, "this run"))
+
+    assert LogCursor.from_start(container).read(container).splitlines() == [
+        _stamp(6, 0, "this run")
+    ]
+
+
+def test_log_cursor_without_a_start_shows_only_recent_lines() -> None:
+    container = _GrowingLog()
+    container.write(*(_stamp(1, index, f"line {index}") for index in range(50)))
+
+    lines = LogCursor(first_tail=12).read(container).splitlines()
+
+    assert len(lines) == 12
+    assert lines[-1].endswith("line 49")
+
 
 def test_wait_ready_bounds_requests_and_sleep_by_absolute_deadline(
     monkeypatch: pytest.MonkeyPatch,
@@ -2512,7 +2786,7 @@ def test_docker_runtime_emits_debug_commands_to_observer(
     observer.debug_messages.clear()
     runtime.restart(config, record, observer=observer)
     assert any(
-        msg.startswith("Executing: docker restart -t 20")
+        msg.startswith("Executing: docker restart -t 30")
         for msg in observer.debug_messages
     )
     assert not any("docker run" in msg for msg in observer.debug_messages)

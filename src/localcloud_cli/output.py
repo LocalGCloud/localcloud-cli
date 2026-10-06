@@ -155,6 +155,7 @@ _COMMON_FIELDS = (
     FieldSpec("services", "Services"),
     FieldSpec("changed_fields", "Changed", "warning"),
     FieldSpec("reset_scope", "Reset scope", "warning"),
+    FieldSpec("warning", "Warning", "warning"),
 )
 _DOCTOR_FIELDS = (
     FieldSpec("status", "Status", "status"),
@@ -719,6 +720,7 @@ def render_json(value: Any, *, color: ColorMode = ColorMode.NONE) -> str:
 
 
 _CONCISE_ERROR_FIELDS = {
+    "cause",
     "command",
     "config",
     "container",
@@ -729,6 +731,7 @@ _CONCISE_ERROR_FIELDS = {
     "field",
     "fields",
     "image",
+    "last_error",
     "network",
     "project",
     "resource",

@@ -402,7 +402,8 @@ def main(argv: list[str] | None = None) -> int:
     reporter = LifecycleReporter(verbose=verbose)
     reports_progress = args.command in _PROGRESS_COMMANDS
     telemetry: Telemetry | None = None
-    if args.command in _RUNTIME_COMMANDS:
+    # A dry run changes nothing, so it neither counts as a run nor sends events.
+    if args.command in _RUNTIME_COMMANDS and not getattr(args, "dry_run", False):
         from .telemetry import Telemetry
 
         telemetry = Telemetry(args.command)
@@ -661,6 +662,7 @@ def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConf
         "skip_validation": getattr(args, "skip_config_validation", False),
         "strict_port_validation": getattr(args, "strict_port_validation", False),
         "local_only": getattr(args, "local_only", False),
+        "port_range": getattr(args, "port_range", None),
     }
     paths = getattr(controller, "paths", None) or HostPaths.from_environment()
     active_diagnostics: list[dict[str, Any]] = []
@@ -979,6 +981,14 @@ def _parser() -> argparse.ArgumentParser:
             "--local-only",
             action="store_true",
             help="Publish Docker ports on 127.0.0.1 only (default: all host interfaces)",
+        )
+        command.add_argument(
+            "--port-range",
+            metavar="START-END",
+            help=(
+                "Publish on host ports from this range instead of the canonical "
+                "ports (overrides host.port_range)"
+            ),
         )
         if name in {"start", "restart"}:
             command.add_argument(

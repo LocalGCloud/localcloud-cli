@@ -314,10 +314,13 @@ Project and user are request context: switching them is instant and never touche
 
 ### Ports
 
-New runtimes prefer the canonical range `5380–5405` (plus DNS `5410/udp`). If that
+New runtimes prefer the canonical range `5380–5405` (plus DNS `5410/udp`). With Cloud SQL MySQL
+enabled, the set also includes `5406`, which LocalCloud's MySQL companion container publishes. If that
 complete set is unavailable, the CLI proposes one contiguous alternative from `5508–5539`, then
-`5821–5840`, then `5322–5342`, and asks before creating the container. It never scans the operating
-system's general ephemeral range, and `lc env` always emits the ports actually in use.
+`5821–5840`, then `5322–5342`, and asks before creating the container. Such a runtime publishes only
+the ports its enabled services use, so four can run beside the canonical one. To pick the host ports
+yourself, set `host.port_range: 6000-6099` or pass `--port-range 6000-6099`. The CLI never scans the
+operating system's general ephemeral range, and `lc env` always emits the ports actually in use.
 
 ## Services
 

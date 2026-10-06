@@ -41,6 +41,8 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
   bind address, normally all host interfaces. `--local-only` binds every published
   port to `127.0.0.1` (`-p 127.0.0.1:5380:5380`), including TLS ports,
   alternative host ports, and transparent-network aliases. SDK endpoints still use localhost.
+  LocalCloud publishes its Cloud SQL MySQL companion on the same interfaces. Older
+  images publish it on every interface, and `status` warns when that happens.
 - `--local-only` is available on `start`, `restart`, and `reset`; pass it each time
   to keep localhost-only publishing. Changing the option recreates a managed
   container while preserving its persistent data volume. Attached containers keep
@@ -52,7 +54,19 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
 - New runtimes prefer the canonical host ports. If that complete set is unavailable,
   the CLI proposes one contiguous mapping from `5508-5539`, then `5821-5840`,
   then `5322-5342`, and asks before creating the container. It never scans the
-  operating system's general ephemeral range.
+  operating system's general ephemeral range. Off the canonical ports a runtime
+  publishes only the ports its enabled services use, so four can run beside the
+  canonical one.
+- `--port-range START-END` (or `host.port_range`) takes the host ports from that
+  range instead, even when the canonical ports are free, without asking. Like
+  `--local-only`, pass the flag each time; images that predate `host.port_range`
+  reject that setting, so use the flag with them.
+- With Cloud SQL MySQL enabled (`cloudsql` with `mysql_enabled` not `false`), the
+  set includes the companion's port, `5406` by default. LocalCloud publishes it from
+  its own MySQL container, so in an alternative mapping it takes the block's last
+  port. Each runtime's companion is named after its data volume
+  (`localcloud-mysql-<volume>`). Pin the port with `host.environment.LOCALCLOUD_MYSQL_PORT`
+  to keep it fixed when the other ports move.
 
 Docker socket access uses the tri-state `host.docker_socket` setting and defaults
 to `auto`:
@@ -156,9 +170,15 @@ lc restart --accept-dynamic-ports
 Declining, or omitting that flag without an interactive terminal, leaves the
 existing container unchanged.
 
+`restart` keeps the runtime's companion containers, such as Dataproc clusters,
+which LocalCloud resumes. The Cloud SQL MySQL companion is the exception: it is
+removed with the old container and recreated on demand with the new runtime's
+port and name. Its data stays on the volume.
+
 ### `reset`
 
-Resets emulator data and reapplies initial seed state.
+Clears the selected project's emulator data. Reload sample data with the
+Console's Re-seed Data action.
 
 ```sh
 # Reset only the selected project (default)
@@ -168,8 +188,9 @@ lc reset
 lc reset --all-projects
 ```
 
-`lc reset` (no flag) resets a single project through the LocalCloud API and
-never touches the Docker data volume. `lc reset --all-projects` does not mutate
+`lc reset` (no flag) resets a single project through the LocalCloud reset API,
+the one the Console uses, so it does not require `mcp.destructive`. It never
+touches the Docker data volume. `lc reset --all-projects` does not mutate
 anything: recreating every project means deleting the data volume, and
 localcloud never runs `docker volume rm` for you. It prints the steps (`lc stop`,
 `docker volume rm -f <volume>`, `lc start`) and exits non-zero so nothing is
@@ -183,6 +204,9 @@ Stops the runtime without deleting persistent volume data.
 lc stop
 lc stop --data-volume isolated-data
 ```
+
+Companion containers, such as Dataproc clusters and the Cloud SQL MySQL server,
+are stopped rather than deleted, and LocalCloud resumes them on the next `start`.
 
 ### `doctor`
 

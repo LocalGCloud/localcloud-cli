@@ -275,10 +275,57 @@ class JavaMcpClient:
             ) from error
 
     def reset_project(self) -> dict[str, Any]:
-        return self._project_result(
-            "localcloud_reset_project",
-            self.tool("localcloud_reset_project", {"project": self.project}),
-        )
+        """Clear the project's service data; samples are reloaded from the Console.
+
+        Uses the server's reset API, as the Console does. The MCP reset tool is
+        gated behind LOCALCLOUD_MCP_DESTRUCTIVE to keep agents from resetting
+        data, which a person running `lc reset` should not have to enable.
+        """
+        url = f"{self.url}/reset"
+        headers = self._headers()
+        headers["Accept"] = "application/json"
+        try:
+            response = self._http_request(
+                "POST",
+                url,
+                params={"project": self.project},
+                json={"restore_seed": False},
+                headers=headers,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            report = response.json()
+        except Exception as error:
+            raise _transport_error(
+                "java_reset_api_unavailable",
+                "Java LocalCloud reset API request failed",
+                error,
+                url=url,
+                method="POST",
+            ) from error
+        if not isinstance(report, dict):
+            raise HostError(
+                "java_mcp_invalid_response",
+                "Java LocalCloud returned an invalid reset report",
+                {"project": self.project},
+            )
+        if report.get("status") != "success":
+            failures = report.get("failures") or []
+            raise HostError(
+                "project_reset_incomplete",
+                "Some services could not be reset",
+                {
+                    "project": self.project,
+                    "status": report.get("status"),
+                    "cause": "; ".join(
+                        f"{item.get('service')}: {item.get('error')}"
+                        for item in failures
+                        if isinstance(item, dict)
+                    ),
+                    "failures": failures,
+                },
+            )
+        return report
 
     def _project_result(self, tool: str, result: Any) -> dict[str, Any]:
         if not isinstance(result, dict):

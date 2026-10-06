@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import re
 import shutil
 import socket
 import shlex
@@ -10,6 +11,7 @@ import stat
 import time
 import warnings
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from types import MappingProxyType
 from typing import Any, Mapping
 from urllib.parse import urlparse
@@ -59,6 +61,9 @@ _IMAGE_PORT_CAPABILITIES = frozenset(
     | {f"{_DNS_PORT}/udp"}
 )
 _DEFAULT_READINESS_TIMEOUT = 120.0
+# Docker sends SIGKILL after this. LocalCloud's shutdown stops its Dataproc and
+# MySQL companions and then Postgres; 20s was not always enough (exit 137).
+STOP_TIMEOUT_SECONDS = 30
 _DOCKER_SOCKET_PATH = "/var/run/docker.sock"
 _FALLBACK_TCP_PORT_RANGES = (
     range(5508, 5540),
@@ -66,6 +71,17 @@ _FALLBACK_TCP_PORT_RANGES = (
     range(5322, 5343),
 )
 _CHILD_MANAGED_LABEL = "localcloud.managed"
+_CHILD_SERVICE_LABEL = "com.localcloud.service"
+# The Cloud SQL MySQL companion keeps its data on the volume, and the server
+# recreates it on demand, so it is the only child a replacement removes.
+_MYSQL_COMPANION_SERVICE = "cloudsql-mysql"
+# The server's default port for that companion (MySqlServerManager); the CLI
+# passes LOCALCLOUD_MYSQL_PORT only when the planned port differs.
+_MYSQL_DEFAULT_PORT = 5406
+_LOG_READ_LIMIT = 2000
+_LOG_TIMESTAMP = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})"
+)
 _LEGACY_LABELS = {
     "com.localcloud." + "work" + "space",
     "com.localcloud." + "work" + "space-key",
@@ -123,6 +139,8 @@ class RuntimeRecord:
     network_created: bool = False
     image_status: str = ""
     published_ports: PublishedPorts = field(default_factory=dict)
+    # Host port of the Cloud SQL MySQL companion this runtime publishes.
+    mysql_port: int | None = None
 
 
 PortBinding = tuple[str, int | None]
@@ -141,6 +159,9 @@ class DockerRunPlan:
     ports: Mapping[str, tuple[PortBinding, ...]]
     environment: Mapping[str, str]
     labels: Mapping[str, str]
+    # (canonical, host) port of the Cloud SQL MySQL companion. The server
+    # publishes it, so it is planned here but is not a `docker run` binding.
+    mysql_ports: tuple[int, int] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -225,6 +246,10 @@ class DockerRunPlan:
                         (host_ip, host_port, container_port, protocol)
                     )
                     break
+        if self.mysql_ports is not None:
+            canonical, host_port = self.mysql_ports
+            host_ip = primary_mappings[0][0] if primary_mappings else ""
+            primary_mappings.append((host_ip, host_port, canonical, "tcp"))
         if all(
             host_port == container_port
             for _host_ip, host_port, container_port, _protocol in primary_mappings
@@ -233,9 +258,69 @@ class DockerRunPlan:
         return tuple(primary_mappings)
 
 
+class LogCursor:
+    """Reads a container's log incrementally, on the Docker daemon's clock.
+
+    Each read resumes at the newest log timestamp already returned, so a burst
+    between two polls is never cut short by a tail limit, and host/daemon clock
+    drift cannot skip lines. Docker's `since` is a float, so reads overlap by
+    a millisecond and the lines in that overlap are de-duplicated.
+    """
+
+    _OVERLAP_NS = 1_000_000
+
+    def __init__(
+        self,
+        since_ns: int | None = None,
+        *,
+        first_tail: int | None = None,
+    ) -> None:
+        self._since_ns = since_ns
+        self._first_tail = first_tail
+        self._overlap: set[str] = set()
+
+    @classmethod
+    def from_start(cls, container: Any) -> LogCursor:
+        """Every line of the container's current run (not earlier runs)."""
+        return cls(_started_at_ns(container))
+
+    def read(self, container: Any) -> str:
+        limit = self._first_tail or _LOG_READ_LIMIT
+        self._first_tail = None
+        kwargs: dict[str, Any] = {"timestamps": True, "tail": limit}
+        if self._since_ns is not None:
+            kwargs["since"] = self._since_ns / 1_000_000_000
+        output = container.logs(**kwargs)
+        text = (
+            output.decode("utf-8", errors="replace")
+            if isinstance(output, bytes)
+            else str(output)
+        )
+        fresh = [
+            line for line in text.splitlines() if line and line not in self._overlap
+        ]
+        stamps = [
+            stamp
+            for stamp in map(_timestamp_ns, fresh)
+            if stamp is not None
+        ]
+        if stamps:
+            cutoff = max(stamps) - self._OVERLAP_NS
+            self._overlap = {
+                line
+                for line in (*self._overlap, *fresh)
+                if (_timestamp_ns(line) or 0) >= cutoff
+            }
+            self._since_ns = cutoff
+        return "".join(f"{line}\n" for line in fresh)
+
+
 class DockerRuntime:
     def __init__(self, client: Any | None = None):
         self._resolved_image_details: dict[str, dict[str, Any]] = {}
+        # One log cursor per container, shared by the readiness wait and the
+        # log tail that follows it, so neither repeats nor skips lines.
+        self._log_cursors: dict[str, LogCursor] = {}
         if client is not None:
             self.client = client
             return
@@ -388,6 +473,16 @@ class DockerRuntime:
         raw_tls_port = container_environment.get("LOCALCLOUD_TLS_PORT", "")
         if raw_tls_port.isdigit() and 1 <= int(raw_tls_port) <= 65535:
             tls_port = int(raw_tls_port)
+        # Without LOCALCLOUD_MYSQL_PORT the server publishes its default port;
+        # 0 lets Docker pick one.
+        raw_mysql_port = container_environment.get("LOCALCLOUD_MYSQL_PORT", "")
+        mysql_port = (
+            int(raw_mysql_port)
+            if raw_mysql_port.isdigit() and 1 <= int(raw_mysql_port) <= 65535
+            else None
+            if raw_mysql_port or config.mysql_port is None
+            else _MYSQL_DEFAULT_PORT
+        )
         tls_gateway = endpoint_map.get(str(tls_port))
         state = _container_state(container)
         health = _container_health(container)
@@ -430,6 +525,7 @@ class DockerRuntime:
                 item.get("Destination") == LEGACY_SEED_MOUNT_DESTINATION
                 for item in _container_mounts(container)
             ),
+            mysql_port=mysql_port,
         )
 
     def preflight_create(
@@ -470,17 +566,23 @@ class DockerRuntime:
         )
         self._require_runtime_ownership_capability(config, image)
         self._validate_image_port_metadata(config, image, observer)
-        allowed_ports = _published_host_ports(replacing)
-        if not _port_is_free(5406) and (5406, "tcp") not in allowed_ports:
-            if not (local_only and replacing is not None and replacing.ownership.get("container") == "managed"):
-                _emit_warning(
-                    observer,
-                    "Host port 5406/tcp is already in use; Cloud SQL MySQL companion container will not be able to bind when started",
-                )
-        self._port_bindings(
-            config,
-            allowed_ports=allowed_ports,
-        )
+        allowed_ports = self._allowed_host_ports(config, replacing)
+        self._port_bindings(config, allowed_ports=allowed_ports)
+        if (
+            config.mysql_port is not None
+            and _mysql_port_pinned(config)
+            and (config.mysql_port, "tcp") not in allowed_ports
+            and not _port_is_free(
+                config.mysql_port,
+                socket.SOCK_STREAM,
+                "127.0.0.1" if config.local_only else "",
+            )
+        ):
+            _emit_warning(
+                observer,
+                f"Host port {config.mysql_port}/tcp, set by LOCALCLOUD_MYSQL_PORT, is "
+                "in use; Cloud SQL MySQL cannot start until it is free",
+            )
         replacing_id = replacing.container_id if replacing is not None else ""
         name_collision = self._get_optional(
             self.client.containers, config.container_name, "container"
@@ -551,27 +653,68 @@ class DockerRuntime:
             **_config_labels(config),
             **_base_labels(config.data_volume, "container"),
         }
+        ports, mysql_host_port = self._port_plan(
+            config,
+            allowed_ports=self._allowed_host_ports(config, replacing),
+        )
         return DockerRunPlan(
             image=config.image,
             name=config.container_name,
             network_name=config.network_name,
             mem_limit=config.memory,
             volumes=volumes,
-            ports=self._port_bindings(
-                config,
-                allowed_ports=_published_host_ports(replacing),
+            ports=ports,
+            environment=_container_environment(
+                config, config.network_name, mysql_port=mysql_host_port
             ),
-            environment=_container_environment(config, config.network_name),
             labels=labels,
+            mysql_ports=(
+                (config.mysql_port, mysql_host_port)
+                if config.mysql_port is not None and mysql_host_port is not None
+                else None
+            ),
         )
+
+    def _allowed_host_ports(
+        self,
+        config: LocalCloudConfig,
+        replacing: RuntimeRecord | None,
+    ) -> set[tuple[int, str]]:
+        """Host ports this runtime already holds: its container's and children's."""
+        allowed = _published_host_ports(replacing)
+        try:
+            children = self.client.containers.list(
+                all=True,
+                filters={
+                    "label": [
+                        f"{_CHILD_MANAGED_LABEL}=true",
+                        f"{VOLUME_NAME_LABEL}={config.data_volume}",
+                    ]
+                },
+            )
+        except Exception:
+            return allowed
+        for child in children:
+            for port_spec, bindings in _published_ports(child).items():
+                _port, _, protocol = port_spec.partition("/")
+                allowed.update(
+                    (host_port, protocol or "tcp")
+                    for _host_ip, host_port in bindings
+                    if host_port is not None
+                )
+        return allowed
 
     def has_canonical_ports(
         self,
         config: LocalCloudConfig,
         runtime: RuntimeRecord,
     ) -> bool:
+        if config.port_range is not None:
+            return _within_configured_range(config, runtime)
         expected = _canonical_port_bindings(config)
         if runtime.published_ports.keys() != expected.keys():
+            return False
+        if config.mysql_port is not None and runtime.mysql_port != config.mysql_port:
             return False
         return all(
             {
@@ -629,7 +772,9 @@ class DockerRuntime:
             current.network_name
             or str(host_config.get("NetworkMode") or config.network_name)
         )
-        environment = _container_environment(config, network_name)
+        environment = _container_environment(
+            config, network_name, mysql_port=current.mysql_port
+        )
 
         raw_labels = container_config.get("Labels")
         labels = (
@@ -720,6 +865,9 @@ class DockerRuntime:
             current,
             failures,
             dry_run=True,
+            services=_replaced_child_services(
+                current, remove_volume=remove_volume, remove_network=remove_network
+            ),
         )
         if failures:
             raise HostError(
@@ -727,7 +875,16 @@ class DockerRuntime:
                 "Managed child-container cleanup could not be planned",
                 {"data_volume": config.data_volume, "failures": failures},
             )
-        commands = [
+        commands = (
+            list(
+                self.preview_stop_commands(
+                    _resource_name(container) or str(current.container_id)
+                )
+            )
+            if current.state == "running"
+            else []
+        )
+        commands.extend(
             shlex.join(
                 [
                     "docker",
@@ -738,7 +895,7 @@ class DockerRuntime:
                 ]
             )
             for child in children
-        ]
+        )
         commands.append(
             shlex.join(
                 [
@@ -769,11 +926,15 @@ class DockerRuntime:
         return (shlex.join(["docker", "start", target]),)
 
     @staticmethod
-    def preview_restart_commands(target: str, timeout: int = 20) -> tuple[str, ...]:
+    def preview_restart_commands(
+        target: str, timeout: int = STOP_TIMEOUT_SECONDS
+    ) -> tuple[str, ...]:
         return (shlex.join(["docker", "restart", "-t", str(timeout), target]),)
 
     @staticmethod
-    def preview_stop_commands(target: str, timeout: int = 20) -> tuple[str, ...]:
+    def preview_stop_commands(
+        target: str, timeout: int = STOP_TIMEOUT_SECONDS
+    ) -> tuple[str, ...]:
         return (shlex.join(["docker", "stop", "-t", str(timeout), target]),)
 
     def create(
@@ -850,6 +1011,7 @@ class DockerRuntime:
                 deadline=deadline,
                 container=container,
                 observer=observer,
+                cursor=self._track_logs(container, from_start=True),
             )
             ready = self.resolve(
                 config,
@@ -924,7 +1086,8 @@ class DockerRuntime:
     ) -> RuntimeRecord:
         deadline = _resolve_readiness_deadline(readiness_deadline)
         container, current = self._mutation_target(config, runtime)
-        if current.state != "running":
+        started = current.state != "running"
+        if started:
             if observer is not None and hasattr(observer, "debug"):
                 target_name = _resource_name(container) or current.container_id
                 observer.debug(
@@ -960,6 +1123,7 @@ class DockerRuntime:
             deadline=deadline,
             container=container,
             observer=observer,
+            cursor=self._track_logs(container, from_start=started),
         )
         ready = self.resolve(
             config,
@@ -991,10 +1155,12 @@ class DockerRuntime:
             target_name = _resource_name(container) or current.container_id
             observer.debug(
                 "Executing: "
-                + shlex.join(["docker", "restart", "-t", "20", target_name])
+                + shlex.join(
+                    ["docker", "restart", "-t", str(STOP_TIMEOUT_SECONDS), target_name]
+                )
             )
         try:
-            container.restart(timeout=20)
+            container.restart(timeout=STOP_TIMEOUT_SECONDS)
         except Exception as error:
             raise HostError(
                 "container_restart_failed",
@@ -1023,6 +1189,7 @@ class DockerRuntime:
             deadline=deadline,
             container=container,
             observer=observer,
+            cursor=self._track_logs(container, from_start=True),
         )
         ready = self.resolve(
             config,
@@ -1048,32 +1215,16 @@ class DockerRuntime:
         observer: Any | None = None,
     ) -> RuntimeRecord:
         container, current = self._mutation_target(config, runtime)
-        if current.state == "running":
-            if observer is not None and hasattr(observer, "debug"):
-                target_name = _resource_name(container) or current.container_id
-                observer.debug(
-                    "Executing: "
-                    + shlex.join(["docker", "stop", "-t", "20", target_name])
-                )
-            try:
-                container.stop(timeout=20)
-            except Exception as error:
-                raise HostError(
-                    "container_stop_failed",
-                    "LocalCloud runtime container could not be stopped",
-                    {
-                        "data_volume": config.data_volume,
-                        "container_id": current.container_id,
-                        "cause": str(error),
-                    },
-                ) from error
+        self._stop_container(config, container, current, observer)
         if current.ownership.get("container") == "managed":
+            # Keep children: the server stops them on shutdown and resumes
+            # them on the next start (Dataproc clusters, the MySQL companion).
             failures: list[dict[str, Any]] = []
-            self._remove_children(config.data_volume, container, current, failures)
+            self._stop_children(config.data_volume, container, current, failures)
             if failures:
                 raise HostError(
                     "cleanup_failed",
-                    "Managed child-container cleanup was incomplete",
+                    "Managed child containers could not be stopped",
                     {"data_volume": config.data_volume, "failures": failures},
                 )
         updated = self.resolve(
@@ -1083,6 +1234,37 @@ class DockerRuntime:
         )
         assert updated is not None
         return updated
+
+    def _stop_container(
+        self,
+        config: LocalCloudConfig,
+        container: Any,
+        current: RuntimeRecord,
+        observer: Any | None,
+    ) -> None:
+        """Let LocalCloud shut down (companions, then Postgres) before Docker kills it."""
+        if current.state != "running":
+            return
+        if observer is not None and hasattr(observer, "debug"):
+            target_name = _resource_name(container) or current.container_id
+            observer.debug(
+                "Executing: "
+                + shlex.join(
+                    ["docker", "stop", "-t", str(STOP_TIMEOUT_SECONDS), target_name]
+                )
+            )
+        try:
+            container.stop(timeout=STOP_TIMEOUT_SECONDS)
+        except Exception as error:
+            raise HostError(
+                "container_stop_failed",
+                "LocalCloud runtime container could not be stopped",
+                {
+                    "data_volume": config.data_volume,
+                    "container_id": current.container_id,
+                    "cause": str(error),
+                },
+            ) from error
 
     def remove(
         self,
@@ -1109,9 +1291,19 @@ class DockerRuntime:
                 f"Removing managed container {current.name!r}; "
                 f"remove_volume={remove_volume}"
             )
+        # `docker rm -f` would SIGKILL a running LocalCloud, Postgres included.
+        self._stop_container(config, container, current, observer)
 
         failures: list[dict[str, Any]] = []
-        self._remove_children(config.data_volume, container, current, failures)
+        self._remove_children(
+            config.data_volume,
+            container,
+            current,
+            failures,
+            services=_replaced_child_services(
+                current, remove_volume=remove_volume, remove_network=remove_network
+            ),
+        )
         if failures:
             raise HostError(
                 "cleanup_failed",
@@ -1275,11 +1467,65 @@ class DockerRuntime:
         config: LocalCloudConfig,
         runtime: RuntimeRecord,
         tail: int = 200,
-        *,
-        since: float | None = None,
     ) -> str:
         if tail < 0:
             raise HostError("invalid_tail", "Log tail must be zero or greater")
+        container = self._log_container(config, runtime)
+        try:
+            output = container.logs(tail=tail, timestamps=True)
+        except Exception as error:
+            raise _logs_failed(config, runtime, error) from error
+        return (
+            output.decode("utf-8", errors="replace")
+            if isinstance(output, bytes)
+            else str(output)
+        )
+
+    def follow_logs(self, config: LocalCloudConfig, runtime: RuntimeRecord) -> str:
+        """Log lines the runtime wrote since the previous read, without gaps."""
+        container = self._log_container(config, runtime)
+        cursor = self._log_cursors.get(str(runtime.container_id))
+        if cursor is None:
+            cursor = self._track_logs(container, from_start=False)
+        try:
+            return cursor.read(container)
+        except Exception as error:
+            raise _logs_failed(config, runtime, error) from error
+
+    def mysql_companion_host_ip(self, config: LocalCloudConfig) -> str | None:
+        """Address the runtime's Cloud SQL MySQL companion publishes on, if any."""
+        try:
+            companions = self.client.containers.list(
+                all=True,
+                filters={
+                    "label": [
+                        f"{VOLUME_NAME_LABEL}={config.data_volume}",
+                        f"{_CHILD_SERVICE_LABEL}={_MYSQL_COMPANION_SERVICE}",
+                    ]
+                },
+            )
+        except Exception:
+            return None
+        for companion in companions:
+            for bindings in _published_ports(companion).values():
+                for host_ip, _host_port in bindings:
+                    return host_ip
+        return None
+
+    def _track_logs(self, container: Any, *, from_start: bool) -> LogCursor:
+        """Follow a container's log, from its current run or from its last lines."""
+        if from_start:
+            try:
+                container.reload()
+            except Exception:
+                pass
+            cursor = LogCursor.from_start(container)
+        else:
+            cursor = LogCursor(first_tail=12)
+        self._log_cursors[_resource_identity(container)] = cursor
+        return cursor
+
+    def _log_container(self, config: LocalCloudConfig, runtime: RuntimeRecord) -> Any:
         container_id = str(runtime.container_id or "")
         if not container_id:
             raise HostError(
@@ -1288,7 +1534,7 @@ class DockerRuntime:
                 {"data_volume": config.data_volume},
             )
         try:
-            container = self.client.containers.get(container_id)
+            return self.client.containers.get(container_id)
         except Exception as error:
             raise HostError(
                 "container_missing",
@@ -1299,26 +1545,6 @@ class DockerRuntime:
                     "cause": str(error),
                 },
             ) from error
-        try:
-            kwargs: dict[str, Any] = {"tail": tail, "timestamps": True}
-            if since is not None:
-                kwargs["since"] = since
-            output = container.logs(**kwargs)
-        except Exception as error:
-            raise HostError(
-                "logs_failed",
-                "Could not read LocalCloud runtime logs",
-                {
-                    "data_volume": config.data_volume,
-                    "container_id": container_id,
-                    "cause": str(error),
-                },
-            ) from error
-        return (
-            output.decode("utf-8", errors="replace")
-            if isinstance(output, bytes)
-            else str(output)
-        )
 
     def is_ready(
         self,
@@ -1481,12 +1707,28 @@ class DockerRuntime:
         tls_enabled: bool = False,
         tls_port: int | None = None,
         local_only: bool = True,
+        mysql_port: int | None = None,
+        config: LocalCloudConfig | None = None,
     ) -> dict[str, Any]:
-        """Check port availability for LocalCloud and report diagnostics."""
+        """Check port availability for LocalCloud and report diagnostics.
+
+        With `config`, its settings replace the keyword values, a configured
+        port range is checked instead of the canonical ports, and the fallback
+        block is sized for the ports its enabled services use.
+        """
+        if config is not None:
+            tls_enabled = config.tls_enabled
+            tls_port = config.tls_port
+            local_only = config.local_only
+            mysql_port = config.mysql_port
+            if config.port_range is not None:
+                return self._range_diagnostics(config)
         ports = list(_BASE_TCP_PORTS)
         if tls_enabled:
             effective_tls_port = tls_port if tls_port is not None else DEFAULT_TLS_PORT
             ports.extend((effective_tls_port, *_DEDICATED_TLS_PORTS))
+        if mysql_port is not None:
+            ports.append(mysql_port)
         canonical_ports = tuple(sorted(set(ports)))
         host_ip = "127.0.0.1" if local_only else ""
 
@@ -1533,7 +1775,11 @@ class DockerRuntime:
         if occupied and not has_lc_container:
             try:
                 alt = _available_tcp_port_block(
-                    len(canonical_ports), set(), host_ip
+                    _fallback_block_size(config)
+                    if config is not None
+                    else len(canonical_ports),
+                    set(),
+                    host_ip,
                 )
                 alternative_range = list(alt)
             except HostError:
@@ -1555,6 +1801,32 @@ class DockerRuntime:
             "localcloud_ports": localcloud_ports,
             "alternative_range": alternative_range,
             "status": status,
+        }
+
+    def _range_diagnostics(self, config: LocalCloudConfig) -> dict[str, Any]:
+        """The block a runtime would take from its configured port range."""
+        assert config.port_range is not None
+        start, end = config.port_range
+        host_ip = "127.0.0.1" if config.local_only else ""
+        try:
+            block = list(
+                _available_tcp_port_block(
+                    _fallback_block_size(config),
+                    set(),
+                    host_ip,
+                    _configured_port_ranges(config),
+                )
+            )
+        except HostError:
+            block = []
+        return {
+            "canonical_ports": block or list(range(start, end + 1)),
+            "configured_range": [start, end],
+            "all_canonical_available": bool(block),
+            "occupied_ports": [],
+            "localcloud_ports": [],
+            "alternative_range": None,
+            "status": "available" if block else "conflict",
         }
 
     def cleanup_resources(
@@ -1692,6 +1964,7 @@ class DockerRuntime:
         deadline: float,
         container: Any | None = None,
         observer: Any | None = None,
+        cursor: LogCursor | None = None,
     ) -> dict[str, Any]:
         normalized = _validate_base_url(url)
         timeout = max(0.0, deadline - time.monotonic())
@@ -1704,6 +1977,7 @@ class DockerRuntime:
 
         last_log_emit = 0.0
         _LOG_EMIT_INTERVAL = 2.0
+        log_cursor = cursor or LogCursor(first_tail=12)
 
         def _emit_logs(*, force: bool = False) -> None:
             nonlocal last_log_emit
@@ -1717,8 +1991,8 @@ class DockerRuntime:
                 and hasattr(observer, "runtime_logs")
             ):
                 try:
-                    logs = _container_logs(container, tail=12)
-                    if logs and not logs.startswith("<logs unavailable"):
+                    logs = log_cursor.read(container)
+                    if logs:
                         observer.runtime_logs(logs)
                 except Exception:
                     pass
@@ -1758,7 +2032,7 @@ class DockerRuntime:
                 if response.status_code == 200:
                     payload = response.json()
                     if payload.get("status") in {"healthy", "ok", "ready"}:
-                        _emit_logs()
+                        _emit_logs(force=True)
                         if observer is not None and hasattr(observer, "debug"):
                             observer.debug(
                                 f"Runtime readiness succeeded at {normalized}/health"
@@ -2313,24 +2587,55 @@ class DockerRuntime:
         *,
         allowed_ports: set[tuple[int, str]] | None = None,
     ) -> RequestedPorts:
-        ordinary_ports = _ordinary_tcp_ports(config)
+        return self._port_plan(config, allowed_ports=allowed_ports)[0]
+
+    def _port_plan(
+        self,
+        config: LocalCloudConfig,
+        *,
+        allowed_ports: set[tuple[int, str]] | None = None,
+    ) -> tuple[RequestedPorts, int | None]:
+        """Runtime-container bindings and the MySQL companion's host port.
+
+        The canonical layout publishes every canonical port. When any of them
+        is taken, or `port_range` is set, the runtime publishes only the ports
+        its enabled services use, as one block from the fallback ranges or the
+        configured range. The MySQL companion's port belongs to the same set
+        and takes the block's last port, unless LOCALCLOUD_MYSQL_PORT pins it.
+        """
+        movable_mysql = None if _mysql_port_pinned(config) else config.mysql_port
+
+        def with_mysql(ports: tuple[int, ...]) -> tuple[int, ...]:
+            return (*ports, movable_mysql) if movable_mysql is not None else ports
+
         host_ip = "127.0.0.1" if config.local_only else ""
         allowed = allowed_ports or set()
-        canonical_free = all(
+        published = _ordinary_tcp_ports(config)
+        host_ports: tuple[int, ...] | None = None
+        if config.port_range is None and all(
             _port_is_free(port, socket.SOCK_STREAM, host_ip) or (port, "tcp") in allowed
-            for port in ordinary_ports
-        )
-        host_ports = (
-            ordinary_ports
-            if canonical_free
-            else _available_tcp_port_block(len(ordinary_ports), allowed, host_ip)
+            for port in with_mysql(published)
+        ):
+            host_ports = with_mysql(published)
+        if host_ports is None:
+            published = _fallback_tcp_ports(config)
+            host_ports = _available_tcp_port_block(
+                len(with_mysql(published)),
+                allowed,
+                host_ip,
+                _configured_port_ranges(config),
+            )
+        mysql_host_port = (
+            host_ports[len(published)]
+            if movable_mysql is not None
+            else config.mysql_port
         )
         bindings: RequestedPorts = {
             f"{container_port}/tcp": ((host_ip, host_port),)
-            for container_port, host_port in zip(ordinary_ports, host_ports)
+            for container_port, host_port in zip(published, host_ports)
         }
         if not config.transparent_network:
-            return bindings
+            return bindings, mysql_host_port
         if not config.tls_enabled:
             raise HostError(
                 "invalid_config",
@@ -2354,7 +2659,7 @@ class DockerRuntime:
                 )
             key = f"{container_port}/{protocol}"
             bindings[key] = (*bindings.get(key, ()), (host_ip, host_port))
-        return bindings
+        return bindings, mysql_host_port
 
     def _volume_for_create(
         self, config: LocalCloudConfig, labels: dict[str, str]
@@ -2478,7 +2783,58 @@ class DockerRuntime:
         failures: list[dict[str, Any]],
         *,
         dry_run: bool = False,
+        services: frozenset[str] | None = None,
     ) -> list[Any]:
+        owned = self._owned_children(
+            data_volume, parent, runtime, failures, services=services
+        )
+        if dry_run:
+            return [child for child, _expected in owned]
+        for child, expected in owned:
+            _remove_verified(
+                child,
+                "child_container",
+                expected,
+                failures,
+                force=True,
+                v=True,
+            )
+        return [child for child, _expected in owned]
+
+    def _stop_children(
+        self,
+        data_volume: str,
+        parent: Any | None,
+        runtime: RuntimeRecord | None,
+        failures: list[dict[str, Any]],
+    ) -> None:
+        """Stop children the server left running, e.g. after a forced stop."""
+        for child, _expected in self._owned_children(
+            data_volume, parent, runtime, failures
+        ):
+            if _container_state(child) != "running":
+                continue
+            try:
+                child.stop(timeout=STOP_TIMEOUT_SECONDS)
+            except Exception as error:
+                failures.append(
+                    {
+                        "resource": "child_container",
+                        "identity": _resource_identity(child),
+                        "cause": str(error),
+                    }
+                )
+
+    def _owned_children(
+        self,
+        data_volume: str,
+        parent: Any | None,
+        runtime: RuntimeRecord | None,
+        failures: list[dict[str, Any]],
+        *,
+        services: frozenset[str] | None = None,
+    ) -> list[tuple[Any, dict[str, str]]]:
+        """Children whose ownership labels match; `services` narrows the set."""
         try:
             containers = self.client.containers.list(
                 all=True,
@@ -2505,6 +2861,8 @@ class DockerRuntime:
             if parent_id == _resource_identity(child):
                 continue
             labels = _resource_labels(child)
+            if services is not None and labels.get(_CHILD_SERVICE_LABEL) not in services:
+                continue
             new_claim = (
                 labels.get(VOLUME_NAME_LABEL) == data_volume
                 and labels.get(_CHILD_MANAGED_LABEL) == "true"
@@ -2547,18 +2905,7 @@ class DockerRuntime:
                 owned.append((child, expected))
         if failures:
             return []
-        if dry_run:
-            return [child for child, _expected in owned]
-        for child, expected in owned:
-            _remove_verified(
-                child,
-                "child_container",
-                expected,
-                failures,
-                force=True,
-                v=True,
-            )
-        return [child for child, _expected in owned]
+        return owned
 
     @staticmethod
     def _get_optional(collection: Any, name: str, kind: str) -> Any | None:
@@ -2789,7 +3136,10 @@ def _record_container_labels(runtime: RuntimeRecord) -> dict[str, str]:
 
 
 def _container_environment(
-    config: LocalCloudConfig, network_name: str
+    config: LocalCloudConfig,
+    network_name: str,
+    *,
+    mysql_port: int | None = None,
 ) -> dict[str, str]:
     environment = dict(config.environment)
     environment.pop("LOCALCLOUD_CONFIG", None)
@@ -2802,7 +3152,28 @@ def _container_environment(
         environment["LOCALCLOUD_DATA_VOLUME"] = config.data_volume
     environment["LOCALCLOUD_DOCKER_ACCESS"] = config.docker_socket_mode
     environment.pop("LOCALCLOUD_INSTANCE", None)
+    if config.mysql_port is not None:
+        # One companion per data volume. Older images name every runtime's
+        # companion `localcloud-mysql`, letting one server replace another's.
+        if config.data_volume != DEFAULT_DATA_VOLUME:
+            environment.setdefault(
+                "LOCALCLOUD_MYSQL_CONTAINER_NAME", _mysql_companion_name(config)
+            )
+        if mysql_port is not None and mysql_port != _MYSQL_DEFAULT_PORT:
+            environment.setdefault("LOCALCLOUD_MYSQL_PORT", str(mysql_port))
     return environment
+
+
+def _mysql_port_pinned(config: LocalCloudConfig) -> bool:
+    return "LOCALCLOUD_MYSQL_PORT" in config.environment
+
+
+def _mysql_companion_name(config: LocalCloudConfig) -> str:
+    """The server's own per-volume name (MySqlServerManager.containerName)."""
+    configured = config.environment.get("LOCALCLOUD_MYSQL_CONTAINER_NAME", "").strip()
+    if configured:
+        return configured
+    return "localcloud-mysql-" + re.sub(r"[^a-zA-Z0-9_.-]", "-", config.data_volume)
 
 def _format_memory_limit(value: Any) -> str | None:
     if not isinstance(value, (int, float)) or value <= 0:
@@ -3133,6 +3504,63 @@ def _container_environment_values(container: Any) -> dict[str, str]:
     return environment
 
 
+def _timestamp_ns(value: str) -> int | None:
+    """Docker RFC 3339 timestamp (nanosecond precision) as epoch nanoseconds."""
+    match = _LOG_TIMESTAMP.match(value)
+    if match is None:
+        return None
+    base, fraction, zone = match.groups()
+    try:
+        moment = datetime.fromisoformat(base + ("+00:00" if zone == "Z" else zone))
+    except ValueError:
+        return None
+    seconds = int(moment.timestamp())
+    if seconds <= 0:
+        return None
+    return seconds * 1_000_000_000 + int((fraction or "").ljust(9, "0"))
+
+
+def _started_at_ns(container: Any) -> int | None:
+    state = getattr(container, "attrs", {}).get("State") or {}
+    started = state.get("StartedAt") if isinstance(state, Mapping) else None
+    return _timestamp_ns(started) if isinstance(started, str) else None
+
+
+def _replaced_child_services(
+    runtime: RuntimeRecord, *, remove_volume: bool, remove_network: bool
+) -> frozenset[str] | None:
+    """Which children removing this runtime's container also removes.
+
+    All of them (None) when their volume or network goes too. Otherwise only
+    the MySQL companion, whose data stays on the volume and whose name and port
+    must follow the replacement; Dataproc clusters keep running state that the
+    server resumes from the same containers.
+    """
+    if (
+        remove_volume and runtime.ownership["data_volume"] == "managed"
+    ) or (
+        remove_network
+        and runtime.ownership["network"] == "managed"
+        and runtime.network_name is not None
+    ):
+        return None
+    return frozenset({_MYSQL_COMPANION_SERVICE})
+
+
+def _logs_failed(
+    config: LocalCloudConfig, runtime: RuntimeRecord, error: Exception
+) -> HostError:
+    return HostError(
+        "logs_failed",
+        "Could not read LocalCloud runtime logs",
+        {
+            "data_volume": config.data_volume,
+            "container_id": str(runtime.container_id or ""),
+            "cause": str(error),
+        },
+    )
+
+
 def _container_logs(container: Any, *, tail: int = 200) -> str:
     if container is None:
         return ""
@@ -3203,6 +3631,51 @@ def _ordinary_tcp_ports(config: LocalCloudConfig) -> tuple[int, ...]:
     if config.tls_enabled:
         ports.extend((config.tls_port, *_DEDICATED_TLS_PORTS))
     return tuple(sorted(set(ports)))
+
+
+def _fallback_tcp_ports(config: LocalCloudConfig) -> tuple[int, ...]:
+    """The canonical ports the enabled services use; the rest are unused or reserved."""
+    if not config.service_ports:
+        return _ordinary_tcp_ports(config)
+    used = {int(GATEWAY_PORT), *config.service_ports}
+    if config.tls_enabled:
+        used.add(config.tls_port)
+    return tuple(port for port in _ordinary_tcp_ports(config) if port in used)
+
+
+def _fallback_block_size(config: LocalCloudConfig) -> int:
+    movable_mysql = config.mysql_port is not None and not _mysql_port_pinned(config)
+    return len(_fallback_tcp_ports(config)) + int(movable_mysql)
+
+
+def _within_configured_range(config: LocalCloudConfig, runtime: RuntimeRecord) -> bool:
+    """Whether a runtime already publishes its service ports inside port_range."""
+    assert config.port_range is not None
+    start, end = config.port_range
+    expected = {f"{port}/tcp" for port in _fallback_tcp_ports(config)}
+    if config.transparent_network:
+        expected.add(f"{_DNS_PORT}/udp")
+    if set(runtime.published_ports) != expected:
+        return False
+    host_ports = [
+        host_port
+        for port_spec, bindings in runtime.published_ports.items()
+        if port_spec.endswith("/tcp")
+        for _host_ip, host_port in bindings
+        if host_port is not None and host_port not in _TRANSPARENT_HOST_PORTS
+    ]
+    if not host_ports or not all(start <= port <= end for port in host_ports):
+        return False
+    if config.mysql_port is None or _mysql_port_pinned(config):
+        return True
+    return runtime.mysql_port is not None and start <= runtime.mysql_port <= end
+
+
+def _configured_port_ranges(config: LocalCloudConfig) -> tuple[range, ...]:
+    if config.port_range is None:
+        return _FALLBACK_TCP_PORT_RANGES
+    start, end = config.port_range
+    return (range(start, end + 1),)
 
 
 def _canonical_port_bindings(config: LocalCloudConfig) -> PublishedPorts:
@@ -3319,8 +3792,9 @@ def _available_tcp_port_block(
     count: int,
     allowed_ports: set[tuple[int, str]],
     host_ip: str,
+    ranges: tuple[range, ...] = _FALLBACK_TCP_PORT_RANGES,
 ) -> tuple[int, ...]:
-    for allowed_range in _FALLBACK_TCP_PORT_RANGES:
+    for allowed_range in ranges:
         last_start = allowed_range.stop - count
         for start in range(allowed_range.start, last_start + 1):
             candidates = tuple(range(start, start + count))
@@ -3330,13 +3804,17 @@ def _available_tcp_port_block(
                 for port in candidates
             ):
                 return candidates
+    searched = ", ".join(
+        f"{allowed_range.start}-{allowed_range.stop - 1}" for allowed_range in ranges
+    )
     raise HostError(
         "alternative_ports_unavailable",
-        "No complete alternative LocalCloud host-port set is available",
+        "No complete alternative LocalCloud host-port set is available: "
+        f"{count} free ports needed in {searched}",
         {
             "ranges": [
                 [allowed_range.start, allowed_range.stop - 1]
-                for allowed_range in _FALLBACK_TCP_PORT_RANGES
+                for allowed_range in ranges
             ],
             "required_ports": count,
         },

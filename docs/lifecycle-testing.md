@@ -17,7 +17,7 @@ This runbook documents the required end-to-end CLI lifecycle testing procedure f
   ```sh
   docker pull agentcloud/localcloud:latest
   ```
-- Canonical host ports `5380-5405` free on loopback interfaces.
+- Canonical host ports `5380-5406` free on loopback interfaces (`5406` is the Cloud SQL MySQL companion's).
 
 ---
 
@@ -33,8 +33,8 @@ localcloud doctor
 **Expected Result:**
 - Status `OK`.
 - Docker daemon detected with path.
-- Image points to `agentcloud/localcloud:latest` with local SHA-256 digest.
-- Ports `5380-5405` reported as `(available)`.
+- Image points to the configured image (`agentcloud/localcloud:latest` unless `host.image` or `LOCALCLOUD_IMAGE` says otherwise) with local SHA-256 digest.
+- Ports `5380-5406` reported as `(available)`.
 
 ---
 
@@ -95,7 +95,7 @@ localcloud status --data-volume test-lifecycle
 **Expected Result:**
 - Status: `Running`.
 - Origin: `managed`.
-- Ports: `5380-5405`.
+- Ports: `5380-5406`.
 - URL: `http://127.0.0.1:5380`.
 - All enabled services listed.
 
@@ -138,6 +138,7 @@ localcloud restart --data-volume test-lifecycle --no-pull --tail 2
 - Finds and stops running container.
 - Starts container again.
 - Flyway reports schema up to date (no migration error).
+- The Dataproc sample cluster container is kept and `sample-cluster` stays `RUNNING`.
 - Final status returns `Running`.
 
 ---
@@ -166,6 +167,7 @@ localcloud stop --data-volume test-lifecycle
 - Status: `Stopped`.
 - Container ID and name displayed.
 - Data volume remains intact.
+- Companion containers (the Dataproc sample cluster, the Cloud SQL MySQL server) are stopped, not removed.
 
 Verify stopped state with `localcloud status --data-volume test-lifecycle` (reports `Stopped`).
 
@@ -181,6 +183,7 @@ localcloud start --data-volume test-lifecycle --no-pull --tail 2
 **Expected Result:**
 - Reattaches to existing stopped container ID.
 - Faster startup time (< 20s).
+- The Dataproc sample cluster resumes: `sample-cluster` reports `RUNNING`, not `DEFUNCT`.
 - Status: `Running`.
 
 ---
@@ -197,7 +200,8 @@ localcloud stop --data-volume test-lifecycle
 CONTAINER_ID=$(docker ps -a --filter "volume=test-lifecycle" --format "{{.ID}}")
 NETWORK_NAME=$(docker inspect "$CONTAINER_ID" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}')
 
-# 3. Remove Docker resources
+# 3. Remove Docker resources, companions first (stop keeps them; they hold the network)
+docker ps -aq --filter "label=com.localcloud.volume-name=test-lifecycle" | xargs docker rm -f
 docker rm -f "$CONTAINER_ID"
 docker network rm "$NETWORK_NAME"
 docker volume rm test-lifecycle

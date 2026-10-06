@@ -308,6 +308,24 @@ def test_error_omits_verbose_logs_and_nested_diagnostics() -> None:
     assert rendered == "Error [container_start_failed] Container failed\nData Volume: team-data"
 
 
+def test_error_shows_the_actionable_cause() -> None:
+    rendered = render_error(
+        HostError(
+            "project_reset_failed",
+            "LocalCloud project could not be reset",
+            {
+                "data_volume": "team-data",
+                "cause": "Tool localcloud_reset_project requires LOCALCLOUD_MCP_DESTRUCTIVE=true",
+            },
+        )
+    )
+    assert rendered.splitlines() == [
+        "Error [project_reset_failed] LocalCloud project could not be reset",
+        "Data Volume: team-data",
+        "Cause: Tool localcloud_reset_project requires LOCALCLOUD_MCP_DESTRUCTIVE=true",
+    ]
+
+
 def test_cloud_has_equal_visible_width_and_animation_changes_color() -> None:
     from localcloud_cli.output import _CLOUD_PERIMETER_COORDS
 

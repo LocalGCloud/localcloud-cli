@@ -74,6 +74,7 @@ HOST_CONFIG_FIELDS = {
     "environment",
     "container_name",
     "network_name",
+    "port_range",
 }
 SERVICES_FIELDS = {"enabled", "catalog"}
 FLAT_FIELD_REPLACEMENTS = {
@@ -230,6 +231,15 @@ class LocalCloudConfig:
     tls_port: int = DEFAULT_TLS_PORT
     strict_port_validation: bool = False
     local_only: bool = False
+    # Host port the Cloud SQL MySQL companion publishes, or None when it cannot
+    # start. Derived from services, so it is not part of the runtime identity.
+    mysql_port: int | None = None
+    # Container ports the enabled services listen on (from the catalog). A
+    # runtime off the canonical ports publishes only these.
+    service_ports: tuple[int, ...] = ()
+    # host.port_range / --port-range: host ports to use instead of the
+    # canonical and built-in fallback ports.
+    port_range: tuple[int, int] | None = None
 
     def __post_init__(self) -> None:
         encoded = json.dumps(
@@ -264,6 +274,8 @@ def runtime_settings(config: LocalCloudConfig) -> dict[str, Any]:
     if config.tls_enabled:
         settings["tls_enabled"] = True
         settings["tls_port"] = config.tls_port
+    if config.port_range is not None:
+        settings["port_range"] = "{}-{}".format(*config.port_range)
     return settings
 
 
@@ -373,6 +385,80 @@ def _effective_service_catalog(
         definition = catalog.setdefault(service_id, {})
         _overlay_mapping(definition, override)
     return catalog
+
+
+def _service_ports(
+    catalog: dict[str, dict[str, object]],
+    services: tuple[str, ...],
+) -> tuple[int, ...]:
+    """Every port the enabled services' catalog entries name.
+
+    Walks each entry generically (no catalog field names): integers under a
+    port-named key (`port`, `...Port`, `..._port`) or inside a `...Ports` map.
+    """
+    ports: set[int] = set()
+
+    def collect(value: object, key: str, in_port_map: bool) -> None:
+        if isinstance(value, dict):
+            for child_key, child in value.items():
+                collect(child, str(child_key), key.endswith("Ports"))
+        elif (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and (in_port_map or key == "port" or key.endswith(("Port", "_port")))
+        ):
+            ports.add(value)
+
+    for service_id in services:
+        collect(catalog.get(service_id) or {}, service_id, False)
+    return tuple(sorted(ports))
+
+
+def _port_range(name: str, value: object) -> tuple[int, int]:
+    text = str(value).strip() if isinstance(value, (str, int)) else ""
+    start_text, separator, end_text = text.partition("-")
+    if not (
+        separator
+        and start_text.strip().isdigit()
+        and end_text.strip().isdigit()
+        and 1024 <= int(start_text) <= int(end_text) <= 65535
+    ):
+        _invalid_config(
+            f"{name} must be START-END with 1024 <= START <= END <= 65535",
+            field=name,
+            value=value,
+        )
+    return int(start_text), int(end_text)
+
+
+def _mysql_port(
+    catalog: dict[str, dict[str, object]],
+    services: tuple[str, ...],
+    environment: dict[str, str],
+) -> int | None:
+    """Host port of the Cloud SQL MySQL companion, or None when it never starts.
+
+    The server publishes this port from its own companion container, outside
+    the runtime container's port block, so the CLI checks and plans it here."""
+    if "cloudsql" not in services:
+        return None
+    definition = catalog.get("cloudsql") or {}
+    settings = definition.get("config")
+    if isinstance(settings, dict):
+        enabled = settings.get("mysql_enabled", True)
+        if enabled is False or str(enabled).strip().lower() == "false":
+            return None
+    if "LOCALCLOUD_MYSQL_PORT" in environment:
+        value = environment["LOCALCLOUD_MYSQL_PORT"].strip()
+        # 0 lets Docker pick a free port, so there is nothing to reserve.
+        if value == "0":
+            return None
+        return _port("host.environment.LOCALCLOUD_MYSQL_PORT", value)
+    ports = definition.get("additionalPorts")
+    value = ports.get("mysql") if isinstance(ports, dict) else None
+    if value is None:
+        return None
+    return _port("services.catalog.cloudsql.additionalPorts.mysql", value)
 
 
 def _overlay_mapping(
@@ -516,6 +602,7 @@ def load_config(
     skip_validation: bool = False,
     strict_port_validation: bool = False,
     local_only: bool = False,
+    port_range: str | None = None,
 ) -> LocalCloudConfig:
     source_directory = _source_directory(directory)
     host_paths = paths if paths is not None else HostPaths.from_environment()
@@ -662,6 +749,15 @@ def load_config(
         )
     if tls is not None:
         environment["LOCALCLOUD_TLS_ENABLED"] = "true" if tls else "false"
+    mysql_port = _mysql_port(effective_catalog, effective_services, environment)
+    service_ports = _service_ports(effective_catalog, effective_services)
+    selected_port_range = (
+        _port_range("--port-range", port_range)
+        if port_range is not None
+        else _port_range("host.port_range", host["port_range"])
+        if host.get("port_range") is not None
+        else None
+    )
 
     tls_section = raw.get("tls") or {}
     if not isinstance(tls_section, dict):
@@ -749,6 +845,9 @@ def load_config(
         network_name=selected_network,
         diagnostics=tuple(diagnostics),
         effective_services=effective_services,
+        mysql_port=mysql_port,
+        service_ports=service_ports,
+        port_range=selected_port_range,
     )
 
 
