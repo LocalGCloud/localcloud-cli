@@ -22,7 +22,8 @@ The telemetry release gate also needs these settings in `LocalGCloud/localcloud-
   repository stores the numeric ID; copy it from that project's settings in
   PostHog.
 
-Without them, the release fails at "Verify frozen telemetry reaches PostHog".
+Until both are set, "Verify frozen telemetry reaches PostHog" skips and the
+release continues without proving delivery.
 Release checks send events under distinct IDs that start with `lcc_0000`. Add
 `distinct_id` "does not match regex" `^lcc_0000` to the project's internal and
 test user filters so these events stay out of product dashboards.
@@ -211,7 +212,8 @@ gh run watch "${tap_run_url##*/}" \
 `cli-release.yml` verifies the selected tag, runs source validation with
 `pytest -m "not docker"`, builds all four native archives, and creates the
 GitHub release. On each platform, the frozen binary runs `start` with an
-unreachable Docker host. The workflow then requires PostHog to accept the
+unreachable Docker host. When the PostHog settings above are configured, the
+workflow then requires PostHog to accept the
 resulting `cli_startup_error` and `cli_heartbeat` events within three `start`
 attempts and to return them from its query API within 10 minutes, tagged
 `source: cli` and `$lib: localcloud-cli` with the release version and commit,
