@@ -11,6 +11,22 @@ You need admin access to:
 
 No cross-repository token is required. Each manual workflow writes only to its own repository using that repository's `GITHUB_TOKEN`.
 
+The telemetry release gate also needs these settings in `LocalGCloud/localcloud-cli`:
+
+- secret `POSTHOG_PERSONAL_API_KEY`: a PostHog personal API key with only the
+  `query:read` scope;
+- variable `POSTHOG_PROJECT_ID`: the numeric ID of the PostHog project that
+  owns the shared ingestion key (`DEFAULT_API_KEY` in
+  `src/localcloud_cli/telemetry.py`). The server, the Console (through the
+  server), and the website send to the same project with the same key. No
+  repository stores the numeric ID; copy it from that project's settings in
+  PostHog.
+
+Without them, the release fails at "Verify frozen telemetry reaches PostHog".
+Release checks send events under distinct IDs that start with `lcc_0000`. Add
+`distinct_id` "does not match regex" `^lcc_0000` to the project's internal and
+test user filters so these events stay out of product dashboards.
+
 ## 1. Publish the Docker runtime (independent of CLI releases)
 
 Publishing and qualifying `agentcloud/localcloud:latest` is managed entirely
@@ -194,7 +210,13 @@ gh run watch "${tap_run_url##*/}" \
 
 `cli-release.yml` verifies the selected tag, runs source validation with
 `pytest -m "not docker"`, builds all four native archives, and creates the
-GitHub release. It does not pull or otherwise depend on Docker Hub state — the
+GitHub release. On each platform, the frozen binary runs `start` with an
+unreachable Docker host. The workflow then requires PostHog to accept the
+resulting `cli_startup_error` and `cli_heartbeat` events within three `start`
+attempts and to return them from its query API within 10 minutes, tagged
+`source: cli` and `$lib: localcloud-cli` with the release version and commit,
+retrying transient query failures
+(`tests/test_posthog_delivery.py`). It does not pull or otherwise depend on Docker Hub state — the
 release notes cite the runtime image by its mutable `:latest` tag, and no job
 in the workflow requires Docker. Release creation is fail-closed by default.
 With `force=true`, the per-tag concurrency lock serializes replacement runs,

@@ -829,6 +829,65 @@ def test_main_returns_concise_host_error_by_default(
     assert "Error [runtime_not_running] start it" in captured.err
 
 
+def test_main_reports_startup_failure_to_telemetry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import localcloud_cli.telemetry as telemetry
+
+    def fail(_self: FakeController, _config: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise HostError("docker_unavailable", "Docker is not running")
+
+    batches: list[list[dict[str, Any]]] = []
+    monkeypatch.delenv("LOCALCLOUD_TELEMETRY")
+    monkeypatch.setattr(
+        telemetry, "_deliver", lambda events, _environment: batches.append(events) or True
+    )
+    monkeypatch.setattr(FakeController, "start", fail)
+
+    assert main(["start"]) == 2
+    assert [event["event"] for event in batches[0]] == ["cli_startup_error", "cli_heartbeat"]
+    assert batches[0][0]["properties"]["error_code"] == "docker_unavailable"
+    assert (tmp_path / "home" / "telemetry.json").exists()
+
+
+@pytest.mark.parametrize("opted_out", [None, "local", "recorded"])
+def test_main_reports_docker_failure_before_config_resolution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, opted_out: str | None
+) -> None:
+    import localcloud_cli.telemetry as telemetry
+
+    def unavailable(_self: FakeController) -> None:
+        raise HostError("docker_unavailable", "Docker is not running")
+
+    batches: list[list[dict[str, Any]]] = []
+    monkeypatch.delenv("LOCALCLOUD_TELEMETRY")
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    opt_out = "version: 1\nhost:\n  environment:\n    LOCALCLOUD_TELEMETRY: false\n"
+    if opted_out == "local":
+        (workdir / "localcloud.yaml").write_text(opt_out)
+    elif opted_out == "recorded":
+        # Only the runtime remembers this config, which needs Docker to read;
+        # telemetry's record of the last Docker-backed run stands in for it.
+        remembered = tmp_path / "elsewhere" / "localcloud.yaml"
+        remembered.parent.mkdir()
+        remembered.write_text(opt_out)
+        state = tmp_path / "home" / "telemetry.json"
+        state.parent.mkdir(exist_ok=True)
+        state.write_text(json.dumps({"config_path": str(remembered)}))
+    monkeypatch.setattr(
+        telemetry, "_deliver", lambda events, _environment: batches.append(events) or True
+    )
+    monkeypatch.setattr(FakeController, "__init__", unavailable)
+
+    assert main(["start"]) == 2
+    if opted_out:
+        assert batches == []
+    else:
+        assert batches[0][0]["properties"]["error_code"] == "docker_unavailable"
+
+
 def test_main_returns_structured_host_error_when_verbose(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

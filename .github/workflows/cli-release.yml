@@ -170,6 +170,17 @@ jobs:
           ./dist/localcloud --help >/dev/null
           ./dist/localcloud guide >/dev/null
 
+      - name: Verify frozen telemetry reaches PostHog
+        env:
+          POSTHOG_PERSONAL_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+          POSTHOG_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
+          LOCALCLOUD_REQUIRE_POSTHOG_CHECK: "1"
+          LOCALCLOUD_CLI_UNDER_TEST: dist/localcloud
+          LOCALCLOUD_EXPECTED_COMMIT: ${{ needs.validate-release.outputs.release_commit }}
+        run: >-
+          uv run --frozen --extra test python -m pytest -q -m posthog
+          tests/test_posthog_delivery.py
+
       - name: Verify prompt startup latency
         run: >-
           uv run --frozen python scripts/check-startup-feedback.py

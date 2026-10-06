@@ -631,6 +631,10 @@ falling back. CLI flags override the corresponding `host` values.
 it — Compute Engine, Cloud Run, GKE, or Dataproc. Set `true` to always mount it, or `false` as a hard
 opt-out.
 
+`start`, `restart`, `reset`, and `stop` send anonymous startup-error and hourly usage events. Set
+`LOCALCLOUD_TELEMETRY=false` or `DO_NOT_TRACK=1` to turn them off; see
+[Telemetry](docs/configuration.md#telemetry) for exactly what is sent.
+
 → [Full configuration reference](docs/configuration.md)
 
 ## Troubleshooting

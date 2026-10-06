@@ -48,4 +48,5 @@ version = {attr = "localcloud_cli.__version__"}
 testpaths = ["tests"]
 markers = [
   "docker: requires a working local Docker engine",
+  "posthog: sends real telemetry to PostHog and queries it back (release gate)",
 ]

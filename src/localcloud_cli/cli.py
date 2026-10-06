@@ -35,6 +35,7 @@ from .output import (
 if TYPE_CHECKING:
     from .config import LocalCloudConfig
     from .docker_runtime import DockerRunPlan, PortMapping
+    from .telemetry import Telemetry
 
 ALIAS_HELP = "lc is an alias for localcloud; both commands behave identically."
 AGENT_HELP = "Coding agents: run 'localcloud guide' before using LocalCloud."
@@ -64,9 +65,11 @@ class _ExecutionObserver:
         *,
         debug: bool = False,
         input_stream: TextIO | None = None,
+        telemetry: Telemetry | None = None,
     ):
         self.reporter = reporter
         self.debug_enabled = debug
+        self.telemetry = telemetry
         self.input_stream = sys.stdin if input_stream is None else input_stream
         self._seen_lines: set[str] = set()
         self._emitted_history: list[str] = []
@@ -186,6 +189,8 @@ class _ExecutionObserver:
         self.reporter.update(message)
 
     def config(self, command: str, config: LocalCloudConfig, args: argparse.Namespace) -> None:
+        if self.telemetry is not None:
+            self.telemetry.configure(config)
         if command not in {
             "start",
             "restart",
@@ -325,6 +330,8 @@ class _ExecutionObserver:
     def runtime_logs(self, logs: str) -> None:
         if not logs or logs.startswith("<logs unavailable"):
             return
+        if self.telemetry is not None:
+            self.telemetry.observe_logs(logs)
         batch = [line.rstrip("\r\n") for line in logs.splitlines() if line.rstrip("\r\n")]
         if not batch:
             return
@@ -394,6 +401,14 @@ def main(argv: list[str] | None = None) -> int:
     debug = bool(getattr(args, "debug", False))
     reporter = LifecycleReporter(verbose=verbose)
     reports_progress = args.command in _PROGRESS_COMMANDS
+    telemetry: Telemetry | None = None
+    if args.command in _RUNTIME_COMMANDS:
+        from .telemetry import Telemetry
+
+        telemetry = Telemetry(args.command)
+    result: Any = None
+    failure: Exception | None = None
+    interrupted = False
     if reports_progress:
         reporter.start(_initial_task(args))
     try:
@@ -401,7 +416,10 @@ def main(argv: list[str] | None = None) -> int:
             from .update import update
 
             return update()
-        result = _execute(args, observer=_ExecutionObserver(reporter, debug=debug))
+        result = _execute(
+            args,
+            observer=_ExecutionObserver(reporter, debug=debug, telemetry=telemetry),
+        )
         failure_message = _result_failure_message(args, result)
         if reports_progress:
             if failure_message is None:
@@ -411,11 +429,13 @@ def main(argv: list[str] | None = None) -> int:
         _print_result(args, result, fields)
         return 1 if failure_message is not None else 0
     except HostError as error:
+        failure = error
         if reports_progress:
             reporter.fail(error.message)
         _print_error(args, error)
         return 2
     except KeyboardInterrupt:
+        interrupted = True
         if args.command == "mcp":
             if terminal_capabilities(sys.stderr).interactive:
                 print("MCP connection closed.", file=sys.stderr, flush=True)
@@ -428,6 +448,7 @@ def main(argv: list[str] | None = None) -> int:
             print("LocalCloud command interrupted.", file=sys.stderr, flush=True)
         return 130
     except SystemExit:
+        interrupted = True
         if reports_progress:
             reporter.fail("LocalCloud command interrupted")
         raise
@@ -436,6 +457,7 @@ def main(argv: list[str] | None = None) -> int:
         # already raised as a HostError is an unexpected bug, not a user
         # interruption - give it the same clean-error treatment instead of a
         # raw traceback, and only surface the traceback when --debug is set.
+        failure = error
         if reports_progress:
             reporter.fail("LocalCloud command failed unexpectedly")
         _print_error(
@@ -451,6 +473,17 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     finally:
         reporter.close()
+        if telemetry is not None:
+            if not telemetry.configured:
+                try:
+                    # Docker failed before config resolution. Files, plus the config
+                    # the last Docker-backed run used, still carry the opt-out and
+                    # context for the failure report.
+                    source = _FileConfigSource(telemetry.recorded_config())
+                    telemetry.configure(_command_config(source, args), fallback=True)
+                except Exception:
+                    pass  # An unreadable config hides its opt-out, so stay silent.
+            telemetry.finish(error=failure, result=result, interrupted=interrupted)
 
 
 def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = None) -> Any:
@@ -595,6 +628,18 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
         "Unsupported LocalCloud command",
         {"command": args.command},
     )
+
+
+class _FileConfigSource:
+    """Config selection without Docker; telemetry's record stands in for its memory."""
+
+    paths = None
+
+    def __init__(self, remembered: str | None) -> None:
+        self._remembered = remembered
+
+    def remembered_config(self, _config: LocalCloudConfig) -> str | None:
+        return self._remembered
 
 
 def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConfig:

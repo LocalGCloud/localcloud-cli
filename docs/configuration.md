@@ -130,6 +130,64 @@ eval "$(lc env --project-id project-beta)"
 
 `--user` sets the attributed caller identity sent to LocalCloud services. The default is `local-developer`. Where an email principal is required, LocalCloud normalizes it to `local-developer@localcloud.invalid`.
 
+## Telemetry
+
+Runtime commands (`start`, `restart`, `reset`, `stop`, `status`, `logs`, `console`, `env`, `mcp`)
+record anonymous usage. Only `start`, `restart`, `reset`, and `stop` send it, to the same PostHog
+project and key as the LocalCloud server, the Console (whose summaries the server forwards), and
+the website. The other commands only update local counts, so they never wait on the network.
+
+Every CLI event can be told apart from those sources in three ways:
+
+| Marker | CLI | Server and Console |
+| :--- | :--- | :--- |
+| Event name | `cli_` prefix | `heartbeat`, `server_started`, `service_error`, `console_summary`, … |
+| `source` / `$lib` | `cli` / `localcloud-cli` | no `source` / `localcloud-java` |
+| `distinct_id` | `lcc_` + 16 hex digits | `lc_` + 16 hex digits |
+
+Properties that mean the same thing as a server property use its name and type: `services_enabled`,
+`services_enabled_count`, `error_type`, `error_message`, `version`, and `commit_id`.
+
+- `cli_startup_error`: sent when `start`, `restart`, or `reset` fails, or when the startup log
+  shows `[FAILED]`/`ERROR` lines. Errors that only need your input are not sent: an unconfirmed or
+  declined port mapping, conflicting dry-run flags, a busy runtime lock, or nothing to restart. It
+  carries the command; the outcome (`failed`, `started_with_errors`, or `interrupted`); the error
+  code, message (`error_message`), and cause; the phase, state, and timeout when known; the exception type for
+  unexpected errors; and up to ten error lines from the current run's log, each cut to 240
+  characters.
+- `cli_heartbeat`: sent at most once an hour. It carries per-command counts and the number of
+  startup errors since the last heartbeat. The running container reports its own service and usage
+  metrics separately.
+
+Every event also carries the enabled services and their count, memory, TLS, Docker socket mode,
+image tag (`custom` for any other registry), CLI version and commit, OS and architecture, Python
+version, whether the CLI is the standalone binary, and whether `CI` is set.
+
+Text fields are scrubbed before sending. Credentials in URLs, secret-like `key=value` pairs, bearer
+tokens, e-mail addresses, long tokens, home and LocalCloud paths, the working directory, the config
+path, and any non-default project, user, data volume, container, network, image, registry, or
+Docker host name are replaced with placeholders. Raw logs are never sent.
+
+Each sending run makes one request with a 3-second deadline. If delivery fails, up to five events are
+kept in `LOCALCLOUD_HOME/telemetry.json` and retried by a later sending command, no sooner than five
+minutes after the failed attempt (immediately if a new startup error happens). Telemetry never
+changes a command's output or exit code. The same file holds the anonymous ID, a random `lcc_…`
+value, and the path of the last config used, so an opt-out in that config is honored even when
+Docker is not running.
+
+Turn it off with any of these. Turning it off also deletes buffered events and the ID:
+
+| Setting | Effect |
+| :--- | :--- |
+| `LOCALCLOUD_TELEMETRY=false` in the shell | Disables CLI telemetry |
+| `DO_NOT_TRACK=1` in the shell | Disables CLI telemetry |
+| `host.environment.LOCALCLOUD_TELEMETRY: "false"` in `localcloud.yaml` | Disables CLI telemetry and is passed to the container, so it disables server telemetry too. `telemetry.json` keeps only `{"disabled": true}` so runs that cannot reach Docker still honor it |
+
+`LOCALCLOUD_EVENT_API_KEY` and `LOCALCLOUD_POSTHOG_URL`, in the shell or in `host.environment`,
+point events at a different PostHog project or proxy. Events go to `/batch/` under the URL's path,
+after dropping a capture path such as `/i/v0/e/`: `https://proxy.example/ph/i/v0/e/` sends to
+`https://proxy.example/ph/batch/`.
+
 ## Related References
 
 - [CLI commands and output modes](cli-reference.md)
