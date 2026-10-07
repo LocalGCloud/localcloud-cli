@@ -156,6 +156,10 @@
             "format": "date-time",
             "type": "string"
           },
+          "function": {
+            "description": "The externally run function the session was registered for, if any.",
+            "type": "string"
+          },
           "id": {
             "description": "Session ID (a binding ID, wib-...).",
             "type": "string"
@@ -177,7 +181,7 @@
             "type": "string"
           },
           "revocationReason": {
-            "description": "deleted, expired, project_reset or reset.",
+            "description": "deleted, expired, project_reset, reset, function_deleted or function_updated.",
             "type": "string"
           },
           "revokedAt": {
@@ -236,6 +240,10 @@
             "format": "date-time",
             "type": "string"
           },
+          "function": {
+            "description": "The externally run function the session was registered for, if any.",
+            "type": "string"
+          },
           "id": {
             "description": "Session ID (a binding ID, wib-...).",
             "type": "string"
@@ -263,7 +271,7 @@
             "$ref": "#/components/schemas/IdentityRelayProfile"
           },
           "revocationReason": {
-            "description": "deleted, expired, project_reset or reset.",
+            "description": "deleted, expired, project_reset, reset, function_deleted or function_updated.",
             "type": "string"
           },
           "revokedAt": {
@@ -324,6 +332,10 @@
         "additionalProperties": false,
         "description": "Creates a 12-hour host relay session. The project defaults to X-LocalCloud-Project, then the configured project; the account to default@<project>.",
         "properties": {
+          "function": {
+            "description": "projects/<p>/locations/<l>/functions/<id>: registers that function's externally run process; the session serves its runtime account in its project (LC-ID-015-02).",
+            "type": "string"
+          },
           "projectId": {
             "description": "Google project ID of the session.",
             "type": "string"
@@ -360,6 +372,6 @@
     "dirty": false,
     "path": "specs/api/openapi/localcloud.json",
     "repository": "localcloud",
-    "revision": "94d8a91f0094cb48e1c74fb6ae8453115e046c6d"
+    "revision": "594daad1bcd60cfb06259e602cc684813cf75332"
   }
 }
