@@ -167,6 +167,7 @@ class FakeController:
                 "GCE_METADATA_IP": "127.0.0.1:49123",
                 "GOOGLE_CLOUD_PROJECT": config.project,
             },
+            "endpoint_variables": ["GCE_METADATA_HOST", "GCE_METADATA_IP"],
             "warnings": ["GOOGLE_APPLICATION_CREDENTIALS=/keys/sa.json takes precedence"],
         }
 
@@ -176,6 +177,7 @@ class FakeController:
             "status": "stopped",
             "relays_removed": ["lc-identity-1"],
             "sessions_ended": ["wib-1"],
+            "unset_variables": ["GCE_METADATA_HOST", "GCE_METADATA_IP"],
             "failures": [],
         }
 

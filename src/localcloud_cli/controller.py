@@ -27,6 +27,7 @@ from .config import (
 from .constants import DEFAULTS_CONFIG_LABEL, DEFAULT_IMAGE
 from .docker_runtime import (
     IDENTITY_SESSION_LABEL,
+    identity_relay_variables,
     STOP_TIMEOUT_SECONDS,
     DockerRunPlan,
     DockerRuntime,
@@ -998,11 +999,12 @@ class Controller:
         Creates a guarded LocalCloud identity session, starts its relay from the running
         LocalCloud image with the metadata port published on 127.0.0.1, waits for the relay's
         handshake and for the host port to answer, and returns the variables that point
-        Application Default Credentials at it. The session's capability goes only to the relay
+        Application Default Credentials at it: the session's typed SDK profile with its endpoint
+        variables moved to the published port. The session's capability goes only to the relay
         container: it is not returned, printed, logged or stored. Re-running replaces this
         project and account's relay, keeping its host port when it is free.
         """
-        from .endpoints import ambient_adc_warnings
+        from .endpoints import ambient_adc_warnings, identity_environment
 
         current = self._resolve_runtime(config, reuse_remembered=True)
         target = self.target(config)
@@ -1031,6 +1033,9 @@ class Controller:
             )
         relay: dict[str, Any] | None = None
         try:
+            profile = session.get("profile")
+            # Validates the profile before anything starts; the port is remapped once known.
+            _, endpoint_variables = identity_environment(profile, 1, {})
             if observer is not None and hasattr(observer, "debug"):
                 observer.debug(
                     f"Starting identity relay for session {session_id} "
@@ -1046,10 +1051,14 @@ class Controller:
                 if isinstance(session.get("relay"), dict)
                 else None,
                 preferred_host_port=preferred_port,
+                endpoint_variables=endpoint_variables,
             )
             capability = None
             session = self._await_identity_relay(
                 client, session_id, relay, config.project, timeout=timeout
+            )
+            environment, endpoint_variables = identity_environment(
+                profile, int(relay["host_port"])
             )
         except BaseException:
             capability = None
@@ -1068,7 +1077,6 @@ class Controller:
             except HostError:
                 pass
             raise
-        address = f"127.0.0.1:{relay['host_port']}"
         return {
             "status": "started",
             "data_volume": config.data_volume,
@@ -1081,11 +1089,8 @@ class Controller:
                 "issuer": session.get("issuer"),
             },
             "relay": relay,
-            "environment": {
-                "GCE_METADATA_HOST": address,
-                "GCE_METADATA_IP": address,
-                "GOOGLE_CLOUD_PROJECT": config.project,
-            },
+            "environment": environment,
+            "endpoint_variables": endpoint_variables,
             "replaced_sessions": replaced,
             "warnings": ambient_adc_warnings(),
         }
@@ -1115,17 +1120,22 @@ class Controller:
         failures: list[dict[str, Any]] = []
         ended: list[str] = []
         removed: list[str] = []
+        unset: list[str] = []
         for relay in relays:
             name = getattr(relay, "name", None) or getattr(relay, "id", "")
             ended.extend(self._end_identity_relay(relay, client, failures=failures))
             if not any(failure.get("container") == name for failure in failures):
                 removed.append(str(name))
+                for variable in identity_relay_variables(relay):
+                    if variable not in unset:
+                        unset.append(variable)
         return {
             "status": "stopped" if relays else "not_running",
             "data_volume": config.data_volume,
             "project": config.project,
             "relays_removed": removed,
             "sessions_ended": ended,
+            "unset_variables": unset,
             "failures": failures,
         }
 
@@ -1197,10 +1207,12 @@ class Controller:
                 )
             if session.get("state") == "ACTIVE":
                 try:
+                    # The relay is on this machine's loopback: never through HTTP(S)_PROXY.
                     answer = httpx.get(
                         metadata,
                         headers={"Metadata-Flavor": "Google"},
                         timeout=min(_READINESS_REQUEST_TIMEOUT, max(0.1, deadline - time.monotonic())),
+                        trust_env=False,
                     )
                     if answer.status_code == 200 and answer.text.strip() == project:
                         return session

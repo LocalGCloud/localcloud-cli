@@ -1,0 +1,4 @@
+{
+  "projectId": "local-gcp-project",
+  "serviceAccount": "runner@local-gcp-project.iam.gserviceaccount.com"
+}

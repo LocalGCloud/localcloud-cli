@@ -152,6 +152,7 @@ _IDENTITY_RESULT = {
         "GCE_METADATA_IP": "127.0.0.1:49123",
         "GOOGLE_CLOUD_PROJECT": "agent-project-1",
     },
+    "endpoint_variables": ["GCE_METADATA_HOST", "GCE_METADATA_IP"],
     "warnings": ["GOOGLE_APPLICATION_CREDENTIALS=/keys/sa.json takes precedence"],
 }
 
@@ -192,10 +193,15 @@ def test_identity_stop_unsets_the_session_variables() -> None:
         "status": "stopped",
         "relays_removed": ["lc-identity-1"],
         "sessions_ended": ["wib-abc"],
+        "unset_variables": ["GCE_METADATA_HOST", "GCE_METADATA_IP"],
         "failures": [{"session": "wib-def", "cause": "LocalCloud is not running"}],
     }
     shell = render_identity_stop(result, "shell")
     assert shell.rstrip().endswith("unset GCE_METADATA_HOST GCE_METADATA_IP")
+    nothing = render_identity_stop({**result, "unset_variables": [], "relays_removed": []}, "shell")
+    assert "unset" not in nothing
+    hostile = render_identity_stop({**result, "unset_variables": ["A;rm -rf /", "OK_NAME"]}, "shell")
+    assert hostile.rstrip().endswith("unset OK_NAME")
     assert "wib-abc" in shell and "# WARNING: wib-def: LocalCloud is not running" in shell
     assert json.loads(render_identity_stop(result, "json")) == result
     assert "unset" not in render_identity_stop(result, "docker-compose")
@@ -222,3 +228,39 @@ def test_ambient_adc_is_reported_and_left_in_place(tmp_path) -> None:
     custom.mkdir()
     (custom / "application_default_credentials.json").write_text("{}", encoding="utf-8")
     assert str(custom) in ambient_adc_warnings({"CLOUDSDK_CONFIG": str(custom)}, home=tmp_path / "empty")[0]
+
+
+def test_identity_environment_follows_the_typed_profile() -> None:
+    import identity_fixtures
+    from localcloud_cli.endpoints import identity_environment
+
+    profile = identity_fixtures.created_session("agent-project-1")["profile"]
+    environment, variables = identity_environment(profile, 49123, {})
+    assert environment == {
+        "GCE_METADATA_HOST": "127.0.0.1:49123",
+        "GCE_METADATA_IP": "127.0.0.1:49123",
+        "GOOGLE_CLOUD_PROJECT": "agent-project-1",
+    }
+    assert variables == ["GCE_METADATA_HOST", "GCE_METADATA_IP"]
+
+    proxied, _ = identity_environment(profile, 49123, {"http_proxy": "http://proxy:3128", "NO_PROXY": "*.corp"})
+    assert proxied["NO_PROXY"] == proxied["no_proxy"] == "*.corp,127.0.0.1,localhost"
+    everything, _ = identity_environment(profile, 49123, {"HTTP_PROXY": "http://proxy:3128", "NO_PROXY": "*"})
+    assert "NO_PROXY" not in everything, "NO_PROXY=* already bypasses every host"
+
+    for broken in (None, {**profile, "kind": "x"}, {**profile, "endpointVariables": ["MISSING"]},
+                   {**profile, "metadataPort": "8081"}):
+        with pytest.raises(HostError):
+            identity_environment(broken, 49123, {})
+
+
+def test_identity_environment_quotes_values_literally() -> None:
+    from localcloud_cli.endpoints import render_identity_environment
+
+    result = {**_IDENTITY_RESULT, "environment": {**_IDENTITY_RESULT["environment"],
+                                                  "NO_PROXY": 'corp,$(touch x),"q"'}}
+    shell = render_identity_environment(result, "shell")
+    assert 'export NO_PROXY="corp,\\$(touch x),\\"q\\""' in shell
+    compose = render_identity_environment(result, "docker-compose")
+    assert '  NO_PROXY: "corp,$(touch x),\\"q\\""' in compose
+

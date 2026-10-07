@@ -529,3 +529,29 @@ def test_identity_session_api_errors_are_specific(
         JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER).create_identity_session()
     assert caught.value.code == code
     assert message in caught.value.message
+
+
+def test_localcloud_calls_never_go_through_an_environment_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A developer's HTTP(S)_PROXY cannot reach their loopback LocalCloud and must not see its calls."""
+    import identity_fixtures
+    from recording_http import recording_server
+
+    def gateway(method: str, target: str, headers: dict[str, str]) -> tuple[int, Any]:
+        return 200, identity_fixtures.active_session()
+
+    with recording_server() as (proxy_port, proxied), recording_server(gateway) as (gateway_port, served):
+        for variable in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+            monkeypatch.setenv(variable, f"http://127.0.0.1:{proxy_port}")
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+        # A client created now reads the proxy variables, as a fresh `lc` process would.
+        monkeypatch.setattr(java_client_module, "_SHARED_CLIENT", None)
+        session = JavaMcpClient(f"http://127.0.0.1:{gateway_port}", PROJECT, USER).identity_session(
+            "wib-0123456789abcdef01234567"
+        )
+        java_client_module.get_shared_http_client().close()
+
+    assert session["state"] == "ACTIVE"
+    assert [hit["target"] for hit in served] == ["/identity/sessions/wib-0123456789abcdef01234567"]
+    assert proxied == [], "the proxy saw a LocalCloud call"
+

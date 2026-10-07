@@ -14,7 +14,7 @@ import warnings
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 from urllib.parse import urlparse
 
 import httpx
@@ -79,6 +79,8 @@ _CHILD_SERVICE_LABEL = "com.localcloud.service"
 IDENTITY_SESSION_LABEL = "com.localcloud.identity-session"
 IDENTITY_PROJECT_LABEL = "com.localcloud.identity-project"
 IDENTITY_ACCOUNT_LABEL = "com.localcloud.identity-account"
+# The session profile's endpoint variables, which `lc env --identity --stop` unsets.
+IDENTITY_VARIABLES_LABEL = "com.localcloud.identity-variables"
 IDENTITY_RELAY_BINARY = "/opt/localcloud/bin/localcloud-relay"
 IDENTITY_RELAY_METADATA_PORT = 8081
 IDENTITY_RELAY_CAPABILITY_ENV = "LOCALCLOUD_RELAY_CAPABILITY"
@@ -3013,6 +3015,7 @@ class DockerRuntime:
         account_key: str,
         relay_profile: Mapping[str, Any] | None = None,
         preferred_host_port: int | None = None,
+        endpoint_variables: Sequence[str] = (),
     ) -> dict[str, Any]:
         """Start a session's host relay from the runtime's own image.
 
@@ -3071,6 +3074,7 @@ class DockerRuntime:
             IDENTITY_SESSION_LABEL: session_id,
             IDENTITY_PROJECT_LABEL: project,
             IDENTITY_ACCOUNT_LABEL: account_key,
+            IDENTITY_VARIABLES_LABEL: ",".join(endpoint_variables),
         }
         attempts = [preferred_host_port, None] if preferred_host_port else [None]
         last_error: Exception | None = None
@@ -3182,6 +3186,12 @@ class DockerRuntime:
             if host_port is not None:
                 return host_port
         return None
+
+
+def identity_relay_variables(container: Any) -> list[str]:
+    """The endpoint variables a relay's session profile set, from its label."""
+    value = _resource_labels(container).get(IDENTITY_VARIABLES_LABEL) or ""
+    return [name for name in value.split(",") if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)]
 
 
 def identity_relay_name(data_volume: str, project: str, account_key: str) -> str:

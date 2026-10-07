@@ -138,10 +138,13 @@ eval "$(lc env --identity --stop)"
 It creates a 12-hour session through LocalCloud's guarded `POST /identity/sessions`, starts
 a relay container from the image of the running LocalCloud (its `localcloud-relay` binary)
 on the runtime's network, publishes the relay's metadata port on `127.0.0.1` only, waits
-until the relay is serving, and prints `GCE_METADATA_HOST`, `GCE_METADATA_IP`
-(`127.0.0.1:<port>`) and `GOOGLE_CLOUD_PROJECT`. `--format json` prints those variables as
-a JSON object and `--format docker-compose` as an `environment:` block; `terraform` prints the
-same exports as `shell`. Java is not needed on the host.
+until the relay is serving, and prints the session's SDK profile: `GCE_METADATA_HOST`,
+`GCE_METADATA_IP` (`127.0.0.1:<port>`) and `GOOGLE_CLOUD_PROJECT`. LocalCloud generates that
+profile (the `profile` of the session response, `IdentitySdkProfile` in its API contract);
+the command only moves its endpoint variables to the published port before any application
+mints a token, and never rewrites a token. `--format json` prints the variables as a JSON
+object and `--format docker-compose` as an `environment:` block; `terraform` prints the same
+exports as `shell`. Java is not needed on the host.
 
 - One relay runs per data volume, project and account. Running the command again replaces
   it, ends the previous session and keeps the port when it is free.
@@ -149,15 +152,22 @@ same exports as `shell`. Java is not needed on the host.
   command never prints, logs or stores it.
 - `GOOGLE_APPLICATION_CREDENTIALS` and gcloud's `application_default_credentials.json` take
   precedence over the metadata server in Google client libraries. The command reports either
-  one as a warning and leaves it unchanged.
+  one as a warning with how to isolate it, and leaves both the variable and the file
+  unchanged: unset `GOOGLE_APPLICATION_CREDENTIALS`, and start applications with
+  `CLOUDSDK_CONFIG` pointing at an empty directory (for example
+  `CLOUDSDK_CONFIG="$(mktemp -d)" python my_app.py`).
+- When `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` is set, the output also sets `NO_PROXY` and
+  `no_proxy` to their current entries plus `127.0.0.1,localhost`, so client libraries reach
+  the loopback relay directly. The CLI's own LocalCloud calls never use those proxies.
 - In strict and gcp-live IAM modes the `--user` caller needs `iam.serviceAccounts.actAs`
   (for example `roles/iam.serviceAccountUser`) on the account.
 - Any process on this machine can use the loopback port while the session lasts, the same
   exposure as an ADC key file. Sessions end after 12 hours, with `--stop` (`--account`
   limits it to that account's relay) and when the project is reset. `lc stop` stops the relay
   with LocalCloud's other child containers; run `lc env --identity` again after the next start.
-- The LocalCloud image must provide identity sessions; an older image reports
-  `identity_sessions_unsupported`.
+  `--stop` prints `unset` for the endpoint variables the removed sessions set.
+- The LocalCloud image must provide identity sessions with an SDK profile; an older image
+  reports `identity_sessions_unsupported`.
 
 ### `console`
 

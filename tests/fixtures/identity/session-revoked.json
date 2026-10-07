@@ -1,0 +1,15 @@
+{
+  "id": "wib-0123456789abcdef01234567",
+  "name": "projects/local-gcp-project/identitySessions/wib-0123456789abcdef01234567",
+  "projectId": "local-gcp-project",
+  "serviceAccount": "default@local-gcp-project.iam.gserviceaccount.com",
+  "serviceAccountUniqueId": "104857600000000000001",
+  "state": "REVOKED",
+  "revocationReason": "deleted",
+  "createdAt": "2026-10-07T00:00:00Z",
+  "readyAt": "2026-10-07T00:00:02Z",
+  "expiresAt": "2026-10-07T12:00:00Z",
+  "revokedAt": "2026-10-07T01:00:00Z",
+  "createdBy": "user:local-developer@localcloud.invalid",
+  "issuer": "https://identity.localcloud.internal/0123456789abcdef"
+}

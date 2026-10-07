@@ -58,9 +58,14 @@ _SHARED_CLIENT: httpx.Client | None = None
 
 
 def get_shared_http_client() -> httpx.Client:
+    """The client for LocalCloud's own listeners, which are always on this machine.
+
+    It ignores HTTP_PROXY, HTTPS_PROXY and ALL_PROXY: a developer's proxy cannot reach their
+    loopback LocalCloud, and must never see its requests.
+    """
     global _SHARED_CLIENT
     if _SHARED_CLIENT is None or _SHARED_CLIENT.is_closed:
-        _SHARED_CLIENT = httpx.Client()
+        _SHARED_CLIENT = httpx.Client(trust_env=False)
     return _SHARED_CLIENT
 
 

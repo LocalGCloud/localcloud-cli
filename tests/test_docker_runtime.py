@@ -11,6 +11,8 @@ from typing import Any
 
 import pytest
 
+import identity_fixtures
+
 import localcloud_cli.docker_runtime as runtime_module
 from localcloud_cli.config import HostPaths, load_config
 from localcloud_cli.constants import DEFAULT_IMAGE
@@ -3054,12 +3056,9 @@ def test_identity_relay_runs_the_runtime_image_on_its_network_with_a_loopback_me
         capability="lcrc1.secret-capability",
         project="identity-project",
         account_key="default",
-        relay_profile={
-            "command": ["/opt/localcloud/bin/localcloud-relay", "workload"],
-            "metadataPort": 8081,
-            "capabilityEnv": "LOCALCLOUD_RELAY_CAPABILITY",
-            "environment": {"LOCALCLOUD_RELAY_METADATA_ADDR": "0.0.0.0:8081"},
-        },
+        # LocalCloud's own relays' gateway origin is replaced by one this runtime's network reaches.
+        relay_profile=identity_fixtures.created_session("identity-project")["relay"],
+        endpoint_variables=["GCE_METADATA_HOST", "GCE_METADATA_IP"],
     )
 
     run = client.containers.run_calls[-1]
@@ -3085,6 +3084,7 @@ def test_identity_relay_runs_the_runtime_image_on_its_network_with_a_loopback_me
     assert labels[CONFIG_HASH_LABEL]
     assert labels[runtime_module.IDENTITY_SESSION_LABEL] == "wib-0123456789abcdef01234567"
     assert labels["localcloud.relay.binding"] == "wib-0123456789abcdef01234567"
+    assert labels[runtime_module.IDENTITY_VARIABLES_LABEL] == "GCE_METADATA_HOST,GCE_METADATA_IP"
     assert "lcrc1.secret-capability" not in json.dumps(labels)
     assert relay["container"] == runtime_module.identity_relay_name(
         record.data_volume, "identity-project", "default"
@@ -3094,6 +3094,7 @@ def test_identity_relay_runs_the_runtime_image_on_its_network_with_a_loopback_me
 
     found = runtime.identity_relays(record.data_volume, project="identity-project")
     assert [container.name for container in found] == [relay["container"]]
+    assert runtime_module.identity_relay_variables(found[0]) == ["GCE_METADATA_HOST", "GCE_METADATA_IP"]
     assert runtime.identity_relays(record.data_volume, project="other-project") == []
     assert runtime.identity_relays("other-volume") == []
     assert runtime.identity_relay_host_port(found[0]) == 28081
