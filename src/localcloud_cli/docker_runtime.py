@@ -3094,6 +3094,9 @@ class DockerRuntime:
                     security_opt=["no-new-privileges"],
                     read_only=True,
                     restart_policy={"Name": "unless-stopped"},
+                    # The image's gateway health check does not apply to the relay, as the
+                    # server's own relays also disable it.
+                    healthcheck={"test": ["NONE"]},
                 )
             except Exception as error:
                 last_error = error

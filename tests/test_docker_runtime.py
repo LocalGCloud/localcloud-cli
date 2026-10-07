@@ -3077,6 +3077,7 @@ def test_identity_relay_runs_the_runtime_image_on_its_network_with_a_loopback_me
     assert run["cap_drop"] == ["ALL"]
     assert run["read_only"] is True
     assert run["restart_policy"] == {"Name": "unless-stopped"}
+    assert run["healthcheck"] == {"test": ["NONE"]}
     labels = run["labels"]
     assert labels[MANAGED_LABEL] == "true"
     assert labels["localcloud.managed"] == "true"
