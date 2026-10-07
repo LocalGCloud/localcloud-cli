@@ -118,6 +118,47 @@ eval "$(lc env --format terraform)"
 lc env --format docker-compose
 ```
 
+#### `env --identity`
+
+`lc env --identity [--account EMAIL]` gives processes on this machine a local identity:
+Application Default Credentials then obtain signed LocalCloud ID and access tokens for one
+service account from a metadata server, in every IAM mode.
+
+```sh
+# Default account: default@<project>.iam.gserviceaccount.com
+eval "$(lc env --identity)"
+
+# A specific service account of the project (email, account ID or unique ID)
+eval "$(lc env --identity --account runner@my-project.iam.gserviceaccount.com)"
+
+# Remove the relay, end the session and unset the variables
+eval "$(lc env --identity --stop)"
+```
+
+It creates a 12-hour session through LocalCloud's guarded `POST /identity/sessions`, starts
+a relay container from the image of the running LocalCloud (its `localcloud-relay` binary)
+on the runtime's network, publishes the relay's metadata port on `127.0.0.1` only, waits
+until the relay is serving, and prints `GCE_METADATA_HOST`, `GCE_METADATA_IP`
+(`127.0.0.1:<port>`) and `GOOGLE_CLOUD_PROJECT`. `--format json` prints those variables as
+a JSON object and `--format docker-compose` as an `environment:` block; `terraform` prints the
+same exports as `shell`. Java is not needed on the host.
+
+- One relay runs per data volume, project and account. Running the command again replaces
+  it, ends the previous session and keeps the port when it is free.
+- The session relay's capability is passed only to the relay container's environment; the
+  command never prints, logs or stores it.
+- `GOOGLE_APPLICATION_CREDENTIALS` and gcloud's `application_default_credentials.json` take
+  precedence over the metadata server in Google client libraries. The command reports either
+  one as a warning and leaves it unchanged.
+- In strict and gcp-live IAM modes the `--user` caller needs `iam.serviceAccounts.actAs`
+  (for example `roles/iam.serviceAccountUser`) on the account.
+- Any process on this machine can use the loopback port while the session lasts, the same
+  exposure as an ADC key file. Sessions end after 12 hours, with `--stop` (`--account`
+  limits it to that account's relay) and when the project is reset. `lc stop` stops the relay
+  with LocalCloud's other child containers; run `lc env --identity` again after the next start.
+- The LocalCloud image must provide identity sessions; an older image reports
+  `identity_sessions_unsupported`.
+
 ### `console`
 
 Opens the LocalCloud browser console for the selected project and user.

@@ -274,7 +274,7 @@ class ContainerCollection(Collection):
                 for host, host_port in bindings
             ]
         mounts: list[dict[str, Any]] = []
-        for source, mount in kwargs["volumes"].items():
+        for source, mount in kwargs.get("volumes", {}).items():
             is_bind = str(source).startswith("/")
             mounts.append(
                 {
@@ -297,6 +297,12 @@ class ContainerCollection(Collection):
             networks=[kwargs["network"]],
             environment=kwargs["environment"],
         )
+        failure = getattr(self, "run_failure", None)
+        if failure is not None:
+            error = failure(kwargs)
+            if error is not None:
+                self.add(resource)
+                raise error
         return self.add(resource)
 
 
@@ -3030,3 +3036,104 @@ def test_classify_resource_allows_managed_network_with_different_data_volume(
 
     ownership = runtime._classify_resource(network, "network", "different-data-volume")
     assert ownership == "managed"
+
+
+# --- Identity session relays (lc env --identity) -------------------------------------------------
+
+
+def test_identity_relay_runs_the_runtime_image_on_its_network_with_a_loopback_metadata_port(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    record = runtime.create(_config(tmp_path, project="identity-project"))
+
+    relay = runtime.start_identity_relay(
+        record,
+        session_id="wib-0123456789abcdef01234567",
+        capability="lcrc1.secret-capability",
+        project="identity-project",
+        account_key="default",
+        relay_profile={
+            "command": ["/opt/localcloud/bin/localcloud-relay", "workload"],
+            "metadataPort": 8081,
+            "capabilityEnv": "LOCALCLOUD_RELAY_CAPABILITY",
+            "environment": {"LOCALCLOUD_RELAY_METADATA_ADDR": "0.0.0.0:8081"},
+        },
+    )
+
+    run = client.containers.run_calls[-1]
+    assert run["image"] == record.image_id
+    assert run["entrypoint"] == ["/opt/localcloud/bin/localcloud-relay"]
+    assert run["command"] == ["workload"]
+    assert run["network"] == record.network_name
+    assert run["ports"] == {"8081/tcp": ("127.0.0.1", None)}
+    assert run["environment"] == {
+        "LOCALCLOUD_RELAY_METADATA_ADDR": "0.0.0.0:8081",
+        "LOCALCLOUD_RELAY_GATEWAY": f"http://{record.name}:5380",
+        "LOCALCLOUD_RELAY_CAPABILITY": "lcrc1.secret-capability",
+    }
+    assert run["mem_limit"] == "32m"
+    assert run["cap_drop"] == ["ALL"]
+    assert run["read_only"] is True
+    assert run["restart_policy"] == {"Name": "unless-stopped"}
+    labels = run["labels"]
+    assert labels[MANAGED_LABEL] == "true"
+    assert labels["localcloud.managed"] == "true"
+    assert labels[VOLUME_NAME_LABEL] == record.data_volume
+    assert labels[CONFIG_HASH_LABEL]
+    assert labels[runtime_module.IDENTITY_SESSION_LABEL] == "wib-0123456789abcdef01234567"
+    assert labels["localcloud.relay.binding"] == "wib-0123456789abcdef01234567"
+    assert "lcrc1.secret-capability" not in json.dumps(labels)
+    assert relay["container"] == runtime_module.identity_relay_name(
+        record.data_volume, "identity-project", "default"
+    )
+    assert relay["host_port"] == 28081
+    assert "lcrc1.secret-capability" not in json.dumps(relay)
+
+    found = runtime.identity_relays(record.data_volume, project="identity-project")
+    assert [container.name for container in found] == [relay["container"]]
+    assert runtime.identity_relays(record.data_volume, project="other-project") == []
+    assert runtime.identity_relays("other-volume") == []
+    assert runtime.identity_relay_host_port(found[0]) == 28081
+
+    runtime.remove_identity_relay(found[0])
+    assert found[0].removed == [{"force": True, "v": True}]
+    assert runtime.identity_relays(record.data_volume) == []
+
+
+def test_identity_relay_falls_back_to_a_free_port_and_never_removes_other_containers(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    record = runtime.create(_config(tmp_path))
+    client.containers.run_failure = lambda kwargs: (
+        RuntimeError("Bind for 127.0.0.1:41000 failed: port is already allocated")
+        if kwargs["ports"]["8081/tcp"][1] == 41000
+        else None
+    )
+
+    relay = runtime.start_identity_relay(
+        record,
+        session_id="wib-1",
+        capability="lcrc1.x",
+        project="fallback-project",
+        account_key="sa@p.iam.gserviceaccount.com",
+        preferred_host_port=41000,
+    )
+
+    assert [call["ports"]["8081/tcp"] for call in client.containers.run_calls[-2:]] == [
+        ("127.0.0.1", 41000),
+        ("127.0.0.1", None),
+    ]
+    assert relay["host_port"] == 28081
+    # The failed attempt's container was removed before the retry; only the relay remains.
+    assert [name for name in client.containers.values if name.startswith("lc-identity-")] == [
+        relay["container"]
+    ]
+
+    with pytest.raises(HostError) as refused:
+        runtime.remove_identity_relay(client.containers.get(record.name))
+    assert refused.value.code == "ownership_mismatch"
+    assert client.containers.get(record.name).removed == []

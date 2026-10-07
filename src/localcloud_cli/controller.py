@@ -26,6 +26,7 @@ from .config import (
 )
 from .constants import DEFAULTS_CONFIG_LABEL, DEFAULT_IMAGE
 from .docker_runtime import (
+    IDENTITY_SESSION_LABEL,
     STOP_TIMEOUT_SECONDS,
     DockerRunPlan,
     DockerRuntime,
@@ -37,6 +38,8 @@ from .java_client import JavaMcpClient, is_retryable_java_error
 _START_READINESS_TIMEOUT = 60.0
 _READINESS_REQUEST_TIMEOUT = 5.0
 _READINESS_POLL_INTERVAL = 1.0
+_IDENTITY_RELAY_TIMEOUT = 45.0
+_IDENTITY_POLL_INTERVAL = 0.25
 
 
 @dataclass(frozen=True)
@@ -981,6 +984,236 @@ class Controller:
             if remaining > 0:
                 time.sleep(min(_READINESS_POLL_INTERVAL, remaining))
 
+
+    def identity_env(
+        self,
+        config: LocalCloudConfig,
+        *,
+        account: str | None = None,
+        observer: Any | None = None,
+        timeout: float = _IDENTITY_RELAY_TIMEOUT,
+    ) -> dict[str, Any]:
+        """Start a host identity relay (`lc env --identity`) and return its environment.
+
+        Creates a guarded LocalCloud identity session, starts its relay from the running
+        LocalCloud image with the metadata port published on 127.0.0.1, waits for the relay's
+        handshake and for the host port to answer, and returns the variables that point
+        Application Default Credentials at it. The session's capability goes only to the relay
+        container: it is not returned, printed, logged or stored. Re-running replaces this
+        project and account's relay, keeping its host port when it is free.
+        """
+        from .endpoints import ambient_adc_warnings
+
+        current = self._resolve_runtime(config, reuse_remembered=True)
+        target = self.target(config)
+        if current is None or current.state != "running":
+            current = self._resolve_runtime(config, require=True)
+        assert current is not None
+        account_key = identity_account_key(account)
+        client = JavaMcpClient(target["url"], project=config.project, user=config.user)
+
+        replaced: list[str] = []
+        preferred_port: int | None = None
+        for relay in self.runtime.identity_relays(
+            config.data_volume, project=config.project, account_key=account_key
+        ):
+            preferred_port = preferred_port or self.runtime.identity_relay_host_port(relay)
+            replaced.extend(self._end_identity_relay(relay, client, failures=[]))
+
+        session = client.create_identity_session(account)
+        capability = session.pop("capability", None)
+        session_id = str(session.get("id") or "")
+        if not isinstance(capability, str) or not capability or not session_id:
+            raise HostError(
+                "identity_session_failed",
+                "LocalCloud did not return an identity session capability",
+                {"project": config.project},
+            )
+        relay: dict[str, Any] | None = None
+        try:
+            if observer is not None and hasattr(observer, "debug"):
+                observer.debug(
+                    f"Starting identity relay for session {session_id} "
+                    f"({session.get('serviceAccount')})"
+                )
+            relay = self.runtime.start_identity_relay(
+                current,
+                session_id=session_id,
+                capability=capability,
+                project=config.project,
+                account_key=account_key,
+                relay_profile=session.get("relay")
+                if isinstance(session.get("relay"), dict)
+                else None,
+                preferred_host_port=preferred_port,
+            )
+            capability = None
+            session = self._await_identity_relay(
+                client, session_id, relay, config.project, timeout=timeout
+            )
+        except BaseException:
+            capability = None
+            if relay is not None:
+                for container in self.runtime.identity_relays(
+                    config.data_volume,
+                    project=config.project,
+                    account_key=account_key,
+                ):
+                    try:
+                        self.runtime.remove_identity_relay(container)
+                    except HostError:
+                        pass
+            try:
+                client.delete_identity_session(session_id)
+            except HostError:
+                pass
+            raise
+        address = f"127.0.0.1:{relay['host_port']}"
+        return {
+            "status": "started",
+            "data_volume": config.data_volume,
+            "project": config.project,
+            "session": {
+                "id": session_id,
+                "service_account": session.get("serviceAccount"),
+                "state": session.get("state"),
+                "expires_at": session.get("expiresAt"),
+                "issuer": session.get("issuer"),
+            },
+            "relay": relay,
+            "environment": {
+                "GCE_METADATA_HOST": address,
+                "GCE_METADATA_IP": address,
+                "GOOGLE_CLOUD_PROJECT": config.project,
+            },
+            "replaced_sessions": replaced,
+            "warnings": ambient_adc_warnings(),
+        }
+
+    def stop_identity(
+        self,
+        config: LocalCloudConfig,
+        *,
+        account: str | None = None,
+    ) -> dict[str, Any]:
+        """Remove identity relays (`lc env --identity --stop`) and end their sessions.
+
+        Without `account` every relay of the selected data volume and project is removed. A
+        session whose LocalCloud is not running ends at its expiry.
+        """
+        current = self._resolve_runtime(config, reuse_remembered=True)
+        relays = self.runtime.identity_relays(
+            config.data_volume,
+            project=config.project,
+            account_key=identity_account_key(account) if account else None,
+        )
+        client = (
+            JavaMcpClient(current.url, project=config.project, user=config.user)
+            if current is not None and current.state == "running" and current.url
+            else None
+        )
+        failures: list[dict[str, Any]] = []
+        ended: list[str] = []
+        removed: list[str] = []
+        for relay in relays:
+            name = getattr(relay, "name", None) or getattr(relay, "id", "")
+            ended.extend(self._end_identity_relay(relay, client, failures=failures))
+            if not any(failure.get("container") == name for failure in failures):
+                removed.append(str(name))
+        return {
+            "status": "stopped" if relays else "not_running",
+            "data_volume": config.data_volume,
+            "project": config.project,
+            "relays_removed": removed,
+            "sessions_ended": ended,
+            "failures": failures,
+        }
+
+    def _end_identity_relay(
+        self,
+        relay: Any,
+        client: JavaMcpClient | None,
+        *,
+        failures: list[dict[str, Any]],
+    ) -> list[str]:
+        labels = dict(getattr(relay, "labels", None) or {})
+        session_id = labels.get(IDENTITY_SESSION_LABEL)
+        name = getattr(relay, "name", None) or getattr(relay, "id", "")
+        try:
+            self.runtime.remove_identity_relay(relay)
+        except HostError as error:
+            failures.append({"container": name, "cause": error.message})
+            return []
+        if not session_id:
+            return []
+        if client is None:
+            failures.append(
+                {
+                    "session": session_id,
+                    "cause": "LocalCloud is not running; the session ends when it expires",
+                }
+            )
+            return []
+        try:
+            client.delete_identity_session(session_id)
+        except HostError as error:
+            failures.append({"session": session_id, "cause": error.message})
+            return []
+        return [session_id]
+
+    def _await_identity_relay(
+        self,
+        client: JavaMcpClient,
+        session_id: str,
+        relay: dict[str, Any],
+        project: str,
+        *,
+        timeout: float,
+    ) -> dict[str, Any]:
+        """Wait until the relay's handshake activated the session and its host port answers."""
+        import httpx
+
+        deadline = time.monotonic() + timeout
+        session: dict[str, Any] = {}
+        metadata = (
+            f"http://127.0.0.1:{relay['host_port']}"
+            "/computeMetadata/v1/project/project-id"
+        )
+        last_problem = "the relay has not completed its readiness handshake"
+        while time.monotonic() < deadline:
+            state, logs = self.runtime.identity_relay_state(relay["container"])
+            if state not in {"running", "created", "restarting"}:
+                raise HostError(
+                    "identity_relay_failed",
+                    f"The identity relay is {state} before it became ready",
+                    {"container": relay["container"], "logs": logs},
+                )
+            session = client.identity_session(session_id)
+            if session.get("state") == "REVOKED":
+                raise HostError(
+                    "identity_session_failed",
+                    "The identity session was revoked while its relay started",
+                    {"session": session_id},
+                )
+            if session.get("state") == "ACTIVE":
+                try:
+                    answer = httpx.get(
+                        metadata,
+                        headers={"Metadata-Flavor": "Google"},
+                        timeout=min(_READINESS_REQUEST_TIMEOUT, max(0.1, deadline - time.monotonic())),
+                    )
+                    if answer.status_code == 200 and answer.text.strip() == project:
+                        return session
+                    last_problem = f"the host port answered HTTP {answer.status_code}"
+                except httpx.HTTPError as error:
+                    last_problem = f"the host port is not reachable yet ({error})"
+            time.sleep(_IDENTITY_POLL_INTERVAL)
+        _, logs = self.runtime.identity_relay_state(relay["container"])
+        raise HostError(
+            "identity_relay_timeout",
+            f"The identity relay did not become ready within {int(timeout)}s: {last_problem}",
+            {"container": relay["container"], "host_port": relay["host_port"], "logs": logs},
+        )
 
     def doctor(self) -> dict[str, Any]:
         result = self.runtime.doctor()
@@ -1940,6 +2173,12 @@ def _changed_fields(
     ):
         changed.add("image")
     return sorted(changed)
+
+
+def identity_account_key(account: str | None) -> str:
+    """The relay label of a requested session account: the value as given, or `default`."""
+    value = (account or "").strip()
+    return value or "default"
 
 
 def _public_config(value: str | None) -> str:

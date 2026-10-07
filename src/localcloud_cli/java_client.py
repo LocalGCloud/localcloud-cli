@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -273,6 +274,79 @@ class JavaMcpClient:
                 url=url,
                 method="GET",
             ) from error
+
+    def _identity_api(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Call LocalCloud's /identity/sessions API as this project and user."""
+        url = f"{self.url}{path}"
+        headers = self._headers()
+        headers["Accept"] = "application/json"
+        request_args: dict[str, Any] = {"headers": headers, "timeout": self.timeout}
+        if payload is not None:
+            request_args["json"] = payload
+        try:
+            response = self._http_request(method, url, **request_args)
+        except Exception as error:
+            raise _transport_error(
+                "java_identity_api_unavailable",
+                "LocalCloud identity session API request failed",
+                error,
+                url=url,
+                method=method,
+            ) from error
+        body: Any = None
+        try:
+            body = response.json()
+        except Exception:
+            body = None
+        if response.status_code >= 400:
+            message = None
+            if isinstance(body, dict) and isinstance(body.get("error"), dict):
+                message = body["error"].get("message")
+            if response.status_code in {404, 405} and message is None:
+                raise HostError(
+                    "identity_sessions_unsupported",
+                    "This LocalCloud image does not provide identity sessions; "
+                    "update the image and restart LocalCloud",
+                    {"url": url, "status_code": response.status_code},
+                )
+            raise HostError(
+                "identity_session_failed",
+                str(message or f"LocalCloud returned HTTP {response.status_code}"),
+                {
+                    "url": url,
+                    "method": method,
+                    "status_code": response.status_code,
+                    "retryable": response.status_code in {408, 429}
+                    or response.status_code >= 500,
+                },
+            )
+        if not isinstance(body, dict):
+            raise HostError(
+                "java_mcp_invalid_response",
+                "LocalCloud returned an invalid identity session response",
+                {"url": url, "method": method},
+            )
+        return body
+
+    def create_identity_session(self, service_account: str | None = None) -> dict[str, Any]:
+        """Create a 12-hour host relay session; the result holds its capability once."""
+        payload: dict[str, Any] = {"projectId": self.project}
+        if service_account:
+            payload["serviceAccount"] = service_account
+        return self._identity_api("POST", "/identity/sessions", payload)
+
+    def identity_session(self, session_id: str) -> dict[str, Any]:
+        return self._identity_api("GET", f"/identity/sessions/{quote(session_id, safe='')}")
+
+    def delete_identity_session(self, session_id: str) -> dict[str, Any]:
+        return self._identity_api(
+            "DELETE", f"/identity/sessions/{quote(session_id, safe='')}"
+        )
 
     def reset_project(self) -> dict[str, Any]:
         """Clear the project's service data; samples are reloaded from the Console.

@@ -135,3 +135,90 @@ def test_off_canonical_runtime_rejects_endpoints_on_ports_it_does_not_publish() 
     endpoints_module._validate_no_unpublished_canonical_endpoints(
         {"FIRESTORE_EMULATOR_HOST": "127.0.0.1:5384"}, {"5380": 5380}
     )
+
+
+# --- lc env --identity -----------------------------------------------------------------------------
+
+_IDENTITY_RESULT = {
+    "status": "started",
+    "project": "agent-project-1",
+    "session": {
+        "id": "wib-abc",
+        "service_account": "default@agent-project-1.iam.gserviceaccount.com",
+        "expires_at": "2026-10-07T12:00:00Z",
+    },
+    "environment": {
+        "GCE_METADATA_HOST": "127.0.0.1:49123",
+        "GCE_METADATA_IP": "127.0.0.1:49123",
+        "GOOGLE_CLOUD_PROJECT": "agent-project-1",
+    },
+    "warnings": ["GOOGLE_APPLICATION_CREDENTIALS=/keys/sa.json takes precedence"],
+}
+
+
+def test_identity_environment_renders_every_env_format() -> None:
+    from localcloud_cli.endpoints import render_identity_environment
+
+    shell = render_identity_environment(_IDENTITY_RESULT, "shell")
+    assert 'export GCE_METADATA_HOST="127.0.0.1:49123"\n' in shell
+    assert 'export GCE_METADATA_IP="127.0.0.1:49123"\n' in shell
+    assert 'export GOOGLE_CLOUD_PROJECT="agent-project-1"\n' in shell
+    assert "# WARNING: GOOGLE_APPLICATION_CREDENTIALS=/keys/sa.json" in shell
+    assert "lc env --identity --stop" in shell
+    assert all(line.startswith(("#", "export ")) for line in shell.splitlines()), shell
+    assert render_identity_environment(_IDENTITY_RESULT, "terraform") == shell
+
+    assert json.loads(render_identity_environment(_IDENTITY_RESULT, "json")) == _IDENTITY_RESULT["environment"]
+
+    compose = render_identity_environment(_IDENTITY_RESULT, "docker-compose")
+    assert '  GCE_METADATA_HOST: "127.0.0.1:49123"' in compose
+    assert compose.splitlines()[0] == "# docker-compose environment variables"
+
+
+def test_identity_environment_refuses_a_non_loopback_relay_address() -> None:
+    from localcloud_cli.endpoints import render_identity_environment
+
+    remote = {**_IDENTITY_RESULT, "environment": {**_IDENTITY_RESULT["environment"],
+                                                  "GCE_METADATA_HOST": "192.0.2.10:8081"}}
+    with pytest.raises(HostError) as caught:
+        render_identity_environment(remote, "shell")
+    assert caught.value.code == "nonlocal_endpoint"
+
+
+def test_identity_stop_unsets_the_session_variables() -> None:
+    from localcloud_cli.endpoints import render_identity_stop
+
+    result = {
+        "status": "stopped",
+        "relays_removed": ["lc-identity-1"],
+        "sessions_ended": ["wib-abc"],
+        "failures": [{"session": "wib-def", "cause": "LocalCloud is not running"}],
+    }
+    shell = render_identity_stop(result, "shell")
+    assert shell.rstrip().endswith("unset GCE_METADATA_HOST GCE_METADATA_IP")
+    assert "wib-abc" in shell and "# WARNING: wib-def: LocalCloud is not running" in shell
+    assert json.loads(render_identity_stop(result, "json")) == result
+    assert "unset" not in render_identity_stop(result, "docker-compose")
+
+
+def test_ambient_adc_is_reported_and_left_in_place(tmp_path) -> None:
+    from localcloud_cli.endpoints import ambient_adc_warnings
+
+    key = tmp_path / "sa.json"
+    key.write_text("{}", encoding="utf-8")
+    well_known = tmp_path / "home" / ".config" / "gcloud" / "application_default_credentials.json"
+    well_known.parent.mkdir(parents=True)
+    well_known.write_text("{}", encoding="utf-8")
+
+    warnings = ambient_adc_warnings({"GOOGLE_APPLICATION_CREDENTIALS": str(key)}, home=tmp_path / "home")
+
+    assert len(warnings) == 2
+    assert f"GOOGLE_APPLICATION_CREDENTIALS={key}" in warnings[0]
+    assert "unset GOOGLE_APPLICATION_CREDENTIALS" in warnings[0]
+    assert str(well_known) in warnings[1]
+    assert key.read_text(encoding="utf-8") == "{}" and well_known.is_file(), "nothing is deleted"
+    assert ambient_adc_warnings({}, home=tmp_path / "empty") == []
+    custom = tmp_path / "gcloud-config"
+    custom.mkdir()
+    (custom / "application_default_credentials.json").write_text("{}", encoding="utf-8")
+    assert str(custom) in ambient_adc_warnings({"CLOUDSDK_CONFIG": str(custom)}, home=tmp_path / "empty")[0]

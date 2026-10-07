@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest  # pyright: ignore[reportMissingImports]
@@ -2343,3 +2344,216 @@ def test_start_missing_network_dry_run_plans_replacement_and_recreation(
     assert isinstance(plan, str)
     assert runtime.preview_remove_network == [False]
     assert runtime.preview_network_exists[-1] is None
+
+
+# --- lc env --identity -----------------------------------------------------------------------------
+
+_CAPABILITY = "lcrc1.never-leaves-the-relay-environment"
+
+
+class _IdentityRuntime(FakeRuntime):
+    """FakeRuntime plus the identity relay operations, tracking relays as labeled containers."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.relays: dict[str, Any] = {}
+        self.started: list[dict[str, Any]] = []
+        self.relay_state = "running"
+        self.removed_relays: list[str] = []
+
+    def identity_relays(self, data_volume: str, *, project=None, account_key=None) -> list[Any]:
+        return [
+            relay
+            for relay in self.relays.values()
+            if relay.labels["com.localcloud.volume-name"] == data_volume
+            and (project is None or relay.labels["com.localcloud.identity-project"] == project)
+            and (account_key is None or relay.labels["com.localcloud.identity-account"] == account_key)
+        ]
+
+    def start_identity_relay(self, runtime, *, session_id, capability, project, account_key,
+                             relay_profile=None, preferred_host_port=None) -> dict[str, Any]:
+        self.started.append({
+            "runtime": runtime.name, "session_id": session_id, "capability": capability,
+            "project": project, "account_key": account_key, "relay_profile": relay_profile,
+            "preferred_host_port": preferred_host_port,
+        })
+        name = f"lc-identity-{len(self.started)}"
+        port = preferred_host_port or 49100 + len(self.started)
+        self.relays[name] = SimpleNamespace(
+            name=name,
+            id=f"id-{name}",
+            port=port,
+            labels={
+                "com.localcloud.volume-name": runtime.data_volume,
+                "com.localcloud.identity-session": session_id,
+                "com.localcloud.identity-project": project,
+                "com.localcloud.identity-account": account_key,
+            },
+        )
+        return {"container": name, "container_id": f"id-{name}", "host_port": port,
+                "image": runtime.image_id, "network": runtime.network_name}
+
+    def identity_relay_state(self, name: str) -> tuple[str, str]:
+        return (self.relay_state if name in self.relays else "removed"), "relay log"
+
+    def identity_relay_host_port(self, relay: Any) -> int | None:
+        return relay.port
+
+    def remove_identity_relay(self, relay: Any) -> None:
+        self.removed_relays.append(relay.name)
+        self.relays.pop(relay.name, None)
+
+
+class _IdentityJava(FakeJavaClient):
+    sessions: dict[str, dict[str, Any]] = {}
+    created: list[tuple[str, str, str | None]] = []
+    deleted: list[str] = []
+    activate = True
+
+    def create_identity_session(self, service_account: str | None = None) -> dict[str, Any]:
+        session_id = f"wib-{len(type(self).created) + 1}"
+        type(self).created.append((self.project, self.user, service_account))
+        session = {
+            "id": session_id,
+            "projectId": self.project,
+            "serviceAccount": service_account or f"default@{self.project}.iam.gserviceaccount.com",
+            "state": "PENDING",
+            "expiresAt": "2026-10-07T12:00:00Z",
+            "issuer": "https://identity.localcloud.internal/0123456789abcdef",
+            "relay": {"command": ["/opt/localcloud/bin/localcloud-relay", "workload"]},
+        }
+        type(self).sessions[session_id] = dict(session)
+        return {**session, "capability": _CAPABILITY}
+
+    def identity_session(self, session_id: str) -> dict[str, Any]:
+        session = type(self).sessions[session_id]
+        if type(self).activate and session["state"] == "PENDING":
+            session["state"] = "ACTIVE"
+        return dict(session)
+
+    def delete_identity_session(self, session_id: str) -> dict[str, Any]:
+        type(self).deleted.append(session_id)
+        type(self).sessions[session_id]["state"] = "REVOKED"
+        return dict(type(self).sessions[session_id])
+
+
+@pytest.fixture
+def identity(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    _IdentityJava.sessions = {}
+    _IdentityJava.created = []
+    _IdentityJava.deleted = []
+    _IdentityJava.activate = True
+    monkeypatch.setattr(controller_module, "JavaMcpClient", _IdentityJava)
+    monkeypatch.setattr(controller_module, "_IDENTITY_POLL_INTERVAL", 0.0)
+    probes: list[str] = []
+
+    def metadata(url: str, **kwargs: Any) -> Any:
+        probes.append(url)
+        assert kwargs["headers"] == {"Metadata-Flavor": "Google"}
+        return SimpleNamespace(status_code=200, text="local-gcp-project")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", metadata)
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.setenv("CLOUDSDK_CONFIG", str(tmp_path / "no-gcloud"))
+    paths = _paths(tmp_path)
+    runtime = _IdentityRuntime()
+    controller = Controller(runtime=cast(Any, runtime), paths=paths)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    return controller, runtime, config, probes
+
+
+def test_identity_env_starts_a_relay_for_a_session_and_keeps_the_capability_out_of_results(
+    identity, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    controller, runtime, config, probes = identity
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(tmp_path / "real-key.json"))
+
+    result = controller.identity_env(config, account="runner@local-gcp-project.iam.gserviceaccount.com")
+
+    assert _IdentityJava.created == [
+        ("local-gcp-project", "local-developer", "runner@local-gcp-project.iam.gserviceaccount.com")
+    ]
+    started = runtime.started[0]
+    assert started["capability"] == _CAPABILITY, "only the relay receives the capability"
+    assert started["session_id"] == "wib-1"
+    assert started["account_key"] == "runner@local-gcp-project.iam.gserviceaccount.com"
+    assert started["relay_profile"] == {"command": ["/opt/localcloud/bin/localcloud-relay", "workload"]}
+    assert result["environment"] == {
+        "GCE_METADATA_HOST": "127.0.0.1:49101",
+        "GCE_METADATA_IP": "127.0.0.1:49101",
+        "GOOGLE_CLOUD_PROJECT": "local-gcp-project",
+    }
+    assert result["session"]["id"] == "wib-1"
+    assert result["session"]["state"] == "ACTIVE"
+    assert probes == ["http://127.0.0.1:49101/computeMetadata/v1/project/project-id"]
+    assert any("GOOGLE_APPLICATION_CREDENTIALS" in warning for warning in result["warnings"])
+    assert _CAPABILITY not in json.dumps(result)
+
+
+def test_identity_env_replaces_the_previous_relay_and_reuses_its_port(identity) -> None:
+    controller, runtime, config, _probes = identity
+    first = controller.identity_env(config)
+    second = controller.identity_env(config)
+
+    assert runtime.removed_relays == ["lc-identity-1"]
+    assert _IdentityJava.deleted == ["wib-1"]
+    assert second["replaced_sessions"] == ["wib-1"]
+    assert runtime.started[1]["preferred_host_port"] == 49101
+    assert second["environment"]["GCE_METADATA_HOST"] == first["environment"]["GCE_METADATA_HOST"]
+    assert list(runtime.relays) == ["lc-identity-2"]
+
+
+def test_identity_env_cleans_up_when_the_relay_never_becomes_ready(identity) -> None:
+    controller, runtime, config, _probes = identity
+    runtime.relay_state = "exited"
+
+    with pytest.raises(HostError) as caught:
+        controller.identity_env(config)
+
+    assert caught.value.code == "identity_relay_failed"
+    assert runtime.relays == {}, "the relay is removed"
+    assert _IdentityJava.deleted == ["wib-1"], "the session is ended"
+    assert _CAPABILITY not in json.dumps(caught.value.to_dict())
+
+
+def test_identity_env_times_out_without_the_handshake(identity) -> None:
+    controller, runtime, config, _probes = identity
+    _IdentityJava.activate = False
+
+    with pytest.raises(HostError) as caught:
+        controller.identity_env(config, timeout=0.05)
+
+    assert caught.value.code == "identity_relay_timeout"
+    assert runtime.relays == {} and _IdentityJava.deleted == ["wib-1"]
+
+
+def test_identity_stop_removes_relays_and_ends_sessions(identity) -> None:
+    controller, runtime, config, _probes = identity
+    controller.identity_env(config)
+    controller.identity_env(config, account="other@local-gcp-project.iam.gserviceaccount.com")
+
+    only = controller.stop_identity(config, account="other@local-gcp-project.iam.gserviceaccount.com")
+    assert only["sessions_ended"] == ["wib-2"] and list(runtime.relays) == ["lc-identity-1"]
+
+    everything = controller.stop_identity(config)
+    assert everything["status"] == "stopped"
+    assert everything["relays_removed"] == ["lc-identity-1"]
+    assert everything["sessions_ended"] == ["wib-1"]
+    assert controller.stop_identity(config)["status"] == "not_running"
+
+
+def test_identity_stop_removes_relays_while_localcloud_is_stopped(identity) -> None:
+    controller, runtime, config, _probes = identity
+    controller.identity_env(config)
+    runtime.record = replace(runtime.record, state="exited")
+
+    result = controller.stop_identity(config)
+
+    assert result["relays_removed"] == ["lc-identity-1"]
+    assert result["sessions_ended"] == []
+    assert result["failures"] == [
+        {"session": "wib-1", "cause": "LocalCloud is not running; the session ends when it expires"}
+    ]

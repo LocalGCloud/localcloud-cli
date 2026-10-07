@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
-from typing import Any
+from pathlib import Path
+from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 from .errors import HostError
@@ -57,6 +59,95 @@ def environment_config(
             ) from error
     validate_local_endpoints(rewritten)
     return rewritten
+
+
+IDENTITY_ENVIRONMENT_KEYS = ("GCE_METADATA_HOST", "GCE_METADATA_IP", "GOOGLE_CLOUD_PROJECT")
+
+
+def ambient_adc_warnings(
+    environ: Mapping[str, str] | None = None,
+    home: Path | None = None,
+) -> list[str]:
+    """Credentials Application Default Credentials prefers over the metadata server.
+
+    Google's client libraries read GOOGLE_APPLICATION_CREDENTIALS first, then gcloud's
+    application-default credentials file, and only then the metadata server an identity
+    session provides. They are reported, never changed or deleted.
+    """
+    values = os.environ if environ is None else environ
+    warnings: list[str] = []
+    configured = (values.get("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+    if configured:
+        warnings.append(
+            f"GOOGLE_APPLICATION_CREDENTIALS={configured} takes precedence over the identity "
+            "session's metadata server: Google client libraries in this shell use it until "
+            "you unset GOOGLE_APPLICATION_CREDENTIALS. LocalCloud left it unchanged."
+        )
+    config_dir = (values.get("CLOUDSDK_CONFIG") or "").strip()
+    if config_dir:
+        well_known = Path(config_dir) / "application_default_credentials.json"
+    elif os.name == "nt" and values.get("APPDATA"):
+        well_known = Path(values["APPDATA"]) / "gcloud" / "application_default_credentials.json"
+    else:
+        base = home if home is not None else Path.home()
+        well_known = base / ".config" / "gcloud" / "application_default_credentials.json"
+    if well_known.is_file():
+        warnings.append(
+            f"gcloud application-default credentials at {well_known} take precedence over the "
+            "identity session's metadata server for libraries that read that file. LocalCloud "
+            "left them unchanged."
+        )
+    return warnings
+
+
+def render_identity_environment(result: Mapping[str, Any], output_format: str) -> str:
+    """`lc env --identity` output in the same formats as `lc env`."""
+    environment = {
+        key: str(result["environment"][key]) for key in IDENTITY_ENVIRONMENT_KEYS
+    }
+    validate_local_endpoints(
+        {key: f"http://{value}" for key, value in environment.items() if key != "GOOGLE_CLOUD_PROJECT"}
+    )
+    if output_format == "json":
+        return json.dumps(environment, indent=2)
+    session = result.get("session") or {}
+    summary = (
+        f"LocalCloud identity session {session.get('id')} for {session.get('service_account')} "
+        f"(project {result.get('project')}) expires {session.get('expires_at')}; "
+        "end it with: lc env --identity --stop"
+    )
+    warnings = [str(warning) for warning in result.get("warnings") or []]
+    if output_format == "docker-compose":
+        lines = [
+            "# docker-compose environment variables",
+            f"# {summary}",
+            "# 127.0.0.1 is the Docker host's loopback; only host-networked services reach it.",
+            *(f"# WARNING: {warning}" for warning in warnings),
+            "environment:",
+            *(f'  {key}: "{value}"' for key, value in environment.items()),
+        ]
+        return "\n".join(lines) + "\n"
+    lines = [
+        f"# {summary}",
+        *(f"# WARNING: {warning}" for warning in warnings),
+        *(f'export {key}="{value}"' for key, value in environment.items()),
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def render_identity_stop(result: Mapping[str, Any], output_format: str) -> str:
+    """`lc env --identity --stop` output: unset the session variables in shell formats."""
+    if output_format == "json":
+        return json.dumps(dict(result), indent=2)
+    ended = ", ".join(result.get("sessions_ended") or []) or "none"
+    removed = len(result.get("relays_removed") or [])
+    lines = [f"# LocalCloud identity relays removed: {removed}; sessions ended: {ended}"]
+    for failure in result.get("failures") or []:
+        subject = failure.get("session") or failure.get("container")
+        lines.append(f"# WARNING: {subject}: {failure.get('cause')}")
+    if output_format != "docker-compose":
+        lines.append("unset GCE_METADATA_HOST GCE_METADATA_IP")
+    return "\n".join(lines) + "\n"
 
 
 def rewrite_endpoints(value: Any, endpoint_map: dict[str, Any]) -> Any:

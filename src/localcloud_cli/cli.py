@@ -233,6 +233,11 @@ class _ExecutionObserver:
                 f"Opening LocalCloud console for project {config.project!r} "
                 f"on data volume: {config.data_volume!r}…"
             )
+        elif command == "env" and getattr(args, "identity", False):
+            message = (
+                f"{'Stopping' if args.stop else 'Starting'} the identity relay for project "
+                f"{config.project!r} on data volume: {config.data_volume!r}…"
+            )
         elif command == "env":
             message = (
                 f"Generating {args.format} SDK configuration for project "
@@ -587,6 +592,17 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
             from .mcp_stdio import run
 
             return run(config, connect_timeout=args.connect_timeout)
+        if args.command == "env" and getattr(args, "identity", False):
+            if args.stop:
+                result = controller.stop_identity(config, account=args.account)
+            else:
+                result = controller.identity_env(
+                    config, account=args.account, observer=observer
+                )
+            if observer is not None:
+                for warning in result.get("warnings") or []:
+                    observer.warning(str(warning))
+            return result
         target = controller.target(config)
         if args.command == "console":
             import webbrowser
@@ -706,6 +722,15 @@ def _print_result(args: argparse.Namespace, result: Any, fields: list[str]) -> N
         return
     capabilities = terminal_capabilities(sys.stdout)
     color = capabilities.color
+    if command == "env" and getattr(args, "identity", False) and isinstance(result, dict):
+        from .endpoints import render_identity_environment, render_identity_stop
+
+        _print_native(
+            render_identity_stop(result, args.format)
+            if args.stop
+            else render_identity_environment(result, args.format)
+        )
+        return
     if command == "env":
         if isinstance(result, str):
             _print_native(result)
@@ -775,6 +800,10 @@ def _initial_task(args: argparse.Namespace) -> str:
         return "Preparing to read LocalCloud logs…"
     if command == "console":
         return "Preparing to open the LocalCloud console…"
+    if command == "env" and getattr(args, "identity", False):
+        if args.stop:
+            return "Stopping the LocalCloud identity relay…"
+        return "Preparing a LocalCloud identity session…"
     if command == "env":
         return f"Preparing {args.format} SDK configuration…"
     return f"Running LocalCloud {command}…"
@@ -824,6 +853,20 @@ def _success_message(args: argparse.Namespace, result: Any) -> str:
         return "LocalCloud logs loaded"
     if command == "console":
         return "LocalCloud console opened"
+    if command == "env" and getattr(args, "identity", False) and isinstance(result, dict):
+        if args.stop:
+            removed = len(result.get("relays_removed") or [])
+            if removed == 0:
+                return "No LocalCloud identity relay was running for this project"
+            return (
+                f"Removed {removed} identity relay(s); ended sessions: "
+                f"{', '.join(result.get('sessions_ended') or []) or 'none'}"
+            )
+        session = result.get("session") or {}
+        return (
+            f"Identity session {session.get('id')} serves {session.get('service_account')} at "
+            f"{result['environment']['GCE_METADATA_HOST']} until {session.get('expires_at')}"
+        )
     if command == "env":
         return "SDK configuration generated"
     return f"LocalCloud {command} completed"
@@ -871,7 +914,14 @@ class _LocalCloudParser(argparse.ArgumentParser):
             args = sys.argv[1:]
         if not args:
             args = ["-h"]
-        return super().parse_args(args, namespace)
+        parsed = super().parse_args(args, namespace)
+        if (
+            getattr(parsed, "command", None) == "env"
+            and not parsed.identity
+            and (parsed.account is not None or parsed.stop)
+        ):
+            self.error("--account and --stop require --identity")
+        return parsed
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -1123,6 +1173,30 @@ def _parser() -> argparse.ArgumentParser:
         choices=("shell", "json", "terraform", "docker-compose"),
         default="shell",
         help="Output format (default: shell)",
+    )
+    env_command.add_argument(
+        "--identity",
+        action="store_true",
+        help=(
+            "Start a 12-hour local identity session: a metadata relay on 127.0.0.1 that "
+            "Application Default Credentials use as the selected service account"
+        ),
+    )
+    env_command.add_argument(
+        "--account",
+        metavar="EMAIL",
+        help=(
+            "Service account of the identity session (email, account ID or unique ID; "
+            "default: default@<project>.iam.gserviceaccount.com); requires --identity"
+        ),
+    )
+    env_command.add_argument(
+        "--stop",
+        action="store_true",
+        help=(
+            "Remove the project's identity relays and end their sessions "
+            "(only that account's with --account); requires --identity"
+        ),
     )
     _add_debug_option(env_command)
 

@@ -150,6 +150,35 @@ class FakeController:
             "user": config.user,
         }
 
+    def identity_env(
+        self, config: Any, *, account: str | None = None, observer: Any | None = None
+    ) -> dict[str, Any]:
+        self.calls.append(("identity_env", (config, account)))
+        return {
+            "status": "started",
+            "project": config.project,
+            "session": {
+                "id": "wib-1",
+                "service_account": account or f"default@{config.project}.iam.gserviceaccount.com",
+                "expires_at": "2026-10-07T12:00:00Z",
+            },
+            "environment": {
+                "GCE_METADATA_HOST": "127.0.0.1:49123",
+                "GCE_METADATA_IP": "127.0.0.1:49123",
+                "GOOGLE_CLOUD_PROJECT": config.project,
+            },
+            "warnings": ["GOOGLE_APPLICATION_CREDENTIALS=/keys/sa.json takes precedence"],
+        }
+
+    def stop_identity(self, config: Any, *, account: str | None = None) -> dict[str, Any]:
+        self.calls.append(("stop_identity", (config, account)))
+        return {
+            "status": "stopped",
+            "relays_removed": ["lc-identity-1"],
+            "sessions_ended": ["wib-1"],
+            "failures": [],
+        }
+
     def doctor(self) -> dict[str, Any]:
         self.calls.append(("doctor", None))
         return {
@@ -1928,3 +1957,53 @@ def test_help_flags_include_command_required_note(
     help_long = capsys.readouterr().out
     assert "Note: One of the <command> is required." in help_long
 
+
+
+def test_env_identity_prints_session_exports_and_reports_ambient_credentials(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["env", "--identity", "--project-id", "agent-project-1"]) == 0
+
+    captured = capsys.readouterr()
+    assert 'export GCE_METADATA_HOST="127.0.0.1:49123"' in captured.out
+    assert 'export GCE_METADATA_IP="127.0.0.1:49123"' in captured.out
+    assert 'export GOOGLE_CLOUD_PROJECT="agent-project-1"' in captured.out
+    assert "Warning: GOOGLE_APPLICATION_CREDENTIALS=/keys/sa.json" in captured.err
+    assert "Identity session wib-1 serves default@agent-project-1" in captured.err
+    assert "target" not in [call[0] for call in FakeController.instance.calls]
+    config, account = dict(FakeController.instance.calls)["identity_env"]
+    assert (config.project, account) == ("agent-project-1", None)
+
+
+def test_env_identity_json_and_account_selection(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["env", "--identity", "--account", "runner@p.iam.gserviceaccount.com",
+                 "--format", "json"]) == 0
+
+    assert json.loads(capsys.readouterr().out) == {
+        "GCE_METADATA_HOST": "127.0.0.1:49123",
+        "GCE_METADATA_IP": "127.0.0.1:49123",
+        "GOOGLE_CLOUD_PROJECT": "local-gcp-project",
+    }
+    assert dict(FakeController.instance.calls)["identity_env"][1] == "runner@p.iam.gserviceaccount.com"
+
+
+def test_env_identity_stop_unsets_and_requires_identity(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["env", "--identity", "--stop", "--account", "a@p.iam.gserviceaccount.com"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.rstrip().endswith("unset GCE_METADATA_HOST GCE_METADATA_IP")
+    assert "Removed 1 identity relay(s); ended sessions: wib-1" in captured.err
+    assert dict(FakeController.instance.calls)["stop_identity"][1] == "a@p.iam.gserviceaccount.com"
+
+    for flags in (["--stop"], ["--account", "a@p.iam.gserviceaccount.com"]):
+        assert main(["env", *flags]) == 2
+        assert "require --identity" in capsys.readouterr().err

@@ -471,3 +471,61 @@ def test_default_client_transport_uses_shared_project_and_caller(
     assert result is None
     assert calls[0]["headers"]["X-LocalCloud-Project"] == "local-gcp-project"
     assert calls[0]["headers"]["X-LocalCloud-User"] == "local-developer"
+
+
+def test_identity_session_api_calls_carry_project_and_caller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def request(method: str, url: str, **kwargs: Any) -> FakeResponse:
+        calls.append({"method": method, "url": url, **kwargs})
+        return FakeResponse({"id": "wib-1", "state": "PENDING"})
+
+    monkeypatch.setattr(java_client_module.httpx, "request", request)
+    client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
+
+    assert client.create_identity_session("sa@agent-project.iam.gserviceaccount.com")["id"] == "wib-1"
+    client.identity_session("wib-1")
+    client.delete_identity_session("wib/../x")
+
+    assert [(call["method"], call["url"]) for call in calls] == [
+        ("POST", "http://127.0.0.1:49080/identity/sessions"),
+        ("GET", "http://127.0.0.1:49080/identity/sessions/wib-1"),
+        ("DELETE", "http://127.0.0.1:49080/identity/sessions/wib%2F..%2Fx"),
+    ]
+    assert calls[0]["json"] == {
+        "projectId": PROJECT,
+        "serviceAccount": "sa@agent-project.iam.gserviceaccount.com",
+    }
+    assert all(call["headers"]["X-LocalCloud-Project"] == PROJECT for call in calls)
+    assert all(call["headers"]["X-LocalCloud-User"] == USER for call in calls)
+
+
+@pytest.mark.parametrize(
+    ("status", "payload", "code", "message"),
+    [
+        (404, None, "identity_sessions_unsupported", "does not provide identity sessions"),
+        (403, {"error": {"code": 403, "message": "Permission 'iam.serviceAccounts.actAs' denied"}},
+         "identity_session_failed", "iam.serviceAccounts.actAs"),
+        (404, {"error": {"code": 404, "message": "Service account x was not found"}},
+         "identity_session_failed", "was not found"),
+    ],
+)
+def test_identity_session_api_errors_are_specific(
+    monkeypatch: pytest.MonkeyPatch, status: int, payload: Any, code: str, message: str
+) -> None:
+    class Failed(FakeResponse):
+        def json(self) -> Any:
+            if self.payload is None:
+                raise ValueError("not JSON")
+            return self.payload
+
+    monkeypatch.setattr(
+        java_client_module.httpx, "request",
+        lambda method, url, **kwargs: Failed(payload, status_code=status),
+    )
+    with pytest.raises(HostError) as caught:
+        JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER).create_identity_session()
+    assert caught.value.code == code
+    assert message in caught.value.message

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import os
@@ -72,6 +73,16 @@ _FALLBACK_TCP_PORT_RANGES = (
 )
 _CHILD_MANAGED_LABEL = "localcloud.managed"
 _CHILD_SERVICE_LABEL = "com.localcloud.service"
+# Host relay sessions (`lc env --identity`): one relay container per data volume, project and
+# account, started from the running LocalCloud image. Its child ownership labels let `lc stop`
+# and `lc restart` remove it with the server's own children.
+IDENTITY_SESSION_LABEL = "com.localcloud.identity-session"
+IDENTITY_PROJECT_LABEL = "com.localcloud.identity-project"
+IDENTITY_ACCOUNT_LABEL = "com.localcloud.identity-account"
+IDENTITY_RELAY_BINARY = "/opt/localcloud/bin/localcloud-relay"
+IDENTITY_RELAY_METADATA_PORT = 8081
+IDENTITY_RELAY_CAPABILITY_ENV = "LOCALCLOUD_RELAY_CAPABILITY"
+_IDENTITY_RELAY_MEMORY = "32m"
 # The Cloud SQL MySQL companion keeps its data on the volume, and the server
 # recreates it on demand, so it is the only child a replacement removes.
 _MYSQL_COMPANION_SERVICE = "cloudsql-mysql"
@@ -2953,6 +2964,229 @@ class DockerRuntime:
             if resource is not None:
                 _remove_verified(resource, kind, labels, failures, **kwargs)
         return failures
+
+    # --- Identity session relays (`lc env --identity`) -------------------------------------------
+
+    def identity_relays(
+        self,
+        data_volume: str,
+        *,
+        project: str | None = None,
+        account_key: str | None = None,
+    ) -> list[Any]:
+        """Identity relay containers of this data volume, optionally one project or account."""
+        try:
+            containers = self.client.containers.list(
+                all=True,
+                filters={
+                    "label": [
+                        IDENTITY_SESSION_LABEL,
+                        f"{VOLUME_NAME_LABEL}={data_volume}",
+                    ]
+                },
+            )
+        except Exception as error:
+            raise HostError(
+                "docker_inspect_failed",
+                "Could not list LocalCloud identity relays",
+                {"data_volume": data_volume, "cause": str(error)},
+            ) from error
+        selected = []
+        for container in containers:
+            labels = _resource_labels(container)
+            if labels.get(VOLUME_NAME_LABEL) != data_volume:
+                continue
+            if project is not None and labels.get(IDENTITY_PROJECT_LABEL) != project:
+                continue
+            if account_key is not None and labels.get(IDENTITY_ACCOUNT_LABEL) != account_key:
+                continue
+            selected.append(container)
+        return selected
+
+    def start_identity_relay(
+        self,
+        runtime: RuntimeRecord,
+        *,
+        session_id: str,
+        capability: str,
+        project: str,
+        account_key: str,
+        relay_profile: Mapping[str, Any] | None = None,
+        preferred_host_port: int | None = None,
+    ) -> dict[str, Any]:
+        """Start a session's host relay from the runtime's own image.
+
+        The relay joins the runtime's network and reaches the gateway by the runtime's container
+        name; its metadata listener is published on 127.0.0.1 only. The capability is passed in
+        the relay-only environment variable and nowhere else.
+        """
+        if not runtime.network_name or not runtime.name:
+            raise HostError(
+                "identity_relay_unavailable",
+                "The LocalCloud runtime has no network to attach an identity relay to",
+                {"data_volume": runtime.data_volume},
+            )
+        profile = dict(relay_profile or {})
+        command = profile.get("command")
+        if not (
+            isinstance(command, list)
+            and command
+            and all(isinstance(part, str) and part for part in command)
+        ):
+            command = [IDENTITY_RELAY_BINARY, "workload"]
+        port_value = profile.get("metadataPort")
+        metadata_port = (
+            port_value
+            if isinstance(port_value, int) and 0 < port_value < 65536
+            else IDENTITY_RELAY_METADATA_PORT
+        )
+        capability_env = profile.get("capabilityEnv")
+        if not isinstance(capability_env, str) or not capability_env:
+            capability_env = IDENTITY_RELAY_CAPABILITY_ENV
+        environment = {
+            "LOCALCLOUD_RELAY_METADATA_ADDR": f"0.0.0.0:{metadata_port}",
+        }
+        served = profile.get("environment")
+        if isinstance(served, Mapping) and isinstance(
+            served.get("LOCALCLOUD_RELAY_METADATA_ADDR"), str
+        ):
+            environment["LOCALCLOUD_RELAY_METADATA_ADDR"] = served[
+                "LOCALCLOUD_RELAY_METADATA_ADDR"
+            ]
+        # The gateway as seen from the runtime network; the relay never uses the host's ports.
+        environment["LOCALCLOUD_RELAY_GATEWAY"] = f"http://{runtime.name}:{GATEWAY_PORT}"
+        environment[capability_env] = capability
+        image = runtime.image_id or runtime.actual_image or runtime.configured_image
+        name = identity_relay_name(runtime.data_volume, project, account_key)
+        labels = {
+            MANAGED_LABEL: "true",
+            _CHILD_MANAGED_LABEL: "true",
+            VOLUME_NAME_LABEL: runtime.data_volume,
+            CONFIG_HASH_LABEL: runtime.config_hash
+            or runtime.labels.get(CONFIG_HASH_LABEL)
+            or "identity-session",
+            "localcloud.service": "identity-session",
+            "localcloud.relay": "true",
+            "localcloud.relay.binding": session_id,
+            IDENTITY_SESSION_LABEL: session_id,
+            IDENTITY_PROJECT_LABEL: project,
+            IDENTITY_ACCOUNT_LABEL: account_key,
+        }
+        attempts = [preferred_host_port, None] if preferred_host_port else [None]
+        last_error: Exception | None = None
+        for host_port in attempts:
+            self._remove_named_identity_relay(name)
+            try:
+                container = self.client.containers.run(
+                    image,
+                    command=list(command[1:]),
+                    entrypoint=[command[0]],
+                    name=name,
+                    detach=True,
+                    labels=labels,
+                    environment=environment,
+                    network=runtime.network_name,
+                    ports={
+                        f"{metadata_port}/tcp": ("127.0.0.1", host_port),
+                    },
+                    mem_limit=_IDENTITY_RELAY_MEMORY,
+                    cap_drop=["ALL"],
+                    security_opt=["no-new-privileges"],
+                    read_only=True,
+                    restart_policy={"Name": "unless-stopped"},
+                )
+            except Exception as error:
+                last_error = error
+                self._remove_named_identity_relay(name)
+                if host_port is not None and _is_port_conflict(error):
+                    continue
+                break
+            published = self._identity_relay_port(container, metadata_port)
+            if published is None:
+                self._remove_named_identity_relay(name)
+                raise HostError(
+                    "identity_relay_failed",
+                    "The identity relay started without a published metadata port",
+                    {"container": name},
+                )
+            return {
+                "container": name,
+                "container_id": getattr(container, "id", None),
+                "host_port": published,
+                "image": image,
+                "network": runtime.network_name,
+            }
+        raise HostError(
+            "identity_relay_failed",
+            "Could not start the LocalCloud identity relay",
+            {"container": name, "image": image, "cause": str(last_error)},
+        ) from last_error
+
+    def identity_relay_state(self, container_name: str) -> tuple[str, str]:
+        """The relay's Docker state and its recent log lines (which never hold the capability)."""
+        container = self._get_optional(self.client.containers, container_name, "container")
+        if container is None:
+            return "removed", ""
+        try:
+            container.reload()
+        except Exception:
+            pass
+        return _container_state(container), _container_logs(container, tail=20)
+
+    def identity_relay_host_port(self, container: Any) -> int | None:
+        return self._identity_relay_port(container, IDENTITY_RELAY_METADATA_PORT)
+
+    def remove_identity_relay(self, container: Any) -> None:
+        """Remove one relay after checking it is an identity relay of a LocalCloud volume."""
+        labels = _resource_labels(container)
+        if (
+            labels.get(MANAGED_LABEL) != "true"
+            or labels.get(_CHILD_MANAGED_LABEL) != "true"
+            or not labels.get(IDENTITY_SESSION_LABEL)
+            or not labels.get(VOLUME_NAME_LABEL)
+        ):
+            raise HostError(
+                "ownership_mismatch",
+                "Refusing to remove a container that is not a LocalCloud identity relay",
+                {"container": _resource_identity(container), "labels": labels},
+            )
+        try:
+            container.remove(force=True, v=True)
+        except Exception as error:
+            if not _is_not_found(error):
+                raise HostError(
+                    "identity_relay_remove_failed",
+                    "Could not remove the LocalCloud identity relay",
+                    {"container": _resource_identity(container), "cause": str(error)},
+                ) from error
+
+    def _remove_named_identity_relay(self, name: str) -> None:
+        existing = self._get_optional(self.client.containers, name, "container")
+        if existing is not None:
+            self.remove_identity_relay(existing)
+
+    @staticmethod
+    def _identity_relay_port(container: Any, metadata_port: int) -> int | None:
+        reload_container = getattr(container, "reload", None)
+        if callable(reload_container):
+            try:
+                reload_container()
+            except Exception:
+                pass
+        for host_ip, host_port in _published_ports(container).get(
+            f"{metadata_port}/tcp", ()
+        ):
+            if host_port is not None:
+                return host_port
+        return None
+
+
+def identity_relay_name(data_volume: str, project: str, account_key: str) -> str:
+    """Stable container name of one data volume, project and account's identity relay."""
+    digest = hashlib.sha256(
+        f"{data_volume}\0{project}\0{account_key}".encode("utf-8")
+    ).hexdigest()
+    return f"lc-identity-{digest[:12]}"
 
 
 def _published_ports(container: Any) -> PublishedPorts:

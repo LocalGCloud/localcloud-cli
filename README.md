@@ -395,7 +395,7 @@ lc start --services default
 | `lc doctor` | Check Docker access and detect legacy LocalCloud state |
 | `lc start` | Start a runtime; prepares a project when `--project-id` is explicit |
 | `lc status` | Show runtime health, ownership, endpoints, and Docker details |
-| `lc env` | Generate SDK, Terraform, or Docker Compose configuration |
+| `lc env` | Generate SDK, Terraform, or Docker Compose configuration; `--identity` starts a local identity session |
 | `lc console` | Open the web console for the selected project and user |
 | `lc logs` | Print recent runtime logs |
 | `lc restart` | Restart runtime with local image (default: `--no-pull`; `--pull` to check registry) |
@@ -482,6 +482,17 @@ lc env --format docker-compose
 
 ```sh
 lc env --format json | jq '.STORAGE_EMULATOR_HOST'
+```
+
+**Signed local identity for host processes.** Application Default Credentials obtain LocalCloud-signed
+ID and access tokens for a service account from a 12-hour metadata relay on `127.0.0.1`. The command
+warns, without changing anything, when `GOOGLE_APPLICATION_CREDENTIALS` or gcloud's application-default
+credentials would take precedence. See [`env --identity`](docs/cli-reference.md#env---identity).
+
+```sh
+eval "$(lc env --identity --account runner@my-project.iam.gserviceaccount.com)"
+python my_app.py          # google.auth.default() now returns the runner account
+eval "$(lc env --identity --stop)"
 ```
 
 **In CI.** Skip the registry check for reproducibility, disable log tailing, and fail loudly.
