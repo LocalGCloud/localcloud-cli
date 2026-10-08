@@ -872,3 +872,99 @@ def test_status_summary_renders_port_availability_when_stopped() -> None:
     summary = render_summary("status", payload)
     assert "Ports        5380-5405 (available)" in summary
 
+
+
+QEMU_FINDING = {
+    "id": "qemu_vm",
+    "severity": "warning",
+    "message": "Colima runs a QEMU virtual machine.",
+    "fix": {
+        "summary": "Recreate Colima on VZ with Rosetta",
+        "commands": ["colima delete --force"],
+        "notes": [],
+        "deletes_data": True,
+    },
+    "steps": [],
+}
+
+
+def test_doctor_summary_shows_docker_host_setup_and_fixes() -> None:
+    payload = {
+        "status": "ok",
+        "docker": "29.8.1",
+        "docker_host": "Colima (QEMU)",
+        "setup_findings": [
+            QEMU_FINDING,
+            {
+                "id": "rosetta_off",
+                "severity": "warning",
+                "message": "Docker Desktop has Rosetta turned off.",
+                "fix": None,
+                "steps": ["In Docker Desktop, open Settings > General"],
+            },
+        ],
+        "fixes": [
+            {"id": "qemu_vm", "summary": "Recreate Colima", "status": "declined"},
+            {
+                "id": "docker_not_running",
+                "summary": "Start Colima",
+                "status": "failed",
+                "command": "colima start",
+                "exit_code": 1,
+            },
+            {"id": "y", "summary": "Turn on Rosetta", "status": "applied"},
+        ],
+    }
+
+    lines = render_summary("doctor", payload).splitlines()
+
+    assert "Docker host  Colima (QEMU)" in lines
+    assert "Setup        Colima runs a QEMU virtual machine." in lines
+    assert "             Fix: Recreate Colima on VZ with Rosetta; run 'lc doctor --fix'" in lines
+    assert "             Step: In Docker Desktop, open Settings > General" in lines
+    assert "Fixes        Declined: Recreate Colima" in lines
+    assert "             Failed: Start Colima ('colima start' exited with 1)" in lines
+    assert "             Applied: Turn on Rosetta" in lines
+
+
+def test_doctor_summary_omits_setup_when_there_are_no_findings() -> None:
+    summary = render_summary(
+        "doctor", {"status": "ok", "docker_host": "unknown", "setup_findings": []}
+    )
+
+    assert "Setup" not in summary
+    assert "Docker host  unknown" in summary
+
+
+def test_render_findings_skips_a_message_the_error_already_printed() -> None:
+    from localcloud_cli.output import render_findings
+
+    findings = [
+        {
+            "id": "docker_not_running",
+            "severity": "error",
+            "message": "Colima is installed but not running.",
+            "fix": {"summary": "Start Colima"},
+            "steps": [],
+        },
+        QEMU_FINDING,
+    ]
+
+    rendered = render_findings(findings, skip_message="Colima is installed but not running.")
+
+    assert rendered.splitlines() == [
+        "Setup  Fix: Start Colima; run 'lc doctor --fix'",
+        "Setup  Colima runs a QEMU virtual machine.",
+        "       Fix: Recreate Colima on VZ with Rosetta; run 'lc doctor --fix'",
+    ]
+    unreachable = {
+        "id": "docker_unreachable",
+        "severity": "error",
+        "message": "Docker is not reachable at tcp://ci:2376.",
+        "fix": None,
+        "steps": ["Check DOCKER_HOST"],
+    }
+    message = "Docker is not reachable at tcp://ci:2376. Check DOCKER_HOST."
+    assert render_findings([unreachable], skip_message=message) == ""
+    colored = render_findings(findings[1:], color=ColorMode.ANSI16)
+    assert strip_ansi(colored).startswith("Setup  Colima runs")

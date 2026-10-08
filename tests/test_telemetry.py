@@ -513,3 +513,56 @@ def test_delivery_reads_overrides_from_config_environment(
 )
 def test_batch_url_keeps_proxy_prefix(configured: str, batch: str) -> None:
     assert telemetry._batch_url(configured) == batch
+
+
+def test_startup_error_carries_setup_finding_ids(sink: Sink, tmp_path: Path) -> None:
+    state = tmp_path / "telemetry.json"
+    _run(state, "stop", at=NOW - 10)
+    sink.batches.clear()
+    session = Telemetry("start", state_path=state, clock=lambda: NOW)
+    session.configure(_config())  # type: ignore[arg-type]
+    session.note_findings(["qemu_vm", "docker_not_running"])
+
+    session.finish(error=HostError("health_timeout", "LocalCloud did not become healthy"))
+
+    assert _startup_event(sink)["properties"]["setup_findings"] == [
+        "qemu_vm",
+        "docker_not_running",
+    ]
+
+
+def test_startup_error_omits_setup_findings_when_checks_did_not_run(
+    sink: Sink, tmp_path: Path
+) -> None:
+    state = tmp_path / "telemetry.json"
+    _run(state, "start", error=HostError("health_timeout", "down"))
+
+    assert "setup_findings" not in _startup_event(sink)["properties"]
+
+
+def test_startup_problem_matches_what_is_reported() -> None:
+    session = Telemetry("start", state_path=Path("unused"), clock=lambda: NOW)
+
+    assert session.startup_problem(HostError("health_timeout", "down"), None) is True
+    assert (
+        session.startup_problem(HostError("port_mapping_declined", "declined"), None)
+        is False
+    )
+    assert session.startup_problem(None, {"status": "started", "logs": ""}) is False
+    assert (
+        session.startup_problem(
+            None, {"status": "started", "logs": f"{_stamp(NOW)} [FAILED] Service BigQuery"}
+        )
+        is True
+    )
+    # Earlier runs' lines in a restarted container's log do not count.
+    later = Telemetry("start", state_path=Path("unused"), clock=lambda: NOW + 3600)
+    assert (
+        later.startup_problem(
+            None, {"logs": f"{_stamp(NOW + 3600)} [  OK  ] up\n{_stamp(NOW)} ERROR old"}
+        )
+        is False
+    )
+    assert Telemetry("status", state_path=Path("unused")).startup_problem(
+        HostError("health_timeout", "down"), None
+    ) is False

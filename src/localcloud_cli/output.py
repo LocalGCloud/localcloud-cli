@@ -160,11 +160,14 @@ _COMMON_FIELDS = (
 _DOCTOR_FIELDS = (
     FieldSpec("status", "Status", "status"),
     FieldSpec("docker", "Docker", "docker"),
+    FieldSpec("docker_host", "Docker host"),
     FieldSpec("default_image", "Image", "image"),
     FieldSpec("ports", "Ports", "ports"),
     FieldSpec("legacy_resources", "Legacy resources", "warning"),
     FieldSpec("legacy_host_state", "Legacy host state", "warning"),
     FieldSpec("legacy_locks", "Legacy locks", "warning"),
+    FieldSpec("setup_findings", "Setup", "warning"),
+    FieldSpec("fixes", "Fixes"),
     FieldSpec("warning", "Warning", "warning"),
 )
 _DOCTOR_EXTRA_FIELDS = (
@@ -466,6 +469,12 @@ def render_summary(
             formatted = _resolve_path(payload, "container.image_details.formatted")
             if formatted is not _MISSING and formatted:
                 value = f"{value} {formatted}"
+        if field.path == "setup_findings" and isinstance(value, (list, tuple)):
+            value = "\n".join(
+                line for finding in value for line in finding_lines(finding)
+            )
+        if field.path == "fixes" and isinstance(value, (list, tuple)):
+            value = "\n".join(fix_outcome_lines(value))
         if command == "doctor" and field.path == "docker":
             docker_cmd_path = _resolve_path(payload, "docker_command_path")
             if docker_cmd_path is not _MISSING and docker_cmd_path:
@@ -758,6 +767,55 @@ def _wrap_scalar_sequence(value: Sequence[Any], width: int) -> list[str]:
     if current or not lines:
         lines.append(current)
     return lines
+
+
+def finding_lines(finding: Mapping[str, Any]) -> list[str]:
+    """A setup finding (host_checks.Finding.to_dict()) as display lines."""
+    lines = [str(finding.get("message") or finding.get("id") or "")]
+    fix = finding.get("fix")
+    if isinstance(fix, Mapping):
+        lines.append(f"Fix: {fix.get('summary')}; run 'lc doctor --fix'")
+    lines.extend(f"Step: {step}" for step in finding.get("steps") or ())
+    return lines
+
+
+def fix_outcome_lines(outcomes: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Setup fix outcomes (applied, declined or failed) as display lines."""
+    lines: list[str] = []
+    for outcome in outcomes:
+        line = f"{str(outcome.get('status')).capitalize()}: {outcome.get('summary')}"
+        if outcome.get("status") == "failed":
+            line += f" ('{outcome.get('command')}' exited with {outcome.get('exit_code')})"
+        lines.append(line)
+    return lines
+
+
+def render_findings(
+    findings: Sequence[Mapping[str, Any]],
+    *,
+    color: ColorMode = ColorMode.NONE,
+    skip_message: str | None = None,
+) -> str:
+    """Setup findings printed under a failed or erroring command's output.
+
+    ``skip_message`` is the error printed above: a finding's message and steps
+    it already contains are dropped, keeping the fix.
+    """
+    label_text = "Setup"
+    indent = " " * (len(label_text) + 2)
+    lines: list[str] = []
+    for finding in findings:
+        role = "error" if finding.get("severity") == "error" else "warning"
+        first, *rest = finding_lines(finding)
+        if skip_message and skip_message.startswith(first):
+            rest = [line for line in rest if line.removeprefix("Step: ") not in skip_message]
+            first, rest = (rest[0], rest[1:]) if rest else ("", [])
+        if not first:
+            continue
+        label = style_text(label_text, role, color, bold=True)
+        lines.append(f"{label}  {style_text(first, role, color)}")
+        lines.extend(f"{indent}{style_text(line, 'muted', color)}" for line in rest)
+    return "\n".join(lines)
 
 
 def render_error(error: HostError, *, color: ColorMode = ColorMode.NONE) -> str:

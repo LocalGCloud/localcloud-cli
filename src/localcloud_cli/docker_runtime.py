@@ -332,11 +332,11 @@ class DockerRuntime:
             except TypeError:
                 self.client = docker.from_env()
         except Exception as error:
-            raise HostError(
-                "docker_unavailable",
-                "Docker is unavailable; start Docker Desktop, Colima, or the selected Docker context",
-                {"cause": str(error), "docker_host": os.environ.get("DOCKER_HOST")},
-            ) from error
+            from .host_checks import docker_unavailable_error
+
+            # Same code as always, with the reason (not installed, not running,
+            # unreachable, permission denied) and what to do about it.
+            raise docker_unavailable_error(error) from error
 
     def resolve(
         self,

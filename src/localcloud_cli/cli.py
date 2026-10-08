@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import shlex
 import sys
 import textwrap
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence, TextIO
@@ -22,8 +24,10 @@ from .errors import HostError
 from .output import (
     LifecycleReporter,
     PanelContext,
+    fix_outcome_lines,
     parse_fields,
     render_error,
+    render_findings,
     render_json,
     render_summary,
     terminal_capabilities,
@@ -35,6 +39,7 @@ from .output import (
 if TYPE_CHECKING:
     from .config import LocalCloudConfig
     from .docker_runtime import DockerRunPlan, PortMapping
+    from .host_checks import Finding
     from .telemetry import Telemetry
 
 ALIAS_HELP = "lc is an alias for localcloud; both commands behave identically."
@@ -47,6 +52,9 @@ _PROGRESS_COMMANDS = {
     "doctor", "cleanup", "start", "restart", "reset", "stop", "status", "logs", "console", "env"
 }
 _PLAIN_PULL_UPDATE_INTERVAL = 2.0
+# After a fix starts a Docker app (`open -a Docker` returns before the engine is up).
+_DOCKER_WAIT_SECONDS = 120.0
+_DOCKER_POLL_SECONDS = 2.0
 _PULL_DOWNLOAD_STATUSES = {
     "already exists",
     "download complete",
@@ -77,6 +85,8 @@ class _ExecutionObserver:
         self._pull_layers: set[str] = set()
         self._pull_progress: dict[str, tuple[int, int]] = {}
         self._plain_pull_update_at: float | None = None
+        # Outcomes of the setup fixes offered during this run.
+        self.fixes: list[dict[str, Any]] = []
 
     def confirm_port_mapping(self, run_plan: DockerRunPlan) -> bool:
         mappings = run_plan.alternative_port_mappings()
@@ -111,6 +121,55 @@ class _ExecutionObserver:
     def debug(self, message: str) -> None:
         if self.debug_enabled:
             self.reporter.write_line(f"[debug] {message}")
+
+    def can_prompt(self) -> bool:
+        """Prompts need a terminal on both ends, and never --verbose (JSON) output."""
+        if self.reporter.verbose:
+            return False
+        try:
+            input_is_interactive = bool(self.input_stream.isatty())
+        except (AttributeError, OSError):
+            input_is_interactive = False
+        return self.reporter.capabilities.interactive and input_is_interactive
+
+    def offer_fixes(self, findings: Sequence[Finding]) -> list[dict[str, Any]]:
+        """Show each finding's fix and apply the ones the user accepts.
+
+        Callers check can_prompt() first. A fix that can delete Docker data
+        needs the typed word 'delete', after the LocalCloud volumes are named.
+        """
+        from .host_checks import apply_fix, localcloud_volumes
+
+        outcomes: list[dict[str, Any]] = []
+        for finding in findings:
+            fix = finding.fix
+            if fix is None:
+                continue
+            lines = [
+                finding.message,
+                *fix.notes,
+                "Commands:",
+                *(f"  {shlex.join(command)}" for command in fix.commands),
+            ]
+            question, accepted = f"{fix.summary}? [y/N] ", {"y", "yes"}
+            if fix.deletes_data:
+                lines.append(
+                    "This can delete every Docker image, container and volume in that "
+                    "VM, not only LocalCloud's."
+                )
+                volumes = localcloud_volumes()
+                if volumes:
+                    lines.append(f"LocalCloud volumes there: {', '.join(volumes)}")
+                question, accepted = "Type 'delete' to continue, or press Enter to skip: ", {"delete"}
+            answer = self.reporter.prompt(lines, question, input_stream=self.input_stream)
+            outcome: dict[str, Any] = {"id": finding.id, "summary": fix.summary}
+            if answer.lower() in accepted:
+                outcome.update(apply_fix(fix, stream=self.reporter.stream))
+            else:
+                outcome["status"] = "declined"
+            outcomes.append(outcome)
+        self.fixes.extend(outcomes)
+        return outcomes
 
     def warning(self, message: str) -> None:
         line = f"Warning: {message}"
@@ -412,15 +471,14 @@ def main(argv: list[str] | None = None) -> int:
     interrupted = False
     if reports_progress:
         reporter.start(_initial_task(args))
+    observer = _ExecutionObserver(reporter, debug=debug, telemetry=telemetry)
     try:
         if args.command == "update":
             from .update import update
 
             return update()
-        result = _execute(
-            args,
-            observer=_ExecutionObserver(reporter, debug=debug, telemetry=telemetry),
-        )
+        result = _execute(args, observer=observer)
+        findings = _diagnose(telemetry, None, result)
         failure_message = _result_failure_message(args, result)
         if reports_progress:
             if failure_message is None:
@@ -428,12 +486,15 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 reporter.fail(failure_message)
         _print_result(args, result, fields)
+        _offer_after_failure(args, observer, findings)
         return 1 if failure_message is not None else 0
     except HostError as error:
         failure = error
+        findings = _diagnose(telemetry, error, None)
         if reports_progress:
             reporter.fail(error.message)
         _print_error(args, error)
+        _offer_after_failure(args, observer, findings)
         return 2
     except KeyboardInterrupt:
         interrupted = True
@@ -497,13 +558,18 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
 
         return update()
 
-    from .controller import Controller
-
-    controller = Controller()
+    fix = args.command == "doctor" and getattr(args, "fix", False)
+    if fix and (observer is None or not observer.can_prompt()):
+        raise HostError(
+            "fix_confirmation_required",
+            "lc doctor --fix asks before each fix; run it in an interactive terminal "
+            "without --verbose",
+        )
+    controller = _controller(args, observer)
     if args.command == "doctor":
         if observer is not None:
             observer.doctor(args)
-        return controller.doctor()
+        return _doctor_fix(controller, observer) if fix and observer else controller.doctor()
     if args.command == "cleanup":
         return controller.cleanup(dry_run=args.dry_run)
 
@@ -631,6 +697,89 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
     )
 
 
+def _controller(args: argparse.Namespace, observer: _ExecutionObserver | None) -> Any:
+    """Connect to Docker. When it is unavailable, `start` and `doctor --fix` in a
+    terminal offer to install or start it, then wait for it."""
+    from .controller import Controller
+
+    try:
+        return Controller()
+    except HostError as error:
+        offers = (args.command == "start" and not getattr(args, "dry_run", False)) or (
+            args.command == "doctor" and getattr(args, "fix", False)
+        )
+        if error.code != "docker_unavailable" or not offers:
+            raise
+        if observer is None or not observer.can_prompt():
+            raise
+        from .host_checks import inspect
+
+        _, findings = inspect(error=str(error.details.get("cause") or error.message))
+        docker_findings = [finding for finding in findings if finding.id.startswith("docker_")]
+        outcomes = observer.offer_fixes(docker_findings)
+        if not any(outcome["status"] == "applied" for outcome in outcomes):
+            raise
+        return _wait_for_docker(observer)
+
+
+def _wait_for_docker(observer: _ExecutionObserver) -> Any:
+    from .controller import Controller
+
+    observer.reporter.update("Waiting for Docker to start…")
+    deadline = time.monotonic() + _DOCKER_WAIT_SECONDS
+    while True:
+        try:
+            return Controller()
+        except HostError as error:
+            if error.code != "docker_unavailable" or time.monotonic() >= deadline:
+                raise
+        time.sleep(_DOCKER_POLL_SECONDS)
+
+
+def _doctor_fix(controller: Any, observer: _ExecutionObserver) -> dict[str, Any]:
+    setup = controller.setup_report()
+    if any(outcome["status"] == "applied" for outcome in observer.offer_fixes(setup[1])):
+        setup = controller.setup_report()  # Report the host as the fixes left it.
+    result = controller.doctor(setup)
+    result["fixes"] = observer.fixes
+    return result
+
+
+def _diagnose(
+    telemetry: Telemetry | None, error: HostError | None, result: Any
+) -> list[Finding] | None:
+    """Run the setup checks when a start counts as failed (telemetry's definition)."""
+    if telemetry is None or not telemetry.startup_problem(error, result):
+        return None
+    from .host_checks import inspect
+
+    if error is not None and error.code == "docker_unavailable":
+        _, findings = inspect(error=str(error.details.get("cause") or error.message))
+    else:
+        _, findings = inspect()
+    telemetry.note_findings([finding.id for finding in findings])
+    serialized = [finding.to_dict() for finding in findings]
+    if error is not None:
+        error.details["setup_findings"] = serialized
+    elif isinstance(result, dict):
+        result["setup_findings"] = serialized
+    return findings
+
+
+def _offer_after_failure(
+    args: argparse.Namespace, observer: _ExecutionObserver, findings: list[Finding] | None
+) -> None:
+    if not findings or not observer.can_prompt():
+        return
+    offered = {outcome["id"] for outcome in observer.fixes}
+    outcomes = observer.offer_fixes([finding for finding in findings if finding.id not in offered])
+    lines = fix_outcome_lines(outcomes)
+    if any(outcome["status"] == "applied" for outcome in outcomes):
+        lines.append(f"Run 'lc {args.command}' again.")
+    for line in lines:
+        print(line, file=sys.stderr, flush=True)
+
+
 class _FileConfigSource:
     """Config selection without Docker; telemetry's record stands in for its memory."""
 
@@ -727,6 +876,12 @@ def _print_result(args: argparse.Namespace, result: Any, fields: list[str]) -> N
     )
     if rendered:
         print(rendered)
+    findings = result.get("setup_findings") if isinstance(result, dict) else None
+    if command != "doctor" and findings:  # doctor shows them as its Setup row
+        print(
+            render_findings(findings, color=terminal_capabilities(sys.stderr).color),
+            file=sys.stderr,
+        )
 
 
 def _print_native(value: str) -> None:
@@ -741,6 +896,11 @@ def _print_error(args: argparse.Namespace, error: HostError) -> None:
         print(render_json(error.to_dict(), color=color), file=sys.stderr)
     else:
         print(render_error(error, color=color), file=sys.stderr)
+        findings = error.details.get("setup_findings")
+        if findings:
+            rendered = render_findings(findings, color=color, skip_message=error.message)
+            if rendered:
+                print(rendered, file=sys.stderr)
 
 
 def _initial_task(args: argparse.Namespace) -> str:
@@ -797,6 +957,8 @@ def _success_message(args: argparse.Namespace, result: Any) -> str:
     if command == "restart":
         return "LocalCloud is ready"
     if command == "doctor":
+        if isinstance(result, dict) and result.get("setup_findings"):
+            return "LocalCloud can start; see Setup for recommended changes"
         return "LocalCloud is ready to start"
     if command == "cleanup":
         return (
@@ -838,6 +1000,12 @@ def _result_failure_message(
         and result.get("status") == "partial"
     ):
         return "LocalCloud cleanup completed with failures"
+    if (
+        args.command == "doctor"
+        and isinstance(result, dict)
+        and any(fix.get("status") == "failed" for fix in result.get("fixes") or ())
+    ):
+        return "A setup fix failed; see Fixes"
     return None
 
 
@@ -913,8 +1081,17 @@ def _parser() -> argparse.ArgumentParser:
     )
     doctor = commands.add_parser(
         "doctor",
-        help="Check Docker access and detect legacy LocalCloud state",
-        description="Check Docker access and detect legacy LocalCloud state.",
+        help="Check Docker access, the Docker host setup, and legacy LocalCloud state",
+        description=(
+            "Check Docker access, the Docker host setup (which Docker app, its VM "
+            "type and Rosetta), and legacy LocalCloud state. With --fix, offer to "
+            "install or start Docker and to switch the Docker VM to VZ with Rosetta."
+        ),
+    )
+    doctor.add_argument(
+        "--fix",
+        action="store_true",
+        help="Offer to fix what doctor finds, asking before each fix",
     )
     _add_output_options(doctor, fields=True, command_name="doctor")
     cleanup = commands.add_parser(

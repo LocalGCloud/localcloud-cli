@@ -3030,3 +3030,46 @@ def test_classify_resource_allows_managed_network_with_different_data_volume(
 
     ownership = runtime._classify_resource(network, "network", "different-data-volume")
     assert ownership == "managed"
+
+
+def test_unreachable_docker_raises_docker_unavailable_with_a_reason(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import docker
+
+    import localcloud_cli.host_checks as host_checks
+
+    def refuse(**_kwargs: Any) -> None:
+        raise docker.errors.DockerException(
+            "Error while fetching server API version: "
+            "('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))"
+        )
+
+    monkeypatch.setattr(docker, "from_env", refuse)
+    monkeypatch.setattr(
+        host_checks,
+        "default_probe",
+        lambda: host_checks.HostProbe(
+            environ={"DOCKER_CONTEXT": "colima"},
+            home=tmp_path,
+            system="Darwin",
+            run=lambda _argv, _timeout: None,
+            which=lambda name: "/opt/homebrew/bin/colima" if name == "colima" else None,
+            applications=(),
+        ),
+    )
+
+    with pytest.raises(HostError) as caught:
+        DockerRuntime()
+
+    error = caught.value
+    assert error.code == "docker_unavailable"
+    assert error.details["reason"] == "not_running"
+    assert "FileNotFoundError" in error.details["cause"]
+    assert error.message == (
+        "Colima is installed but not running. Start it with 'colima start' or run "
+        "'lc doctor --fix'."
+    )
+    assert [finding["id"] for finding in error.details["setup_findings"]] == [
+        "docker_not_running"
+    ]

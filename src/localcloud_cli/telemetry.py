@@ -143,6 +143,8 @@ class Telemetry:
         self._offset: float | None = None
         self._names: tuple[re.Pattern[str] | None, dict[str, str]] | None = None
         self._id = ""
+        # Setup finding ids from host_checks, when the CLI ran them for this run.
+        self._findings: list[str] | None = None
 
     @property
     def configured(self) -> bool:
@@ -175,6 +177,20 @@ class Telemetry:
             self._candidates[line] = max(stamp, self._candidates.get(line, stamp))
         while len(self._candidates) > _MAX_CANDIDATES:
             del self._candidates[min(self._candidates, key=self._candidates.__getitem__)]
+
+    def startup_problem(self, error: BaseException | None, result: Any) -> bool:
+        """Whether this run is a startup error, as ``cli_startup_error`` reports it."""
+        if self.command not in STARTUP_COMMANDS:
+            return False
+        if isinstance(error, HostError) and error.code in _IGNORED_ERRORS:
+            return False
+        if error is not None:
+            return True
+        return bool(self._log_errors(None, result))
+
+    def note_findings(self, ids: list[str]) -> None:
+        """Setup finding ids (never paths or names) for the startup error event."""
+        self._findings = [str(item) for item in ids]
 
     def finish(
         self,
@@ -259,16 +275,9 @@ class Telemetry:
     ) -> dict[str, Any] | None:
         if self.command not in STARTUP_COMMANDS:
             return None
-        if isinstance(error, HostError):
-            if error.code in _IGNORED_ERRORS:
-                return None
-            self.observe_logs(str(error.details.get("logs") or ""))
-        elif isinstance(result, dict):
-            self.observe_logs(str(result.get("logs") or ""))
-        since = self._since()
-        log_errors = [
-            line for line, stamp in self._candidates.items() if stamp >= since
-        ][:_MAX_LOG_LINES]
+        if isinstance(error, HostError) and error.code in _IGNORED_ERRORS:
+            return None
+        log_errors = self._log_errors(error, result)
         if error is None and not log_errors:
             return None
 
@@ -281,6 +290,8 @@ class Telemetry:
             else "started_with_errors",
             "log_errors": [self._scrub(line) for line in log_errors],
         }
+        if self._findings is not None:
+            properties["setup_findings"] = list(self._findings)
         if isinstance(error, HostError):
             properties["error_code"] = error.code
             properties["error_message"] = self._scrub(error.message)
@@ -298,6 +309,17 @@ class Telemetry:
             properties["error_type"] = type(error).__name__
             properties["error_message"] = self._scrub(str(error))
         return self._event("cli_startup_error", {**properties, **self._config_facts()})
+
+    def _log_errors(self, error: BaseException | None, result: Any) -> list[str]:
+        """Error lines the startup logged since this run began."""
+        if isinstance(error, HostError):
+            self.observe_logs(str(error.details.get("logs") or ""))
+        elif isinstance(result, dict):
+            self.observe_logs(str(result.get("logs") or ""))
+        since = self._since()
+        return [
+            line for line, stamp in self._candidates.items() if stamp >= since
+        ][:_MAX_LOG_LINES]
 
     def _since(self) -> float:
         """Host start time on the daemon's clock, minus a little slack.

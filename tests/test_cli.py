@@ -150,12 +150,27 @@ class FakeController:
             "user": config.user,
         }
 
-    def doctor(self) -> dict[str, Any]:
+    # Setup reports doctor --fix sees, one per setup_report() call (last repeats).
+    setup_reports: list[tuple[Any, list[Any]]] = []
+
+    def setup_report(self) -> tuple[Any, list[Any]]:
+        from localcloud_cli.host_checks import DockerHost
+
+        self.calls.append(("setup_report", None))
+        reports = type(self).setup_reports
+        if not reports:
+            return DockerHost(), []
+        return reports.pop(0) if len(reports) > 1 else reports[0]
+
+    def doctor(self, setup: tuple[Any, list[Any]] | None = None) -> dict[str, Any]:
         self.calls.append(("doctor", None))
-        return {
+        result: dict[str, Any] = {
             "status": "ok",
             "default_image": "agentcloud/localcloud:latest (Local: ID: qualified , sha256:qualified)",
         }
+        if setup is not None:
+            result["setup_findings"] = [finding.to_dict() for finding in setup[1]]
+        return result
 
     def cleanup(self, *, confirm: bool | None = None, dry_run: bool = False) -> dict[str, Any]:
         is_dry_run = not confirm if confirm is not None else dry_run
@@ -171,6 +186,7 @@ def fake_controller(
 
     monkeypatch.setenv("LOCALCLOUD_HOME", str(tmp_path / "home"))
     monkeypatch.setattr(controller_module, "Controller", FakeController)
+    monkeypatch.setattr(FakeController, "setup_reports", [])
 
 
 def test_help_surface_uses_data_volume_project_and_user() -> None:
@@ -1928,3 +1944,445 @@ def test_help_flags_include_command_required_note(
     help_long = capsys.readouterr().out
     assert "Note: One of the <command> is required." in help_long
 
+
+
+# --- Docker host setup checks: doctor --fix, start offer, failure diagnostics ---
+
+
+class _Tty(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+@pytest.fixture
+def terminal(monkeypatch: pytest.MonkeyPatch) -> _Tty:
+    """Run main() as if in a terminal; returns the reporter's stream."""
+    import localcloud_cli.cli as cli_module
+    from localcloud_cli.output import LifecycleReporter
+
+    stream = _Tty()
+    monkeypatch.setattr(
+        cli_module,
+        "LifecycleReporter",
+        lambda *, verbose=False: LifecycleReporter(
+            stream=stream, verbose=verbose, environ={"TERM": "dumb"}
+        ),
+    )
+    monkeypatch.setattr(sys, "stdin", _Tty(""))
+    return stream
+
+
+def _answers(monkeypatch: pytest.MonkeyPatch, *lines: str) -> None:
+    monkeypatch.setattr(sys, "stdin", _Tty("".join(f"{line}\n" for line in lines)))
+
+
+@pytest.fixture
+def commands(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
+    """Fix commands run (never really); a command named 'fail' exits 3."""
+    import localcloud_cli.host_checks as host_checks
+
+    ran: list[tuple[str, ...]] = []
+
+    def run(command: Any) -> int:
+        ran.append(tuple(command))
+        return 3 if "fail" in command else 0
+
+    monkeypatch.setattr(host_checks, "_run_streaming", run)
+    return ran
+
+
+def _mac_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    tools: tuple[str, ...] = (),
+    environ: dict[str, str] | None = None,
+) -> Any:
+    import localcloud_cli.host_checks as host_checks
+
+    def run(argv: Any, _timeout: float) -> Any:
+        return SimpleNamespace(returncode=0, stdout="1\n" if argv[0] == "sysctl" else "")
+
+    probe = host_checks.HostProbe(
+        environ=environ or {},
+        home=tmp_path / "mac-home",
+        system="Darwin",
+        run=run,
+        which=lambda name: f"/opt/homebrew/bin/{name}" if name in tools else None,
+        applications=(),
+    )
+    monkeypatch.setattr(host_checks, "default_probe", lambda: probe)
+    return probe
+
+
+def _docker_down(monkeypatch: pytest.MonkeyPatch, attempts: int) -> dict[str, int]:
+    """FakeController() raises docker_unavailable for the first `attempts` calls."""
+    from localcloud_cli.host_checks import docker_unavailable_error
+
+    original = FakeController.__init__
+    calls = {"n": 0}
+
+    def init(self: FakeController) -> None:
+        calls["n"] += 1
+        if calls["n"] <= attempts:
+            raise docker_unavailable_error(
+                RuntimeError("FileNotFoundError(2, 'No such file or directory')")
+            )
+        original(self)
+
+    monkeypatch.setattr(FakeController, "__init__", init)
+    return calls
+
+
+def _finding(identifier: str = "rosetta_off", *, deletes_data: bool = False, command: str = "colima") -> Any:
+    from localcloud_cli.host_checks import Finding, Fix
+
+    return Finding(
+        identifier,
+        "warning",
+        f"{identifier} message",
+        fix=Fix(
+            summary=f"Fix {identifier}",
+            commands=((command, "stop"), (command, "start", "--vz-rosetta")),
+            notes=("Colima restarts.",),
+            deletes_data=deletes_data,
+        ),
+    )
+
+
+def _host() -> Any:
+    from localcloud_cli.host_checks import DockerHost
+
+    return DockerHost(provider="colima", profile="default", vm_type="vz", rosetta=False)
+
+
+def test_doctor_fix_needs_a_terminal(
+    capsys: pytest.CaptureFixture[str], commands: list[tuple[str, ...]]
+) -> None:
+    FakeController.setup_reports = [(_host(), [_finding()])]
+
+    assert main(["doctor", "--fix"]) == 2
+
+    assert "Error [fix_confirmation_required]" in capsys.readouterr().err
+    assert commands == []
+
+
+def test_doctor_fix_with_verbose_never_prompts(
+    terminal: _Tty, capsys: pytest.CaptureFixture[str], commands: list[tuple[str, ...]]
+) -> None:
+    FakeController.setup_reports = [(_host(), [_finding()])]
+
+    assert main(["doctor", "--fix", "--verbose"]) == 2
+
+    error = json.loads(capsys.readouterr().err)
+    assert error["code"] == "fix_confirmation_required"
+    assert commands == []
+
+
+def test_doctor_fix_applies_a_confirmed_fix_and_reports_it(
+    monkeypatch: pytest.MonkeyPatch,
+    terminal: _Tty,
+    capsys: pytest.CaptureFixture[str],
+    commands: list[tuple[str, ...]],
+) -> None:
+    from localcloud_cli.host_checks import DockerHost
+
+    FakeController.setup_reports = [(_host(), [_finding()]), (DockerHost(provider="colima"), [])]
+    _answers(monkeypatch, "y")
+
+    assert main(["doctor", "--fix"]) == 0
+
+    assert commands == [("colima", "stop"), ("colima", "start", "--vz-rosetta")]
+    shown = terminal.getvalue()
+    assert "rosetta_off message" in shown
+    assert "  colima start --vz-rosetta" in shown
+    assert "Fix rosetta_off? [y/N] " in shown
+    assert "$ colima stop" in shown
+    out = capsys.readouterr().out
+    assert "Fixes   Applied: Fix rosetta_off" in out or "Applied: Fix rosetta_off" in out
+    # Doctor re-inspects after a fix, so the report shows the host as fixed.
+    assert [call for call, _ in FakeController.instance.calls].count("setup_report") == 2
+    assert "Setup" not in out
+
+
+def test_doctor_fix_declined_runs_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    terminal: _Tty,
+    capsys: pytest.CaptureFixture[str],
+    commands: list[tuple[str, ...]],
+) -> None:
+    FakeController.setup_reports = [(_host(), [_finding()])]
+    _answers(monkeypatch, "n")
+
+    assert main(["doctor", "--fix"]) == 0
+
+    assert commands == []
+    out = capsys.readouterr().out
+    assert "Declined: Fix rosetta_off" in out
+    assert "rosetta_off message" in out
+
+
+@pytest.mark.parametrize(("answer", "applied"), [("y", False), ("yes", False), ("delete", True)])
+def test_data_deleting_fix_needs_the_word_delete(
+    monkeypatch: pytest.MonkeyPatch,
+    terminal: _Tty,
+    commands: list[tuple[str, ...]],
+    answer: str,
+    applied: bool,
+) -> None:
+    FakeController.setup_reports = [(_host(), [_finding("qemu_vm", deletes_data=True)])]
+    _answers(monkeypatch, answer)
+
+    assert main(["doctor", "--fix"]) == 0
+
+    assert bool(commands) is applied
+    shown = terminal.getvalue()
+    assert "can delete every Docker image, container and volume" in shown
+    assert "Type 'delete' to continue" in shown
+
+
+def test_doctor_fix_lists_localcloud_volumes_before_deleting(
+    monkeypatch: pytest.MonkeyPatch, terminal: _Tty, commands: list[tuple[str, ...]]
+) -> None:
+    import localcloud_cli.host_checks as host_checks
+    from localcloud_cli.docker_runtime import MANAGED_LABEL
+
+    volumes = [SimpleNamespace(name="team-data", attrs={"Labels": {MANAGED_LABEL: "true"}})]
+    client = SimpleNamespace(volumes=SimpleNamespace(list=lambda: volumes))
+    monkeypatch.setattr(host_checks, "_docker_client", lambda: client)
+    FakeController.setup_reports = [(_host(), [_finding("qemu_vm", deletes_data=True)])]
+    _answers(monkeypatch, "")
+
+    assert main(["doctor", "--fix"]) == 0
+
+    assert "LocalCloud volumes there: team-data" in terminal.getvalue()
+    assert commands == []
+
+
+def test_doctor_fix_failure_reports_the_command_and_exit_code(
+    monkeypatch: pytest.MonkeyPatch,
+    terminal: _Tty,
+    capsys: pytest.CaptureFixture[str],
+    commands: list[tuple[str, ...]],
+) -> None:
+    FakeController.setup_reports = [(_host(), [_finding(command="fail")])]
+    _answers(monkeypatch, "y")
+
+    assert main(["doctor", "--fix"]) == 1
+
+    assert commands == [("fail", "stop")]
+    captured = capsys.readouterr()
+    assert "Failed: Fix rosetta_off ('fail stop' exited with 3)" in captured.out
+    assert "A setup fix failed; see Fixes" in terminal.getvalue()
+
+
+def test_doctor_without_docker_explains_and_shows_the_fix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mac_probe(monkeypatch, tmp_path, tools=("brew",))
+    _docker_down(monkeypatch, attempts=10)
+
+    assert main(["doctor"]) == 2
+
+    err = capsys.readouterr().err
+    assert (
+        "Error [docker_unavailable] Docker is not installed. Run 'lc doctor --fix' to "
+        "install Colima, a free, lightweight Docker engine."
+    ) in err
+    assert "Setup  Fix: Install Colima with Homebrew and start it; run 'lc doctor --fix'" in err
+    assert "Setup  Docker is not installed." not in err
+
+
+def test_doctor_fix_installs_docker_then_reports(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    terminal: _Tty,
+    capsys: pytest.CaptureFixture[str],
+    commands: list[tuple[str, ...]],
+) -> None:
+    import localcloud_cli.cli as cli_module
+
+    _mac_probe(monkeypatch, tmp_path, tools=("brew",))
+    calls = _docker_down(monkeypatch, attempts=2)
+    monkeypatch.setattr(cli_module, "_DOCKER_POLL_SECONDS", 0.0)
+    _answers(monkeypatch, "y")
+
+    assert main(["doctor", "--fix"]) == 0
+
+    assert commands == [
+        ("brew", "install", "colima", "docker"),
+        ("colima", "start", "--cpu", "4", "--memory", "8", "--vm-type", "vz", "--vz-rosetta"),
+    ]
+    assert calls["n"] == 3  # failed, failed while starting, connected
+    assert "Applied: Install Colima with Homebrew and start it" in capsys.readouterr().out
+
+
+def test_start_offers_to_start_docker_and_continues(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    terminal: _Tty,
+    commands: list[tuple[str, ...]],
+) -> None:
+    _mac_probe(monkeypatch, tmp_path, tools=("colima",), environ={"DOCKER_CONTEXT": "colima"})
+    _docker_down(monkeypatch, attempts=1)
+    _answers(monkeypatch, "y")
+
+    assert main(["start"]) == 0
+
+    assert commands == [("colima", "start")]
+    assert "Colima is installed but not running." in terminal.getvalue()
+    assert "Start Colima? [y/N] " in terminal.getvalue()
+    assert [call for call, _ in FakeController.instance.calls][-1] == "start"
+
+
+def test_start_gives_up_when_docker_does_not_come_up(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    terminal: _Tty,
+    capsys: pytest.CaptureFixture[str],
+    commands: list[tuple[str, ...]],
+) -> None:
+    import localcloud_cli.cli as cli_module
+
+    _mac_probe(monkeypatch, tmp_path, tools=("colima",), environ={"DOCKER_CONTEXT": "colima"})
+    _docker_down(monkeypatch, attempts=100)
+    monkeypatch.setattr(cli_module, "_DOCKER_WAIT_SECONDS", 0.0)
+    _answers(monkeypatch, "y")
+
+    assert main(["start"]) == 2
+
+    assert commands == [("colima", "start")]
+    assert "Error [docker_unavailable]" in capsys.readouterr().err
+
+
+def test_start_declined_keeps_the_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    terminal: _Tty,
+    capsys: pytest.CaptureFixture[str],
+    commands: list[tuple[str, ...]],
+) -> None:
+    _mac_probe(monkeypatch, tmp_path, tools=("colima",), environ={"DOCKER_CONTEXT": "colima"})
+    _docker_down(monkeypatch, attempts=10)
+    _answers(monkeypatch, "n")
+
+    assert main(["start"]) == 2
+
+    assert commands == []
+    err = capsys.readouterr().err
+    assert "Error [docker_unavailable] Colima is installed but not running." in err
+    # Offered once, before the controller; not again after the failure.
+    assert terminal.getvalue().count("Start Colima? [y/N]") == 1
+
+
+@pytest.mark.parametrize("argv", [["start"], ["start", "--verbose"]])
+def test_start_without_a_terminal_never_offers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    commands: list[tuple[str, ...]],
+    argv: list[str],
+) -> None:
+    _mac_probe(monkeypatch, tmp_path, tools=("colima",), environ={"DOCKER_CONTEXT": "colima"})
+    _docker_down(monkeypatch, attempts=10)
+
+    assert main(argv) == 2
+
+    assert commands == []
+    err = capsys.readouterr().err
+    if "--verbose" in argv:
+        details = json.loads(err)["details"]
+        assert details["reason"] == "not_running"
+        assert [item["id"] for item in details["setup_findings"]] == ["docker_not_running"]
+    else:
+        assert "Setup  Fix: Start Colima; run 'lc doctor --fix'" in err
+
+
+def test_failed_start_runs_the_checks_and_offers_the_fix(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    terminal: _Tty,
+    capsys: pytest.CaptureFixture[str],
+    commands: list[tuple[str, ...]],
+) -> None:
+    import localcloud_cli.host_checks as host_checks
+
+    probe = _mac_probe(monkeypatch, tmp_path, tools=("colima",))
+    colima = probe.home / ".colima" / "default"
+    colima.mkdir(parents=True)
+    (colima / "colima.yaml").write_text("vmType: vz\nrosetta: false\n")
+    monkeypatch.setattr(
+        host_checks, "_docker_client", lambda: SimpleNamespace(info=lambda: {"Name": "colima"})
+    )
+
+    def fail(_self: FakeController, _config: Any, **_kwargs: Any) -> None:
+        raise HostError("health_timeout", "LocalCloud did not become healthy")
+
+    monkeypatch.setattr(FakeController, "start", fail)
+    _answers(monkeypatch, "y")
+
+    assert main(["start"]) == 2
+
+    err = capsys.readouterr().err
+    assert "Error [health_timeout] LocalCloud did not become healthy" in err
+    assert "Setup  Colima has Rosetta turned off" in err
+    assert "Turn on Rosetta in Colima? [y/N] " in terminal.getvalue()
+    assert commands == [("colima", "stop"), ("colima", "start", "--vz-rosetta")]
+    assert "Applied: Turn on Rosetta in Colima" in err
+    assert "Run 'lc start' again." in err
+
+
+def test_start_with_log_errors_reports_findings_in_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import localcloud_cli.host_checks as host_checks
+
+    probe = _mac_probe(monkeypatch, tmp_path, tools=("colima",))
+    colima = probe.home / ".colima" / "default"
+    colima.mkdir(parents=True)
+    (colima / "colima.yaml").write_text("vmType: qemu\n")
+    monkeypatch.setattr(
+        host_checks, "_docker_client", lambda: SimpleNamespace(info=lambda: {"Name": "colima"})
+    )
+
+    def started(_self: FakeController, _config: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"status": "started", "logs": "[FAILED] Service BigQuery (bigquery) failed"}
+
+    monkeypatch.setattr(FakeController, "start", started)
+
+    assert main(["start", "--verbose"]) == 0
+
+    result = json.loads(capsys.readouterr().out)
+    assert [item["id"] for item in result["setup_findings"]] == ["qemu_vm"]
+
+
+def test_healthy_start_runs_no_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    import localcloud_cli.host_checks as host_checks
+
+    def never(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("setup checks ran for a healthy start")
+
+    monkeypatch.setattr(host_checks, "inspect", never)
+
+    assert main(["start"]) == 0
+    assert main(["start", "--dry-run"]) == 0
+
+
+def test_failed_start_reports_finding_ids_to_telemetry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import localcloud_cli.telemetry as telemetry
+
+    _mac_probe(monkeypatch, tmp_path, tools=("colima",), environ={"DOCKER_CONTEXT": "colima"})
+    _docker_down(monkeypatch, attempts=10)
+    batches: list[list[dict[str, Any]]] = []
+    monkeypatch.delenv("LOCALCLOUD_TELEMETRY")
+    monkeypatch.setattr(
+        telemetry, "_deliver", lambda events, _environment: batches.append(events) or True
+    )
+
+    assert main(["start"]) == 2
+
+    properties = batches[0][0]["properties"]
+    assert properties["error_code"] == "docker_unavailable"
+    assert properties["setup_findings"] == ["docker_not_running"]

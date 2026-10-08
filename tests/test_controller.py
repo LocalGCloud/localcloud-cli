@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest  # pyright: ignore[reportMissingImports]
@@ -2343,3 +2344,46 @@ def test_start_missing_network_dry_run_plans_replacement_and_recreation(
     assert isinstance(plan, str)
     assert runtime.preview_remove_network == [False]
     assert runtime.preview_network_exists[-1] is None
+
+
+def test_doctor_reports_the_docker_host_and_setup_findings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import localcloud_cli.host_checks as host_checks
+
+    controller, runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+    runtime.client = SimpleNamespace(info=lambda: {"Name": "colima"})
+    probe_home = tmp_path / "probe"
+    (probe_home / ".colima" / "default").mkdir(parents=True)
+    (probe_home / ".colima" / "default" / "colima.yaml").write_text(
+        "vmType: qemu\nrosetta: false\n"
+    )
+
+    def run(argv: Any, _timeout: float) -> Any:
+        return SimpleNamespace(returncode=0, stdout="1\n")
+
+    monkeypatch.setattr(
+        host_checks,
+        "default_probe",
+        lambda: host_checks.HostProbe(
+            environ={}, home=probe_home, system="Darwin", run=run,
+            which=lambda _name: None, applications=(),
+        ),
+    )
+
+    result = controller.doctor()
+
+    assert result["docker_host"] == "Colima (QEMU)"
+    assert [finding["id"] for finding in result["setup_findings"]] == ["qemu_vm"]
+    assert result["setup_findings"][0]["fix"]["deletes_data"] is True
+
+
+def test_doctor_without_findings_reports_an_unknown_host(tmp_path: Path) -> None:
+    controller, _runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+
+    result = controller.doctor()
+
+    assert result["docker_host"] == "unknown"
+    assert result["setup_findings"] == []

@@ -982,8 +982,18 @@ class Controller:
                 time.sleep(min(_READINESS_POLL_INTERVAL, remaining))
 
 
-    def doctor(self) -> dict[str, Any]:
+    def setup_report(self) -> tuple[Any, list[Any]]:
+        """The Docker host and the setup findings for it (host_checks)."""
+        from .host_checks import inspect
+
+        # The runtime already holds the Docker connection; never open another.
+        return inspect(getattr(self.runtime, "client", None), connect=False)
+
+    def doctor(self, setup: tuple[Any, list[Any]] | None = None) -> dict[str, Any]:
         result = self.runtime.doctor()
+        host, findings = setup if setup is not None else self.setup_report()
+        result["docker_host"] = host.summary()
+        result["setup_findings"] = [finding.to_dict() for finding in findings]
         active_status, active_diagnostics = self._active_runtime_info()
         result["active_runtime"] = active_status
         result["active_runtime_diagnostics"] = active_diagnostics

@@ -92,8 +92,16 @@ Image   agentcloud/localcloud:latest (Local: ID: 66026c0b0b21 ,
 
 ### Prerequisites
 
-Docker Desktop, Colima, or Docker Engine, installed and running. LocalCloud needs at least **4 GiB** of
-memory available to the container for stable operation.
+Docker Desktop, Colima, OrbStack, Rancher Desktop, or Docker Engine, installed and running. LocalCloud
+needs at least **4 GiB** of memory available to the container for stable operation.
+
+No Docker yet? On macOS with Homebrew, `lc doctor --fix` (or `lc start` in a terminal) offers to install
+[Colima](https://github.com/abiosoft/colima), a free, lightweight Docker engine, and starts it with 4 CPUs
+and 8 GiB of memory.
+
+On Apple Silicon, run the Docker VM on **VZ with Rosetta** rather than QEMU: it is faster, and QEMU has
+known issues with LocalCloud (the BigQuery emulator can fail under it). `lc doctor` reports the Docker
+app, its VM type and Rosetta, and `lc doctor --fix` offers to switch Colima or Rancher Desktop.
 
 ### macOS and Linux
 
@@ -153,8 +161,9 @@ Five minutes from nothing to a working Cloud Storage bucket.
 lc doctor
 ```
 
-Confirms Docker connectivity and reports the resolved LocalCloud context. Continue when `Status` is `OK`.
-It creates no LocalCloud state, so it is always safe to run first.
+Confirms Docker connectivity, reports the Docker app and its VM setup, and shows the resolved LocalCloud
+context. Continue when `Status` is `OK`. It creates no LocalCloud state, so it is always safe to run first.
+If it lists **Setup** findings, `lc doctor --fix` offers to fix them, asking before each change.
 
 ### 2. Start the runtime
 
@@ -392,7 +401,7 @@ lc start --services default
 | Command | Purpose |
 | :--- | :--- |
 | `lc update` | Update the CLI through its script installer or Homebrew |
-| `lc doctor` | Check Docker access and detect legacy LocalCloud state |
+| `lc doctor` | Check Docker access, the Docker host setup, and legacy LocalCloud state; `--fix` offers fixes |
 | `lc start` | Start a runtime; prepares a project when `--project-id` is explicit |
 | `lc status` | Show runtime health, ownership, endpoints, and Docker details |
 | `lc env` | Generate SDK, Terraform, or Docker Compose configuration |
@@ -644,7 +653,9 @@ opt-out.
 
 | Symptom | What it means | Fix |
 | :--- | :--- | :--- |
-| `Error [docker_unavailable]` | The Docker daemon is not reachable | Start Docker Desktop / Colima / `dockerd`, then `lc doctor` |
+| `Error [docker_unavailable]` | Docker is not installed, not running, unreachable, or denies access (`details.reason`) | Follow the message; `lc doctor --fix` installs Colima or starts your Docker app |
+| `Error [fix_confirmation_required]` | `lc doctor --fix` ran without a terminal (or with `--verbose`) | Run it in an interactive terminal; it asks before each fix |
+| BigQuery or another service stops soon after `start` on Apple Silicon | The Docker VM runs on QEMU | `lc doctor`, then `lc doctor --fix` to switch to VZ with Rosetta |
 | `Error [docker_socket_unavailable]` | A service needs the Docker socket but it is missing or blocked | Check the socket path, or set `host.docker_socket: false` to disable Docker-backed services |
 | `Error [health_timeout]` / `runtime_readiness_timeout` | The container started but services were not ready in time | `lc logs --tail 200`; confirm at least 4 GiB is available, or raise it with `--memory 8g` |
 | `Error [port_mapping_confirmation_required]` | Canonical ports are busy and the shell is non-interactive | Free the ports, or re-run with `--accept-dynamic-ports` |

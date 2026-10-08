@@ -210,11 +210,42 @@ are stopped rather than deleted, and LocalCloud resumes them on the next `start`
 
 ### `doctor`
 
-Diagnoses Docker daemon access and permissions and inspects legacy LocalCloud host files.
+Diagnoses Docker daemon access and permissions, the Docker host setup, and legacy LocalCloud host files.
 
 ```sh
 lc doctor
+lc doctor --fix    # offer to fix what it finds, asking before each change
 ```
+
+**Docker host** names the Docker app (Colima, Rancher Desktop, Docker Desktop, or `unknown`), its VM type and, on VZ, whether Rosetta is on. **Setup** lists findings; each has an `id` in
+`--verbose` output (`setup_findings`):
+
+| Finding | When | `--fix` |
+| :--- | :--- | :--- |
+| `docker_not_installed` | No Docker engine | macOS with Homebrew: `brew install colima docker`, then `colima start --cpu 4 --memory 8` (plus `--vm-type vz --vz-rosetta` on Apple Silicon). Otherwise prints the steps |
+| `docker_not_running` | A Docker app is installed but stopped | Starts the app the Docker context names (`colima start`, `rdctl start`, `open -a Docker`). Otherwise prints the steps |
+| `docker_unreachable` | `DOCKER_HOST` or the context points at an engine that does not answer | Prints the steps |
+| `docker_permission_denied` | The Docker socket refuses access | Prints the steps |
+| `qemu_vm` | Apple Silicon and the Docker VM runs on QEMU | Colima: deletes and recreates the VM on VZ with Rosetta (`colima delete` without `--data`, keeping CPU, memory and disk). Rancher Desktop: `rdctl set --virtual-machine.type=vz --virtual-machine.use-rosetta=true`. Docker Desktop: prints the steps (QEMU was removed in 4.44) |
+| `rosetta_off` | Apple Silicon, VZ, Rosetta off | Colima: `colima stop`, `colima start --vz-rosetta`. Rancher Desktop: `rdctl set --virtual-machine.use-rosetta=true`. Docker Desktop: prints the steps |
+
+LocalCloud prefers VZ with Rosetta on Apple Silicon: it is faster, and QEMU has known issues with LocalCloud
+(the BigQuery emulator can fail under it). Fixes that turn Rosetta on install the Rosetta runtime first when it
+is missing (`softwareupdate --install-rosetta --agree-to-license`).
+
+Every fix shows its commands before it runs and stops at the first failing command, reporting the command
+and its exit code. Switching a VM restarts it, so running containers stop. A fix that can delete Docker data
+(switching the VM type, until each app is verified to keep its data) says so, lists the LocalCloud volumes,
+and runs only after you type `delete`. `--fix` needs an interactive terminal and does not run with
+`--verbose`. The CLI never runs `sudo` or installer scripts.
+
+`lc doctor` works without Docker: it exits with `docker_unavailable`, whose `details.reason` is
+`not_installed`, `not_running`, `unreachable` or `permission_denied`, and prints the matching finding.
+
+When `start`, `restart` or `reset` fails, or starts with service errors in its log, the CLI runs the same
+checks, prints any findings under the error (and in `setup_findings` with `--verbose`), and offers the fixes in
+a terminal. `lc start` in a terminal also offers to install or start Docker when it is unavailable, waits up to
+120 seconds for it, and then continues.
 
 ### `cleanup`
 
