@@ -544,11 +544,15 @@ catalog, so it cannot drift from what the image actually ships. Instruct your ag
 
 ### stdio bridge
 
+Use **LocalCloud CLI 0.1.9 or newer**. Install with `brew install LocalGCloud/tap/localcloud`, or update an existing Homebrew installation with `brew update` and `brew upgrade localcloud`. Verify with `lc --version`.
+
 Configure LocalCloud for your AI coding client in one command:
 
 ```sh
-lc mcp install --client cursor         # claude-desktop, claude-code, cursor, gemini, windsurf, cline, all
+lc mcp install --client cursor
 ```
+
+[MCP setup and client guide](docs/mcp.md) covers Claude Code/Desktop, Cursor, Codex, VS Code, Cline, Gemini CLI, Antigravity and Windsurf. The CLI 0.1.9 `gemini` installer alias targets Antigravity, and `all` configures five clients; use the guide's manual setup for Gemini CLI and Cline.
 
 The bridge **automatically checks and starts** the LocalCloud container on demand and provisions any missing project requested by the agent without recreating the runtime. All agents and workspaces share the same persistent container (`localcloud-data`). To require manual control and disable auto-start, pass `--no-start`.
 

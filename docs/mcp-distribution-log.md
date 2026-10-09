@@ -54,7 +54,7 @@ Use existing authenticated brand accounts where available. The user authorized G
 | Smithery | Planned | https://smithery.ai/ | Package local MCPB; authenticate; publish and verify |
 | Glama | Planned | https://glama.ai/mcp/servers | Check eligibility and existing entry; submit/claim; verify maintainer metadata |
 | PulseMCP | Planned | https://www.pulsemcp.com/submit | Submit server and demonstrated use case if supported |
-| MCPServers.org / wong2 | Planned | https://mcpservers.org/submit | Website submission; repository no longer accepts listing PRs |
+| MCPServers.org / wong2 | Submitted; review pending | https://mcpservers.org/submit | Browser confirmed “Submission Successful!” for LocalCloud MCP; free queue, review within 2 weeks, email on approval |
 | punkpeye awesome-mcp-servers | Planned | https://github.com/punkpeye/awesome-mcp-servers | Check duplicates and contribution rules; submit PR |
 | appcypher awesome-mcp-servers | Planned | https://github.com/appcypher/awesome-mcp-servers | Check current category and contribution rules; submit PR |
 | Cline Marketplace | Planned | https://github.com/cline/mcp-marketplace | Verify real Cline setup, 400x400 logo, then submit issue |
@@ -79,6 +79,9 @@ Use existing authenticated brand accounts where available. The user authorized G
 3. Checked GitHub latest release: still v0.1.8 at this observation.
 4. Initialized computer control and located Chrome with the authorized Google account already signed in. No account, permission, or external posting changes made by this observation.
 5. Read current MCP guide and created this ledger. Public submissions have not yet been sent.
+6. Verified v0.1.9 release publication at https://github.com/LocalGCloud/localcloud-cli/releases/tag/v0.1.9 and successful release job https://github.com/LocalGCloud/localcloud-cli/actions/runs/37905521567. The Homebrew formula now selects 0.1.9 on all four supported platform/architecture combinations.
+7. Queried the running runtime without changing application data. MCP initialize reported runtime version 0.1.3; discovery returned 27 tools, 14 resources, 7 templates, and 6 prompts. The newer source catalog is not evidence of the installed runtime's exposed catalog.
+8. Submitted LocalCloud MCP to MCPServers.org using the free plan and Cloud Service category. Included CLI 0.1.9+, website and intended website guide links, plus the available GitHub guide as the primary URL. Chrome visibly confirmed successful submission and a review window of up to 2 weeks. No registry name or public remote endpoint was claimed.
 
 ## Resume and completion audit
 

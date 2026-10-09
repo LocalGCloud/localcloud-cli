@@ -1,6 +1,75 @@
-# LocalCloud Model Context Protocol (MCP) Architecture and Guide
+# LocalCloud MCP: a local cloud environment for AI agents
 
-The LocalCloud MCP bridge enables AI coding agents (such as Cursor, Claude Code, Claude Desktop, Gemini/Antigravity, Windsurf, and Cline) to discover, inspect, and interact with 25+ local Google Cloud services running inside LocalCloud.
+LocalCloud gives AI coding agents a free local cloud environment for building, testing, and debugging Google Cloud applications. Its MCP server connects agents to service discovery, SDK configuration, resource inspection, data queries, readiness checks, and diagnostics. Application code uses standard Google Cloud SDKs pointed at the local runtime.
+
+[Website](https://local.cloud/) · [Website MCP guide](https://local.cloud/docs/mcp/) · [Source](https://github.com/LocalGCloud/localcloud-cli) · [Releases](https://github.com/LocalGCloud/localcloud-cli/releases)
+
+## Quickstart
+
+Install **LocalCloud CLI 0.1.9 or newer** and have Docker running. The CLI includes the MCP bridge; no separate MCP server installation or Google Cloud account is required for local workflows.
+
+### Install LocalCloud
+
+On macOS, or Linux with Homebrew:
+
+```sh
+brew install LocalGCloud/tap/localcloud
+lc --version
+lc doctor
+```
+
+For an existing Homebrew installation, run `brew update` and `brew upgrade localcloud`. The version output must be at least `0.1.9` before using `lc mcp install`.
+
+On macOS or Linux without Homebrew:
+
+```sh
+curl -fsSL https://local.cloud/install.sh | sh
+localcloud --version
+localcloud doctor
+```
+
+The [release page](https://github.com/LocalGCloud/localcloud-cli/releases/tag/v0.1.9) also provides signed standalone archives for macOS ARM64/x86_64 and Linux ARM64/x86_64. Linux binaries require glibc 2.35 or newer. Native Windows binaries are not shipped; Windows users need a suitable Linux/WSL environment and a client launch configuration that can reach it.
+
+### Connect an agent
+
+For Cursor:
+
+```sh
+lc mcp install --client cursor
+```
+
+Reload the client and enable the `localcloud` MCP server. The bridge starts or reuses the runtime automatically. The first connection can take longer while Docker downloads the runtime image. To start it deliberately with ports bound to localhost before connecting:
+
+```sh
+lc start --local-only
+```
+
+For Claude Code, use `lc mcp install --client claude-code`; for Claude Desktop, use `lc mcp install --client claude-desktop`. Other client configurations are described below.
+
+### Complete a first task
+
+Give the agent this prompt:
+
+> Use the LocalCloud MCP server. List local services, check readiness, and get the SDK environment for this project. Inspect the compatibility information before writing a small Google Cloud integration test. Use only the returned local endpoints; stop if a required operation is unavailable. Do not request real Google Cloud credentials or fall back to real Google Cloud.
+
+A connected client should discover `localcloud_list_services`, `localcloud_check_readiness`, and `localcloud_get_env`. For an initial tool call, use `localcloud_list_services` with `{}`. Then call `localcloud_get_env` with `{"format":"json"}`. Read the returned endpoint values rather than assuming default ports.
+
+## What agents can do
+
+| Workflow | MCP support | Application workflow |
+| --- | --- | --- |
+| Build a storage and messaging feature | Discover Cloud Storage/Pub/Sub, obtain SDK endpoints, inspect resources and recent requests | Upload a test object, publish a message, consume it, and assert the result using standard SDKs |
+| Inspect and query local data | Browse resources, check database connection profiles, run supported queries | Explore a dataset and run a deterministic BigQuery query |
+| Write a repeatable integration test | Read compatibility, SDK/ Terraform configuration, recipes and test prompts | Create only test-owned resources, verify results, and clean them up through the SDK |
+| Diagnose an application failure | Check readiness, diagnostics, logs and recent requests | Identify an endpoint, schema, or service-readiness problem and rerun the failing test |
+
+Start with [SDK examples](https://local.cloud/docs/sdk-examples/), [Terraform guidance](https://local.cloud/docs/terraform/), and the [agent entry point](https://local.cloud/ai/agents.md). LocalCloud compatibility is service- and operation-specific; validate release behavior against real Google Cloud separately.
+
+## Permissions and local data
+
+Write and destructive MCP management operations are controlled by the runtime settings `LOCALCLOUD_MCP_WRITE` and `LOCALCLOUD_MCP_DESTRUCTIVE`, both disabled by default. These are **runtime** settings, not permissions enabled by `lc mcp install`. The installed client starts the bridge; it does not grant extra runtime privileges. SDK operations can still change local application data, so use test-owned resources and explicit cleanup.
+
+The default data volume is shared across clients and repositories. A project ID selects a logical project; it is not a hard security boundary between agents. Use a separate data volume when an independent runtime is needed. Review [privacy and outbound behavior](https://local.cloud/docs/privacy/) and the [applicable license](https://local.cloud/docs/licensing/) for the artifact you install. LocalCloud is free to use for the documented local development workflows; it is not described here as open source or as a hardened execution sandbox.
 
 ---
 
@@ -26,7 +95,7 @@ The LocalCloud MCP bridge enables AI coding agents (such as Cursor, Claude Code,
 │  • Attributed caller headers (X-LocalCloud-*)          │
 └───────────────────────────┬────────────────────────────┘
                             │
-                   HTTP/SSE │ Loopback Gateway (port 5380)
+            HTTP JSON-RPC │ Local Gateway (port 5380)
                             │ Headers: X-LocalCloud-Project,
                             │          X-LocalCloud-User
 ┌───────────────────────────▼────────────────────────────┐
@@ -88,18 +157,17 @@ lc mcp install --client claude-code
 # Install for Claude Desktop (user-level in claude_desktop_config.json)
 lc mcp install --client claude-desktop
 
-# Install for Gemini / Antigravity (user-level in ~/.gemini/antigravity/mcp_config.json)
+# Install for Antigravity (the gemini alias selects Antigravity configuration)
 lc mcp install --client gemini
 
 # Install for Windsurf
 lc mcp install --client windsurf
 
-# Install for Cline
-lc mcp install --client cline
-
-# Install for all supported clients on your machine
+# Write the Cursor, Claude Code, Claude Desktop, Antigravity and Windsurf configurations
 lc mcp install --client all
 ```
+
+In CLI 0.1.9, `all` configures the five clients listed above, even if their applications are not installed. Cline and Gemini CLI should use the manual configuration instructions below. The `--client cline` path in 0.1.9 is not qualified for the VS Code extension's settings location; use Cline's own configuration editor.
 
 ### Installation Options
 | Flag | Description |
@@ -122,6 +190,59 @@ lc mcp install --client all
 ---
 
 ## 4. Manual Configuration Examples
+
+Use `command -v localcloud` to find the installed executable. Substitute that absolute path in desktop-client examples; `/opt/homebrew/bin/localcloud` is an Apple Silicon Homebrew example, not a universal path. Merge the server entry into existing configuration rather than replacing other servers.
+
+### Codex
+
+```sh
+codex mcp add localcloud -- "$(command -v localcloud)" mcp
+codex mcp list
+```
+
+Alternatively, merge into `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.localcloud]
+command = "/opt/homebrew/bin/localcloud"
+args = ["mcp"]
+startup_timeout_sec = 120
+```
+
+See [Codex MCP configuration](https://developers.openai.com/codex/mcp/) for client settings.
+
+### VS Code / GitHub Copilot
+
+Merge this into the workspace `.vscode/mcp.json`, then use **MCP: List Servers** in the Command Palette to start `localcloud`:
+
+```json
+{
+  "servers": {
+    "localcloud": {
+      "type": "stdio",
+      "command": "/opt/homebrew/bin/localcloud",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+VS Code uses `servers`, while Cursor and Claude Desktop use `mcpServers`. See [VS Code MCP configuration](https://code.visualstudio.com/docs/agent-customization/mcp-servers).
+
+### Cline
+
+Open Cline's **MCP Servers** settings and its configuration editor. Merge the `localcloud` entry from the Cursor/Claude Desktop example below into `mcpServers`, using the executable path on your machine. Start the server in Cline and verify that service discovery succeeds. This avoids assuming where the extension stores its settings. See [Cline MCP documentation](https://docs.cline.bot/mcp/mcp-overview).
+
+### Gemini CLI
+
+The CLI 0.1.9 `--client gemini` alias configures Antigravity. To configure **Gemini CLI**, use Gemini's own command:
+
+```sh
+gemini mcp add --scope user localcloud "$(command -v localcloud)" mcp
+gemini mcp list
+```
+
+Gemini CLI stores MCP servers in `~/.gemini/settings.json` for user scope. See [Gemini CLI MCP documentation](https://geminicli.com/docs/tools/mcp-server/).
 
 ### Cursor (`~/.cursor/mcp.json` or `.cursor/mcp.json`)
 ```json
@@ -162,12 +283,12 @@ claude mcp add --scope user localcloud -- /opt/homebrew/bin/localcloud mcp
 
 ## 5. Authoritative MCP Catalog
 
-The LocalCloud MCP server exposes **27 tools**, **14 resources**, **7 resource templates**, and **6 prompts** directly to coding agents.
+The read-only runtime catalog verified for this guide (runtime MCP version 0.1.3) exposes **27 tools**, **14 resources**, **7 resource templates**, and **6 prompts**. CLI and runtime versions are independent. Catalogs can vary with the runtime image and enabled permissions: `tools/list`, `resources/list`, `resources/templates/list`, and `prompts/list` from the connected runtime are authoritative.
 
 ### Tools (27)
 1. **API Discovery & Invocation**:
-   - `localcloud_get_api_catalog`: Returns the complete catalog of all supported Google Cloud REST APIs, methods, and request/response schemas.
-   - `localcloud_call_api`: Generic caller to invoke any supported GCP REST management API directly inside LocalCloud.
+   - `localcloud_get_api_catalog`: Discovers methods and schemas exposed by LocalCloud's management API catalog.
+   - `localcloud_call_api`: Invokes a catalogued local management operation using its operation ID and typed parameters.
 2. **Service & Project Inspection**:
    - `localcloud_list_services`: List all running GCP services, status, and loopback ports.
    - `localcloud_get_service`: Get detailed endpoints, ports, and configuration for a specific service.
@@ -246,3 +367,19 @@ The LocalCloud MCP server exposes **27 tools**, **14 resources**, **7 resource t
 
 3. **Single container efficiency**:
    Because LocalCloud uses a single shared data volume and container, multiple agents running in different repositories can work concurrently without starting duplicate containers or wasting host RAM.
+
+## Troubleshooting
+
+| Symptom | Action |
+| --- | --- |
+| `mcp install` is not recognized | Check `lc --version`; update to CLI 0.1.9+ and ensure the client uses the updated executable |
+| Docker cannot be reached | Run `lc doctor`, start Docker, and retry; installing client configuration alone does not require Docker |
+| Desktop client cannot find `localcloud` | Set an absolute executable path from `command -v localcloud`; restart the client |
+| First connection times out | Run `lc start --local-only` once to finish image download and startup, then reconnect; increase the client's startup timeout if needed |
+| Bridge reports `mcp_connection_timeout` | Check `lc status` and `lc logs --tail 100`; retry with `localcloud mcp --connect-timeout 60` |
+| Runtime is stopped and `--no-start` is set | Start it explicitly with `lc start`, or remove `--no-start` to allow automatic startup |
+| A write operation is rejected | Inspect the operation's safety and runtime permission settings; client installation does not enable write/destructive permissions |
+| Tools are missing or a service is disabled | Inspect the connected runtime catalog, readiness and compatibility; CLI version alone does not determine runtime tools |
+| Protocol parser reports invalid JSON | Ensure the client launches `localcloud mcp` directly; wrappers must keep diagnostics off stdout |
+
+To disconnect, disable or remove only the `localcloud` server entry in the client's MCP settings. This does not delete the runtime's persistent volume. Report issues at [LocalCloud CLI issues](https://github.com/LocalGCloud/localcloud-cli/issues) with the CLI version, runtime image/version, client, and sanitized error output.
