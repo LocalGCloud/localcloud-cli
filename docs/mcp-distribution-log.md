@@ -201,3 +201,21 @@ Use existing authenticated brand accounts where available. The user authorized G
 ## Resume and completion audit
 
 The authorized rollout has been executed with the specific optional deferrals above. Pending review is not approved placement. For future work, preserve existing IDs and confirmation evidence, update the verified date, and check for duplicates before submitting again. Repeat runtime/client qualification only for changed artifacts or a newly claimed integration; preserve the user's existing environments.
+
+## 2026-10-09: Claude and Codex GitHub marketplaces published
+
+- Business actor: cloud-orbitor; publisher contact: orbitor.cloud@gmail.com.
+- [Implementation PR #8](https://github.com/LocalGCloud/localcloud-cli/pull/8) merged as 181dee77e3a37abed308613d348e7d6e439a3393.
+- [CLI release 0.1.10](https://github.com/LocalGCloud/localcloud-cli/releases/tag/v0.1.10) is public and includes plugin 0.1.0, native macOS/Linux ARM64/x86_64 archives, checksums, and Sigstore verification bundles.
+- [Release workflow](https://github.com/LocalGCloud/localcloud-cli/actions/runs/37981658381) passed all native build and publication jobs. The plugin ZIP, its checksum, native SHA256SUMS, and the macOS ARM64 archive were independently verified with Cosign against the release workflow/tag identity.
+- Published plugin SHA256: 55bb1997afd518ddd9ca3055b25a1a992cd1a2c5b3a3460f408b1948c959a93e. ZIP contents are limited to nine public integration/license/artwork files.
+- The CLI and plugin now carry the owner-approved Public Preview License. The published native archive and plugin ZIP license bytes match the approved agreement.
+- Both clients installed LocalCloud from the remote GitHub catalog. Codex loaded the LocalCloud tools and real service discovery succeeded. A separate environment verified MCP discovery/readiness/compatibility/diagnostics/SDK settings/query plus Storage, Pub/Sub, and BigQuery SDK assertions through the published native CLI and installed plugin launcher.
+- [Setup guide](mcp-marketplace-guide.md): public requirements are Docker engine, LocalCloud CLI, and the LocalCloud Docker image, with native macOS/Linux availability. Launch benefits describe local service workflows without Google Cloud service charges, one-command setup, and multiple projects within machine capacity.
+
+Publication dependencies remain distinct:
+
+- Claude vendor Directory: Cloud Orbiter account created and verified as orbitor.cloud@gmail.com / LocalCloud. Its Free plan cannot submit to the Directory; owner choice on publisher-plan eligibility is pending. No Directory submission/approval is claimed.
+- OpenAI public Directory: local MCP needs an OpenAI-supported review route. Brand account setup and the support request are prepared; no remote endpoint, skills-only substitution, vendor submission, or approval is claimed.
+- Privacy: current hosted usage/diagnostic-event retention needs confirmation before a vendor privacy attestation. Session recording retention was verified as 30 days, which does not establish event retention.
+- Homebrew: the verified release formula is ready, but cloud-orbitor currently has read-only access to homebrew-tap. The tap remains on CLI 0.1.9 until its existing publishing workflow is run by an authorized brand actor or maintainer.
