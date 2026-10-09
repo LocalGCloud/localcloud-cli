@@ -2,10 +2,7 @@
   "mcpServers": {
     "localcloud": {
       "command": "${CLAUDE_PLUGIN_ROOT}/scripts/launch-claude.sh",
-      "args": [],
-      "env": {
-        "PATH": "${PATH}:/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:${HOME}/.local/bin"
-      }
+      "args": []
     }
   }
 }
