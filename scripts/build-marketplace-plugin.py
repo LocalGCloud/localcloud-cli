@@ -11,9 +11,10 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 FILES = (
     ".claude-plugin/plugin.json", ".mcp.json", "plugin.json", "mcp.json",
     "README.md", "LICENSE", "assets/icon.png",
-    "scripts/launch-localcloud.sh", "skills/localcloud/SKILL.md",
+    "scripts/launch-localcloud.sh", "scripts/launch-claude.sh", "skills/localcloud/SKILL.md",
 )
 LAUNCHER = "scripts/launch-localcloud.sh"
+CLAUDE_LAUNCHER = "scripts/launch-claude.sh"
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -42,7 +43,7 @@ def build_package(plugin: Path, output: Path) -> dict:
         for name in sorted(FILES):
             info = ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             info.create_system = 3
-            mode = 0o755 if name == LAUNCHER else 0o644
+            mode = 0o755 if name in (LAUNCHER, CLAUDE_LAUNCHER) else 0o644
             info.external_attr = (stat.S_IFREG | mode) << 16
             info.compress_type = ZIP_DEFLATED
             archive.writestr(info, payload[name])

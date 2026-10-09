@@ -1,10 +1,8 @@
 {
   "mcpServers": {
     "localcloud": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/launch-localcloud.sh",
-      "args": [
-        "mcp"
-      ]
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/launch-claude.sh",
+      "args": []
     }
   }
 }

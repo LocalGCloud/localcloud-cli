@@ -34,6 +34,7 @@ def test_reproducible_allowlisted_package_preserves_launcher_mode(plugin, tmp_pa
     with ZipFile(first) as archive:
         assert set(archive.namelist()) == set(builder.FILES)
         assert archive.getinfo(builder.LAUNCHER).external_attr >> 16 & 0o777 == 0o755
+        assert archive.getinfo(builder.CLAUDE_LAUNCHER).external_attr >> 16 & 0o777 == 0o755
         assert archive.read("LICENSE") == (ROOT / "LICENSE").read_bytes()
     assert first.with_suffix(".zip.sha256").read_text().startswith(receipt["sha256"])
 
@@ -73,8 +74,8 @@ def test_manifests_and_catalogs_expose_actual_mcp():
     stdio = json.loads((PLUGIN / "mcp.json").read_text())["mcpServers"]["localcloud"]
     assert stdio == {"type": "stdio", "command": "./scripts/launch-localcloud.sh", "args": ["mcp"]}
     legacy = json.loads((PLUGIN / ".mcp.json").read_text())["mcpServers"]["localcloud"]
-    assert legacy["command"] == "${CLAUDE_PLUGIN_ROOT}/scripts/launch-localcloud.sh"
-    assert legacy["args"] == ["mcp"]
+    assert legacy["command"] == "${CLAUDE_PLUGIN_ROOT}/scripts/launch-claude.sh"
+    assert legacy["args"] == []
     for name in [".agents/plugins/marketplace.json", ".claude-plugin/marketplace.json"]:
         catalog = json.loads((ROOT / name).read_text())
         assert catalog["name"] == "localcloud"
@@ -84,9 +85,9 @@ def test_manifests_and_catalogs_expose_actual_mcp():
         assert path == "./plugins/localcloud"
 
 
-def _sandbox_launcher(tmp_path):
+def _sandbox_launcher(tmp_path, launcher=builder.LAUNCHER):
     # Map host installation paths into a fixture; never touch the real CLI.
-    source = (PLUGIN / builder.LAUNCHER).read_text()
+    source = (PLUGIN / launcher).read_text()
     for prefix in ["/opt/homebrew/bin", "/usr/local/bin", "/home/linuxbrew/.linuxbrew/bin"]:
         source = source.replace(prefix, str(tmp_path / prefix.strip("/").replace("/", "-")))
     source = source.replace('"${HOME:-}/.local/bin/localcloud"', '"' + str(tmp_path / "home/.local/bin/localcloud") + '"')
@@ -129,6 +130,28 @@ def test_launcher_missing_cli_has_actionable_stderr_only(tmp_path):
     assert result.returncode == 127
     assert result.stdout == ""
     assert "Install it from https://local.cloud/docs/mcp/" in result.stderr
+
+
+@pytest.mark.parametrize("installation", ["bin", "opt-homebrew-bin", "usr-local-bin", "home-linuxbrew-.linuxbrew-bin"])
+def test_claude_launcher_executes_fixed_mcp_command_and_preserves_pid(tmp_path, installation):
+    launch = _sandbox_launcher(tmp_path, builder.CLAUDE_LAUNCHER)
+    _stub_cli(tmp_path / installation / "localcloud")
+    process = subprocess.Popen([str(launch)], env={**os.environ, "PATH": str(tmp_path / "bin")}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert json.loads(process.stdout.readline()) == {"pid": process.pid, "args": ["mcp"]}
+    finally:
+        process.terminate()
+        stdout, stderr = process.communicate(timeout=5)
+    assert stdout == "" and stderr == ""
+
+
+def test_claude_launcher_is_literal_and_missing_cli_has_actionable_stderr(tmp_path):
+    source = (PLUGIN / builder.CLAUDE_LAUNCHER).read_text()
+    assert "$" not in source and "`" not in source
+    launch = _sandbox_launcher(tmp_path, builder.CLAUDE_LAUNCHER)
+    result = subprocess.run([str(launch)], env={"PATH": str(tmp_path / "empty")}, capture_output=True, text=True)
+    assert result.returncode == 127 and result.stdout == ""
+    assert "lc mcp install --client claude-code" in result.stderr
 
 
 @pytest.mark.skipif(shutil.which("sha256sum") is None, reason="release runner supplies sha256sum")
