@@ -199,3 +199,9 @@ codex plugin marketplace add LocalGCloud/localcloud-cli --ref main
 - [ ] Each vendor’s catalog, directory submission, approval, and publication are tracked separately.
 - [ ] Launcher/package tests are meaningful; docs-only edits do not add redundant tests.
 - [ ] No speculative server rewrite, new repository, personal publishing identity, or permission expansion is hidden in the rollout.
+
+## Execution checkpoint — 2026-10-09
+
+Implemented and merged in PR #8; CLI 0.1.10 and plugin 0.1.0 are published. Both remote catalogs installed successfully. Official manifest schemas, Claude validation, 807 initial non-Docker/non-PostHog checks, and 61 focused checks after review fixes passed. All four native release builds passed. The released macOS ARM64 CLI and remote-installed plugin passed real MCP and standard SDK workflow checks. Archive contents, LICENSE, embedded provenance, checksums, and Sigstore signatures were verified.
+
+Pending: Claude paid publisher-plan eligibility, OpenAI brand-account/local-MCP review route, hosted event-retention disclosure, and Homebrew publishing permission. Vendor Directory approval and model-level negative prompt evaluation are not claimed. No private runtime source, Dockerfile, or image layers were included in the plugin or submission preparation.
