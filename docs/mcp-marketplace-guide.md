@@ -31,6 +31,8 @@ In Claude Code:
 
 Enable LocalCloud, reconnect MCP, and check that its tools are listed. A first connection can start or reuse the local runtime. The plugin's launcher needs the installed CLI; it does not install software silently.
 
+Claude uses a literal launcher for the standard `localcloud mcp` command, with PATH and standard Homebrew locations supported. If your CLI is installed elsewhere and is unavailable on Claude Code's PATH, use `lc mcp install --client claude-code` instead of the plugin's MCP entry. The direct installer records the installed CLI's absolute path and supports explicit MCP options.
+
 For removal:
 
 ```text
