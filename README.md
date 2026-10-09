@@ -2,12 +2,14 @@
 
 # LocalCloud CLI
 
-**Google Cloud Platform — in a box.**
+**A free local cloud environment for developers and AI coding agents.**
 
-27 Google Cloud–compatible services in one Docker container, driven from your terminal.
-No billing account, no credentials, no network round trip.
+Build, test, and debug Google Cloud applications from your terminal or coding agent.
+MCP connects your agent to local services, SDK configuration, test data, readiness, and diagnostics.
 
-[![Version](https://img.shields.io/badge/version-0.1.4-4285F4?style=flat-square)](https://github.com/LocalGCloud/localcloud-cli/releases)
+[Website](https://local.cloud/) · [MCP guide](https://local.cloud/docs/mcp/)
+
+[![Version](https://img.shields.io/github/v/release/LocalGCloud/localcloud-cli?color=4285F4&style=flat-square)](https://github.com/LocalGCloud/localcloud-cli/releases)
 [![CLI](https://img.shields.io/badge/CLI-localcloud%20%7C%20lc-34A853?style=flat-square)](https://local.cloud)
 [![Runtime](https://img.shields.io/badge/runtime-Docker-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com)
 [![Protocol](https://img.shields.io/badge/protocol-MCP-FBBC04?style=flat-square)](https://modelcontextprotocol.io)
@@ -315,7 +317,7 @@ This is the one concept worth internalizing, because every flag follows from it:
 | Axis | Flag | What it selects | Scope |
 | :--- | :--- | :--- | :--- |
 | **Data volume** | `--data-volume` | The **durable runtime identity** — a named Docker volume mounted at `/var/lib/localcloud`. Two volumes are two independent LocalClouds. | Docker |
-| **Project** | `--project-id` | A **logical Google Cloud project** inside one runtime. Many projects share a volume. Only `start` creates a missing one. | Request |
+| **Project** | `--project-id` | A **logical Google Cloud project** inside one runtime. Many projects share a volume. `start` and MCP startup create a missing one. | Request |
 | **User** | `--user` | The **attributed caller** sent to LocalCloud services, normalized to `<name>@localcloud.invalid` where a principal is required. | Request |
 
 Project and user are request context: switching them is instant and never touches Docker. Defaults are
@@ -346,43 +348,43 @@ operating system's general ephemeral range, and `lc env` always emits the ports 
 | **AI & productivity** | Vertex AI, Google Sheets |
 
 <details>
-<summary><strong>Full catalog — service IDs, defaults, and tiers</strong></summary>
+<summary><strong>Full catalog — service IDs and defaults</strong></summary>
 
 <br>
 
 Use the **ID** with `--services` or `services.enabled` in `localcloud.yaml`.
 
-| ID | Google Cloud service | Default | Tier |
-| :--- | :--- | :---: | :--- |
-| `gcs` | Cloud Storage | ● on | Community |
-| `pubsub` | Pub/Sub | ● on | Community |
-| `firestore` | Firestore | ○ off | Community |
-| `bigtable` | Bigtable | ● on | Pro |
-| `spanner` | Spanner | ● on | Pro |
-| `bigquery` | BigQuery | ● on | Community |
-| `sheets` | Google Sheets | ● on | Community |
-| `secretmanager` | Secret Manager | ● on | Community |
-| `cloudtasks` | Cloud Tasks | ● on | Community |
-| `cloudscheduler` | Cloud Scheduler | ● on | Community |
-| `cloudfunctions` | Cloud Functions (2nd Gen) | ● on | Community |
-| `alloydb` | AlloyDB | ● on | Community |
-| `dataproc` | Dataproc | ● on | Community |
-| `cloudiam` | Cloud IAM | ● on | Community |
-| `cloudresourcemanager` | Cloud Resource Manager | ● on | Community |
-| `serviceusage` | Service Usage | ● on | Community |
-| `cloudbilling` | Cloud Billing | ● on | Community |
-| `logging` | Cloud Logging | ● on | Community |
-| `monitoring` | Cloud Monitoring | ● on | Community |
-| `gke` | GKE | ○ off | Pro |
-| `compute` | Compute Engine | ○ off | Pro |
-| `cloudrun` | Cloud Run | ○ off | Pro |
-| `memorystore` | Memorystore (Redis/Valkey) | ● on | Community |
-| `workflows` | Cloud Workflows | ● on | Community |
-| `vertexai` | Vertex AI | ○ off | Pro |
-| `kms` | Cloud KMS | ● on | Pro |
-| `cloudsql` | Cloud SQL | ● on | Community |
+| ID | Google Cloud service | Default |
+| :--- | :--- | :---: |
+| `gcs` | Cloud Storage | ● on |
+| `pubsub` | Pub/Sub | ● on |
+| `firestore` | Firestore | ○ off |
+| `bigtable` | Bigtable | ● on |
+| `spanner` | Spanner | ● on |
+| `bigquery` | BigQuery | ● on |
+| `sheets` | Google Sheets | ● on |
+| `secretmanager` | Secret Manager | ● on |
+| `cloudtasks` | Cloud Tasks | ● on |
+| `cloudscheduler` | Cloud Scheduler | ● on |
+| `cloudfunctions` | Cloud Functions (2nd Gen) | ● on |
+| `alloydb` | AlloyDB | ● on |
+| `dataproc` | Dataproc | ● on |
+| `cloudiam` | Cloud IAM | ● on |
+| `cloudresourcemanager` | Cloud Resource Manager | ● on |
+| `serviceusage` | Service Usage | ● on |
+| `cloudbilling` | Cloud Billing | ● on |
+| `logging` | Cloud Logging | ● on |
+| `monitoring` | Cloud Monitoring | ● on |
+| `gke` | GKE | ○ off |
+| `compute` | Compute Engine | ○ off |
+| `cloudrun` | Cloud Run | ○ off |
+| `memorystore` | Memorystore (Redis/Valkey) | ● on |
+| `workflows` | Cloud Workflows | ● on |
+| `vertexai` | Vertex AI | ○ off |
+| `kms` | Cloud KMS | ● on |
+| `cloudsql` | Cloud SQL | ● on |
 
-Tier gating is enforced by the container at startup, not by the CLI. `● on` services start automatically
+`● on` services start automatically
 when `services.enabled` is unset; `○ off` services are available but must be selected explicitly.
 
 </details>
@@ -554,6 +556,12 @@ lc mcp install --client cursor
 
 [MCP setup and client guide](docs/mcp.md) covers Claude Code/Desktop, Cursor, Codex, VS Code, Cline, Gemini CLI, Antigravity and Windsurf. The CLI 0.1.9 `gemini` installer alias targets Antigravity, and `all` configures five clients; use the guide's manual setup for Gemini CLI and Cline.
 
+Run the [three reproducible cloud workflows](docs/mcp-workflows.md). This recording shows MCP checks and actual Storage, Pub/Sub, and BigQuery assertions through CLI 0.1.9 and runtime 0.1.5:
+
+![LocalCloud MCP workflow verification](docs/assets/localcloud-mcp-demo.gif)
+
+[Watch the recorded demo](docs/assets/localcloud-mcp-demo.mp4).
+
 The bridge **automatically checks and starts** the LocalCloud container on demand and provisions any missing project requested by the agent without recreating the runtime. All agents and workspaces share the same persistent container (`localcloud-data`). To require manual control and disable auto-start, pass `--no-start`.
 
 You can also configure clients manually in `claude_desktop_config.json`, `.cursor/mcp.json`, `.claude.json`, or `mcp_config.json`:
@@ -713,9 +721,8 @@ Tests that need a live Docker engine are marked `docker`; deselect them with `-m
 ## License and support
 
 LocalCloud is proprietary software. Individual developers receive the rights described in
-[LICENSE](LICENSE). Service access is gated by **Community**, **Pro**, and **Enterprise** tiers, enforced
-by the container at startup.
+[LICENSE](LICENSE). LocalCloud MCP is free for the documented local development workflows.
 
 - **Website** — [local.cloud](https://local.cloud)
 - **Documentation** — [local.cloud/docs](https://local.cloud/docs)
-- **Support** — open an issue on GitHub, or email [support@local.cloud](mailto:support@local.cloud)
+- **Support** — open an issue on GitHub, or email [info@local.cloud](mailto:info@local.cloud)

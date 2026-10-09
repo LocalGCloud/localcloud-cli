@@ -1,0 +1,54 @@
+{
+  "recordedAt": "2026-10-09T12:32:47Z",
+  "cliVersion": "0.1.9",
+  "runtimeVersion": "0.1.5",
+  "runtimeImage": "agentcloud/localcloud@sha256:cf00c62847da79d026ad76da1cfb4b4bd2154b87cbdc45079260c099e8c845ee",
+  "clientPlatform": "macOS ARM64",
+  "runtimePlatform": "Linux ARM64",
+  "events": [
+    {
+      "seconds": 2.242,
+      "text": "Connected to LocalCloud runtime 0.1.5: 28 tools"
+    },
+    {
+      "seconds": 2.584,
+      "text": "PASS MCP: localcloud_list_services"
+    },
+    {
+      "seconds": 2.793,
+      "text": "PASS MCP: localcloud_check_readiness"
+    },
+    {
+      "seconds": 3.03,
+      "text": "PASS MCP: localcloud_check_compatibility"
+    },
+    {
+      "seconds": 3.22,
+      "text": "PASS MCP: localcloud_get_diagnostics"
+    },
+    {
+      "seconds": 3.237,
+      "text": "PASS MCP: SDK configuration validates against its output schema"
+    },
+    {
+      "seconds": 3.8,
+      "text": "PASS MCP: BigQuery query returns the expected row"
+    },
+    {
+      "seconds": 3.843,
+      "text": "PASS Cloud Storage: upload and read back the exact content"
+    },
+    {
+      "seconds": 3.997,
+      "text": "PASS Pub/Sub: publish, pull, verify, and acknowledge"
+    },
+    {
+      "seconds": 4.6,
+      "text": "PASS BigQuery: SELECT 1 returns the expected row"
+    },
+    {
+      "seconds": 4.6,
+      "text": "Cleanup complete: only uniquely named example resources were removed"
+    }
+  ]
+}

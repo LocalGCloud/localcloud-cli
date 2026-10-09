@@ -22,7 +22,8 @@ Repository guide: https://github.com/LocalGCloud/localcloud-cli/blob/main/docs/m
 ```
 
 4. Preserve other MCP entries. Start or enable `localcloud` in the client. The bridge starts/reuses the runtime automatically; first image download can take longer. You can run `localcloud start --local-only` first to explicitly bind newly started runtime ports to localhost.
-5. Discover tools, call `localcloud_list_services` with `{}`, check readiness, and obtain `localcloud_get_env` with `{"format":"json"}`. Use the returned local endpoints, not guessed default ports.
-6. Read compatibility before running one narrow SDK integration check using only test-owned resources. Do not use live GCP credentials, fall back to real Google Cloud, reset a shared project, or enable destructive MCP permissions implicitly.
+5. Use runtime 0.1.5 or newer for validated strict-client input/output schemas. Inspect `localcloud status`; if an existing runtime is older, report that an explicit runtime upgrade is needed. Do not replace a running shared container implicitly. Follow the MCP guide's upgrade instructions using the user's same data volume/configuration.
+6. Discover tools, call `localcloud_list_services` with `{}`, check readiness, and obtain `localcloud_get_env` with `{"format":"json"}`. Use the returned local endpoints, not guessed default ports.
+7. Read compatibility before running one narrow SDK integration check using only test-owned resources. Do not use live GCP credentials, fall back to real Google Cloud, reset a shared project, or enable destructive MCP permissions implicitly.
 
 The bridge requires no separate MCP package. CLI versions and runtime catalogs are independent. Native Windows binaries are not provided. License, privacy, and outbound behavior are described on the website; this guide does not claim open-source licensing, complete Google Cloud parity, or security isolation between logical projects.

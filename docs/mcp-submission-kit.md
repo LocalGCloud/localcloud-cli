@@ -1,6 +1,6 @@
 # LocalCloud MCP submission kit
 
-Use these descriptions for LocalCloud MCP listings. Installation requires LocalCloud CLI 0.1.9 or newer. The MCP server is included in the CLI/runtime; there is no separate server to purchase.
+Use these descriptions for LocalCloud MCP listings. Installation requires LocalCloud CLI 0.1.9 or newer. The MCP server is included in the CLI/runtime.
 
 ## Identity
 

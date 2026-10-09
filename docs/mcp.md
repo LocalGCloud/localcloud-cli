@@ -46,6 +46,22 @@ lc start --local-only
 
 For Claude Code, use `lc mcp install --client claude-code`; for Claude Desktop, use `lc mcp install --client claude-desktop`. Other client configurations are described below.
 
+### Runtime version and existing environments
+
+Use **LocalCloud runtime 0.1.5 or newer** for validated strict-client tool input and output schemas. CLI and runtime versions are independent. Connecting MCP or updating the CLI reuses an existing container; it does not replace an older runtime.
+
+Inspect `lc status`. To deliberately upgrade the selected runtime while retaining its named data volume:
+
+```sh
+lc restart --image agentcloud/localcloud:0.1.5 --pull
+```
+
+Include the same `--data-volume` and configuration file you normally use if you target a custom environment. The restart briefly interrupts clients; reconnect afterward.
+
+### Desktop bundle
+
+Clients supporting MCP desktop extensions can install the [LocalCloud MCP 0.1.9 bundle](https://github.com/LocalGCloud/localcloud-cli/releases/download/v0.1.9/localcloud-mcp-0.1.9.mcpb). It includes the CLI for macOS 13+ and Linux glibc 2.35+ on ARM64/x86_64. Docker and runtime 0.1.5+ are still required. Follow the client's extension-install flow, then enable LocalCloud MCP. The [registry metadata](https://github.com/LocalGCloud/localcloud-cli/blob/main/server.json) records the artifact hash and prerequisites.
+
 ### Complete a first task
 
 Give the agent this prompt:
@@ -63,7 +79,7 @@ A connected client should discover `localcloud_list_services`, `localcloud_check
 | Write a repeatable integration test | Read compatibility, SDK/ Terraform configuration, recipes and test prompts | Create only test-owned resources, verify results, and clean them up through the SDK |
 | Diagnose an application failure | Check readiness, diagnostics, logs and recent requests | Identify an endpoint, schema, or service-readiness problem and rerun the failing test |
 
-Start with [SDK examples](https://local.cloud/docs/sdk-examples/), [Terraform guidance](https://local.cloud/docs/terraform/), and the [agent entry point](https://local.cloud/ai/agents.md). LocalCloud compatibility is service- and operation-specific; validate release behavior against real Google Cloud separately.
+Run the [three reproducible MCP and SDK workflows](mcp-workflows.md), or start with [SDK examples](https://local.cloud/docs/sdk-examples/), [Terraform guidance](https://local.cloud/docs/terraform/), and the [agent entry point](https://local.cloud/ai/agents.md). LocalCloud compatibility is service- and operation-specific; validate release behavior against real Google Cloud separately.
 
 ## Permissions and local data
 

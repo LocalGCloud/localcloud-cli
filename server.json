@@ -1,0 +1,37 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.LocalGCloud/localcloud",
+  "title": "LocalCloud MCP",
+  "description": "A free local cloud environment for AI agents to build, test, and debug Google Cloud applications.",
+  "version": "0.1.9",
+  "websiteUrl": "https://local.cloud/",
+  "repository": {
+    "url": "https://github.com/LocalGCloud/localcloud-cli",
+    "source": "github"
+  },
+  "icons": [
+    {
+      "src": "https://local.cloud/brand/localcloud-mcp-icon.png",
+      "mimeType": "image/png",
+      "sizes": ["400x400"]
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/LocalGCloud/localcloud-cli/releases/download/v0.1.9/localcloud-mcp-0.1.9.mcpb",
+      "fileSha256": "6788f9208230cce57d2d92453c15806819531d63fca4f0eff37dc39fd0175987",
+      "transport": { "type": "stdio" }
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "documentationUrl": "https://local.cloud/docs/mcp/",
+      "supportUrl": "https://github.com/LocalGCloud/localcloud-cli/issues",
+      "minimumCliVersion": "0.1.9",
+      "minimumRuntimeVersion": "0.1.5",
+      "prerequisites": ["Docker", "macOS 13+ or Linux glibc 2.35+", "ARM64 or x86_64"],
+      "installation": "https://local.cloud/docs/mcp/"
+    }
+  }
+}
