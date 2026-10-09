@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "localcloud",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Build, test, and debug Google Cloud applications in a local cloud environment through MCP.",
   "author": {
     "name": "LocalCloud",
