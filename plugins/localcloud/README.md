@@ -38,6 +38,8 @@ For the official installer or native archives, see the [MCP setup guide](https:/
 
 Enable the plugin and reconnect MCP. Use the marketplace plugin or the CLI's direct MCP installer for a client, so you do not register duplicate servers.
 
+Local MCP tools run in Claude Code and in Cowork sessions that run on your computer. Claude chat on the web and mobile can load the workflow guidance; local MCP execution requires a supported local session.
+
 ## Install in Codex
 
 ```sh
@@ -66,6 +68,8 @@ Remove with `/plugin uninstall localcloud@localcloud` in Claude Code or `codex p
 MCP management writes and destructive operations are disabled by default. SDK application writes still occur during requested workflows. Compatibility varies by service and operation; validate application release behavior against Google Cloud before production deployment.
 
 Local execution does not guarantee zero network traffic. Downloads, update checks, telemetry, and documented outbound features can contact external services, and MCP results are shared with your agent client. See [privacy and outbound data](https://local.cloud/docs/privacy/) and the [CLI privacy reference](https://github.com/LocalGCloud/localcloud-cli/blob/main/docs/mcp-privacy.md).
+
+The CLI can send operational telemetry to LocalCloud's analytics processor, PostHog (`us.i.posthog.com`). Opt out of CLI telemetry with `LOCALCLOUD_TELEMETRY=false` or `DO_NOT_TRACK=1`; the linked reference describes the runtime's separate controls and outbound behavior. Local application data stays in your Docker volume until you delete it.
 
 The plugin and CLI are governed by the [LocalCloud Public Preview License](LICENSE). The runtime is obtained separately under the terms supplied with that image. This plugin contains public CLI integration files and no runtime implementation.
 
