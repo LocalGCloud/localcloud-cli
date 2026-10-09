@@ -139,7 +139,7 @@ LocalCloud ensures container stability for running agents:
 - Caller identity defaults to `local-developer` (normalized to `local-developer@localcloud.invalid`), attributing actions per agent or user.
 
 ### Auto-Reconnection on Restart
-- If the LocalCloud container is restarted (`lc restart`) or port mappings change while an MCP session is open, the bridge detects `java_mcp_unavailable`, automatically re-resolves the target gateway, and retries the request once before failing.
+- After `java_mcp_unavailable`, the bridge re-resolves the target gateway. If the gateway URL changed, it retries the request once at the new URL. A restart that keeps the same URL can still require the client to retry or reconnect.
 
 ---
 
@@ -322,7 +322,7 @@ The read-only runtime catalog verified for this guide (runtime MCP version 0.1.3
    - `localcloud_diff_project`: Compare current project state against a checkpoint.
 
 ### Resources (14)
-- `localcloud://api/catalog`: Complete catalog of supported Google Cloud APIs.
+- `localcloud://api/catalog`: LocalCloud management API operations and schemas.
 - `localcloud://api/openapi`: OpenAPI specifications for LocalCloud management facades.
 - `localcloud://services`: Enabled services and assigned loopback ports.
 - `localcloud://env/shell`: Shell environment variable exports (`export STORAGE_EMULATOR_HOST=...`).
