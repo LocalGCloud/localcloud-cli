@@ -1,6 +1,6 @@
 # LocalCloud MCP distribution record
 
-Started 2026-10-09. Status: execution in progress.
+Started 2026-10-09. Status: rollout executed; external reviews and optional prerequisites remain pending. Last reconciliation: 2026-10-09.
 
 This record tracks the public rollout of LocalCloud MCP, a free local cloud environment for AI coding agents. The scope includes accurate documentation, CLI 0.1.9+ setup, registry packaging, directory submissions, awesome-list contributions, practical announcements, and verified follow-up links. A submission is not a published listing.
 
@@ -12,6 +12,7 @@ This record tracks the public rollout of LocalCloud MCP, a free local cloud envi
 - Source and currently available guide: https://github.com/LocalGCloud/localcloud-cli/blob/main/docs/mcp.md
 - Repository: https://github.com/LocalGCloud/localcloud-cli
 - Required CLI: 0.1.9 or newer for `lc mcp install` and automatic runtime startup
+- Required runtime: 0.1.5 or newer for qualified strict-client schemas; existing older environments need the explicit upgrade in the guide
 - Contact: agent@local.cloud; general support: info@local.cloud
 - Positioning: free local cloud development for agents; no Pro or paid-version claims; do not describe the proprietary runtime as open source.
 
@@ -38,41 +39,44 @@ Use existing authenticated brand accounts where available. The user authorized G
 - [x] Three reproducible example workflows and troubleshooting
 - [x] Short, medium, and long submission descriptions with website and guide links
 - [x] Existing-brand logo exports, screenshot, architecture visual, and recorded short demo
-- [ ] Official registry metadata and qualified installable package
+- [x] Official registry metadata and qualified installable package
 - [x] Qualified desktop package; optional Smithery publication deferred with a concrete authorization blocker
 - [x] Docker Catalog feasibility and concrete current integration blocker
-- [ ] Public listings and awesome-list submissions with evidence
-- [ ] Practical announcements through available accounts
+- [x] Public registry entry and directory/awesome-list submissions with evidence; external approvals distinguished
+- [x] Practical announcements through available accounts
 - [x] Private reference record saved separately for the maintainer
-- [ ] Final status reconciliation and completion audit
+- [x] Final status reconciliation and completion audit; pending reviews and optional prerequisites recorded
 
 ## Submission ledger
 
 | Destination | State | Submission or live URL | Follow-up |
 | --- | --- | --- | --- |
-| Official MCP Registry | Publication in progress | https://registry.modelcontextprotocol.io/ | Exact namespace lookup returned 404 before publication; package is public and hash verified; refreshing expired publishing login |
-| GitHub MCP Registry | Planned | https://github.com/mcp | Verify current inclusion route and actual discoverability |
+| Official MCP Registry | Published; active/latest 0.1.9 | https://registry.modelcontextprotocol.io/v0.1/servers/io.github.jhsenjaliya%2Flocalcloud/versions/0.1.9 | Namespace `io.github.jhsenjaliya/localcloud`; exact API readback verifies metadata, guide and qualified MCPB hash |
+| GitHub MCP Registry | Nomination emailed; inclusion pending | https://github.com/mcp | Sent to the official `partnerships@github.com` inclusion route; exact Gmail Sent search verified. Curated GitHub listing is not yet confirmed |
 | Smithery | Deferred: CLI authorization exposes the account API key | https://smithery.ai/docs/build/publish | Browser sign-in completed; local MCPB requires CLI/API publication. The CLI authorization explicitly asks for API-key access, so it was canceled under computer-control confirmation policy. No listing published |
-| Cursor Directory | Draft form prepared | https://cursor.directory/plugins/new | Google sign-in completed; MCP component, guide links, and brand icon prepared; publish after usable runtime delivery |
+| Cursor Directory | Submitted; security scan pending | https://cursor.directory/plugins/localcloud-mcp | Page confirms scanning; plugin remains unpublished and hidden until the security agent finishes. Do not count it as live |
 | Glama | Deferred: new account requires legal acceptance | https://glama.ai/complete-profile | Google sign-in completed; profile completion requires Terms of Service acceptance, which was not performed |
 | PulseMCP | Skipped for now: submissions paused | https://www.pulsemcp.com/submit | Browser page says new submissions and listing changes are temporarily paused (notice updated September 3, 2026); publish to Official Registry for automatic pickup when service resumes |
 | MCPServers.org / wong2 | Submitted; review pending | https://mcpservers.org/submit | Browser confirmed “Submission Successful!” for LocalCloud MCP; free queue, review within 2 weeks, email on approval |
-| punkpeye awesome-mcp-servers | Draft PR submitted | https://github.com/punkpeye/awesome-mcp-servers/pull/16030 | Mark ready after packaged runtime schema fix is qualified; entry includes website, MCP guide and CLI 0.1.9+ |
+| punkpeye awesome-mcp-servers | Ready PR; maintainer review pending | https://github.com/punkpeye/awesome-mcp-servers/pull/16030 | Open, not draft; submission check passed. Final body links qualified releases, website and guide |
 | appcypher awesome-mcp-servers | Skipped: upstream archived | https://github.com/jhsenjaliya/localcloud-awesome-mcp-servers-appcypher/commit/8ff392246f0d42b34c1c75912bc96597341e5285 | API confirmed archived=true after rejecting PR creation with 404; prepared fork branch is retained, not an upstream listing |
-| TensorBlock MCP Index / awesome list | Draft PR submitted | https://github.com/TensorBlock/awesome-mcp-servers/pull/3385 | Mark ready after public runtime delivery; cloud category entry includes install, transport, prerequisites, website and guide |
-| Awesome DevOps MCP Servers | Draft PR submitted | https://github.com/rohitg00/awesome-devops-mcp-servers/pull/351 | Mark ready after public runtime delivery; GCP/local platform entry |
+| TensorBlock MCP Index / awesome list | Ready PR; maintainer review pending | https://github.com/TensorBlock/awesome-mcp-servers/pull/3385 | Open, not draft; cloud category entry includes install, transport, prerequisites, website and guide |
+| Awesome DevOps MCP Servers | Ready PR; maintainer review pending | https://github.com/rohitg00/awesome-devops-mcp-servers/pull/351 | Open, not draft; GCP/local platform entry |
 | Cline Marketplace | Deferred: required native Cline install test not completed | https://github.com/cline/mcp-marketplace | Submission rules require watching Cline set up from README/llms-install. Cline is not installed/configured here; strict SDK proof does not establish that prerequisite. Logo/installation docs are prepared; no issue claiming a Cline test was submitted |
 | Docker MCP Catalog | Deferred: no qualified containerized stdio bridge | https://github.com/docker/mcp-registry/blob/main/CONTRIBUTING.md | Local entries require a source Dockerfile and Toolkit verification. The published MCP bridge is a host-native CLI using host Docker discovery; its public repository has no such container profile. The loopback runtime endpoint is not an eligible public hosted server. No untested socket-mount profile or fake public endpoint submitted |
 | MCP Market | Submitted; review pending | https://mcpmarket.com/submit | Browser confirmed “Submitted! You're in the free queue”; current stated wait 4–6 weeks; email on publication |
-| MCP.so | Planned | https://mcp.so/submit | Current main form is paid; check existing/free path, otherwise skip |
-| Additional MCP directories | Discovery pending | — | Add verified active destinations individually; avoid duplicate submissions |
-| Cloud/agent/testing awesome lists | Discovery pending | — | Add relevant repositories and follow their rules |
-| LocalCloud website/blog | MCP guide live; walkthrough prepared | https://local.cloud/docs/mcp/ | New article, runtime upgrade instructions, and recorded demo pass local committed build/installer/159 performance checks; deployment pending |
-| DEV | Planned | https://dev.to/ | Use existing account and workflow tutorial |
-| Hacker News | Planned | https://news.ycombinator.com/ | Check existing posts and suitable release-ready Show HN |
-| Reddit | Planned | https://www.reddit.com/ | Check promotion rules and existing posts; use permitted showcase channels |
-| LinkedIn | Planned | https://www.linkedin.com/ | Use relevant brand/account and release-ready announcement |
-| X | Planned | https://x.com/LocalCloud_AI | Check account and post with usable installation/guide links |
+| MCPServers.com | Submitted; review pending | https://mcpservers.com/submit | Browser confirms implementation submitted for review; website/guide, logo, architecture visual, versions and prerequisites supplied |
+| MCP.so | Free community issue submitted; review pending | https://github.com/chatmcp/mcpso/issues/5034 | Open submission issue; current paid main form was not purchased. No approved directory placement claimed |
+| MCPHub | Deferred: login requires legal acceptance | https://www.mcphub.app/registry | Login page explicitly makes signing in agreement to new terms; no account completion or submission |
+| mcpdirectory.dev | Automatic ingestion path; listing unverified | https://mcpdirectory.dev/ | Site says data comes from MCP Registry, GitHub and npm, refreshed daily. Official entry is published; no manual submission route observed and current LocalCloud search did not find a listing |
+| mcpdirectory.app | Deferred: unavailable | https://mcpdirectory.app/ | Fetch returned 502; browser navigation returned DNS resolution failure. Revisit if service becomes available |
+| Other awesome-list categories | Scope screened | — | Remote-only lists and unrelated Web3/OSINT/research lists are not suitable for this local stdio server. Three relevant cloud/DevOps submissions above cover the reviewed scope |
+| LocalCloud website/blog | Guide, walkthrough and demo live | https://local.cloud/blog/localcloud-mcp-agent-cloud/ | Website commit `9d7a8f6`; deployment run `37933108475` succeeded. Guide/article/video HTTP 200 verified; full build, installer and 159 performance checks passed |
+| DEV | Published; anonymous view verified | https://dev.to/jaysen99/give-your-coding-agent-a-local-cloud-environment-with-mcp-2b2l | Canonical link to original walkthrough; `mcp`/`ai` tags and truthful Fully Autonomous disclosure |
+| Hacker News | Published regular link submission | https://news.ycombinator.com/item?id=50021011 | Existing `jaysen_apache` account; practical walkthrough submitted as a normal link, without duplicate Show HN or generated comments |
+| Reddit r/mcp | Published; anonymous view verified | https://www.reddit.com/r/mcp/comments/1x1mucq/ | Existing `jhsonline` account; showcase flair, Brand Affiliate label and maintainer/AI-assistance disclosure. No duplicate crossposts |
+| LinkedIn | Published; permalink verified | https://www.linkedin.com/feed/update/urn:li:activity:7514331414318759936/ | Existing Jay Sen account; website, guide, CLI/runtime prerequisites and runnable workflows. UI confirmed Post successful |
+| X | Published with recorded demo | https://x.com/LocalCloud_AI/status/2108549606422536549 | Existing brand account; actual MP4 attached, website/guide and CLI/runtime requirements included |
 
 ## Action history
 
@@ -158,7 +162,42 @@ Use existing authenticated brand accounts where available. The user authorized G
 78. Uploaded the qualified MCPB and separate `MCPB_SHA256SUMS` to the existing CLI v0.1.9 release, preserving the original native assets/checksums. Downloaded the public bundle and verified 102366787 bytes and SHA-256 `6788f9208230cce57d2d92453c15806819531d63fca4f0eff37dc39fd0175987`.
 79. Official registry publication rejected the expired publishing token with HTTP 401; no entry was created. Started the normal GitHub device-flow refresh using the same maintainer/app identity and permissions.
 80. Separated private operational follow-up details from the public listing ledger and saved a full private copy for the maintainer. Consolidating only unpublished task-owned CLI preparation commits before public push so private details are not exposed through earlier commit history.
+81. Completed the routine publisher login refresh. Organization namespace publication was denied with HTTP 403 despite the maintainer's existing organization role; did not change membership privacy or grant broader credentials. Published the recommended personal namespace `io.github.jhsenjaliya/localcloud`, version 0.1.9. Exact version/latest APIs confirm status active and isLatest=true, with the qualified public bundle and matching SHA-256.
+82. Published sanitized CLI documentation, examples, metadata and media as `7e5a3f7`, then corrected the registry namespace in `6496521`. Only unpublished task-owned preparation commits were consolidated; no remote history was rewritten. Updated the public repository's agent-focused description, website and relevant MCP/cloud topics and verified their readback.
+83. Published website walkthrough/demo revision `9d7a8f6`. Deployment https://github.com/LocalGCloud/LocalGCloud.github.io/actions/runs/37933108475 completed successfully for that exact revision. Live guide, blog, icon, architecture visual and MP4 return HTTP 200. The article includes a textual transcript and version/qualification boundaries.
+84. Rewrote the three awesome-list PR descriptions around the delivered releases and marked each ready for review. All remain open and not draft; punkpeye's submission check passed. No upstream PR was merged or maintainer approval represented as complete.
+85. Submitted the MCPServers.com form with corrected product name, agent-focused description, actual icon/banner and website/guide links. Browser confirmed “Your MCP server implementation has been submitted for review.” Optional contacts/calendar access remained unchecked and unexpected LAN access was blocked.
+86. Submitted Cursor Directory's LocalCloud MCP component and setup metadata. The resulting page is https://cursor.directory/plugins/localcloud-mcp; it explicitly says the plugin is scanning, unpublished and hidden until the security agent finishes. A later check retained that pending status.
+87. Used MCP.so's free community issue route after observing paid placement on its main form. Created https://github.com/chatmcp/mcpso/issues/5034 and verified it is open. No paid placement purchased and no listing approval claimed.
+88. Sent the official GitHub MCP Registry inclusion nomination to `partnerships@github.com` from the authorized account. Included the active Official Registry entry, repository, website, MCP guide, walkthrough, qualified bundle and prerequisites. Gmail's exact `in:sent` recipient/subject search confirms the nomination thread; curated inclusion remains pending.
+89. Published the brand X announcement at https://x.com/LocalCloud_AI/status/2108549606422536549 with the actual recorded MP4, CLI/runtime versions, install command and website/guide links. Verified the post after a non-binding new-account reach notice; did not manufacture engagement.
+90. Published https://dev.to/jaysen99/give-your-coding-agent-a-local-cloud-environment-with-mcp-2b2l through the existing account. Previewed the rendered tutorial, used `mcp` and `ai` tags, saved its original-site canonical URL, and selected the truthful Fully Autonomous authorship disclosure. An anonymous browser view confirms publication and links; saved an unobstructed screenshot.
+91. Submitted the practical walkthrough as a regular Hacker News link at https://news.ycombinator.com/item?id=50021011 using the existing `jaysen_apache` account. A focused pre-submission search found no matching MCP post. Verified the exact title, URL and author; no duplicate Show HN, generated comments or artificial engagement.
+92. Published the r/mcp showcase at https://www.reddit.com/r/mcp/comments/1x1mucq/ using the existing `jhsonline` account. Read the community's promotion rules, selected showcase flair and Brand Affiliate, disclosed maintainer affiliation and AI assistance, and included concrete runnable tests. Anonymous browser readback confirms the complete post is visible; declined duplicate crosspost suggestions.
+93. Published the existing Jay Sen account's LinkedIn announcement at https://www.linkedin.com/feed/update/urn:li:activity:7514331414318759936/. Browser confirmed Post successful; the permalink contains the agent-focused description, website/guide, CLI/runtime requirements and verified workflow boundaries.
+94. Screened remaining optional destinations. MCPHub login explicitly requires agreement to new terms; did not complete it. mcpdirectory.dev says it ingests MCP Registry/GitHub/npm daily; the official entry provides that feed path, but no LocalCloud listing or manual submission route was verified. mcpdirectory.app returned both a fetch failure and browser DNS failure. Cline's README requires observing Cline install from README/llms-install; that native prerequisite remains unverified in this environment, so no misleading marketplace issue was filed. Remote-only and unrelated awesome lists were excluded.
+95. Removed all four task-owned qualification/release containers, their networks and synthetic volumes, cleared only their runtime records, and restored `localcloud-data` as active. Removed the task Buildx builder, stopped and deleted its separate Colima profile, and verified only the original default profile/context remains. Original `localcloud` container, application volume and existing builders were preserved.
+96. Saved final manifest/registry, schema regression, build, website checks and cleanup evidence in the maintainer's private artifact folder. Removed the clean, published task release worktree, two clean/pushed submission clones, extracted bundle, downloaded verification CLI/publisher and temporary video renderer. Retained the public release artifacts, source branches/tags, useful shared images/caches and private follow-up evidence.
+97. Completion audit verified the active/latest official entry, deployed website revision, three open ready PRs, open MCP.so issue, five published community/social announcements, submission confirmations, and concrete optional deferrals. Reconciled this public record and the private follow-up document; external approvals remain explicitly pending.
+
+## Released artifacts and verification
+
+- CLI 0.1.9: https://github.com/LocalGCloud/localcloud-cli/releases/tag/v0.1.9
+- Desktop bundle: https://github.com/LocalGCloud/localcloud-cli/releases/download/v0.1.9/localcloud-mcp-0.1.9.mcpb — 102366787 bytes, SHA-256 `6788f9208230cce57d2d92453c15806819531d63fca4f0eff37dc39fd0175987`.
+- Runtime 0.1.5: `agentcloud/localcloud:0.1.5`, index `sha256:b2f6e01cb1eb59de3caea5fdfa6299a616e84c28d8dcc4e6ee3e1e882de17934`. Native ARM64 and emulated AMD64 strict MCP plus Storage/PubSub/BigQuery assertions passed against their exact public image digests.
+- 33 focused CLI/MCP/installer/packaging tests and 39 focused runtime tests passed. Schema regressions failed before their fixes. Full production-shaped multiarchitecture builds passed locally; remote runtime CI did not run.
+- Website full build, strict upstream verification, installer checks and 159 performance checks passed. Successful deployment and live HTTP proof are recorded separately above.
+- The released MCPB's actual macOS ARM64 launcher passed strict SDK discovery, all environment formats, resource reads and an asserted BigQuery result. Other native client UIs and native AMD64 hardware are not claimed as tested.
+- Public media: https://local.cloud/brand/localcloud-mcp-icon.png, https://local.cloud/brand/localcloud-mcp-flow.svg, https://local.cloud/brand/localcloud-mcp-demo.mp4.
+
+## Follow-up queue
+
+- Check Cursor Directory's security scan and the three awesome-list PRs before sending any additional submission; reply to genuine maintainer requests without duplicating entries.
+- MCPServers.org's stated two-week review window ends around October 23, 2026. MCP Market's stated 4–6 week window is around November 6–20. MCPServers.com, MCP.so and GitHub inclusion have no verified approval date.
+- Revisit PulseMCP when intake resumes and check automatic directory ingestion after a refresh. The active Official Registry record is the canonical feed entry.
+- Optional human prerequisites: Glama/MCPHub terms acceptance, Smithery's API-key authorization, and a configured Cline agent completing the required installation test. Docker Catalog additionally needs a genuinely qualified containerized stdio integration.
+- No placement was purchased. No automatic follow-up or monitoring schedule was created.
 
 ## Resume and completion audit
 
-For each destination, preserve confirmation text, PR/issue IDs, live URLs, and the last verified date. Keep published, submitted/pending, skipped, and blocked distinct. Before completion, verify every advertised command against published artifacts, check website deployment and links, inspect all created PRs/issues/listings, and reconcile every deliverable above. Optional destinations may be skipped with a specific evidenced reason; essential installation and publication claims must be proved.
+The authorized rollout has been executed with the specific optional deferrals above. Pending review is not approved placement. For future work, preserve existing IDs and confirmation evidence, update the verified date, and check for duplicates before submitting again. Repeat runtime/client qualification only for changed artifacts or a newly claimed integration; preserve the user's existing environments.
