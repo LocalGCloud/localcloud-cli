@@ -257,6 +257,8 @@ def test_cli_mcp_install_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         "--project",
         "--project-id",
         "cli-test-project",
+        "--data-volume",
+        DEFAULT_DATA_VOLUME,
     ])
     result = _execute(args)
 
@@ -323,5 +325,4 @@ def test_resolve_localcloud_command_prefers_system_over_venv(tmp_path: Path, mon
     res = resolve_localcloud_command(prefer_bare=False)
     # On macOS or Linux where /opt/homebrew or fake_brew exists, it returns an absolute path
     assert Path(res).is_absolute()
-
 

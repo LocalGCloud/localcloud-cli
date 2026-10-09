@@ -28,7 +28,7 @@ localcloud --version
 localcloud doctor
 ```
 
-The [release page](https://github.com/LocalGCloud/localcloud-cli/releases/tag/v0.1.9) also provides signed standalone archives for macOS ARM64/x86_64 and Linux ARM64/x86_64. Linux binaries require glibc 2.35 or newer. Native Windows binaries are not shipped; Windows users need a suitable Linux/WSL environment and a client launch configuration that can reach it.
+The [release page](https://github.com/LocalGCloud/localcloud-cli/releases/tag/v0.1.9) also provides signed standalone archives for macOS ARM64/x86_64 and Linux ARM64/x86_64. macOS binaries require macOS 13 or newer; Linux binaries require glibc 2.35 or newer. Native Windows binaries are not shipped; Windows users need a suitable Linux/WSL environment and a client launch configuration that can reach it.
 
 ### Connect an agent
 
