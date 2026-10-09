@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import copy
 import io
 from typing import Any
 
@@ -397,6 +398,59 @@ def test_running_bridge_lists_only_java_tools_and_preserves_initialize() -> None
         "localcloud_apply_scenario",
     ]
     assert controller.targets == [CONFIG]
+
+
+def test_tool_display_titles_preserve_runtime_schemas_and_safety_annotations() -> None:
+    upstream = {
+        "jsonrpc": "2.0",
+        "result": {
+            "tools": [
+                {
+                    "name": "localcloud_get_api_catalog",
+                    "inputSchema": {"type": "object", "properties": {}},
+                    "annotations": {"readOnlyHint": True, "destructiveHint": False},
+                },
+                {
+                    "name": "localcloud_query_data",
+                    "title": "Runtime query",
+                    "annotations": {"title": "Query data", "readOnlyHint": False},
+                },
+            ],
+            "nextCursor": "next-page",
+        },
+    }
+    original = copy.deepcopy(upstream)
+    FakeJava.responses = {"tools/list": upstream}
+    adapter = McpAdapter(CONFIG, controller=RunningController())
+
+    response = adapter.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+
+    assert response is not None
+    tools = response["result"]["tools"]
+    assert tools[0] == {
+        **original["result"]["tools"][0],
+        "title": "Get API catalog",
+        "annotations": {
+            **original["result"]["tools"][0]["annotations"],
+            "title": "Get API catalog",
+        },
+    }
+    assert tools[1] == original["result"]["tools"][1]
+    assert response["result"]["nextCursor"] == "next-page"
+    assert response["id"] == 2
+    assert upstream == original
+
+
+@pytest.mark.parametrize(
+    "tool", [None, {"name": 123}, {"name": ""}, {"name": "tool", "annotations": []}]
+)
+def test_tool_titles_do_not_repair_malformed_runtime_records(tool: Any) -> None:
+    FakeJava.responses = {"tools/list": {"jsonrpc": "2.0", "result": {"tools": [tool]}}}
+    adapter = McpAdapter(CONFIG, controller=RunningController())
+
+    response = adapter.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+
+    assert response == {"jsonrpc": "2.0", "id": 2, "result": {"tools": [tool]}}
 
 
 def test_task_completion_logging_and_notifications_are_forwarded_opaquely() -> None:

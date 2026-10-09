@@ -1,7 +1,7 @@
 {
   "name": "localcloud",
   "displayName": "LocalCloud",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Build, test, and debug Google Cloud applications in a local cloud environment through MCP.",
   "author": {
     "name": "LocalCloud",
@@ -11,7 +11,7 @@
   "homepage": "https://local.cloud/",
   "documentationUrl": "https://local.cloud/docs/mcp/",
   "supportUrl": "https://github.com/LocalGCloud/localcloud-cli/issues",
-  "privacyPolicyUrl": "https://local.cloud/docs/privacy/",
+  "privacyPolicyUrl": "https://github.com/LocalGCloud/localcloud-cli/blob/main/docs/mcp-privacy.md",
   "termsOfServiceUrl": "https://local.cloud/license/",
   "repository": "https://github.com/LocalGCloud/localcloud-cli",
   "keywords": [

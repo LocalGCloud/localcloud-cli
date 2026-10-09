@@ -84,7 +84,7 @@ def main() -> None:
             "compatibility": {"platforms": ["darwin", "linux"]},
             "tools_generated": True,
             "keywords": ["localcloud", "google-cloud", "coding-agents", "integration-testing"],
-            "privacy_policies": ["https://local.cloud/docs/privacy/"],
+            "privacy_policies": ["https://github.com/LocalGCloud/localcloud-cli/blob/main/docs/mcp-privacy.md"],
         }
         (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         shutil.copy2(ROOT / "docs/assets/localcloud-mcp-icon.png", bundle / "icon.png")
