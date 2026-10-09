@@ -12,7 +12,7 @@
       "name": "localcloud",
       "source": "./plugins/localcloud",
       "description": "Build, test, and debug Google Cloud applications locally through MCP.",
-      "version": "0.1.0"
+      "version": "0.1.1"
     }
   ]
 }
