@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import anyio
+import copy
 import signal
 import sys
 from typing import Any, Callable
@@ -156,6 +157,34 @@ class McpAdapter:
                 response["result"] = transform_endpoint_payload(
                     response["result"], self.endpoint_map
                 )
+            if method == "tools/list" and isinstance(response.get("result"), dict):
+                tools = response["result"].get("tools")
+                if isinstance(tools, list):
+                    # Fill display metadata while preserving the runtime's safety declarations.
+                    response = copy.deepcopy(response)
+                    for tool in response["result"]["tools"]:
+                        if (
+                            not isinstance(tool, dict)
+                            or not isinstance(tool.get("name"), str)
+                            or not tool["name"]
+                        ):
+                            continue
+                        annotations = tool.get("annotations")
+                        if annotations is None:
+                            annotations = tool["annotations"] = {}
+                        if not isinstance(annotations, dict):
+                            continue
+                        title = tool.get("title") or annotations.get("title")
+                        if not title:
+                            title = " ".join(
+                                word.upper() if word in {"api", "sdk", "sql", "iam"} else word
+                                for word in tool["name"].removeprefix("localcloud_").split("_")
+                            )
+                            title = title[:1].upper() + title[1:]
+                        if not tool.get("title"):
+                            tool["title"] = title
+                        if not annotations.get("title"):
+                            annotations["title"] = title
             return response
         except HostError as error:
             if is_notification:

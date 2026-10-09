@@ -67,9 +67,9 @@ Remove with `/plugin uninstall localcloud@localcloud` in Claude Code or `codex p
 
 MCP management writes and destructive operations are disabled by default. SDK application writes still occur during requested workflows. Compatibility varies by service and operation; validate application release behavior against Google Cloud before production deployment.
 
-Local execution does not guarantee zero network traffic. Downloads, update checks, telemetry, and documented outbound features can contact external services, and MCP results are shared with your agent client. See [privacy and outbound data](https://local.cloud/docs/privacy/) and the [CLI privacy reference](https://github.com/LocalGCloud/localcloud-cli/blob/main/docs/mcp-privacy.md).
+Local execution does not guarantee zero network traffic. Downloads, update checks, telemetry, and documented outbound features can contact external services, and MCP results are shared with your agent client. See the [CLI and MCP privacy policy](https://github.com/LocalGCloud/localcloud-cli/blob/main/docs/mcp-privacy.md) and [runtime privacy and outbound data](https://local.cloud/docs/privacy/).
 
-The CLI can send operational telemetry to LocalCloud's analytics processor, PostHog (`us.i.posthog.com`). Opt out of CLI telemetry with `LOCALCLOUD_TELEMETRY=false` or `DO_NOT_TRACK=1`; the linked reference describes the runtime's separate controls and outbound behavior. Local application data stays in your Docker volume until you delete it.
+The CLI can send operational telemetry to LocalCloud's analytics processor, PostHog (`us.i.posthog.com`). Opt out of CLI telemetry with `LOCALCLOUD_TELEMETRY=false` or `DO_NOT_TRACK=1`; the linked reference describes the runtime's separate controls and outbound behavior. Persistent local application data can stay in your Docker volume until you delete it.
 
 The plugin and CLI are governed by the [LocalCloud Public Preview License](LICENSE). The runtime is obtained separately under the terms supplied with that image. This plugin contains public CLI integration files and no runtime implementation.
 
