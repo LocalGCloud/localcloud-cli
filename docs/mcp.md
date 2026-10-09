@@ -2,11 +2,16 @@
 
 LocalCloud gives AI coding agents a free local cloud environment for building, testing, and debugging Google Cloud applications. Its MCP server connects agents to service discovery, SDK configuration, resource inspection, data queries, readiness checks, and diagnostics. Application code uses standard Google Cloud SDKs pointed at the local runtime.
 
+Start the environment with one command, create local projects for experiments and tests,
+and run local service workflows with zero Google Cloud service charges. Initial startup may
+download the image; project capacity depends on your machine. For Claude and Codex plugins,
+see the [marketplace installation guide](mcp-marketplace-guide.md).
+
 [Website](https://local.cloud/) · [Website MCP guide](https://local.cloud/docs/mcp/) · [Source](https://github.com/LocalGCloud/localcloud-cli) · [Releases](https://github.com/LocalGCloud/localcloud-cli/releases)
 
 ## Quickstart
 
-Install **LocalCloud CLI 0.1.9 or newer** and have Docker running. The CLI includes the MCP bridge; no separate MCP server installation or Google Cloud account is required for local workflows.
+Requirements: **Docker engine, LocalCloud CLI, and the LocalCloud Docker image**. The CLI runs natively on macOS and Linux, includes the MCP bridge, and obtains the image when needed. No separate MCP server installation or Google Cloud account is required for local workflows.
 
 ### Install LocalCloud
 
@@ -18,7 +23,7 @@ lc --version
 lc doctor
 ```
 
-For an existing Homebrew installation, run `brew update` and `brew upgrade localcloud`. The version output must be at least `0.1.9` before using `lc mcp install`.
+For an existing Homebrew installation, run `brew update` and `brew upgrade localcloud` to use the current CLI.
 
 On macOS or Linux without Homebrew:
 
@@ -28,7 +33,7 @@ localcloud --version
 localcloud doctor
 ```
 
-The [release page](https://github.com/LocalGCloud/localcloud-cli/releases/tag/v0.1.9) also provides signed standalone archives for macOS ARM64/x86_64 and Linux ARM64/x86_64. macOS binaries require macOS 13 or newer; Linux binaries require glibc 2.35 or newer. Native Windows binaries are not shipped; Windows users need a suitable Linux/WSL environment and a client launch configuration that can reach it.
+The [release page](https://github.com/LocalGCloud/localcloud-cli/releases/latest) also provides signed standalone archives for macOS ARM64/x86_64 and Linux ARM64/x86_64. macOS binaries require macOS 13 or newer; Linux binaries require glibc 2.35 or newer. Native Windows binaries are not shipped; Windows users need a suitable Linux/WSL environment and a client launch configuration that can reach it.
 
 ### Connect an agent
 
@@ -46,21 +51,21 @@ lc start --local-only
 
 For Claude Code, use `lc mcp install --client claude-code`; for Claude Desktop, use `lc mcp install --client claude-desktop`. Other client configurations are described below.
 
-### Runtime version and existing environments
+### Existing environments and updates
 
-Use **LocalCloud runtime 0.1.5 or newer** for validated strict-client tool input and output schemas. CLI and runtime versions are independent. Connecting MCP or updating the CLI reuses an existing container; it does not replace an older runtime.
+Use the current LocalCloud CLI and image together. Connecting MCP or updating the CLI reuses an existing container; it does not replace an older runtime. If a strict client rejects a tool schema, deliberately update the selected runtime and reconnect.
 
 Inspect `lc status`. To deliberately upgrade the selected runtime while retaining its named data volume:
 
 ```sh
-lc restart --image agentcloud/localcloud:0.1.5 --pull
+lc restart --image agentcloud/localcloud:latest --pull
 ```
 
 Include the same `--data-volume` and configuration file you normally use if you target a custom environment. The restart briefly interrupts clients; reconnect afterward.
 
 ### Desktop bundle
 
-Clients supporting MCP desktop extensions can install the [LocalCloud MCP 0.1.9 bundle](https://github.com/LocalGCloud/localcloud-cli/releases/download/v0.1.9/localcloud-mcp-0.1.9.mcpb). It includes the CLI for macOS 13+ and Linux glibc 2.35+ on ARM64/x86_64. Docker and runtime 0.1.5+ are still required. Follow the client's extension-install flow, then enable LocalCloud MCP. The [registry metadata](https://github.com/LocalGCloud/localcloud-cli/blob/main/server.json) records the artifact hash and prerequisites.
+Clients supporting MCP desktop extensions can obtain the LocalCloud MCP bundle from the [release assets](https://github.com/LocalGCloud/localcloud-cli/releases). It includes the native CLI; Docker engine and the LocalCloud image are still required. Follow the client's extension-install flow, then enable LocalCloud MCP. The [registry metadata](https://github.com/LocalGCloud/localcloud-cli/blob/main/server.json) records the selected artifact hash and prerequisites. Claude and Codex marketplace plugins use the separately installed CLI.
 
 ### Complete a first task
 
@@ -388,7 +393,7 @@ The read-only runtime catalog verified for this guide (runtime MCP version 0.1.3
 
 | Symptom | Action |
 | --- | --- |
-| `mcp install` is not recognized | Check `lc --version`; update to CLI 0.1.9+ and ensure the client uses the updated executable |
+| `mcp install` is not recognized | Update LocalCloud through its installation channel and ensure the client uses that executable |
 | Docker cannot be reached | Run `lc doctor`, start Docker, and retry; installing client configuration alone does not require Docker |
 | Desktop client cannot find `localcloud` | Set an absolute executable path from `command -v localcloud`; restart the client |
 | First connection times out | Run `lc start --local-only` once to finish image download and startup, then reconnect; increase the client's startup timeout if needed |

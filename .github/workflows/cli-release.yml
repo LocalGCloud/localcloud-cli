@@ -231,6 +231,9 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Build CLI marketplace plugin
+        run: python3 scripts/build-marketplace-plugin.py --output release-assets/localcloud-plugin.zip
+
       - name: Verify asset set and generate checksums
         shell: bash
         working-directory: release-assets
@@ -247,7 +250,7 @@ jobs:
         shell: bash
         working-directory: release-assets
         run: |
-          for asset in localcloud-*.tar.gz SHA256SUMS; do
+          for asset in localcloud-*.tar.gz localcloud-plugin.zip localcloud-plugin.zip.sha256 SHA256SUMS; do
             cosign sign-blob --yes --bundle "${asset}.sigstore.json" "$asset"
           done
 

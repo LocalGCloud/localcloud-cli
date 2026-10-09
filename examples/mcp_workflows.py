@@ -113,7 +113,7 @@ async def main(command: str, volume: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--command", default="localcloud", help="LocalCloud CLI 0.1.9+ executable")
+    parser.add_argument("--command", default="localcloud", help="LocalCloud CLI executable or plugin launcher")
     parser.add_argument("--data-volume", required=True, help="Your test runtime's named Docker volume")
     args = parser.parse_args()
     asyncio.run(main(args.command, args.data_volume))

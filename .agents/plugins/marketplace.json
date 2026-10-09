@@ -1,0 +1,20 @@
+{
+  "name": "localcloud",
+  "interface": {
+    "displayName": "LocalCloud"
+  },
+  "plugins": [
+    {
+      "name": "localcloud",
+      "source": {
+        "source": "local",
+        "path": "./plugins/localcloud"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
