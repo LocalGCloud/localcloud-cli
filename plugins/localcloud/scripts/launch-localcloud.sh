@@ -5,7 +5,7 @@ set -eu
 if command -v localcloud >/dev/null 2>&1; then
     exec localcloud "$@"
 fi
-for candidate in /opt/homebrew/bin/localcloud /usr/local/bin/localcloud; do
+for candidate in /opt/homebrew/bin/localcloud /usr/local/bin/localcloud /home/linuxbrew/.linuxbrew/bin/localcloud "${HOME:-}/.local/bin/localcloud"; do
     if [ -x "$candidate" ]; then
         exec "$candidate" "$@"
     fi

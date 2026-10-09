@@ -391,6 +391,10 @@ esac
                 "localcloud-linux-amd64.tar.gz.sigstore.json",
                 "localcloud-linux-arm64.tar.gz",
                 "localcloud-linux-arm64.tar.gz.sigstore.json",
+                "localcloud-plugin.zip",
+                "localcloud-plugin.zip.sha256",
+                "localcloud-plugin.zip.sha256.sigstore.json",
+                "localcloud-plugin.zip.sigstore.json",
                 "localcloud.rb",
             ]
         )

@@ -10,6 +10,7 @@ import sys
 from zipfile import ZipFile
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins/localcloud"
@@ -29,7 +30,7 @@ def test_reproducible_allowlisted_package_preserves_launcher_mode(plugin, tmp_pa
     receipt = builder.build_package(plugin, first)
     builder.build_package(plugin, second)
     assert first.read_bytes() == second.read_bytes()
-    assert receipt["version"] == "0.1.0"
+    assert receipt["version"] == json.loads((plugin / "plugin.json").read_text())["version"]
     with ZipFile(first) as archive:
         assert set(archive.namelist()) == set(builder.FILES)
         assert archive.getinfo(builder.LAUNCHER).external_attr >> 16 & 0o777 == 0o755
@@ -86,8 +87,9 @@ def test_manifests_and_catalogs_expose_actual_mcp():
 def _sandbox_launcher(tmp_path):
     # Map host installation paths into a fixture; never touch the real CLI.
     source = (PLUGIN / builder.LAUNCHER).read_text()
-    for prefix in ["/opt/homebrew/bin", "/usr/local/bin"]:
+    for prefix in ["/opt/homebrew/bin", "/usr/local/bin", "/home/linuxbrew/.linuxbrew/bin"]:
         source = source.replace(prefix, str(tmp_path / prefix.strip("/").replace("/", "-")))
+    source = source.replace('"${HOME:-}/.local/bin/localcloud"', '"' + str(tmp_path / "home/.local/bin/localcloud") + '"')
     launch = tmp_path / "launcher.sh"
     launch.write_text(source)
     launch.chmod(0o755)
@@ -105,10 +107,10 @@ def _stub_cli(path):
     path.chmod(0o755)
 
 
-@pytest.mark.parametrize("from_path", [True, False])
-def test_launcher_executes_cli_preserving_arguments_and_pid(tmp_path, from_path):
+@pytest.mark.parametrize("installation", ["bin", "opt-homebrew-bin", "home-linuxbrew-.linuxbrew-bin", "home/.local/bin"])
+def test_launcher_executes_cli_preserving_arguments_and_pid(tmp_path, installation):
     launch = _sandbox_launcher(tmp_path)
-    location = tmp_path / ("bin" if from_path else "opt-homebrew-bin") / "localcloud"
+    location = tmp_path / installation / "localcloud"
     _stub_cli(location)
     env = {**os.environ, "PATH": str(tmp_path / "bin")}
     process = subprocess.Popen([str(launch), "mcp", "--project-id", "two words"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -127,3 +129,20 @@ def test_launcher_missing_cli_has_actionable_stderr_only(tmp_path):
     assert result.returncode == 127
     assert result.stdout == ""
     assert "Install it from https://local.cloud/docs/mcp/" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("sha256sum") is None, reason="release runner supplies sha256sum")
+def test_release_workflow_plugin_checksums_do_not_break_homebrew(tmp_path):
+    workflow = yaml.safe_load((ROOT / ".github/workflows/cli-release.yml").read_text())
+    steps = workflow["jobs"]["publish-release"]["steps"]
+    assets = [row["asset"] for row in workflow["jobs"]["build-native"]["strategy"]["matrix"]["include"]]
+    for name in assets:
+        (tmp_path / name).write_bytes(b"native archive fixture")
+    builder.build_package(PLUGIN, tmp_path / "localcloud-plugin.zip")
+    checksum_script = next(step["run"] for step in steps if step.get("name") == "Verify asset set and generate checksums")
+    subprocess.run(["/bin/bash", "-e", "-o", "pipefail", "-c", checksum_script], cwd=tmp_path, check=True)
+    subprocess.run([sys.executable, str(ROOT / "scripts/render-homebrew-formula.py"), "--version", "0.1.10", "--checksums", str(tmp_path / "SHA256SUMS"), "--output", str(tmp_path / "localcloud.rb")], check=True)
+    assert "localcloud-plugin.zip" not in (tmp_path / "SHA256SUMS").read_text()
+    assert (tmp_path / "localcloud-plugin.zip.sha256").is_file()
+    signing_script = next(step["run"] for step in steps if step.get("name") == "Keyless-sign release files")
+    assert "localcloud-plugin.zip.sha256" in signing_script

@@ -242,7 +242,6 @@ jobs:
           actual=$(printf '%s\n' localcloud-*.tar.gz | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
           test "$actual" = "$expected"
           sha256sum localcloud-darwin-amd64.tar.gz localcloud-darwin-arm64.tar.gz localcloud-linux-amd64.tar.gz localcloud-linux-arm64.tar.gz > SHA256SUMS
-          sha256sum localcloud-plugin.zip >> SHA256SUMS
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
@@ -251,7 +250,7 @@ jobs:
         shell: bash
         working-directory: release-assets
         run: |
-          for asset in localcloud-*.tar.gz localcloud-plugin.zip SHA256SUMS; do
+          for asset in localcloud-*.tar.gz localcloud-plugin.zip localcloud-plugin.zip.sha256 SHA256SUMS; do
             cosign sign-blob --yes --bundle "${asset}.sigstore.json" "$asset"
           done
 
