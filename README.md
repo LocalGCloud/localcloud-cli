@@ -29,7 +29,7 @@ libraries it already uses, just pointed at loopback.
 
 ```console
 $ lc doctor
-╭── LocalCloud v0.1.5 ────────────────────────────────────────────────────────────────────────╮
+╭── LocalCloud v0.1.9 ────────────────────────────────────────────────────────────────────────╮
 │                            │ Top commands                                                   │
 │ Checking LocalCloud setup  │  localcloud (or lc)    status | start | stop | restart         │
 │                            │  eval $(lc env)        Exports env vars that redirect cloud se…│
@@ -53,9 +53,9 @@ $ lc doctor
  Tip: Run localcloud guide for AI agent workflows, or lc for the fast alias.
 
 Status  OK
-Docker  29.7.2 (/opt/homebrew/bin/docker)
-Image   agentcloud/localcloud:latest (Local: ID: 66026c0b0b21 ,
-        sha256:66026c0b0b21398990faafb2e4a2ec71c6c10ff27c72f7cd3461d96863486011)
+Docker  29.8.1 (/opt/homebrew/bin/docker)
+Image   agentcloud/localcloud:latest
+Ports   5380-5406 (in use by localcloud)
 ```
 
 ## Why LocalCloud
@@ -148,7 +148,7 @@ Windows users can run the container directly — see the
 
 ```console
 $ lc --version
-localcloud 0.1.4 (commit 0123456789ab, released 2026-09-08)
+localcloud 0.1.9 (commit 60bd923c80ee, released 2026-10-09)
 ```
 
 Release builds embed their exact source commit and release date, so a binary can always be traced back.
@@ -184,6 +184,7 @@ User          local-developer
 Image         agentcloud/localcloud:latest
 Image status  Available locally
 URL           http://127.0.0.1:5380
+Ports         5380-5406
 Services      alloydb, bigquery, bigtable, cloudbilling, cloudfunctions, cloudiam,
               cloudresourcemanager, cloudscheduler, cloudsql, cloudtasks, dataproc, gcs, kms,
               logging, memorystore, monitoring, secretmanager, serviceusage, sheets, spanner,
@@ -285,10 +286,12 @@ lc stop      # stop the container; the data volume is untouched
 
 Your data survives `stop` and `restart`. `lc start` brings it back exactly as it was.
 
+> **Tip for AI coding agents:** Skip manual shell setup! Head to [AI agents & MCP](#ai-agents--mcp) to configure Cursor, Claude Code, or Windsurf in one command (`lc mcp install`).
+
 ## How it works
 
 ```
-  your code ──► google-cloud-* SDK ──► 127.0.0.1:5380-5405 ─────────┐
+  your code ──► google-cloud-* SDK ──► 127.0.0.1:5380-5406 ─────────┐
   terraform ──► GOOGLE_*_CUSTOM_ENDPOINT ───────────────────────────┤
   AI agent  ──► lc mcp (stdio) / :5380/mcp (HTTP) ──────────────────┤
                                                                     │
@@ -403,18 +406,18 @@ lc start --services default
 | Command | Purpose |
 | :--- | :--- |
 | `lc update` | Update the CLI through its script installer or Homebrew |
-| `lc doctor` | Check Docker access, the Docker host setup, and legacy LocalCloud state; `--fix` offers fixes |
-| `lc start` | Start a runtime; prepares a project when `--project-id` is explicit |
+| `lc doctor` | Inspect Docker access, VM engine, and host setup; `--fix` interactively resolves issues |
+| `lc start` | Start the runtime; supports `--services`, `--local-only`, and auto-creating projects |
 | `lc status` | Show runtime health, ownership, endpoints, and Docker details |
 | `lc env` | Generate SDK, Terraform, or Docker Compose configuration |
 | `lc console` | Open the web console for the selected project and user |
 | `lc logs` | Print recent runtime logs |
-| `lc restart` | Restart runtime with local image (default: `--no-pull`; `--pull` to check registry) |
+| `lc restart` | Recreate container with local image (default: `--no-pull`; `--pull` to check registry) |
 | `lc reset` | Reset the selected project (`--all-projects` prints manual recreate steps) |
 | `lc stop` | Stop the runtime without deleting persistent data |
 | `lc cleanup` | Remove malformed Docker resources, stale runtime state, and legacy files |
 | `lc guide` | Print authoritative coding-agent guidance |
-| `lc mcp` | Run the stdio MCP bridge |
+| `lc mcp` | Run the stdio MCP bridge; `lc mcp install` configures AI coding agents |
 
 Run `lc COMMAND --help` for command-specific flags and the valid `--fields` paths.
 
@@ -530,41 +533,76 @@ nothing is destroyed by accident.
 
 ## AI agents & MCP
 
-The agent path is a first-class surface, not an add-on. An agent can provision, seed, query, and reset
-GCP-shaped state on its own.
+LocalCloud provides native [Model Context Protocol (MCP)](https://modelcontextprotocol.io) integration, giving AI coding agents (Cursor, Claude Code, Claude Desktop, Windsurf, Gemini/Antigravity, Cline) direct access to 25+ local Google Cloud services without live cloud credentials, permissions, or billing.
 
-### Point an agent at the guide first
+### Why agents work best with LocalCloud MCP
+- **On-demand auto-start**: When your agent makes a call or initializes, the MCP bridge checks and starts LocalCloud in the background automatically (guarded by file lock against race conditions). Pass `--no-start` if you prefer manual runtime control.
+- **Single shared container**: All agent sessions and repositories connect to a single persistent container (`localcloud-data`). Multiple editor windows will not spawn duplicate containers or exhaust host memory.
+- **Safe local testing**: Agents generate authentic emulator environment variables (`eval "$(lc env)"`), query local databases (BigQuery, Spanner, Cloud SQL), publish/pull Pub/Sub messages, and test Cloud Storage buckets directly against loopback.
+- **Attributed multi-project isolation**: Projects are logical namespaces inside the runtime (`--project-id`). Multiple agents working on different applications share the runtime while remaining logically isolated.
 
-```sh
-lc guide
-```
-
-`lc guide` prints authoritative, copy-pasteable workflow guidance generated from the runtime's own service
-catalog, so it cannot drift from what the image actually ships. Instruct your agent:
-
-> Before interacting with local cloud services, run `localcloud guide`.
-
-### stdio bridge
-
-Use **LocalCloud CLI 0.1.9 or newer**. Install with `brew install LocalGCloud/tap/localcloud`, or update an existing Homebrew installation with `brew update` and `brew upgrade localcloud`. Verify with `lc --version`.
+### One-command setup: `lc mcp install`
 
 Configure LocalCloud for your AI coding client in one command:
 
 ```sh
+# Install for Cursor (user-level in ~/.cursor/mcp.json)
 lc mcp install --client cursor
+
+# Install for Claude Code (user scope via claude CLI)
+lc mcp install --client claude-code
+
+# Install for Claude Desktop (claude_desktop_config.json)
+lc mcp install --client claude-desktop
+
+# Install for Gemini / Antigravity (~/.gemini/antigravity/mcp_config.json)
+lc mcp install --client gemini
+
+# Install for Windsurf (~/.codeium/windsurf/mcp_config.json)
+lc mcp install --client windsurf
+
+# Install for Cline (~/.cline/mcp_settings.json)
+lc mcp install --client cline
+
+# Configure all supported clients at once
+lc mcp install --client all
 ```
 
-[MCP setup and client guide](docs/mcp.md) covers Claude Code/Desktop, Cursor, Codex, VS Code, Cline, Gemini CLI, Antigravity and Windsurf. The CLI 0.1.9 `gemini` installer alias targets Antigravity, and `all` configures five clients; use the guide's manual setup for Gemini CLI and Cline.
+- **Global by default**: Installs into user-level configuration (`--global`) so all repositories on your machine have immediate access to LocalCloud. Pass `--project` to configure only the current repository workspace.
+- **Desktop PATH resilience**: On macOS, automatically resolves to permanent system binaries (`/opt/homebrew/bin/localcloud` or `/usr/local/bin/localcloud`), ensuring GUI applications launched from the Dock or Finder run smoothly without shell PATH issues.
+- **Custom overrides**: Pass `--command-path <CMD>` to supply a custom executable (e.g. `lc` or `/opt/homebrew/bin/lc`), or `--bare` to force the bare `localcloud` command.
 
-Run the [three reproducible cloud workflows](docs/mcp-workflows.md). This recording shows MCP checks and actual Storage, Pub/Sub, and BigQuery assertions through CLI 0.1.9 and runtime 0.1.5:
+### Instructing your agent
 
-![LocalCloud MCP workflow verification](docs/assets/localcloud-mcp-demo.gif)
+Prompt your agent to use LocalCloud emulators:
 
-[Watch the recorded demo](docs/assets/localcloud-mcp-demo.mp4).
+> You have access to the `localcloud` MCP server. Follow its `use-localcloud-instead-of-gcp` prompt. Run `localcloud guide` or use `localcloud_get_env` to direct all Google Cloud client libraries and Terraform to local loopback emulators.
 
-The bridge **automatically checks and starts** the LocalCloud container on demand and provisions any missing project requested by the agent without recreating the runtime. All agents and workspaces share the same persistent container (`localcloud-data`). To require manual control and disable auto-start, pass `--no-start`.
+You can also run `lc guide` in your terminal: it prints authoritative, copy-pasteable workflow guidance generated from the runtime's own service catalog, so it cannot drift from what the image actually ships.
 
-You can also configure clients manually in `claude_desktop_config.json`, `.cursor/mcp.json`, `.claude.json`, or `mcp_config.json`:
+### What the agent can do
+
+The MCP bridge exposes **27 tools**, **14 resources**, and **6 prompts** directly to the agent:
+
+| Capability | Tools & Resources | What the agent does |
+| :--- | :--- | :--- |
+| **Service discovery & health** | `localcloud_list_services`<br>`localcloud_check_readiness` | Discovers running services, assigned loopback ports, and verifies emulator readiness before sending requests. |
+| **API catalog & schemas** | `localcloud_get_api_catalog`<br>`localcloud_browse_resources` | Inspects full Google Cloud REST OpenAPI schemas, method parameters, and browses buckets, tables, and topics. |
+| **Data querying & SQL** | `localcloud_query_data` | Runs real SQL queries against local BigQuery, Cloud Spanner, and Cloud SQL databases without requiring client SDKs. |
+| **SDK & Terraform wiring** | `localcloud_get_env`<br>`localcloud_generate_terraform_env` | Generates environment export commands (`STORAGE_EMULATOR_HOST`, etc.) and Terraform provider overrides. |
+| **Testing & scenarios** | `localcloud_list_recipes`<br>`localcloud_export_state` | Seeds test data scenarios, creates project state checkpoints, and diffs state changes. |
+
+### Reproducible cloud workflows
+
+Run the [three reproducible cloud workflows](docs/mcp-workflows.md) for complete agent prompts and Python/SDK test runs for Cloud Storage, Pub/Sub, and BigQuery:
+
+![LocalCloud MCP demo](docs/assets/localcloud-mcp-demo.gif)
+
+*(Watch the [recorded demo](docs/assets/localcloud-mcp-demo.mp4) or see the full [MCP Architecture & Guide](docs/mcp.md)).*
+
+### Manual client configuration
+
+If you prefer to configure your MCP client manually:
 
 ```json
 {
@@ -582,39 +620,7 @@ You can also configure clients manually in `claude_desktop_config.json`, `.curso
 ```
 *(On macOS desktop apps, an absolute path like `/opt/homebrew/bin/localcloud` is recommended when launched from Dock/Finder; use bare `"localcloud"` when launching from a terminal shell with PATH configured).*
 
-When using custom or isolated data volumes, pin `--data-volume` so the bridge targets that specific runtime. Get the exact block for your machine from `lc start --verbose`:
-
-```console
-$ lc start --verbose | jq .mcp
-{
-  "command": "localcloud",
-  "args": ["mcp", "--data-volume", "localcloud-data",
-           "--project-id", "local-gcp-project", "--user", "local-developer"],
-  "direct_url": "http://127.0.0.1:5380/mcp",
-  "headers": {
-    "X-LocalCloud-Project": "local-gcp-project",
-    "X-LocalCloud-User": "local-developer"
-  }
-}
-```
-
-### Streamable HTTP
-
-For clients that speak HTTP directly, use `direct_url` with **every** returned header so the project and
-caller travel with each request.
-
-### The catalog-first tool workflow
-
-Agents should discover operations rather than guess routes:
-
-1. Read `localcloud://api/catalog`, or search it with `localcloud_get_api_catalog`.
-2. Select a documented management `operation_id` — never a raw route.
-3. Call `localcloud_call_api` with that operation ID and its typed parameters.
-4. For Google-compatible services, check `localcloud_list_services`, readiness, and compatibility before
-   sending application traffic.
-
-Write and destructive operations are gated behind the `LOCALCLOUD_MCP_WRITE` and
-`LOCALCLOUD_MCP_DESTRUCTIVE` server settings, both off by default.
+For clients that speak HTTP directly, use `http://127.0.0.1:5380/mcp` together with `X-LocalCloud-Project` and `X-LocalCloud-User` headers.
 
 ## Configuration
 
@@ -697,6 +703,7 @@ and `--debug` prints the exact `docker run` the CLI would use.
 | [Configuration](docs/configuration.md) | `localcloud.yaml`, service catalog, volumes, projects, identity |
 | [Integrations](docs/integrations.md) | Python, Node, Go, Terraform/OpenTofu, and MCP client setup |
 | [MCP guide & architecture](docs/mcp.md) | Auto-start, project isolation, tool catalog, and client installers |
+| [MCP reproducible workflows](docs/mcp-workflows.md) | Step-by-step agent test scenarios for Storage, Pub/Sub, BigQuery |
 | [Lifecycle testing](docs/lifecycle-testing.md) | End-to-end container lifecycle test runbook and verification |
 | [local.cloud/docs](https://local.cloud/docs) | Product documentation, service compatibility, and the console |
 
