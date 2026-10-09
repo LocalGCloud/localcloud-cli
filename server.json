@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.LocalGCloud/localcloud",
+  "name": "io.github.jhsenjaliya/localcloud",
   "title": "LocalCloud MCP",
   "description": "A free local cloud environment for AI agents to build, test, and debug Google Cloud applications.",
   "version": "0.1.9",
