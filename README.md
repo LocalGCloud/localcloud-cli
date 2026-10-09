@@ -7,7 +7,10 @@
 Build, test, and debug Google Cloud applications from your terminal or coding agent.
 MCP connects your agent to local services, SDK configuration, test data, readiness, and diagnostics.
 
-[Website](https://local.cloud/) · [MCP guide](https://local.cloud/docs/mcp/)
+Run local service workflows without Google Cloud service charges, start with one command,
+and create local projects for your experiments and test suites within your machine's capacity.
+
+[Website](https://local.cloud/) · [MCP guide](https://local.cloud/docs/mcp/) · [Claude & Codex marketplace setup](docs/mcp-marketplace-guide.md)
 
 [![Version](https://img.shields.io/github/v/release/LocalGCloud/localcloud-cli?color=4285F4&style=flat-square)](https://github.com/LocalGCloud/localcloud-cli/releases)
 [![CLI](https://img.shields.io/badge/CLI-localcloud%20%7C%20lc-34A853?style=flat-square)](https://local.cloud)

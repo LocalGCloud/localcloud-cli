@@ -1,0 +1,48 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "localcloud",
+  "version": "0.1.0",
+  "description": "Build, test, and debug Google Cloud applications in a local cloud environment through MCP.",
+  "author": {
+    "name": "LocalCloud",
+    "email": "orbitor.cloud@gmail.com",
+    "url": "https://local.cloud/"
+  },
+  "homepage": "https://local.cloud/docs/mcp/",
+  "repository": "https://github.com/LocalGCloud/localcloud-cli",
+  "keywords": [
+    "google-cloud",
+    "local-development",
+    "integration-testing",
+    "mcp"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "LocalCloud",
+        "shortDescription": "Local cloud for coding agents",
+        "longDescription": "Give your coding agent a cloud environment it can work with. LocalCloud connects your agent to a local environment for building, testing, and debugging Google Cloud applications. Through MCP, discover services, obtain SDK connection settings, inspect resources, query data, and investigate failures. Use standard Google Cloud SDKs to exercise Storage workflows, Pub/Sub consumers, and BigQuery queries, then verify the results locally without provisioning Google Cloud resources.\n\nRequirements: a working Docker engine, the LocalCloud CLI, and the LocalCloud Docker image. The CLI runs natively on macOS and Linux and obtains the image when needed. First startup may download the image. Your coding client supplies code execution; the plugin supplies the MCP connection and workflow guidance.\n\nCompatibility varies by service and operation. Validate application release behavior against Google Cloud before production deployment. MCP management writes and destructive operations are disabled by default; SDK application writes still occur during requested workflows. Local operation does not guarantee zero outbound traffic. Review the linked privacy and license information.",
+        "developerName": "LocalCloud",
+        "category": "Developer Tools",
+        "capabilities": [
+          "Local service discovery",
+          "SDK configuration",
+          "Resource inspection",
+          "Data queries",
+          "Diagnostics"
+        ],
+        "websiteURL": "https://local.cloud/",
+        "supportURL": "https://github.com/LocalGCloud/localcloud-cli/issues",
+        "privacyPolicyURL": "https://local.cloud/docs/privacy/",
+        "termsOfServiceURL": "https://local.cloud/license/",
+        "defaultPrompt": [
+          "Build and test a Cloud Storage upload-and-read workflow with LocalCloud using the standard Python SDK.",
+          "Test a Pub/Sub publisher and consumer with LocalCloud, then verify the message is received and acknowledged.",
+          "Run a BigQuery query against LocalCloud test data and assert the expected result."
+        ],
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/icon.png"
+      }
+    }
+  }
+}
