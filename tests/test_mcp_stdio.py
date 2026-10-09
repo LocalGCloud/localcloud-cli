@@ -61,12 +61,24 @@ class RunningController:
         self.targets: list[LocalCloudConfig] = []
         self.readiness_timeouts: list[float | None] = []
 
+    def start(
+        self,
+        config: LocalCloudConfig,
+        *,
+        ensure_project: bool = False,
+        allow_replace: bool = True,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return {"status": "started"}
+
     def target(
         self,
         config: LocalCloudConfig,
         *,
         readiness_timeout: float | None = None,
         on_url_resolved: Any = None,
+        ensure_project: bool = False,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         self.targets.append(config)
         self.readiness_timeouts.append(readiness_timeout)
@@ -121,6 +133,7 @@ def test_run_raises_on_first_sigint_and_restores_handler(
         _config: LocalCloudConfig,
         _connect_timeout: float,
         _on_connecting: Any,
+        *_args: Any,
     ) -> None:
         installed["handler"](mcp_module.signal.SIGINT, None)
 

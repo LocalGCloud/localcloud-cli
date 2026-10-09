@@ -179,6 +179,7 @@ class Controller:
         tail: float | None = 0.0,
         dry_run: bool = False,
         confirm_port_mapping: Callable[[DockerRunPlan], bool] | None = None,
+        allow_replace: bool = True,
     ) -> dict[str, Any] | str:
         if dry_run and pull:
             raise HostError(
@@ -219,8 +220,12 @@ class Controller:
                 commands = self.runtime.preview_create_commands(config, run_plan)
                 status = "started"
             else:
-                requires_reconfig = self._requires_managed_replacement(current, config)
-                if effective_pull or requires_reconfig:
+                requires_reconfig = (
+                    self._requires_managed_replacement(current, config)
+                    if allow_replace
+                    else False
+                )
+                if allow_replace and (effective_pull or requires_reconfig):
                     prepared_image = self.runtime.preflight_create(
                         config,
                         current,
@@ -243,7 +248,7 @@ class Controller:
                     and current.image_id != new_image_id
                 )
                 is_managed = current.ownership.get("container") == "managed"
-                if is_managed and (requires_reconfig or was_pulled or image_id_changed):
+                if allow_replace and is_managed and (requires_reconfig or was_pulled or image_id_changed):
                     action = "replace"
                     reason = (
                         "managed runtime network is missing"
@@ -277,8 +282,6 @@ class Controller:
                     target = current.name or current.container_id or config.container_name
                     commands = self._preview_start(target)
                     status = "started"
-
-
                 elif not self.runtime.is_ready(current):
                     action = "wait"
                     reason = "the selected container is running but not ready"
@@ -867,6 +870,7 @@ class Controller:
         *,
         readiness_timeout: float | None = None,
         on_url_resolved: Callable[[str], None] | None = None,
+        ensure_project: bool = False,
     ) -> dict[str, Any]:
         if readiness_timeout is not None and readiness_timeout <= 0:
             raise ValueError("readiness_timeout must be positive")
@@ -908,6 +912,10 @@ class Controller:
                     },
                 )
             if not self._project_exists(current, config.project, config.user):
+                if ensure_project:
+                    deadline = time.monotonic() + _READINESS_REQUEST_TIMEOUT
+                    self._ensure_project(current, config, deadline=deadline)
+                    return target
                 raise HostError(
                     "unknown_project",
                     (
@@ -962,6 +970,9 @@ class Controller:
                     last_error = error
                 else:
                     if not project_exists:
+                        if ensure_project:
+                            self._ensure_project(current, config, deadline=deadline)
+                            return target
                         raise HostError(
                             "unknown_project",
                             (

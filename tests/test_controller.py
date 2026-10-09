@@ -1367,6 +1367,22 @@ def test_start_attaches_to_running_runtime_without_replacing_when_local_image_di
     assert runtime.removes == []
     assert runtime.creates == 0
 
+
+def test_start_with_allow_replace_false_reuses_running_container_even_if_reconfig_needed(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    original = _config(tmp_path, paths=paths)
+    runtime.record = _record(original)
+    changed = _config(tmp_path, paths=paths, services=["bigquery"])
+
+    result = controller.start(changed, allow_replace=False)
+
+    assert result["status"] == "already_running"
+    assert runtime.removes == []
+    assert runtime.creates == 0
+
+
 def test_stop_preserves_attached_ephemeral_runtime(tmp_path: Path) -> None:
     controller, runtime, paths = _controller(tmp_path)
     config = _config(tmp_path, paths=paths, yaml="host:\n  data: ephemeral\n")

@@ -557,6 +557,25 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
         from .update import update
 
         return update()
+    if args.command == "mcp" and getattr(args, "mcp_subcommand", None) == "install":
+        from .config import load_config
+        from .mcp_install import install_mcp_server
+
+        config = load_config(
+            directory=Path.cwd(),
+            data_volume=args.data_volume,
+            project=args.project_id,
+            user=args.user,
+        )
+        return install_mcp_server(
+            config,
+            client=args.client,
+            is_global=args.is_global,
+            directory=Path.cwd(),
+            command_override=getattr(args, "command_path", None),
+            prefer_bare=getattr(args, "bare", False),
+            explicit_project=(args.project_id is not None),
+        )
 
     fix = args.command == "doctor" and getattr(args, "fix", False)
     if fix and (observer is None or not observer.can_prompt()):
@@ -652,7 +671,10 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
         if args.command == "mcp":
             from .mcp_stdio import run
 
-            return run(config, connect_timeout=args.connect_timeout)
+            run_kwargs: dict[str, Any] = {"connect_timeout": args.connect_timeout}
+            if getattr(args, "no_start", False):
+                run_kwargs["auto_start"] = False
+            return run(config, **run_kwargs)
         target = controller.target(config)
         if args.command == "console":
             import webbrowser
@@ -852,6 +874,17 @@ def _print_result(args: argparse.Namespace, result: Any, fields: list[str]) -> N
     if command == "logs" and not args.verbose:
         value = result.get("logs", "") if isinstance(result, dict) else result
         _print_native(str(value))
+        return
+    if command == "mcp" and getattr(args, "mcp_subcommand", None) == "install":
+        if isinstance(result, dict) and "results" in result:
+            for r in result["results"]:
+                verb = "Updated" if r.get("status") == "updated" else "Installed"
+                loc = f"at {r['config_path']}" if "config_path" in r else f"via {r.get('method', 'cli')}"
+                print(f"{verb} LocalCloud MCP server configuration for {r['client']} {loc}.")
+        elif isinstance(result, dict) and ("config_path" in result or "method" in result):
+            verb = "Updated" if result.get("status") == "updated" else "Installed"
+            loc = f"at {result['config_path']}" if "config_path" in result else f"via {result.get('method', 'cli')}"
+            print(f"{verb} LocalCloud MCP server configuration for {result['client']} {loc}.")
         return
     capabilities = terminal_capabilities(sys.stdout)
     color = capabilities.color
@@ -1305,9 +1338,51 @@ def _parser() -> argparse.ArgumentParser:
 
     mcp = commands.add_parser(
         "mcp",
-        help="Run the stdio MCP bridge for the selected runtime",
-        description="Run the stdio MCP bridge for the selected runtime.",
+        help="Run the stdio MCP bridge or manage MCP client installations",
+        description="Run the stdio MCP bridge or manage MCP client installations.",
     )
+    mcp_subparsers = mcp.add_subparsers(dest="mcp_subcommand")
+    install = mcp_subparsers.add_parser(
+        "install",
+        help="Install LocalCloud MCP server configuration for an AI coding agent",
+        description="Install LocalCloud MCP server configuration into a coding client config file.",
+    )
+    from .mcp_install import SUPPORTED_CLIENTS
+
+    install.add_argument(
+        "--client",
+        choices=(*SUPPORTED_CLIENTS, "all"),
+        default="cursor",
+        help="Target AI client to configure (default: cursor)",
+    )
+    install.add_argument(
+        "--global",
+        dest="is_global",
+        action="store_true",
+        default=True,
+        help="Install into user-level configuration (default: true)",
+    )
+    install.add_argument(
+        "--project",
+        dest="is_global",
+        action="store_false",
+        help="Install into project/workspace configuration instead of user-level configuration",
+    )
+    install.add_argument(
+        "--command-path",
+        dest="command_path",
+        default=None,
+        metavar="CMD",
+        help="Command or binary path to invoke LocalCloud (e.g. 'lc', 'localcloud', '/opt/homebrew/bin/localcloud')",
+    )
+    install.add_argument(
+        "--bare",
+        action="store_true",
+        help="Use bare 'localcloud' command instead of resolving an absolute path",
+    )
+    _add_context(install)
+    _add_debug_option(install)
+
     _add_context(mcp)
     mcp.add_argument(
         "--connect-timeout",
@@ -1318,6 +1393,11 @@ def _parser() -> argparse.ArgumentParser:
             "Maximum seconds to wait for the LocalCloud MCP endpoint "
             "(default: 10)"
         ),
+    )
+    mcp.add_argument(
+        "--no-start",
+        action="store_true",
+        help="Do not automatically start LocalCloud if it is not running",
     )
     _add_debug_option(mcp)
     return parser

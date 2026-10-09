@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import anyio
 import signal
 import sys
 from typing import Any, Callable
@@ -20,8 +21,14 @@ class McpAdapter:
         controller: Controller | None = None,
         connect_timeout: float = 10.0,
         on_connecting: Callable[[str], None] | None = None,
+        auto_start: bool = True,
     ):
         selected_controller = controller if controller is not None else Controller()
+        self.config = config
+        self.controller = selected_controller
+        self.connect_timeout = connect_timeout
+        self.on_connecting = on_connecting
+        self.auto_start = auto_start
         connecting_url: str | None = None
 
         def url_resolved(url: str) -> None:
@@ -29,6 +36,19 @@ class McpAdapter:
             connecting_url = f"{url.rstrip('/')}/mcp"
             if on_connecting is not None:
                 on_connecting(connecting_url)
+
+        if auto_start and hasattr(selected_controller, "start"):
+            if terminal_capabilities(sys.stderr).interactive:
+                print(
+                    f"LocalCloud MCP ensuring runtime for volume '{config.data_volume}'…",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            selected_controller.start(
+                config,
+                ensure_project=True,
+                allow_replace=False,
+            )
 
         try:
             target = selected_controller.target(
@@ -43,9 +63,7 @@ class McpAdapter:
                     if isinstance(url, str) and url:
                         connecting_url = f"{url.rstrip('/')}/mcp"
                 target_name = connecting_url or "the LocalCloud MCP endpoint"
-                timeout_unit = (
-                    "second" if connect_timeout == 1 else "seconds"
-                )
+                timeout_unit = "second" if connect_timeout == 1 else "seconds"
                 raise HostError(
                     "mcp_connection_timeout",
                     (
@@ -59,20 +77,25 @@ class McpAdapter:
                         "timeout_seconds": connect_timeout,
                     },
                 ) from error
-            if error.code != "runtime_not_running":
+            elif error.code == "runtime_not_running":
+                raise HostError(
+                    "runtime_not_running",
+                    "Run "
+                    f"localcloud start --data-volume {config.data_volume} "
+                    f"--project-id {config.project} --user {config.user} "
+                    "before connecting MCP.",
+                    {
+                        "data_volume": config.data_volume,
+                        "project": config.project,
+                        "user": config.user,
+                    },
+                ) from error
+            else:
                 raise
-            raise HostError(
-                "runtime_not_running",
-                "Run "
-                f"localcloud start --data-volume {config.data_volume} "
-                f"--project-id {config.project} --user {config.user} "
-                "before connecting MCP.",
-                {
-                    "data_volume": config.data_volume,
-                    "project": config.project,
-                    "user": config.user,
-                },
-            ) from error
+
+        self._set_target(target)
+
+    def _set_target(self, target: dict[str, Any]) -> None:
         try:
             self.endpoint_map = {
                 str(canonical): int(host_port)
@@ -83,17 +106,43 @@ class McpAdapter:
             raise HostError(
                 "runtime_target_invalid",
                 "LocalCloud runtime target could not be resolved for MCP",
-                {"data_volume": config.data_volume, "cause": str(error)},
+                {"data_volume": self.config.data_volume, "cause": str(error)},
             ) from error
+        self.target = target
         self.mcp_url = f"{url}/mcp"
-        self.java = JavaMcpClient(url, project=config.project, user=config.user)
+        self.java = JavaMcpClient(url, project=self.config.project, user=self.config.user)
+
+    def _refresh_target(self) -> bool:
+        target = self.controller.target(
+            self.config,
+            readiness_timeout=self.connect_timeout,
+        )
+        url = target.get("url", "").rstrip("/")
+        if url and f"{url}/mcp" != self.mcp_url:
+            self._set_target(target)
+            return True
+        return False
 
     def handle(self, message: dict[str, Any]) -> dict[str, Any] | None:
         request_id = message.get("id")
         method = str(message.get("method"))
         is_notification = request_id is None
         try:
-            response = self.java.forward(message)
+            try:
+                response = self.java.forward(message)
+            except HostError as error:
+                if error.code == "java_mcp_unavailable":
+                    # In case of container restart or port change, re-resolve and retry once
+                    try:
+                        if self._refresh_target():
+                            response = self.java.forward(message)
+                        else:
+                            raise error
+                    except Exception:
+                        raise error
+                else:
+                    raise
+
             if is_notification:
                 return None
             if response is None:
@@ -148,6 +197,7 @@ def run(
     config: LocalCloudConfig,
     *,
     connect_timeout: float = 10.0,
+    auto_start: bool = True,
 ) -> None:
     import anyio
 
@@ -162,7 +212,10 @@ def run(
 
     previous_sigint = signal.signal(signal.SIGINT, _raise_keyboard_interrupt)
     try:
-        anyio.run(_run_sdk, config, connect_timeout, report_connecting)
+        run_args: list[Any] = [_run_sdk, config, connect_timeout, report_connecting]
+        if not auto_start:
+            run_args.append(False)
+        anyio.run(*run_args)
     finally:
         signal.signal(signal.SIGINT, previous_sigint)
 
@@ -171,6 +224,7 @@ async def _run_sdk(
     config: LocalCloudConfig,
     connect_timeout: float = 10.0,
     on_connecting: Callable[[str], None] | None = None,
+    auto_start: bool = True,
 ) -> None:
     from mcp import types
     from mcp.server.stdio import stdio_server
@@ -180,6 +234,7 @@ async def _run_sdk(
         config,
         connect_timeout=connect_timeout,
         on_connecting=on_connecting,
+        auto_start=auto_start,
     )
     async with stdio_server() as (read_stream, write_stream):
         async with read_stream, write_stream:
@@ -205,7 +260,7 @@ async def _run_sdk(
                     message = incoming.message.model_dump(
                         by_alias=True, exclude_unset=True
                     )
-                    response = adapter.handle(message)
+                    response = await anyio.to_thread.run_sync(adapter.handle, message)
                 if response is not None:
                     try:
                         parsed = types.jsonrpc_message_adapter.validate_python(

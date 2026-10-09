@@ -75,11 +75,14 @@ Copy-paste first run
    container, runtime origin and per-resource ownership, selected project and
    caller, loopback SDK endpoints, and an `mcp` object. Repeating it is safe.
 
-3. Copy the returned `mcp.command` and `mcp.args` into a stdio-only MCP client.
-   For a Streamable HTTP client, use `mcp.direct_url` together with every
-   returned `mcp.headers` entry so the selected project and caller are carried
-   on each request. Generated MCP arguments always pin `--data-volume`, so a
-   long-lived bridge cannot silently switch to a later active runtime.
+3. Copy the returned `mcp.command` and `mcp.args` into a stdio-only MCP client,
+   or install it automatically using `localcloud mcp install --client cursor`
+   (supports `claude-code`, `claude-desktop`, `cursor`, `gemini`, `windsurf`,
+   `cline`, or `all`). For a Streamable HTTP client, use `mcp.direct_url`
+   together with every returned `mcp.headers` entry so the selected project and
+   caller are carried on each request. Generated MCP arguments pin
+   `--data-volume` when using isolated volumes so a long-lived bridge cannot
+   silently switch to a different runtime.
 
 MCP API-catalog-first workflow
 
@@ -156,6 +159,7 @@ Legacy `instance:` and `volume_name:` configuration fields are rejected with a
 
 Useful commands
 
+   localcloud mcp install --client cursor
    localcloud status
    localcloud logs --tail 200
    localcloud console --project-id another-project --user build-agent

@@ -254,10 +254,10 @@ class LocalCloudConfig:
 def runtime_settings(config: LocalCloudConfig) -> dict[str, Any]:
     """Return host-owned Docker settings that define runtime identity."""
     settings = {
+        "config_path": (
+            str(config.config_path) if config.config_path is not None else None
+        ),
         "data_volume": config.data_volume,
-        "config_path": str(config.config_path)
-        if config.config_path is not None
-        else None,
         "data": config.data,
         "image": config.image,
         "memory": config.memory,
@@ -1120,6 +1120,43 @@ def _read_config(path: Path | None) -> dict[object, object]:
     if not isinstance(parsed, dict):
         _invalid_config("Configuration must be a YAML object", config=str(path))
     return parsed
+
+
+def slugify_project_name(name: str) -> str | None:
+    """Convert an arbitrary repository or directory name into a valid GCP project ID."""
+    if not name:
+        return None
+    lowered = name.strip().lower()
+    cleaned = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
+    if not cleaned:
+        return None
+    if not cleaned[0].isalpha():
+        cleaned = f"proj-{cleaned}"
+    cleaned = cleaned[:30].rstrip("-")
+    if len(cleaned) < 6:
+        if not cleaned.startswith("proj-"):
+            cleaned = f"proj-{cleaned}"
+        while len(cleaned) < 6:
+            cleaned = f"{cleaned}-dev"
+        cleaned = cleaned[:30].rstrip("-")
+    if PROJECT_ID_PATTERN.fullmatch(cleaned):
+        return cleaned
+    return None
+
+
+def _detect_git_project(directory: Path | None) -> str | None:
+    """Find the nearest git root and slugify its directory name as the default project ID."""
+    if directory is None:
+        return None
+    try:
+        current = directory.resolve()
+    except Exception:
+        return None
+    for candidate in (current, *current.parents):
+        git_dir = candidate / ".git"
+        if git_dir.exists():
+            return slugify_project_name(candidate.name)
+    return None
 
 
 def validate_project(value: object | None) -> str:

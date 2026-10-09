@@ -206,3 +206,5 @@ after dropping a capture path such as `/i/v0/e/`: `https://proxy.example/ph/i/v0
 
 - [CLI commands and output modes](cli-reference.md)
 - [SDK, Terraform, and MCP integrations](integrations.md)
+- [LocalCloud MCP Architecture and Complete Tool Catalog](mcp.md)
+

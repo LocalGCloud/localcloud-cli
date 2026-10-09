@@ -544,16 +544,23 @@ catalog, so it cannot drift from what the image actually ships. Instruct your ag
 
 ### stdio bridge
 
-Add LocalCloud as an MCP server in Claude Code, Claude Desktop, Cursor, or Windsurf:
+Configure LocalCloud for your AI coding client in one command:
+
+```sh
+lc mcp install --client cursor         # claude-desktop, claude-code, cursor, gemini, windsurf, cline, all
+```
+
+The bridge **automatically checks and starts** the LocalCloud container on demand and provisions any missing project requested by the agent without recreating the runtime. All agents and workspaces share the same persistent container (`localcloud-data`). To require manual control and disable auto-start, pass `--no-start`.
+
+You can also configure clients manually in `claude_desktop_config.json`, `.cursor/mcp.json`, `.claude.json`, or `mcp_config.json`:
 
 ```json
 {
   "mcpServers": {
     "localcloud": {
-      "command": "localcloud",
+      "command": "/opt/homebrew/bin/localcloud",
       "args": [
         "mcp",
-        "--data-volume", "localcloud-data",
         "--project-id", "local-gcp-project",
         "--user", "local-developer"
       ]
@@ -561,9 +568,9 @@ Add LocalCloud as an MCP server in Claude Code, Claude Desktop, Cursor, or Winds
   }
 }
 ```
+*(On macOS desktop apps, an absolute path like `/opt/homebrew/bin/localcloud` is recommended when launched from Dock/Finder; use bare `"localcloud"` when launching from a terminal shell with PATH configured).*
 
-Generated MCP arguments always pin `--data-volume`, so a long-lived bridge cannot silently switch to a
-different runtime later. Get the exact block for your machine from `lc start --verbose`:
+When using custom or isolated data volumes, pin `--data-volume` so the bridge targets that specific runtime. Get the exact block for your machine from `lc start --verbose`:
 
 ```console
 $ lc start --verbose | jq .mcp
@@ -677,8 +684,10 @@ and `--debug` prints the exact `docker run` the CLI would use.
 | [CLI reference](docs/cli-reference.md) | Every command, flag, output mode, and field path |
 | [Configuration](docs/configuration.md) | `localcloud.yaml`, service catalog, volumes, projects, identity |
 | [Integrations](docs/integrations.md) | Python, Node, Go, Terraform/OpenTofu, and MCP client setup |
+| [MCP guide & architecture](docs/mcp.md) | Auto-start, project isolation, tool catalog, and client installers |
 | [Lifecycle testing](docs/lifecycle-testing.md) | End-to-end container lifecycle test runbook and verification |
 | [local.cloud/docs](https://local.cloud/docs) | Product documentation, service compatibility, and the console |
+
 
 ## Development
 

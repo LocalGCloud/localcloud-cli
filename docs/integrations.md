@@ -103,43 +103,96 @@ arguments of its own.
 
 ## AI Coding Agents and MCP
 
-LocalCloud supports the [Model Context Protocol](https://modelcontextprotocol.io). AI agents can inspect, seed, test, and manage local cloud resources programmatically.
+LocalCloud supports the [Model Context Protocol](https://modelcontextprotocol.io). AI coding agents can inspect, seed, test, and manage 25+ local Google Cloud services running inside LocalCloud.
 
-### Claude Desktop, Cursor, and Windsurf
+### One-Command Setup: `lc mcp install`
 
-Add LocalCloud as an MCP server in `claude_desktop_config.json` or `cursor.json`:
+Configure your AI coding assistant with a single command:
+
+```sh
+# Install for Cursor (user-level in ~/.cursor/mcp.json)
+lc mcp install --client cursor
+
+# Install for Claude Code (user scope via `claude mcp add` CLI)
+lc mcp install --client claude-code
+
+# Install for Claude Desktop (claude_desktop_config.json)
+lc mcp install --client claude-desktop
+
+# Install for Gemini / Antigravity (~/.gemini/antigravity/mcp_config.json)
+lc mcp install --client gemini
+
+# Install for Windsurf (~/.codeium/windsurf/mcp_config.json)
+lc mcp install --client windsurf
+
+# Install for Cline (~/.cline/mcp_settings.json)
+lc mcp install --client cline
+
+# Install for all supported clients on your machine
+lc mcp install --client all
+```
+
+#### Key Capabilities
+- **Automatic on-demand startup**: The bridge automatically checks if the LocalCloud container is running and starts it if stopped. To require manual control and disable auto-start, pass `--no-start`.
+- **Single shared container**: All agents and workspaces share the default `localcloud-data` Docker volume and container instance, preserving host RAM and compute.
+- **System binary resolution**: User-level installations prioritize permanent system installations (e.g. `/opt/homebrew/bin/localcloud` or `/usr/local/bin/localcloud`) so GUI applications launched from macOS Dock/Finder find the binary without shell PATH issues, and agent setups survive repository virtualenv deletion.
+- **Custom command overrides**: Pass `--command-path <CMD>` to supply a custom command (e.g. `/opt/homebrew/bin/lc` or `localcloud`), or `--bare` to force a bare command name. Pass `--project` to configure only the current repository workspace instead of user-level settings.
+
+### Manual Configuration Examples
+
+If you prefer to configure your client manually:
+
+#### Cursor (`~/.cursor/mcp.json` or `.cursor/mcp.json`)
+```json
+{
+  "mcpServers": {
+    "localcloud": {
+      "command": "/opt/homebrew/bin/localcloud",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+*(Use bare `"localcloud"` if launching Cursor from a terminal shell with PATH configured).*
+
+#### Claude Code
+```sh
+claude mcp add --scope user localcloud -- /opt/homebrew/bin/localcloud mcp
+```
+
+#### Claude Desktop (`claude_desktop_config.json`)
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "localcloud": {
-      "command": "localcloud",
-      "args": [
-        "mcp",
-        "--data-volume",
-        "localcloud-data",
-        "--project-id",
-        "local-gcp-project"
-      ]
+      "command": "/opt/homebrew/bin/localcloud",
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-### Agent guidance
+### Agent Guidance
 
-Before an agent interacts with local cloud services, run:
+Instruct your coding agent to use LocalCloud emulators:
 
+> You have access to the `localcloud` MCP server. Follow its `use-localcloud-instead-of-gcp` prompt. Use `localcloud_get_env` or `eval "$(lc env)"` to direct Google Cloud SDKs and Terraform to local emulators.
+
+You can also run:
 ```sh
 lc guide
 ```
-
-You can also instruct an agent:
-
-> Before interacting with local cloud services, run `localcloud guide` to inspect available MCP tools and emulator endpoints.
+to print authoritative workflow guidance directly into the terminal or context window.
 
 ## Related References
 
 - [Quick Start](../README.md#quick-start)
+- [LocalCloud MCP Architecture and Complete Tool Catalog](mcp.md)
 - [CLI commands and output modes](cli-reference.md)
 - [Configuration and runtime identity](configuration.md)
+
+

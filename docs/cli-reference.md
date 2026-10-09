@@ -308,13 +308,19 @@ lc guide
 
 ### `mcp`
 
-Runs the stdio Model Context Protocol bridge for AI tools and coding environments.
+Runs the stdio Model Context Protocol bridge for AI tools and coding environments, or configures coding agent clients.
 
 ```sh
 lc mcp
 lc mcp --project-id my-project
 lc mcp --connect-timeout 30
+lc mcp --no-start
+lc mcp install --client cursor
+lc mcp install --client claude-desktop
+lc mcp install --client gemini
 ```
+
+When invoked by an AI coding agent or client, the bridge automatically checks whether the LocalCloud runtime container is running and starts it if stopped. It also automatically ensures that the requested `--project-id` is created within the runtime. To disable automatic startup and require LocalCloud to already be running, pass `--no-start`.
 
 When run directly in an interactive terminal, the command reports the resolved
 LocalCloud `/mcp` endpoint on stderr before waiting for it to become ready.
@@ -326,6 +332,18 @@ Once connected, the stdio bridge remains open without a session timeout while
 it accepts requests. Pressing Ctrl-C prints `MCP connection closed.`, exits
 with status 130, and does not emit a traceback. Non-interactive MCP launchers
 receive no lifecycle text, and stdout stays reserved for JSON-RPC traffic.
+
+#### `mcp install`
+
+Installs LocalCloud MCP server configuration directly into the target AI client configuration file.
+
+```sh
+lc mcp install --client {claude|claude-desktop|claude-code|cursor|gemini|antigravity|windsurf|cline|all} [--global|--project] [--bare] [--command-path CMD]
+```
+
+Automatically resolves the absolute path to `localcloud` (prioritizing permanent system/Homebrew binaries like `/opt/homebrew/bin/localcloud` over local repository virtualenvs) and configures the target project. Use `--bare` to write portable bare `localcloud` commands, or `--command-path` to supply a custom command or alias like `/opt/homebrew/bin/lc`. When `--client all` is specified, it updates configurations for all supported clients present on the system. Pass `--global` (the default) to update user-level configurations across all projects, or `--project` for repository-scoped configuration.
+
+For complete architectural details, client configuration files, and the full MCP tools catalog, see the [MCP Architecture & Guide](mcp.md).
 
 ## Output Modes
 
