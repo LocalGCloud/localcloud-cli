@@ -711,6 +711,7 @@ and `--debug` prints the exact `docker run` the CLI would use.
 | [Integrations](docs/integrations.md) | Python, Node, Go, Terraform/OpenTofu, and MCP client setup |
 | [MCP guide & architecture](docs/mcp.md) | Auto-start, project isolation, tool catalog, and client installers |
 | [MCP reproducible workflows](docs/mcp-workflows.md) | Step-by-step agent test scenarios for Storage, Pub/Sub, BigQuery |
+| [MCP listings and submissions](docs/mcp-distribution-log.md) | Marketplace, directory, awesome-list, and announcement links; status and follow-up |
 | [Lifecycle testing](docs/lifecycle-testing.md) | End-to-end container lifecycle test runbook and verification |
 | [local.cloud/docs](https://local.cloud/docs) | Product documentation, service compatibility, and the console |
 

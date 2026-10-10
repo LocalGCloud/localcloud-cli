@@ -1,6 +1,6 @@
 # LocalCloud marketplace copy — draft for review
 
-Status: approved for implementation on 2026-10-09, with the launch requirements and benefits below. Not yet submitted. This document is the content specification for the [marketplace plan](superpowers/plans/2026-10-09-localcloud-mcp-marketplaces.md).
+Status: approved for implementation on 2026-10-09, with the launch requirements and benefits below. This document is the content specification for the [marketplace plan](superpowers/plans/2026-10-09-localcloud-mcp-marketplaces.md); see the [distribution record](mcp-distribution-log.md) for actual submissions, live links, and review status.
 
 ## Positioning
 

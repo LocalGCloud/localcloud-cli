@@ -1,8 +1,115 @@
 # LocalCloud MCP distribution record
 
-Started 2026-10-09. Status: rollout executed; external reviews and optional prerequisites remain pending. Last reconciliation: 2026-10-09.
+Maintainer reference for every MCP integration, listing, submission, and launch announcement made during this rollout. Started and reconciled **2026-10-09 (Pacific time)**. GitHub status checks below were made on 2026-10-10 at 01:45 UTC.
 
-This record tracks the public rollout of LocalCloud MCP, a free local cloud environment for AI coding agents. The scope includes accurate documentation, CLI 0.1.9+ setup, registry packaging, directory submissions, awesome-list contributions, practical announcements, and verified follow-up links. A submission is not a published listing.
+**GitHub plugins and direct local MCP installation are available. Official Claude review is pending; an OpenAI public-directory submission has not been made.** Third-party placements have their own statuses below. A submitted form, open PR, or private management page is not an approved public listing.
+
+## Canonical identity and integration
+
+- Product: **LocalCloud**; public source: [LocalGCloud/localcloud-cli](https://github.com/LocalGCloud/localcloud-cli).
+- Publisher actions: **cloud-orbitor**; publisher contact: **orbitor.cloud@gmail.com**. Keep private login, billing, and identity-verification details out of this record.
+- Transport: **local stdio**, launched by the installed CLI as `localcloud mcp`. The [website MCP guide](https://local.cloud/docs/mcp/) is an HTML documentation page, not a remote MCP endpoint.
+- Requirements: Docker engine, LocalCloud CLI, and the LocalCloud Docker image. Native CLI platforms: macOS and Linux.
+- [Local setup and connection checks](mcp-marketplace-guide.md) · [MCP reference](mcp.md) · [Approved listing copy](mcp-marketplace-copy.md) · [Privacy](mcp-privacy.md) · [License](https://local.cloud/license/) · [Support](https://github.com/LocalGCloud/localcloud-cli/issues).
+- Scope: the public CLI/plugin only. Do not supply private runtime source, its build Dockerfile, or image exports to a directory or validator.
+
+## How to read the status
+
+**Available / published** means the recorded catalog or public placement was verified. **Submitted / in review** means receipt or review is confirmed, but publication is pending. **Deferred** means no completed submission. **Withdrawn / superseded** entries must not be reused.
+
+Dates are Pacific time. **Checked** identifies a fresh API/page check; **recorded** identifies saved submission or installation evidence. Rows based on saved evidence were not all revisited during this reconciliation. Review estimates are the providers' original estimates, not promised publication dates.
+
+## Official marketplaces and registries
+
+| Destination | Status | Direct reference | Evidence and next action |
+| --- | --- | --- | --- |
+| Claude GitHub marketplace | Available; remote installation qualified | [Catalog](https://github.com/LocalGCloud/localcloud-cli/blob/main/.claude-plugin/marketplace.json) · [Local setup](mcp-marketplace-guide.md#claude-code-plugin) | Recorded 2026-10-09. Install `localcloud@localcloud` from `LocalGCloud/localcloud-cli`; source plugin is 0.1.5. Independent of Claude Directory approval. |
+| Codex GitHub marketplace | Available; remote installation and tool use qualified | [Catalog](https://github.com/LocalGCloud/localcloud-cli/blob/main/.agents/plugins/marketplace.json) · [Local setup](mcp-marketplace-guide.md#codex-plugin) | Recorded 2026-10-09. Same public CLI repository and plugin; independent of OpenAI Directory approval. |
+| Claude official Directory | Submitted; In review; not live at last observation | [Owner management page](https://claude.ai/directory/manage/plugins/e917c263-e80b-4fa1-9070-45bde6b2f8a7) · [Edit](https://claude.ai/directory/manage/plugins/e917c263-e80b-4fa1-9070-45bde6b2f8a7/edit) | Portal recorded 2026-10-09: plugin 0.1.5, zero blockers/holds, security scan passed for `e9e5f34`; later documentation commit `af839dd` detected and In review. Push webhook connected; a real main push received HTTP 200. Await reviewer decision. These are private management links, not public listing URLs. |
+| OpenAI official Directory | Support request escalated; no draft/upload/submission recorded | [Publisher portal](https://platform.openai.com/plugins) · [Support](https://help.openai.com/) | Recorded 2026-10-09. Await the supported local-stdio submission and brand-publisher verification route. No case ID or public LocalCloud listing URL was supplied. Keep the public publisher under the brand identity. |
+| Official MCP Registry | Earlier entry withdrawn; brand replacement publication unconfirmed | [Registry](https://registry.modelcontextprotocol.io/) · [Approved name lookup](https://registry.modelcontextprotocol.io/v0.1/servers/cloud.local%2Flocalcloud/versions/latest) | Intended name: `cloud.local/localcloud`. Withdrawal receipt recorded 2026-10-09. The intended-name lookup returned 404 during this reconciliation; search requests timed out. Verify brand publication before claiming it is active or relying on automatic ingestion. |
+| GitHub MCP Registry | Nomination emailed; inclusion unconfirmed | [GitHub MCP directory](https://github.com/mcp) | Recorded 2026-10-09: nomination sent to the published `partnerships@github.com` route. No LocalCloud directory URL or case ID confirmed. Reconcile any further correspondence under the brand account. |
+
+## Third-party directories
+
+| Destination | Status | Direct reference | Evidence and next action |
+| --- | --- | --- | --- |
+| TensorBlock MCP Index | Listing PR merged; installation correction pending | [Public profile](https://www.tensorblock.co/mcp/servers/github-localgcloud-localcloud-cli-46793d77?client=cursor) · [Merged PR #3405](https://github.com/TensorBlock/awesome-mcp-servers/pull/3405) · [Correction PR #3416](https://github.com/TensorBlock/awesome-mcp-servers/pull/3416) | GitHub checked 2026-10-09: #3405 merged; #3416 open. The profile previously used the HTML guide as an MCP URL; correction supplies stdio command/args. The profile returned HTTP 200 during this check, but its client-rendered install panel was not revalidated. Verify the panel after merge and deployment. |
+| Cursor Directory | Submitted; security scan pending at last observation | [Submission/profile path](https://cursor.directory/plugins/localcloud-mcp) | Confirmation recorded 2026-10-09; unpublished/hidden during scanning. Fresh request returned HTTP 429, so publication remains unconfirmed. |
+| MCPServers.org / wong2 | Submitted; review pending at last observation | [Submission form](https://mcpservers.org/submit) | Recorded 2026-10-09: “Submission Successful!”; original review estimate up to two weeks, around October 23. No approved LocalCloud permalink received. |
+| MCP Market | Submitted to free queue; publication unconfirmed | [Submission form](https://mcpmarket.com/submit) | Recorded 2026-10-09: submission confirmed; original estimate 4–6 weeks, around November 6–20. No listing permalink received. |
+| MCPServers.com | Submitted; publication unconfirmed | [Submission form](https://mcpservers.com/submit) | Recorded 2026-10-09: implementation submitted for review. No listing permalink or approval date received. |
+| MCP.so | Brand submission issue open; directory placement unconfirmed | [Issue #5047](https://github.com/chatmcp/mcpso/issues/5047) | GitHub checked 2026-10-09: open, authored by cloud-orbitor. Replaces closed issue #5034. Free community route; no placement purchased. |
+
+## GitHub awesome lists
+
+| Destination | Status | Direct reference | Evidence and next action |
+| --- | --- | --- | --- |
+| punkpeye/awesome-mcp-servers | Brand PR open; Glama requirement unresolved | [PR #16056](https://github.com/punkpeye/awesome-mcp-servers/pull/16056) · [Validation clarification](https://github.com/punkpeye/awesome-mcp-servers/pull/16056#issuecomment-6086208723) | GitHub checked 2026-10-09. Maintainer requests Glama validation and a score badge. Brand reply asks how its sandbox supports the host CLI plus published Docker runtime. No Glama badge, validator package, or runtime source/Dockerfile supplied. Await a supported CLI-only route. |
+| TensorBlock/awesome-mcp-servers | Brand listing merged; correction open | [PR #3405](https://github.com/TensorBlock/awesome-mcp-servers/pull/3405) · [PR #3416](https://github.com/TensorBlock/awesome-mcp-servers/pull/3416) | GitHub checked 2026-10-09. Same placement as TensorBlock above; count it once. Merge/redeploy the correction before treating its generated setup as qualified. |
+| rohitg00/awesome-devops-mcp-servers | Brand PR open | [PR #352](https://github.com/rohitg00/awesome-devops-mcp-servers/pull/352) | GitHub checked 2026-10-09. Required minimum runtime was added in response to review; no new actionable bot findings recorded. Await maintainer merge. |
+| appcypher/awesome-mcp-servers | Skipped; upstream archived | [Upstream](https://github.com/appcypher/awesome-mcp-servers) | Recorded 2026-10-09: archived upstream rejected PR creation. Prepared historical fork is not an upstream listing; do not create duplicates. |
+
+## Other destinations reviewed
+
+These are candidates or deferred routes, not created listings.
+
+| Destination | Status / prerequisite | Reference | Last evidence |
+| --- | --- | --- | --- |
+| Glama | No submission completed; CLI/Docker validation route unresolved | [Servers](https://glama.ai/mcp/servers) · [Maintainer question](https://github.com/punkpeye/awesome-mcp-servers/pull/16056#issuecomment-6086208723) | Recorded 2026-10-09. Initial profile completion also required legal acceptance. Do not publish private runtime packaging to clear the requirement. |
+| Smithery | Deferred; API-key authorization not completed | [Publication guide](https://smithery.ai/docs/build/publish) | Recorded 2026-10-09. Browser login alone did not publish a listing; CLI authorization was canceled at its credential-access prompt. |
+| PulseMCP | Intake was paused; no manual submission | [Submission page](https://www.pulsemcp.com/submit) | Pause recorded 2026-10-09. Fresh request returned HTTP 403; current intake not verified. Registry ingestion also depends on a confirmed active brand entry. |
+| Cline Marketplace | Deferred; required native Cline installation test incomplete | [Marketplace repository](https://github.com/cline/mcp-marketplace) | Recorded 2026-10-09. Setup documentation is available; no submission issue or qualifying Cline install test claimed. |
+| Docker MCP Catalog | Deferred; no qualified containerized stdio bridge | [Contribution requirements](https://github.com/docker/mcp-registry/blob/main/CONTRIBUTING.md) | Recorded 2026-10-09. Host-native CLI uses Docker discovery; no supported public container profile qualified. Do not substitute a documentation URL or untested socket-mount configuration. |
+| MCPHub | Deferred; login requires legal acceptance | [Registry](https://www.mcphub.app/registry) | Recorded 2026-10-09. No completed account or submission. |
+| mcpdirectory.dev | Automatic ingestion candidate; listing unverified | [Directory](https://mcpdirectory.dev/) | Recorded 2026-10-09. No manual route or LocalCloud result found; do not assume ingestion from a withdrawn registry entry. |
+| mcpdirectory.app | Deferred; service unavailable at last check | [Directory](https://mcpdirectory.app/) | Recorded 2026-10-09: HTTP 502 / DNS failure. No submission. |
+
+## Product pages and announcements
+
+| Destination | Recorded placement | Direct reference | Evidence / follow-up |
+| --- | --- | --- | --- |
+| LocalCloud website | MCP guide and launch walkthrough published | [MCP page](https://local.cloud/docs/mcp/) · [Walkthrough](https://local.cloud/blog/localcloud-mcp-agent-cloud/) | Publication recorded 2026-10-09. The owner is handling website alignment with the [CLI setup guide](mcp-marketplace-guide.md); this ledger update does not deploy the site. |
+| X, LocalCloud_AI | Updated four-post brand thread with demo and hashtags | [Hook + video](https://x.com/LocalCloud_AI/status/2108599008977703159) · [Reply 2](https://x.com/LocalCloud_AI/status/2108599010445705329) · [Reply 3](https://x.com/LocalCloud_AI/status/2108599011834024234) · [Reply 4](https://x.com/LocalCloud_AI/status/2108599013155197153) | Publication and permalink readback recorded 2026-10-09. This is the revised announcement, superseding the earlier post below. |
+| DEV | Article published during the initial rollout | [Article](https://dev.to/jaysen99/give-your-coding-agent-a-local-cloud-environment-with-mcp-2b2l) | Anonymous view recorded 2026-10-09; current visibility not rechecked. Historical account placement; no new personal-account publication in this reconciliation. |
+| Hacker News | Regular link submission published | [Item #50021011](https://news.ycombinator.com/item?id=50021011) | Exact submission recorded 2026-10-09; current visibility not rechecked. |
+| Reddit r/mcp | Showcase post published during the initial rollout | [Post](https://www.reddit.com/r/mcp/comments/1x1mucq/) | Anonymous view recorded at publication on 2026-10-09; current visibility/moderation state not rechecked. |
+| LinkedIn | Historical initial-rollout post only | [Recorded permalink](https://www.linkedin.com/feed/update/urn:li:activity:7514331414318759936/) | Publication recorded 2026-10-09; current visibility not rechecked. Owner subsequently instructed us not to use personal LinkedIn. No further personal LinkedIn posting. |
+| GitHub organization | LocalCloud icon set | [LocalGCloud organization](https://github.com/LocalGCloud) | Brand-avatar receipt recorded 2026-10-09. Organization branding, not a separate MCP directory listing. |
+
+## Withdrawn and superseded references
+
+Retain these links to explain old search results and avoid submitting duplicates. They are not current active submissions.
+
+| Previous reference | Disposition | Replacement |
+| --- | --- | --- |
+| Official Registry `io.github.jhsenjaliya/localcloud`, version 0.1.9 | Withdrawn; saved registry receipt says `deleted` on 2026-10-09. Legacy API lookup now returns 404. | Intended `cloud.local/localcloud`; publication still needs confirmation. |
+| [punkpeye PR #16030](https://github.com/punkpeye/awesome-mcp-servers/pull/16030) | Closed without merge; checked 2026-10-09. | [Brand PR #16056](https://github.com/punkpeye/awesome-mcp-servers/pull/16056) |
+| [TensorBlock PR #3385](https://github.com/TensorBlock/awesome-mcp-servers/pull/3385) | Closed without merge; checked 2026-10-09. | [Merged brand PR #3405](https://github.com/TensorBlock/awesome-mcp-servers/pull/3405) |
+| [DevOps PR #351](https://github.com/rohitg00/awesome-devops-mcp-servers/pull/351) | Closed without merge; checked 2026-10-09. | [Brand PR #352](https://github.com/rohitg00/awesome-devops-mcp-servers/pull/352) |
+| [MCP.so issue #5034](https://github.com/chatmcp/mcpso/issues/5034) | Closed; checked 2026-10-09. | [Brand issue #5047](https://github.com/chatmcp/mcpso/issues/5047) |
+| [Earlier X post](https://x.com/LocalCloud_AI/status/2108549606422536549) | Superseded by the revised brand thread; old-post visibility not rechecked. | [Current recorded thread](https://x.com/LocalCloud_AI/status/2108599008977703159) |
+
+## Follow-up and maintenance
+
+1. Check Claude's existing review and OpenAI's existing support conversation before taking another submission action. Add public listing URLs only after publication is verified.
+2. Verify brand MCP Registry publication. Keep the withdrawn name in the historical record, never as the active feed identifier.
+3. Follow TensorBlock correction #3416 through merge, deployment, and an actual client install-panel check; confirm stdio `command` and `args`, with no documentation URL used as an endpoint.
+4. Follow the Glama clarification on punkpeye #16056 and the DevOps #352 merge. Preserve the CLI-only privacy boundary.
+5. Recheck the submitted third-party queues and record the eventual LocalCloud permalinks, approval/rejection dates, and any requested changes. Retain existing IDs; do not send duplicates because a queue is slow.
+
+For every future change, update the existing row's status, direct submission and live links, evidence date/type, and next action. Add a new row for a new destination and retain a retired-reference row for a replacement. Keep provider messages, IDs, and status distinctions exact; never infer approval from a successful HTTP response. Record a blocked check as blocked rather than refreshing its verification date silently.
+
+Plugin, CLI, and runtime versions are independent. The last qualified native CLI release is [0.1.11](https://github.com/LocalGCloud/localcloud-cli/releases/tag/v0.1.11); its downloadable plugin ZIP is historical plugin 0.1.3, while the current GitHub catalogs and Claude submission use plugin 0.1.5. [Homebrew publication evidence](https://github.com/LocalGCloud/homebrew-tap/actions/runs/38004527000) and [launcher correction PR #14](https://github.com/LocalGCloud/localcloud-cli/pull/14) document that distinction. Link future qualification evidence here when artifacts change.
+
+No automated monitoring or paid placement is configured. This document is a maintained reference, not a live status feed. Private screenshots and receipts stay outside the public repository; credentials, webhook secrets, verification documents, and private runtime implementation must never be added here.
+
+## Historical execution notes
+
+<details>
+<summary>Original rollout log and release observations — superseded by the reference tables above</summary>
+
+The following notes preserve the sequence and evidence recorded during execution. Their original status tables, identities, requirements, and pending actions are historical snapshots; use the reconciled tables above for the latest known state.
 
 ## Public identity and links
 
@@ -227,3 +334,5 @@ Publication dependencies remain distinct:
 - The four Directory-only link-field warnings explicitly say no action is needed. The post-submission local-program warning is informational; the security scan passed and an Anthropic reviewer must approve publication.
 - A push-only GitHub webhook was configured using cloud-orbitor after owner confirmation. TLS verification is enabled; GitHub's ping received HTTP 200 and Claude reported Webhook connected. The temporary signing-secret file was removed. No source or runtime image was uploaded as part of webhook setup.
 - The [local setup guide](mcp-marketplace-guide.md) covers Claude Code, Claude Desktop, Codex CLI/desktop, Cursor, other client references, GitHub plugin installation, connection checks, first SDK tasks, project selection, updates, and removal. Local installation does not depend on vendor Directory approval.
+
+</details>
