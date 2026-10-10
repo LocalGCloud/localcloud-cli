@@ -1421,3 +1421,134 @@ def test_cli_package_has_no_java_or_image_execution_dependency() -> None:
         "docker_runtime.py must not shell out to run the LocalCloud image "
         "before container creation to resolve configuration"
     )
+
+
+# Project selection ----------------------------------------------------------
+
+
+def _git(*args: str, cwd: Path) -> None:
+    import subprocess
+
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _repository(path: Path) -> Path:
+    path.mkdir(parents=True)
+    _git("init", "-q", cwd=path)
+    return path
+
+
+@pytest.mark.usefixtures("real_git")
+def test_a_git_repository_selects_its_own_project(tmp_path: Path) -> None:
+    repository = _repository(tmp_path / "Payments_API.v2")
+    (repository / "src" / "handlers").mkdir(parents=True)
+
+    for directory in (repository, repository / "src" / "handlers"):
+        selected = load_config(
+            directory=directory, paths=_paths(tmp_path), active_runtime=None
+        )
+        assert (selected.project, selected.project_source) == ("payments-api-v2", "git")
+
+
+@pytest.mark.usefixtures("real_git")
+def test_every_worktree_of_a_repository_shares_its_project(tmp_path: Path) -> None:
+    repository = _repository(tmp_path / "orders-service")
+    _git("commit", "-q", "--allow-empty", "-m", "init", cwd=repository)
+    worktree = tmp_path / "agent-7f3a"
+    _git("worktree", "add", "-q", str(worktree), cwd=repository)
+
+    selected = load_config(directory=worktree, paths=_paths(tmp_path), active_runtime=None)
+
+    assert selected.project == "orders-service"
+
+
+@pytest.mark.usefixtures("real_git")
+def test_worktree_project_without_a_git_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = _repository(tmp_path / "orders-service")
+    _git("commit", "-q", "--allow-empty", "-m", "init", cwd=repository)
+    worktree = tmp_path / "agent-7f3a"
+    _git("worktree", "add", "-q", str(worktree), cwd=repository)
+
+    def no_git(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(config_module.subprocess, "run", no_git)
+
+    assert config_module.detect_git_project(worktree) == "orders-service"
+    assert config_module.detect_git_project(tmp_path) is None
+
+
+@pytest.mark.usefixtures("real_git")
+def test_project_precedence(tmp_path: Path) -> None:
+    repository = _repository(tmp_path / "inventory")
+    paths = _paths(tmp_path)
+    shared = paths.home / "localcloud.yaml"
+    shared.parent.mkdir(parents=True)
+    shared.write_text("context:\n  project: shared-project\n", encoding="utf-8")
+
+    def select(directory: Path, **kwargs: object) -> tuple[str, str]:
+        config = load_config(directory=directory, paths=paths, active_runtime=None, **kwargs)
+        return config.project, config.project_source
+
+    # A shared (home) config's project does not override the repository's.
+    assert select(repository) == ("inventory", "git")
+    # Outside a repository it is the default.
+    assert select(tmp_path) == ("shared-project", "default")
+    # The repository's own config pins its project.
+    (repository / "localcloud.yaml").write_text(
+        "context:\n  project: inventory-dev\n", encoding="utf-8"
+    )
+    assert select(repository) == ("inventory-dev", "config")
+    # --project-id wins over everything.
+    assert select(repository, project="explicit-project") == ("explicit-project", "flag")
+
+
+def test_without_a_repository_or_config_the_default_project_is_used(tmp_path: Path) -> None:
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path), active_runtime=None)
+
+    assert (selected.project, selected.project_source) == (DEFAULT_PROJECT, "default")
+
+
+@pytest.mark.usefixtures("real_git")
+def test_a_repository_at_the_home_directory_is_not_a_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = _repository(tmp_path / "jdoe")
+    (home / "scratch").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+
+    assert config_module.detect_git_project(home / "scratch") is None
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("api", "proj-api"),
+        ("123", "proj-123"),
+        ("Ünïcödé Tools", "unicode-tools"),
+        ("x" * 40, "x" * 30),
+        ("my-app-", "my-app"),
+        ("---", None),
+    ],
+)
+def test_repository_names_become_valid_project_ids(name: str, expected: str | None) -> None:
+    assert config_module.slugify_project_name(name) == expected
+
+
+@pytest.mark.usefixtures("real_git")
+def test_workspace_project_reads_the_workspace_config_then_git(tmp_path: Path) -> None:
+    repository = _repository(tmp_path / "ledger")
+
+    assert config_module.workspace_project(repository) == ("ledger", "git")
+    (repository / "localcloud.yaml").write_text(
+        "context:\n  project: ledger-local\n", encoding="utf-8"
+    )
+    assert config_module.workspace_project(repository) == ("ledger-local", "config")
+    assert config_module.workspace_project(tmp_path) is None

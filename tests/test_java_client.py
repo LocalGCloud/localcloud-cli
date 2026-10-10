@@ -106,6 +106,7 @@ def test_mcp_transport_preserves_http_failure_details(
         "method": "tools/list",
         "cause": f"HTTP {status_code}",
         "retryable": retryable,
+        "connect_failed": False,
         "status_code": status_code,
     }
     assert (
@@ -133,6 +134,7 @@ def test_mcp_transport_marks_connection_failure_retryable(
         ).rpc("tools/list")
 
     assert caught.value.details["retryable"] is True
+    assert caught.value.details["connect_failed"] is True
     assert "status_code" not in caught.value.details
 
 

@@ -558,39 +558,22 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
 
         return update()
     if args.command == "mcp" and getattr(args, "mcp_subcommand", None) == "install":
-        from .config import DEFAULT_CONFIG_NAME, _read_config, detect_git_project, load_config
         from .mcp_install import install_mcp_server
 
-        project_id = args.project_id
-        if project_id is None:
-            local_config_file = Path.cwd() / DEFAULT_CONFIG_NAME
-            has_local_project = False
-            if local_config_file.is_file():
-                try:
-                    local_raw = _read_config(local_config_file)
-                    if isinstance(local_raw, dict) and isinstance(local_raw.get("context"), dict):
-                        has_local_project = bool(local_raw["context"].get("project"))
-                except Exception:
-                    pass
-            if not has_local_project:
-                project_id = detect_git_project(Path.cwd())
-
-        config = load_config(
-            directory=Path.cwd(),
-            data_volume=args.data_volume,
-            project=project_id,
-            user=args.user,
-            active_runtime=None,
-        )
+        # Only what was passed is written: the bridge selects the project (and
+        # any localcloud.yaml settings) from the workspace it is started for.
         return install_mcp_server(
-            config,
             client=args.client,
             is_global=args.is_global,
             directory=Path.cwd(),
+            data_volume=args.data_volume,
+            project=args.project_id,
+            user=args.user,
             command_override=getattr(args, "command_path", None),
             prefer_bare=getattr(args, "bare", False),
-            explicit_project=(args.project_id is not None),
         )
+    if args.command == "mcp":
+        return _run_mcp_bridge(args, observer)
 
     fix = args.command == "doctor" and getattr(args, "fix", False)
     if fix and (observer is None or not observer.can_prompt()):
@@ -631,7 +614,7 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
             return controller.start(
                 config,
                 pull=pull,
-                ensure_project=args.project_id is not None,
+                ensure_project=_creates_project(config),
                 observer=observer,
                 tail=args.tail,
                 dry_run=args.dry_run,
@@ -654,7 +637,7 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
             return controller.restart(
                 config,
                 pull=pull,
-                ensure_project=args.project_id is not None,
+                ensure_project=_creates_project(config),
                 observer=observer,
                 tail=args.tail,
                 dry_run=args.dry_run,
@@ -683,14 +666,11 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
             return controller.status(config)
         if args.command == "logs":
             return controller.logs(config, tail=args.tail)
-        if args.command == "mcp":
-            from .mcp_stdio import run
-
-            run_kwargs: dict[str, Any] = {"connect_timeout": args.connect_timeout}
-            if getattr(args, "no_start", False):
-                run_kwargs["auto_start"] = False
-            return run(config, **run_kwargs)
-        target = controller.target(config)
+        # A repository's project is created on first use, so `lc env` in a new
+        # checkout matches what its agents see over MCP.
+        target = controller.target(
+            config, ensure_project=config.project_source == "git"
+        )
         if args.command == "console":
             import webbrowser
             from urllib.parse import urlencode
@@ -732,6 +712,44 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
         "Unsupported LocalCloud command",
         {"command": args.command},
     )
+
+
+def _run_mcp_bridge(
+    args: argparse.Namespace, observer: _ExecutionObserver | None
+) -> None:
+    """Run the stdio bridge. Docker and the runtime config are resolved inside
+    it, so a problem with either reaches the agent as a recoverable error
+    instead of a server that exits before its handshake."""
+    from .controller import Controller
+    from .mcp_stdio import run
+
+    def prepare() -> tuple[Any, LocalCloudConfig]:
+        controller = Controller()
+        config = _command_config(controller, args)
+        if observer is not None:
+            observer.config(args.command, config, args)
+        return controller, config
+
+    try:
+        # What the bridge reports until Docker answers: the same selection
+        # without the running container's remembered config.
+        provisional: LocalCloudConfig | None = _command_config(
+            _FileConfigSource(None), args
+        )
+    except HostError:
+        provisional = None
+    return run(
+        provisional,
+        connect_timeout=args.connect_timeout,
+        auto_start=not args.no_start,
+        prepare=prepare,
+    )
+
+
+def _creates_project(config: LocalCloudConfig) -> bool:
+    """Whether start/restart create the selected project: one named by
+    --project-id or derived from the git repository."""
+    return config.project_source in {"flag", "git"}
 
 
 def _controller(args: argparse.Namespace, observer: _ExecutionObserver | None) -> Any:
@@ -830,29 +848,14 @@ class _FileConfigSource:
 
 
 def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConfig:
-    from .config import DEFAULT_CONFIG_NAME, HostPaths, _read_config, detect_git_project, load_active_runtime, load_config
+    from .config import HostPaths, load_active_runtime, load_config
 
     explicit_value = getattr(args, "config", None)
     explicit = Path(explicit_value) if explicit_value is not None else None
-
-    project = getattr(args, "project_id", None)
-    if args.command == "mcp" and project is None:
-        local_config_file = Path.cwd() / DEFAULT_CONFIG_NAME
-        has_local_project = False
-        if local_config_file.is_file():
-            try:
-                local_raw = _read_config(local_config_file)
-                if isinstance(local_raw, dict) and isinstance(local_raw.get("context"), dict):
-                    has_local_project = bool(local_raw["context"].get("project"))
-            except Exception:
-                pass
-        if not has_local_project:
-            project = detect_git_project(Path.cwd())
-
     overrides = {
         "directory": Path.cwd(),
         "data_volume": getattr(args, "data_volume", None),
-        "project": project,
+        "project": getattr(args, "project_id", None),
         "user": getattr(args, "user", None),
         "container_name": getattr(args, "container_name", None),
         "network_name": getattr(args, "network_name", None),
@@ -897,6 +900,26 @@ def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConf
     )
 
 
+_MCP_INSTALL_VERBS = {
+    "installed": "Installed",
+    "updated": "Updated",
+    "unchanged": "Already up to date:",
+}
+
+
+def _mcp_install_line(row: dict[str, Any]) -> str:
+    client = f"{row['client']} ({row['scope']})"
+    if row["status"] == "skipped":
+        return f"Skipped {client}: {row['reason']}."
+    if row["status"] == "failed":
+        return f"Failed {client}: {row['error']}"
+    via = " with 'claude mcp'" if row.get("method") == "claude-cli" else ""
+    return (
+        f"{_MCP_INSTALL_VERBS[row['status']]} LocalCloud MCP for {client} "
+        f"in {row['config_path']}{via}."
+    )
+
+
 def _print_result(args: argparse.Namespace, result: Any, fields: list[str]) -> None:
     if result is None:
         return
@@ -906,15 +929,8 @@ def _print_result(args: argparse.Namespace, result: Any, fields: list[str]) -> N
         _print_native(str(value))
         return
     if command == "mcp" and getattr(args, "mcp_subcommand", None) == "install":
-        if isinstance(result, dict) and "results" in result:
-            for r in result["results"]:
-                verb = "Updated" if r.get("status") == "updated" else "Installed"
-                loc = f"at {r['config_path']}" if "config_path" in r else f"via {r.get('method', 'cli')}"
-                print(f"{verb} LocalCloud MCP server configuration for {r['client']} {loc}.")
-        elif isinstance(result, dict) and ("config_path" in result or "method" in result):
-            verb = "Updated" if result.get("status") == "updated" else "Installed"
-            loc = f"at {result['config_path']}" if "config_path" in result else f"via {result.get('method', 'cli')}"
-            print(f"{verb} LocalCloud MCP server configuration for {result['client']} {loc}.")
+        for row in result.get("results") or [result]:
+            print(_mcp_install_line(row))
         return
     capabilities = terminal_capabilities(sys.stdout)
     color = capabilities.color
@@ -1383,7 +1399,10 @@ def _parser() -> argparse.ArgumentParser:
         "--client",
         choices=(*SUPPORTED_CLIENTS, "all"),
         default="cursor",
-        help="Target AI client to configure (default: cursor)",
+        help=(
+            "AI client to configure (default: cursor); 'all' configures every "
+            "supported client installed on this machine"
+        ),
     )
     install.add_argument(
         "--global",
@@ -1396,7 +1415,10 @@ def _parser() -> argparse.ArgumentParser:
         "--project",
         dest="is_global",
         action="store_false",
-        help="Install into project/workspace configuration instead of user-level configuration",
+        help=(
+            "Write the repository's configuration instead (cursor, claude-code, "
+            "gemini, antigravity)"
+        ),
     )
     install.add_argument(
         "--command-path",

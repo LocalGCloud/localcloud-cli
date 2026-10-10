@@ -139,8 +139,9 @@ class FakeController:
         self.calls.append(("logs", (config, tail)))
         return {"status": "logs", "data_volume": config.data_volume, "logs": "output"}
 
-    def target(self, config: Any) -> dict[str, Any]:
+    def target(self, config: Any, *, ensure_project: bool = False) -> dict[str, Any]:
         self.calls.append(("target", config))
+        self.ensure_project_calls.append(("target", ensure_project))
         return {
             "data_volume": config.data_volume,
             "url": "http://127.0.0.1:49080",
@@ -682,10 +683,12 @@ def test_mcp_dispatch_passes_full_runtime_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    calls: list[tuple[Any, float]] = []
+    calls: list[tuple[Any, float, bool, Any]] = []
 
-    def run(config: Any, *, connect_timeout: float) -> None:
-        calls.append((config, connect_timeout))
+    def run(
+        config: Any, *, connect_timeout: float, auto_start: bool, prepare: Any
+    ) -> None:
+        calls.append((config, connect_timeout, auto_start, prepare))
 
     monkeypatch.setattr("localcloud_cli.mcp_stdio.run", run)
 
@@ -706,11 +709,47 @@ def test_mcp_dispatch_passes_full_runtime_config(
     )
 
     assert len(calls) == 1
-    config, connect_timeout = calls[0]
+    config, connect_timeout, auto_start, prepare = calls[0]
     assert config.data_volume == "team-data"
     assert config.project == "agent-project-1"
     assert config.user == "alice"
     assert connect_timeout == 2.5
+    assert auto_start is True
+    # The bridge connects to Docker itself and resolves the same config there.
+    controller, prepared = prepare()
+    assert isinstance(controller, FakeController)
+    assert (prepared.data_volume, prepared.project, prepared.user) == (
+        "team-data",
+        "agent-project-1",
+        "alice",
+    )
+
+
+def test_mcp_starts_its_bridge_when_docker_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import localcloud_cli.controller as controller_module
+
+    monkeypatch.chdir(tmp_path)
+    calls: list[Any] = []
+
+    def unavailable() -> None:
+        raise HostError("docker_unavailable", "Docker is not reachable")
+
+    monkeypatch.setattr(controller_module, "Controller", unavailable)
+    monkeypatch.setattr(
+        "localcloud_cli.mcp_stdio.run",
+        lambda config, **kwargs: calls.append((config, kwargs)),
+    )
+
+    _execute(_parser().parse_args(["mcp", "--no-start"]))
+
+    config, kwargs = calls[0]
+    assert config.project == "local-gcp-project"
+    assert kwargs["auto_start"] is False
+    with pytest.raises(HostError) as caught:
+        kwargs["prepare"]()
+    assert caught.value.code == "docker_unavailable"
 
 
 def test_native_guide_and_mcp_do_not_emit_lifecycle_status(
@@ -1305,6 +1344,49 @@ def test_explicit_project_id_requests_api_ensure_only_for_start_and_restart() ->
         )
     )
     assert FakeController.instance.ensure_project_calls == [("restart", True)]
+
+
+def _git_repository(path: Path) -> Path:
+    import subprocess
+
+    path.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    return path
+
+
+@pytest.mark.usefixtures("real_git")
+def test_commands_in_a_git_repository_select_and_create_its_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = _git_repository(tmp_path / "Orders Service")
+    (repository / "api").mkdir()
+    monkeypatch.chdir(repository / "api")
+    monkeypatch.setattr(
+        "localcloud_cli.endpoints.environment_config", lambda *_args, **_kwargs: ""
+    )
+
+    for command in ("start", "restart", "env"):
+        _execute(_parser().parse_args([command]))
+        controller = FakeController.instance
+        assert controller.calls[-1][1].project == "orders-service"
+        assert controller.ensure_project_calls == [
+            ("target" if command == "env" else command, True)
+        ]
+
+
+@pytest.mark.usefixtures("real_git")
+def test_commands_outside_a_repository_keep_the_default_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "localcloud_cli.endpoints.environment_config", lambda *_args, **_kwargs: ""
+    )
+
+    _execute(_parser().parse_args(["env"]))
+
+    assert FakeController.instance.calls[0][1].project == "local-gcp-project"
+    assert FakeController.instance.ensure_project_calls == [("target", False)]
 
 
 def test_debug_start_enables_container_debug_and_startup_metrics() -> None:
