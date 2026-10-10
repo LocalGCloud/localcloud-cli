@@ -48,13 +48,13 @@ For Cursor:
 lc mcp install --client cursor
 ```
 
-Reload the client and enable the `localcloud` MCP server. The bridge starts or reuses the runtime automatically. The first connection can take longer while Docker downloads the runtime image. New runtimes publish Docker ports on all host interfaces by default. To start with ports bound to localhost before connecting:
+Reload the client and enable the `localcloud` MCP server. The bridge starts or reuses the runtime automatically and uses the current repository's project (see [One Project per Repository](#one-project-per-repository)). The first start can take a few minutes while Docker downloads the runtime image; until it is ready the agent sees a `localcloud_runtime_status` tool that waits for it and reports any problem. New runtimes publish Docker ports on all host interfaces by default. To start it deliberately with ports bound to localhost before connecting:
 
 ```sh
 lc start --local-only
 ```
 
-For Claude Code, use `lc mcp install --client claude-code`; for Claude Desktop, use `lc mcp install --client claude-desktop`. Codex uses `codex mcp add localcloud -- "$(command -v localcloud)" mcp`. The [local setup guide](mcp-marketplace-guide.md) includes client verification and a first task.
+For Claude Code, use `lc mcp install --client claude-code`; for Claude Desktop, use `lc mcp install --client claude-desktop`; `lc mcp install --client all` configures every supported client installed on this machine. Codex uses `codex mcp add localcloud -- "$(command -v localcloud)" mcp`. Other client configurations are described below, and the [local setup guide](mcp-marketplace-guide.md) includes client verification and a first task.
 
 ### Existing environments and updates
 
@@ -114,10 +114,11 @@ The default data volume is shared across clients and repositories. A project ID 
 │              LocalCloud MCP Bridge (CLI)               │
 │          `localcloud mcp` / `McpAdapter`               │
 │                                                        │
-│  • Auto-starts Docker container on demand if stopped   │
-│  • Idempotent data-volume locked startup               │
-│  • Guarantees container non-replacement                │
-│  • Automatic reconnection on container restart         │
+│  • Answers the handshake at once; connects in the      │
+│    background and reports problems as tool results     │
+│  • Starts a stopped runtime; never replaces one        │
+│  • Selects the repository's project (git, roots)       │
+│  • Concurrent requests; reconnects after restarts      │
 │  • Attributed caller headers (X-LocalCloud-*)          │
 └───────────────────────────┬────────────────────────────┘
                             │
@@ -143,11 +144,16 @@ MCP communicates via JSON-RPC 2.0 over standard input and output (`stdio`).
 
 ## 2. Core Capabilities and Design Principles
 
+### The handshake never waits for Docker
+The bridge answers the client's MCP handshake at once and connects to the runtime in the background, so clients with short startup timeouts (Codex 10s, Claude Code 30s) never drop the server while LocalCloud starts.
+- **Runtime ready** (the usual case, about a second): the handshake, tools, resources and prompts come from the runtime unchanged.
+- **Runtime starting or unavailable**: the client sees a single `localcloud_runtime_status` tool and empty resource and prompt lists. Other tool calls wait up to 90 seconds for a starting runtime, then return an error result that says what is wrong and what to do (start Docker, fix `localcloud.yaml`, run `lc start` under `--no-start`, ...). `localcloud_runtime_status` retries immediately and reports `ready`, `starting` or `unavailable` with the project, data volume and next step.
+- **Runtime becomes ready later**: the bridge sends `tools/list_changed`, `resources/list_changed` and `prompts/list_changed`, and clients that support them reload the full catalog. Otherwise reconnect the server.
+- Problems are also written once to stderr, which clients keep in their MCP logs.
+
 ### On-Demand Auto-Start
-When an AI agent launches `localcloud mcp`, the CLI checks if the container runtime is running:
-- **If stopped or missing**: Automatically starts the container in the background (`Controller.start(ensure_project=True, allow_replace=False)`).
-- **Concurrency protection**: Takes the per-volume file lock (`data_volume_lock`) to serialize startup for agents sharing a volume. Startup can still time out if the runtime does not become ready within its readiness budget.
-- **Manual override**: Passing `--no-start` disables auto-start and reports `runtime_not_running` if LocalCloud is not already running.
+- **If stopped or missing**: the bridge starts the runtime (`Controller.start(ensure_project=True, allow_replace=False)`) under the per-volume lock, with the full 60-second readiness budget, so agents connecting at the same time share one start instead of racing. Startup can still time out if the runtime does not become ready within that budget.
+- **Manual override**: `--no-start` never starts a runtime. The bridge still answers the handshake and reports `runtime_not_running` through `localcloud_runtime_status` until the user runs `lc start`.
 
 ### Non-Replacement Policy
 LocalCloud ensures container stability for running agents:
@@ -159,59 +165,70 @@ LocalCloud ensures container stability for running agents:
 - Multiple agents and workspaces run against a single shared container instance, conserving host RAM, CPU, and disk space.
 - A custom `--data-volume` is only used when hard container isolation is explicitly demanded.
 
-### Logical Project-Level Scope
-- Default project is `local-gcp-project`, ensuring all commands (`lc env`, `lc console`, `lc reset`, and MCP) align on the exact same project and seeded sample data.
-- When an agent or developer passes an explicit `--project-id`, the runtime ensures the logical project exists on connection without restarting the container.
-- Caller identity defaults to `local-developer` (normalized to `local-developer@localcloud.invalid`), attributing actions per agent or user.
+### One Project per Repository
+Every command, the bridge included, selects the same project for a repository, so `lc env` in a terminal and the agents working in that repository see the same data:
+1. `--project-id`;
+2. `context.project` in the repository's own `localcloud.yaml` (or an explicit `--config`/`LOCALCLOUD_CONFIG`);
+3. the git repository's name, slugified into a project ID (`Payments_API.v2` becomes `payments-api-v2`). Worktrees share their main checkout's project; a repository rooted at the home directory is ignored;
+4. otherwise `local-gcp-project` (or the `context.project` of a shared home or remembered config).
 
-### Auto-Reconnection on Restart
-- After `java_mcp_unavailable`, the bridge re-resolves the target gateway. If the gateway URL changed, it retries the request once at the new URL. A restart that keeps the same URL can still require the client to retry or reconnect.
+The bridge learns the repository from its working directory, or from the client's workspace roots (MCP `roots/list`) when the client provides them, as Cursor and VS Code do. A repository's project is created on first use (`lc start`, `lc env`, `lc console`, or an MCP connection) without restarting the runtime. Caller identity defaults to `local-developer` (normalized to `local-developer@localcloud.invalid`), attributing actions per agent or user.
+
+### Concurrent Requests and Reconnection
+- Requests run concurrently: a long query does not hold up pings, cancellations or other calls, and a cancelled request gets no response. Tool calls, resource reads and prompts may run up to 10 minutes.
+- When the runtime refuses a connection (stopped, restarted, or moved to other ports), the bridge connects again, starting the runtime unless `--no-start`, and resends the request once. A request the runtime had already received is never resent; it returns an error instead.
 
 ---
 
 ## 3. One-Command Setup: `lc mcp install`
 
-LocalCloud provides an automated installer that configures AI coding assistants at the user level by default so all repositories can access LocalCloud:
+`lc mcp install` writes the `localcloud` server entry for a client. It needs no Docker. By default it configures the **user level**, so every repository gets LocalCloud and the bridge selects each repository's project itself:
 
 ```sh
-# Install for Cursor (user-level in ~/.cursor/mcp.json)
-lc mcp install --client cursor
-
-# Install for Claude Code (user scope via `claude mcp add` CLI)
-lc mcp install --client claude-code
-
-# Install for Claude Desktop (user-level in claude_desktop_config.json)
-lc mcp install --client claude-desktop
-
-# Install for Antigravity
-lc mcp install --client antigravity
-
-# Install for Windsurf
-lc mcp install --client windsurf
-
-# Configure supported clients
-lc mcp install --client all
+lc mcp install --client cursor           # ~/.cursor/mcp.json (the default client)
+lc mcp install --client claude-code      # runs `claude mcp add-json --scope user`
+lc mcp install --client claude-desktop   # claude_desktop_config.json
+lc mcp install --client gemini           # Gemini CLI: ~/.gemini/settings.json
+lc mcp install --client antigravity      # ~/.gemini/config/mcp_config.json
+lc mcp install --client windsurf         # Windsurf / Devin Desktop
+lc mcp install --client cline            # ~/.cline/data/settings/cline_mcp_settings.json
+lc mcp install --client all              # every supported client installed on this machine
 ```
 
-Use `lc mcp install --help` to discover supported clients. `all` may create configuration for applications that are not installed; select a client explicitly when you only want to configure that application. Codex uses its own registration command. Use the manual instructions below for Cline and Gemini CLI; Cline's extension settings path is not qualified by the installer.
+`--project` writes the repository's own file instead, for the clients that read one: `.cursor/mcp.json`, `.mcp.json` (Claude Code, through `claude mcp add-json --scope project`), `.gemini/settings.json`, and `.agents/mcp_config.json` (Antigravity). Claude Desktop, Windsurf and Cline have no project-level file; `--project` rejects them, and `--client all --project` skips them.
+
+| Client | User level | Project level |
+| --- | --- | --- |
+| Cursor | `~/.cursor/mcp.json` | `.cursor/mcp.json` |
+| Claude Code | `claude mcp add-json --scope user` (`~/.claude.json`) | `.mcp.json` |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS), `%APPDATA%\Claude\…` (Windows), `~/.config/Claude/…` (Linux) | — |
+| Gemini CLI | `~/.gemini/settings.json` | `.gemini/settings.json` |
+| Antigravity | `~/.gemini/config/mcp_config.json` | `.agents/mcp_config.json` |
+| Windsurf / Devin Desktop | an existing `~/.codeium/windsurf/mcp_config.json` or `~/.codeium/mcp_config.json`, else `~/.config/devin/mcp_config.json` (`$XDG_CONFIG_HOME`; `%APPDATA%\devin` on Windows) | — |
+| Cline | `~/.cline/data/settings/cline_mcp_settings.json` (`$CLINE_MCP_SETTINGS_PATH`), or the VS Code extension's file until Cline migrates it | — |
+
+Codex uses its own registration command, `codex mcp add`.
 
 ### Installation Options
 | Flag | Description |
 |---|---|
-| `--client <name>` | Target AI client, such as `cursor` (default), `claude-code`, `claude-desktop`, `antigravity`, or `windsurf`. Check `lc mcp install --help` for all supported names. |
-| `--global` | Install into user-level configuration (default: true). |
-| `--project` | Select repository scope in supported clients such as Claude Code and Cursor. Claude Desktop, Windsurf and the installer's Cline path still use user configuration. Add `--command-path "$(command -v localcloud)"` for an absolute path. |
-| `--project-id <id>` | Pin a specific GCP project ID (defaults to shared `local-gcp-project`). |
-| `--data-volume <name>` | Specify a non-default Docker volume. (Omitted by default). |
-| `--user <name>` | Specify the caller identity (default: `local-developer`). |
+| `--client <name>` | `cursor` (default), `claude-code`, `claude-desktop` (alias `claude`), `gemini`, `antigravity`, `windsurf`, `cline`, or `all`. |
+| `--global` | Install into user-level configuration (the default). |
+| `--project` | Install into the repository's configuration instead. |
+| `--project-id <id>` | Pin one project for every workspace the client opens. Without it the bridge selects each repository's project. |
+| `--data-volume <name>` | Pin a non-default Docker volume. |
+| `--user <name>` | Pin the caller identity (default: `local-developer`). |
 | `--command-path <path>` | Explicit executable command or binary path (e.g., `/opt/homebrew/bin/lc`, `localcloud`). |
 | `--bare` | Use bare `localcloud` command instead of resolving an absolute path. |
 
+Only the flags you pass are written. A repository's `localcloud.yaml` is read by the bridge when it runs, not copied into a client's settings.
+
 ### Safety and Atomicity
 - **No Docker dependency**: Running `lc mcp install` does not require Docker to be running.
-- **Config preservation**: Safely parses existing configuration files and preserves third-party MCP servers.
-- **Atomic writes**: Uses temporary files with atomic rename (`os.replace`) to prevent file corruption.
-- **Binary resolution**: For user-level configurations, prioritizes globally installed system binaries (such as Homebrew `/opt/homebrew/bin/localcloud`, `/usr/local/bin/localcloud`, or system PATH) so agent setups are permanent across all projects and survive virtualenv removals. Falls back to virtualenv or bare command if no system binary exists. Use `--bare` or `--command-path` for explicit overrides.
+- **Config preservation**: Merges the `localcloud` entry and keeps every other setting and server. A file that is not a JSON object, or whose `mcpServers` is not an object, is reported and left untouched.
+- **Atomic writes with a backup**: Writes through a temporary file and `os.replace`, keeping the previous file as `<name>.bak`.
+- **Idempotent**: Reports each client as installed, updated, or already up to date. Claude Code's own `claude mcp` commands make its change when the `claude` CLI is installed; a failing command is reported rather than worked around.
+- **Binary resolution**: For user-level configurations, prioritizes globally installed system binaries (such as Homebrew `/opt/homebrew/bin/localcloud`, `/usr/local/bin/localcloud`, or system PATH) so agent setups are permanent across all projects and survive virtualenv removals. Falls back to virtualenv or bare command if no system binary exists. Project-level files get the bare `localcloud` command, since the repository is shared. Use `--bare` or `--command-path` for explicit overrides.
 
 ---
 
@@ -257,11 +274,11 @@ VS Code uses `servers`, while Cursor and Claude Desktop use `mcpServers`. See [V
 
 ### Cline
 
-Open Cline's **MCP Servers** settings and its configuration editor. Merge the `localcloud` entry from the Cursor/Claude Desktop example below into `mcpServers`, using the executable path on your machine. Start the server in Cline and verify that service discovery succeeds. This avoids assuming where the extension stores its settings. See [Cline MCP documentation](https://docs.cline.bot/mcp/mcp-overview).
+`lc mcp install --client cline` writes Cline's shared settings file. To configure it by hand, open Cline's **MCP Servers** settings and its configuration editor, and merge the `localcloud` entry from the Cursor/Claude Desktop example below into `mcpServers`, using the executable path on your machine. See [Cline MCP documentation](https://docs.cline.bot/mcp/mcp-overview).
 
 ### Gemini CLI
 
-To configure **Gemini CLI**, use Gemini's own command:
+`lc mcp install --client gemini` configures Gemini CLI (CLI 0.1.9 configured Antigravity for this name; use `--client antigravity` for Antigravity). Gemini's own command works too:
 
 ```sh
 gemini mcp add --scope user localcloud "$(command -v localcloud)" mcp
@@ -310,6 +327,8 @@ claude mcp add --scope user localcloud -- "$(command -v localcloud)" mcp
 ## 5. Authoritative MCP Catalog
 
 CLI and runtime releases are independent. Available tools, resources, templates and prompts can vary with the runtime image and enabled permissions. Discover them through `tools/list`, `resources/list`, `resources/templates/list`, and `prompts/list` on the connected runtime; those responses are authoritative. The entries below describe common capabilities, not a fixed catalog size.
+
+While the runtime is starting or unavailable, the bridge lists only its own `localcloud_runtime_status` tool (see [The handshake never waits for Docker](#the-handshake-never-waits-for-docker)).
 
 ### Tools
 1. **API Discovery & Invocation**:
@@ -403,9 +422,11 @@ CLI and runtime releases are independent. Available tools, resources, templates 
 | `mcp install` is not recognized | Update LocalCloud through its installation channel and ensure the client uses that executable |
 | Docker cannot be reached | Run `lc doctor`, start Docker, and retry; installing client configuration alone does not require Docker |
 | Desktop client cannot find `localcloud` | Set an absolute executable path from `command -v localcloud`; restart the client |
-| First connection times out | Run `lc start --local-only` once to finish image download and startup, then reconnect; increase the client's startup timeout if needed |
-| Bridge reports `mcp_connection_timeout` | Check `lc status` and `lc logs --tail 100`; retry with `localcloud mcp --connect-timeout 60` |
-| Runtime is stopped and `--no-start` is set | Start it explicitly with `lc start`, or remove `--no-start` to allow automatic startup |
+| The agent only sees `localcloud_runtime_status` | LocalCloud is starting or unavailable; call the tool for the reason and next step. After it reports `ready`, reconnect the server if the client did not reload its tool list |
+| The first tool call is slow | The first start downloads the runtime image; run `lc start --local-only` once beforehand to avoid the wait |
+| Status reports `mcp_connection_timeout` | Check `lc status` and `lc logs --tail 100`; retry with `localcloud mcp --connect-timeout 60` |
+| Status reports `runtime_not_running` with `--no-start` | Start it explicitly with `lc start`, or remove `--no-start` to allow automatic startup |
+| The agent uses a different project than `lc env` | The client started the bridge outside the repository and does not report workspace roots; install with `--project` in the repository, or pass `--project-id` |
 | A write operation is rejected | Inspect the operation's safety and runtime permission settings; client installation does not enable write/destructive permissions |
 | Tools are missing or a service is disabled | Inspect the connected runtime catalog, readiness and compatibility; CLI version alone does not determine runtime tools |
 | Protocol parser reports invalid JSON | Ensure the client launches `localcloud mcp` directly; wrappers must keep diagnostics off stdout |
