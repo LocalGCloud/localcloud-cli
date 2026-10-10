@@ -215,7 +215,15 @@ The authorized rollout has been executed with the specific optional deferrals ab
 
 Publication dependencies remain distinct:
 
-- Claude vendor Directory: Cloud Orbiter account created and verified as orbitor.cloud@gmail.com / LocalCloud. Its Free plan cannot submit to the Directory; owner choice on publisher-plan eligibility is pending. No Directory submission/approval is claimed.
-- OpenAI public Directory: local MCP needs an OpenAI-supported review route. Brand account setup and the support request are prepared; no remote endpoint, skills-only substitution, vendor submission, or approval is claimed.
-- Privacy: current hosted usage/diagnostic-event retention needs confirmation before a vendor privacy attestation. Session recording retention was verified as 30 days, which does not establish event retention.
-- Homebrew: the verified release formula is ready, but cloud-orbitor currently has read-only access to homebrew-tap. The tap remains on CLI 0.1.9 until its existing publishing workflow is run by an authorized brand actor or maintainer.
+- Claude vendor Directory: [LocalCloud plugin 0.1.5](https://claude.ai/directory/manage/plugins/e917c263-e80b-4fa1-9070-45bde6b2f8a7) was submitted with the owner's terms confirmation. Validation has no blockers or policy holds; the security scan passed and the version is In review. It is not live yet. Public publisher: LocalGCloud; contact: orbitor.cloud@gmail.com.
+- OpenAI public Directory: the local stdio MCP and brand-publisher support request was sent and escalated to a specialist. No vendor submission or approval is recorded; no fake HTTPS endpoint or skills-only substitute was submitted. The GitHub Codex plugin and direct local MCP setup remain available.
+- Privacy: the [CLI/MCP policy](mcp-privacy.md) covers operational telemetry, processor retention limits, deletion requests, and local data. PostHog Free's documented one-year event query window is not an automatic erasure deadline. CLI/plugin integration does not record sessions; website/runtime policies are scoped separately.
+- Homebrew: cloud-orbitor's repository invitation was accepted and [CLI 0.1.11 was published to the tap](https://github.com/LocalGCloud/homebrew-tap/actions/runs/38004527000). Signed checksums and Homebrew installation/tests passed on macOS and Linux, ARM64 and x86_64.
+
+## 2026-10-09: official Claude submission and local setup
+
+- [CLI release 0.1.11](https://github.com/LocalGCloud/localcloud-cli/releases/tag/v0.1.11) is public. Signed release checksums, the plugin ZIP, and the macOS ARM64 archive were verified. That native binary passed real MCP and Storage/Pub/Sub/BigQuery SDK workflows in a task-owned local environment.
+- [PR #14](https://github.com/LocalGCloud/localcloud-cli/pull/14) supplies plugin 0.1.5's inspectable Claude launcher. Claude uses the installed CLI on PATH; direct MCP installation records an absolute path when needed. Codex's launcher keeps its existing discovery behavior. The release 0.1.11 plugin ZIP contains the earlier plugin 0.1.3; GitHub marketplaces and the submitted Directory source follow main's plugin 0.1.5.
+- The four Directory-only link-field warnings explicitly say no action is needed. The post-submission local-program warning is informational; the security scan passed and an Anthropic reviewer must approve publication.
+- A push-only GitHub webhook was configured using cloud-orbitor after owner confirmation. TLS verification is enabled; GitHub's ping received HTTP 200 and Claude reported Webhook connected. The temporary signing-secret file was removed. No source or runtime image was uploaded as part of webhook setup.
+- The [local setup guide](mcp-marketplace-guide.md) covers Claude Code, Claude Desktop, Codex CLI/desktop, Cursor, other client references, GitHub plugin installation, connection checks, first SDK tasks, project selection, updates, and removal. Local installation does not depend on vendor Directory approval.

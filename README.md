@@ -536,13 +536,15 @@ nothing is destroyed by accident.
 
 ## AI agents & MCP
 
-LocalCloud provides native [Model Context Protocol (MCP)](https://modelcontextprotocol.io) integration, giving AI coding agents (Cursor, Claude Code, Claude Desktop, Windsurf, Gemini/Antigravity, Cline) direct access to 25+ local Google Cloud services without live cloud credentials, permissions, or billing.
+LocalCloud provides native [Model Context Protocol (MCP)](https://modelcontextprotocol.io) integration, giving AI coding agents a local cloud environment to build, test, and debug Google Cloud applications with standard SDKs and zero Google Cloud service charges for local workflows.
+
+Follow the [local setup guide for Claude, Codex, Cursor, and other clients](docs/mcp-marketplace-guide.md) for installation, GitHub plugins, connection checks, and a first test prompt. Local setup does not depend on official Directory approval.
 
 ### Why agents work best with LocalCloud MCP
 - **On-demand auto-start**: When your agent makes a call or initializes, the MCP bridge checks and starts LocalCloud in the background automatically (guarded by file lock against race conditions). Pass `--no-start` if you prefer manual runtime control.
-- **Single shared container**: All agent sessions and repositories connect to a single persistent container (`localcloud-data`). Multiple editor windows will not spawn duplicate containers or exhaust host memory.
+- **Shared default environment**: Sessions using the default `localcloud-data` volume reuse its runtime. Select another data volume deliberately when you need a separate Docker environment.
 - **Safe local testing**: Agents generate authentic emulator environment variables (`eval "$(lc env)"`), query local databases (BigQuery, Spanner, Cloud SQL), publish/pull Pub/Sub messages, and test Cloud Storage buckets directly against loopback.
-- **Attributed multi-project isolation**: Projects are logical namespaces inside the runtime (`--project-id`). Multiple agents working on different applications share the runtime while remaining logically isolated.
+- **Project contexts**: Use `--project-id` for different applications and tests. Projects share the selected runtime and are not a security boundary.
 
 ### One-command setup: `lc mcp install`
 
@@ -558,20 +560,22 @@ lc mcp install --client claude-code
 # Install for Claude Desktop (claude_desktop_config.json)
 lc mcp install --client claude-desktop
 
+# Register directly in Codex (CLI and local desktop sessions)
+codex mcp add localcloud -- "$(command -v localcloud)" mcp
+
 # Install for Gemini / Antigravity (~/.gemini/antigravity/mcp_config.json)
 lc mcp install --client gemini
 
 # Install for Windsurf (~/.codeium/windsurf/mcp_config.json)
 lc mcp install --client windsurf
 
-# Install for Cline (~/.cline/mcp_settings.json)
-lc mcp install --client cline
-
-# Configure all supported clients at once
+# Write Cursor, Claude Code, Claude Desktop, Antigravity and Windsurf configurations
 lc mcp install --client all
 ```
 
-- **Global by default**: Installs into user-level configuration (`--global`) so all repositories on your machine have immediate access to LocalCloud. Pass `--project` to configure only the current repository workspace.
+Use `claude-code` explicitly for Claude Code; `claude` is a Claude Desktop alias. Codex uses its own registration command. For Cline, use the [client's MCP configuration editor](docs/mcp.md#cline). Choose a direct connection or the GitHub plugin per client to avoid duplicate tools.
+
+- **Global by default**: Installs into user-level configuration (`--global`). Use `--project` with a client that supports repository scope, such as Claude Code or Cursor. Claude Desktop and Windsurf always use user configuration. For a project installation in a GUI client, add `--command-path "$(command -v localcloud)"` to keep an absolute executable path.
 - **Desktop PATH resilience**: On macOS, automatically resolves to permanent system binaries (`/opt/homebrew/bin/localcloud` or `/usr/local/bin/localcloud`), ensuring GUI applications launched from the Dock or Finder run smoothly without shell PATH issues.
 - **Custom overrides**: Pass `--command-path <CMD>` to supply a custom executable (e.g. `lc` or `/opt/homebrew/bin/lc`), or `--bare` to force the bare `localcloud` command.
 
@@ -585,7 +589,7 @@ You can also run `lc guide` in your terminal: it prints authoritative, copy-past
 
 ### What the agent can do
 
-The MCP bridge exposes **27 tools**, **14 resources**, and **6 prompts** directly to the agent:
+The MCP bridge exposes the running runtime's tools, resources, and prompts. Discover its catalog to check the capabilities available in your environment:
 
 | Capability | Tools & Resources | What the agent does |
 | :--- | :--- | :--- |
@@ -730,8 +734,8 @@ Tests that need a live Docker engine are marked `docker`; deselect them with `-m
 
 ## License and support
 
-LocalCloud is proprietary software. Individual developers receive the rights described in
-[LICENSE](LICENSE). LocalCloud MCP is free for the documented local development workflows.
+LocalCloud is proprietary software governed by the [LocalCloud Public Preview License](LICENSE).
+LocalCloud MCP is free for the documented local development workflows.
 
 - **Website** — [local.cloud](https://local.cloud)
 - **Documentation** — [local.cloud/docs](https://local.cloud/docs)

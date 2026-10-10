@@ -5,7 +5,7 @@ LocalCloud gives AI coding agents a free local cloud environment for building, t
 Start the environment with one command, create local projects for experiments and tests,
 and run local service workflows with zero Google Cloud service charges. Initial startup may
 download the image; project capacity depends on your machine. For Claude and Codex plugins,
-see the [marketplace installation guide](mcp-marketplace-guide.md).
+see the [local client setup and GitHub plugin guide](mcp-marketplace-guide.md).
 
 [Website](https://local.cloud/) · [Website MCP guide](https://local.cloud/docs/mcp/) · [Source](https://github.com/LocalGCloud/localcloud-cli) · [Releases](https://github.com/LocalGCloud/localcloud-cli/releases)
 
@@ -49,7 +49,7 @@ Reload the client and enable the `localcloud` MCP server. The bridge starts or r
 lc start --local-only
 ```
 
-For Claude Code, use `lc mcp install --client claude-code`; for Claude Desktop, use `lc mcp install --client claude-desktop`. Other client configurations are described below.
+For Claude Code, use `lc mcp install --client claude-code`; for Claude Desktop, use `lc mcp install --client claude-desktop`. Codex uses `codex mcp add localcloud -- "$(command -v localcloud)" mcp`. The [local setup guide](mcp-marketplace-guide.md) includes client verification and a first task.
 
 ### Existing environments and updates
 
@@ -63,9 +63,9 @@ lc restart --image agentcloud/localcloud:latest --pull
 
 Include the same `--data-volume` and configuration file you normally use if you target a custom environment. The restart briefly interrupts clients; reconnect afterward.
 
-### Desktop bundle
+### Native archives and plugin packages
 
-Clients supporting MCP desktop extensions can obtain the LocalCloud MCP bundle from the [release assets](https://github.com/LocalGCloud/localcloud-cli/releases). It includes the native CLI; Docker engine and the LocalCloud image are still required. Follow the client's extension-install flow, then enable LocalCloud MCP. The [registry metadata](https://github.com/LocalGCloud/localcloud-cli/blob/main/server.json) records the selected artifact hash and prerequisites. Claude and Codex marketplace plugins use the separately installed CLI.
+The [release assets](https://github.com/LocalGCloud/localcloud-cli/releases/latest) provide native CLI archives and a GitHub plugin ZIP. Configure Claude Desktop through the installed CLI as shown in the [local setup guide](mcp-marketplace-guide.md#claude-desktop). The plugin ZIP is not an MCP desktop-extension bundle. Only use a `.mcpb` package when that artifact is explicitly present in a release and supported by your client; the current CLI release does not include one. Claude and Codex GitHub plugins use the separately installed CLI.
 
 ### Complete a first task
 
@@ -188,14 +188,14 @@ lc mcp install --client windsurf
 lc mcp install --client all
 ```
 
-In CLI 0.1.9, `all` configures the five clients listed above, even if their applications are not installed. Cline and Gemini CLI should use the manual configuration instructions below. The `--client cline` path in 0.1.9 is not qualified for the VS Code extension's settings location; use Cline's own configuration editor.
+`all` configures the five clients listed above, even if their applications are not installed. Codex uses its own registration command. Cline and Gemini CLI should use the manual instructions below: Cline's extension settings path is not qualified by the installer, and the `gemini` alias configures Antigravity.
 
 ### Installation Options
 | Flag | Description |
 |---|---|
 | `--client <name>` | Target AI client: `cursor` (default), `claude-code`, `claude-desktop`, `gemini`, `windsurf`, `cline`, or `all`. |
 | `--global` | Install into user-level configuration (default: true). |
-| `--project` | Install into project/workspace configuration instead of user-level configuration. |
+| `--project` | Select repository scope in supported clients such as Claude Code and Cursor. Desktop and Windsurf still use user configuration. Add `--command-path "$(command -v localcloud)"` for an absolute path. |
 | `--project-id <id>` | Pin a specific GCP project ID (defaults to shared `local-gcp-project`). |
 | `--data-volume <name>` | Specify a non-default Docker volume. (Omitted by default). |
 | `--user <name>` | Specify the caller identity (default: `local-developer`). |
@@ -256,7 +256,7 @@ Open Cline's **MCP Servers** settings and its configuration editor. Merge the `l
 
 ### Gemini CLI
 
-The CLI 0.1.9 `--client gemini` alias configures Antigravity. To configure **Gemini CLI**, use Gemini's own command:
+The `--client gemini` alias configures Antigravity. To configure **Gemini CLI**, use Gemini's own command:
 
 ```sh
 gemini mcp add --scope user localcloud "$(command -v localcloud)" mcp
@@ -281,7 +281,7 @@ Gemini CLI stores MCP servers in `~/.gemini/settings.json` for user scope. See [
 ### Claude Code
 Run using the Claude Code CLI:
 ```sh
-claude mcp add --scope user localcloud -- /opt/homebrew/bin/localcloud mcp
+claude mcp add --scope user localcloud -- "$(command -v localcloud)" mcp
 ```
 
 ### Claude Desktop (`claude_desktop_config.json`)
