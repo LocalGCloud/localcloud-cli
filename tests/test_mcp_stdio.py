@@ -669,7 +669,9 @@ def test_status_tool_retries_and_the_client_is_told_lists_changed() -> None:
         "notifications/resources/list_changed",
         "notifications/prompts/list_changed",
     ]
-    assert tools is not None and tools["result"]["tools"] == [{"name": "localcloud_get_env"}]
+    assert tools is not None and tools["result"]["tools"] == [
+        {"name": "localcloud_get_env", "title": "Get env", "annotations": {"title": "Get env"}}
+    ]
 
 
 def test_a_call_waits_for_a_runtime_that_is_starting(monkeypatch: pytest.MonkeyPatch) -> None:
