@@ -548,6 +548,59 @@ def test_release_fails_if_init_py_has_uncommitted_changes(tmp_path: Path) -> Non
     assert_no_release_mutation(command_log)
 
 
+def test_release_bump_commits_only_the_version_file(tmp_path: Path) -> None:
+    script, env, command_log = release_project(tmp_path, source_version="1.2.2")
+    project = script.parents[1]
+    (project / "unrelated.txt").write_text("not part of the release\n", encoding="utf-8")
+    git(project, "add", "unrelated.txt")
+
+    result = run_script(
+        "--release", "1.2.3", script=script, cwd=tmp_path, env=env, input_text="yes\n"
+    )
+
+    assert result.returncode == 0, result.stderr
+    committed = git(
+        project, "show", "--name-only", "--pretty=format:", "HEAD"
+    ).stdout.split()
+    assert committed == ["src/localcloud_cli/__init__.py"]
+    origin = git(project, "remote", "get-url", "origin").stdout.strip()
+    for ref in ("main", "v1.2.3"):
+        published = subprocess.run(
+            ["git", "--git-dir", origin, "ls-tree", "-r", "--name-only", ref],
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.split()
+        assert "unrelated.txt" not in published
+    assert git(project, "diff", "--cached", "--name-only").stdout.split() == [
+        "unrelated.txt"
+    ]
+    assert result.stderr.count("working tree is not clean") == 1
+
+
+def test_release_bump_confirms_dirty_tree_before_pushing(tmp_path: Path) -> None:
+    script, env, command_log = release_project(tmp_path, source_version="1.2.2")
+    project = script.parents[1]
+    head = git(project, "rev-parse", "HEAD").stdout.strip()
+    (project / "unrelated.txt").write_text("not part of the release\n", encoding="utf-8")
+    git(project, "add", "unrelated.txt")
+
+    result = run_script(
+        "--release", "1.2.3", script=script, cwd=tmp_path, env=env, input_text=""
+    )
+
+    assert result.returncode == 1
+    assert f"Release a version bump on commit {head} anyway?" in result.stderr
+    assert "release cancelled" in result.stderr
+    assert git(project, "rev-parse", "HEAD").stdout.strip() == head
+    assert git(project, "rev-parse", "origin/main").stdout.strip() == head
+    init_content = (project / "src" / "localcloud_cli" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    assert '__version__ = "1.2.2"' in init_content
+    assert_no_release_mutation(command_log)
+
+
 def test_release_tags_dispatches_verifies_and_publishes_tap(tmp_path: Path) -> None:
     script, env, command_log = release_project(tmp_path)
     project = script.parents[1]

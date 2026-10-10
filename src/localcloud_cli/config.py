@@ -91,6 +91,8 @@ RESERVED_HOST_ENVIRONMENT = {
     "LOCALCLOUD_PROJECT",
     "LOCALCLOUD_DATA_DIR",
     "LOCALCLOUD_SERVICES",
+    "LOCALCLOUD_RUNTIME_NETWORK",
+    "LOCALCLOUD_DATA_VOLUME",
 }
 LEGACY_CONFIG_FIELDS = {"instance", "volume_name"}
 SKIP_CONFIG_VALIDATION_ENV = "LOCALCLOUD_SKIP_CONFIG_VALIDATION"
@@ -704,7 +706,7 @@ def load_config(
         )
     )
     data = host_value("data", "persistent")
-    if data not in {"persistent", "ephemeral"}:
+    if not isinstance(data, str) or data not in {"persistent", "ephemeral"}:
         _invalid_config(
             "host.data must be 'persistent' or 'ephemeral'", value=data
         )

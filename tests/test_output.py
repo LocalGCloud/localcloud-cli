@@ -326,6 +326,32 @@ def test_error_shows_the_actionable_cause() -> None:
     ]
 
 
+def test_error_lists_manual_steps_one_command_per_line() -> None:
+    rendered = render_error(
+        HostError(
+            "manual_volume_removal_required",
+            "Run the listed steps yourself",
+            {
+                "data_volume": "team-data",
+                "steps": [
+                    "localcloud stop --data-volume team-data",
+                    "# deletes ALL projects and data on this volume:",
+                    "docker rm -f -v localcloud",
+                    "docker volume rm -f team-data",
+                ],
+            },
+        )
+    )
+    assert rendered.splitlines() == [
+        "Error [manual_volume_removal_required] Run the listed steps yourself",
+        "Data Volume: team-data",
+        "Steps: localcloud stop --data-volume team-data",
+        "       # deletes ALL projects and data on this volume:",
+        "       docker rm -f -v localcloud",
+        "       docker volume rm -f team-data",
+    ]
+
+
 def test_cloud_has_equal_visible_width_and_animation_changes_color() -> None:
     from localcloud_cli.output import _CLOUD_PERIMETER_COORDS
 

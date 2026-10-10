@@ -162,9 +162,9 @@ class McpAdapter:
             target=self._attempt, name="localcloud-mcp-connect", daemon=True
         ).start()
 
-    def _attempt(self) -> None:
+    def _attempt(self, connect: Callable[[], None] | None = None) -> None:
         try:
-            self._connect_once()
+            (connect or self._connect_once)()
         except HostError as error:
             self._fail(error)
         except Exception as error:  # A bug must not leave requests waiting.
@@ -302,6 +302,9 @@ class McpAdapter:
             config, readiness_timeout=self.connect_timeout, ensure_project=True
         )
         self._set_target(target)
+        # A workspace reported meanwhile selects its project in turn.
+        if self.config is not None and self.config.project != config.project:
+            self._use_project(self.config)
 
     def _reconnect(self, generation: int) -> bool:
         """After the runtime refused a connection (stopped, restarted, or moved
@@ -364,12 +367,14 @@ class McpAdapter:
         updated = self._with_workspace(config)
         if updated.project == config.project:
             return
-        self.config = updated
-        if self._state == "connected":
-            try:
-                self._use_project(updated)
-            except HostError as error:
-                self._fail(error)
+        with self._lock:
+            self.config = updated
+            if self._state != "connected":
+                return
+            # Requests wait for the project as they do for a connection.
+            self._state = "connecting"
+            self._attempt_done.clear()
+        self._attempt(lambda: self._use_project(updated))
 
     # Requests --------------------------------------------------------------
 
@@ -409,18 +414,20 @@ class McpAdapter:
             return self._list(message)
         if method == "tools/call" and params.get("name") == STATUS_TOOL:
             return self._status_result(request_id)
+        if method in _LONG_METHODS:
+            # A workspace the client is still reporting selects the project first.
+            self._roots_ready.wait(_ROOTS_WAIT)
         if not self.ensure_connected(_CALL_WAIT):
             return self._unavailable(message)
-        if method == "tools/call":
-            self._roots_ready.wait(_ROOTS_WAIT)
         return self._forward(message)
 
     def _notification(self, method: str, message: dict[str, Any]) -> None:
         if method == "notifications/cancelled":
             params = message.get("params")
-            if isinstance(params, dict) and "requestId" in params:
+            request_id = params.get("requestId") if isinstance(params, dict) else None
+            if isinstance(request_id, (str, int)):
                 with self._lock:
-                    self._cancelled.add(params["requestId"])
+                    self._cancelled.add(request_id)
         elif method == "notifications/initialized":
             with self._lock:
                 self._client_initialized = True
@@ -644,14 +651,18 @@ def _root_directory(root: Any) -> Path | None:
     uri = root.get("uri") if isinstance(root, dict) else None
     if not isinstance(uri, str):
         return None
-    parsed = urlparse(uri)
-    if parsed.scheme != "file":
+    try:
+        parsed = urlparse(uri)
+        if parsed.scheme != "file":
+            return None
+        path = unquote(parsed.path)
+        if sys.platform == "win32" and path.startswith("/") and path[2:3] == ":":
+            path = path[1:]
+        directory = Path(path)
+        return directory if directory.is_dir() else None
+    except (ValueError, OSError):
+        # A URI that does not parse, or a path that cannot be read.
         return None
-    path = unquote(parsed.path)
-    if sys.platform == "win32" and path.startswith("/") and path[2:3] == ":":
-        path = path[1:]
-    directory = Path(path)
-    return directory if directory.is_dir() else None
 
 
 def _raise_keyboard_interrupt(_signum: int, _frame: Any) -> None:
@@ -742,16 +753,28 @@ async def _run_sdk(
                 await write_stream.send(SessionMessage(parsed))
 
             async def respond(message: dict[str, Any]) -> None:
-                response = await anyio.to_thread.run_sync(
-                    adapter.handle, message, abandon_on_cancel=True
-                )
+                try:
+                    response = await anyio.to_thread.run_sync(
+                        adapter.handle, message, abandon_on_cancel=True
+                    )
+                except Exception as error:
+                    # A failed handler must not end the bridge for every other
+                    # request; a notification has no reply to carry the error.
+                    if message.get("id") is None:
+                        return
+                    response = _error(
+                        message["id"], -32603, "LocalCloud MCP adapter failed", str(error)
+                    )
                 if response is not None and not adapter.take_cancelled(response.get("id")):
                     await send(response)
 
             async def accept_response(message: dict[str, Any]) -> None:
-                await anyio.to_thread.run_sync(
-                    adapter.handle_response, message, abandon_on_cancel=True
-                )
+                try:
+                    await anyio.to_thread.run_sync(
+                        adapter.handle_response, message, abandon_on_cancel=True
+                    )
+                except Exception:
+                    pass  # The client's answer has no reply to carry an error.
 
             async def deliver_outbox() -> None:
                 while True:

@@ -289,7 +289,8 @@ class LogCursor:
         first_tail: int | None = None,
     ) -> None:
         self._since_ns = since_ns
-        self._first_tail = first_tail
+        # The first read's bound; None once a read has succeeded.
+        self._first_tail: int | None = first_tail or _LOG_READ_LIMIT
         self._overlap: set[str] = set()
 
     @classmethod
@@ -298,12 +299,16 @@ class LogCursor:
         return cls(_started_at_ns(container))
 
     def read(self, container: Any) -> str:
-        limit = self._first_tail or _LOG_READ_LIMIT
-        self._first_tail = None
+        # Only the first read is bounded, so an old container's history is
+        # never pulled whole; a later one takes every line since the last.
+        limit: int | str = self._first_tail or (
+            "all" if self._since_ns is not None else _LOG_READ_LIMIT
+        )
         kwargs: dict[str, Any] = {"timestamps": True, "tail": limit}
         if self._since_ns is not None:
             kwargs["since"] = self._since_ns / 1_000_000_000
         output = container.logs(**kwargs)
+        self._first_tail = None
         text = (
             output.decode("utf-8", errors="replace")
             if isinstance(output, bytes)
@@ -987,7 +992,7 @@ class DockerRuntime:
         self._require_runtime_ownership_capability(config, image)
 
         container = network = volume = None
-        network_created = volume_created = False
+        network_created = volume_created = run_attempted = False
         try:
             self._require_name_available(
                 self.client.containers, config.container_name, "container"
@@ -1000,6 +1005,7 @@ class DockerRuntime:
                 observer.debug(
                     f"Executing Docker SDK containers.run for {run_plan.name!r}"
                 )
+            run_attempted = True
             container = self.client.containers.run(
                 run_plan.image,
                 **run_plan.run_kwargs(),
@@ -1049,6 +1055,11 @@ class DockerRuntime:
             )
             return ready
         except Exception as error:
+            if container is None and run_attempted and not _is_name_conflict(error):
+                # `containers.run()` creates the container before starting it,
+                # so a failed start leaves it behind without returning it. Not
+                # after a name conflict: that container is someone else's.
+                container = self._unstarted_container(config.container_name)
             failures = self._rollback_create(
                 container,
                 network if network_created else None,
@@ -1640,41 +1651,15 @@ class DockerRuntime:
                                     "name": _resource_name(resource) or "unknown",
                                 }
                             )
-                if labels.get(_CHILD_MANAGED_LABEL) == "true":
-                    continue
-                claimed_role = labels.get(RESOURCE_ROLE_LABEL)
-                if MANAGED_LABEL in labels or claimed_role:
-                    role = claimed_role or kind
-                    data_volume = labels.get(VOLUME_NAME_LABEL)
-                    if kind == "volume" and not data_volume:
-                        data_volume = _resource_name(resource)
-                    try:
-                        self._classify_resource(
-                            resource,
-                            role,
-                            data_volume or "invalid/data-volume",
-                            allow_legacy_volume=kind == "volume",
-                            resource_labels=labels,
-                        )
-                    except HostError as error:
-                        invalid_ownership.append(
-                            {
-                                "kind": kind,
-                                "name": _resource_name(resource),
-                                "error": error.to_dict(),
-                            }
-                        )
-                    except Exception as error:
-                        invalid_ownership.append(
-                            {
-                                "kind": kind,
-                                "name": _resource_name(resource),
-                                "error": {
-                                    "code": "resource_classification_failed",
-                                    "message": str(error),
-                                },
-                            }
-                        )
+                malformed = self._malformed_ownership(kind, resource, labels)
+                if malformed is not None:
+                    invalid_ownership.append(
+                        {
+                            "kind": kind,
+                            "name": _resource_name(resource),
+                            "error": malformed,
+                        }
+                    )
         collisions = [
             {"data_volume": volume, "containers": users}
             for volume, users in sorted(volume_users.items())
@@ -1713,6 +1698,36 @@ class DockerRuntime:
         if warnings:
             result["warning"] = " ".join(warnings)
         return result
+
+    def _malformed_ownership(
+        self, kind: str, resource: Any, labels: dict[str, str]
+    ) -> dict[str, Any] | None:
+        """Why a resource's LocalCloud ownership metadata is malformed, if it is."""
+        if labels.get(_CHILD_MANAGED_LABEL) == "true":
+            return None
+        claimed_role = labels.get(RESOURCE_ROLE_LABEL)
+        if MANAGED_LABEL not in labels and not claimed_role:
+            return None
+        role = claimed_role or kind
+        data_volume = labels.get(VOLUME_NAME_LABEL)
+        if kind == "volume" and not data_volume:
+            data_volume = _resource_name(resource)
+        try:
+            self._classify_resource(
+                resource,
+                role,
+                data_volume or "invalid/data-volume",
+                allow_legacy_volume=kind == "volume",
+                resource_labels=labels,
+            )
+        except HostError as error:
+            return error.to_dict()
+        except Exception as error:
+            return {
+                "code": "resource_classification_failed",
+                "message": str(error),
+            }
+        return None
 
     def port_diagnostics(
         self,
@@ -1862,6 +1877,21 @@ class DockerRuntime:
                 continue
             resource = self._get_optional(collection, name, kind)
             if resource is None:
+                continue
+            # The entry only names the resource: one that was replaced under
+            # the same name since `doctor()` flagged it must not be removed.
+            if (
+                self._malformed_ownership(kind, resource, _resource_labels(resource))
+                is None
+            ):
+                failures.append(
+                    {
+                        "kind": kind,
+                        "name": name,
+                        "cause": "changed since inspection: its LocalCloud "
+                        "ownership metadata is no longer malformed",
+                    }
+                )
                 continue
             try:
                 if kind == "container":
@@ -2950,6 +2980,17 @@ class DockerRuntime:
     def _resolved_ports(container: Any) -> dict[str, int]:
         return _endpoint_map(_published_ports(container))
 
+    def _unstarted_container(self, name: str) -> Any | None:
+        """The container holding `name` if it was created but never started."""
+        try:
+            container = self.client.containers.get(name)
+            if _container_state(container) == "created":
+                return container
+        except Exception:
+            # Best effort: the create failure itself is what gets reported.
+            pass
+        return None
+
     @staticmethod
     def _rollback_create(
         container: Any,
@@ -3106,13 +3147,15 @@ class DockerRuntime:
                 )
             except Exception as error:
                 last_error = error
-                self._remove_named_identity_relay(name)
+                # Only what this run left behind: when the name was taken meanwhile, the
+                # container holding it is another session's relay.
+                self._remove_named_identity_relay(name, session_id=session_id)
                 if host_port is not None and _is_port_conflict(error):
                     continue
                 break
             published = self._identity_relay_port(container, metadata_port)
             if published is None:
-                self._remove_named_identity_relay(name)
+                self._remove_named_identity_relay(name, session_id=session_id)
                 raise HostError(
                     "identity_relay_failed",
                     "The identity relay started without a published metadata port",
@@ -3169,10 +3212,19 @@ class DockerRuntime:
                     {"container": _resource_identity(container), "cause": str(error)},
                 ) from error
 
-    def _remove_named_identity_relay(self, name: str) -> None:
+    def _remove_named_identity_relay(
+        self, name: str, *, session_id: str | None = None
+    ) -> None:
+        """Remove the relay of this name; with `session_id`, only when it is that session's."""
         existing = self._get_optional(self.client.containers, name, "container")
-        if existing is not None:
-            self.remove_identity_relay(existing)
+        if existing is None:
+            return
+        if (
+            session_id is not None
+            and _resource_labels(existing).get(IDENTITY_SESSION_LABEL) != session_id
+        ):
+            return
+        self.remove_identity_relay(existing)
 
     @staticmethod
     def _identity_relay_port(container: Any, metadata_port: int) -> int | None:
@@ -4144,6 +4196,13 @@ def _is_not_found(error: Exception) -> bool:
         "NotFound",
         "ImageNotFound",
     }
+
+
+def _is_name_conflict(error: Exception) -> bool:
+    status_code = getattr(error, "status_code", None)
+    if status_code is None:
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+    return status_code == 409 or "is already in use by container" in str(error).lower()
 
 
 def _is_port_conflict(error: Exception) -> bool:

@@ -137,6 +137,51 @@ def test_off_canonical_runtime_rejects_endpoints_on_ports_it_does_not_publish() 
     )
 
 
+def test_overlapping_port_map_accepts_rewritten_endpoints() -> None:
+    # A port range inside the canonical block puts one service's host port on
+    # another service's canonical port.
+    endpoint_map = {"5380": 5381, "5382": 5383, "5383": 5384}
+    value = {
+        "content": [
+            {
+                "type": "text",
+                "text": (
+                    '{"services":['
+                    '{"endpoint":"http://127.0.0.1:5382","port":5382,'
+                    '"env_var":"STORAGE_EMULATOR_HOST"},'
+                    '{"endpoint":"127.0.0.1:5383","port":5383,'
+                    '"env_var":"PUBSUB_EMULATOR_HOST"}]}'
+                ),
+            }
+        ]
+    }
+
+    transformed = transform_endpoint_payload(value, endpoint_map)
+
+    services = json.loads(transformed["content"][0]["text"])["services"]
+    assert services == [
+        {
+            "endpoint": "http://127.0.0.1:5383",
+            "port": 5383,
+            "env_var": "STORAGE_EMULATOR_HOST",
+        },
+        {"endpoint": "127.0.0.1:5384", "port": 5384, "env_var": "PUBSUB_EMULATOR_HOST"},
+    ]
+
+
+def test_overlapping_port_map_still_rejects_unrewritten_endpoints() -> None:
+    endpoint_map = {"5380": 5381, "5382": 5383, "5383": 5384}
+
+    for stale in ("http://LOCALHOST:5382", '{"port": 5382}'):
+        with pytest.raises(HostError) as caught:
+            endpoints_module._validate_no_stale_canonical_endpoints(stale, endpoint_map)
+        assert caught.value.code == "stale_endpoint"
+        assert caught.value.details == {
+            "canonical_port": "5382",
+            "expected_host_port": 5383,
+        }
+
+
 # --- lc env --identity -----------------------------------------------------------------------------
 
 _IDENTITY_RESULT = {

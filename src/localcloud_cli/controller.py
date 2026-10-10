@@ -368,22 +368,30 @@ class Controller:
                     deadline=deadline,
                 )
             self._record_active(environment, config)
-            if status != "already_running":
-                self._tail_runtime_logs(
-                    observer, config, environment, tail=tail, start_time=start_time
+
+            def payload() -> dict[str, Any]:
+                return self._payload(
+                    status,
+                    environment,
+                    config,
+                    include_sdk=True,
+                    changed_fields=changed_fields,
+                    logs=(
+                        self._runtime_logs(config, environment)
+                        if status != "already_running"
+                        else None
+                    ),
                 )
-            return self._payload(
-                status,
-                environment,
-                config,
-                include_sdk=True,
-                changed_fields=changed_fields,
-                logs=(
-                    self._runtime_logs(config, environment)
-                    if status != "already_running"
-                    else None
-                ),
-            )
+
+            if status == "already_running" or not self._tails_logs(observer, tail):
+                return payload()
+        # Tailing can last as long as the user likes, so it runs without the
+        # data-volume lock: stop, restart and reset stay usable meanwhile.
+        self._tail_runtime_logs(
+            observer, config, environment, tail=tail, start_time=start_time
+        )
+        self._require_followed_runtime(config, environment)
+        return payload()
 
     def restart(
         self,
@@ -414,12 +422,6 @@ class Controller:
                 current is not None
                 and current.ownership.get("container") == "managed"
             )
-            if not dry_run and is_managed and current is not None and current.state == "running":
-                if observer is not None and hasattr(observer, "stopping"):
-                    observer.stopping(config, current)
-                current = self.runtime.stop(config, current, observer=observer)
-                if observer is not None and hasattr(observer, "starting"):
-                    observer.starting(config)
             changed_fields: list[str] = []
             prepared_image: tuple[Any, bool] | None = None
             run_plan: DockerRunPlan | None = None
@@ -536,6 +538,14 @@ class Controller:
             if dry_run:
                 return plan.render()
             _confirm_alternative_port_mapping(run_plan, confirm_port_mapping, config)
+            # Stop only now that nothing above can still fail: a rejected image
+            # or a declined port mapping leaves the running runtime running.
+            if is_managed and current is not None and current.state == "running":
+                if observer is not None and hasattr(observer, "stopping"):
+                    observer.stopping(config, current)
+                current = self.runtime.stop(config, current, observer=observer)
+                if observer is not None and hasattr(observer, "starting"):
+                    observer.starting(config)
 
             if action == "create":
                 environment = self.runtime.create(
@@ -566,18 +576,27 @@ class Controller:
                     config,
                     deadline=time.monotonic() + _START_READINESS_TIMEOUT,
                 )
-            self._tail_runtime_logs(
-                observer, config, environment, tail=tail, start_time=start_time
-            )
             self._record_active(environment, config)
-            return self._payload(
-                status,
-                environment,
-                config,
-                include_sdk=True,
-                changed_fields=changed_fields,
-                logs=self._runtime_logs(config, environment),
-            )
+
+            def payload() -> dict[str, Any]:
+                return self._payload(
+                    status,
+                    environment,
+                    config,
+                    include_sdk=True,
+                    changed_fields=changed_fields,
+                    logs=self._runtime_logs(config, environment),
+                )
+
+            if not self._tails_logs(observer, tail):
+                return payload()
+        # Tailing can last as long as the user likes, so it runs without the
+        # data-volume lock: stop, restart and reset stay usable meanwhile.
+        self._tail_runtime_logs(
+            observer, config, environment, tail=tail, start_time=start_time
+        )
+        self._require_followed_runtime(config, environment)
+        return payload()
 
     def reset(
         self,
@@ -1018,54 +1037,62 @@ class Controller:
         """
         from .endpoints import ambient_adc_warnings, identity_environment
 
-        current = self._resolve_runtime(config, reuse_remembered=True)
-        target = self.target(config)
-        if current is None or current.state != "running":
-            current = self._resolve_runtime(config, require=True)
-        assert current is not None
-        account_key = identity_account_key(account)
-        client = JavaMcpClient(target["url"], project=config.project, user=config.user)
+        with data_volume_lock(self.paths, config.data_volume):
+            current = self._resolve_runtime(config)
+            target = self.target(config)
+            if current is None or current.state != "running":
+                current = self._resolve_runtime(config, require=True)
+            assert current is not None
+            account_key = identity_account_key(account)
+            client = JavaMcpClient(target["url"], project=config.project, user=config.user)
 
-        replaced: list[str] = []
-        preferred_port: int | None = None
-        for relay in self.runtime.identity_relays(
-            config.data_volume, project=config.project, account_key=account_key
-        ):
-            preferred_port = preferred_port or self.runtime.identity_relay_host_port(relay)
-            replaced.extend(self._end_identity_relay(relay, client, failures=[]))
+            replaced: list[str] = []
+            preferred_port: int | None = None
+            for relay in self.runtime.identity_relays(
+                config.data_volume, project=config.project, account_key=account_key
+            ):
+                preferred_port = preferred_port or self.runtime.identity_relay_host_port(relay)
+                replaced.extend(self._end_identity_relay(relay, client, failures=[]))
 
-        session = client.create_identity_session(account)
-        capability = session.pop("capability", None)
-        session_id = str(session.get("id") or "")
-        if not isinstance(capability, str) or not capability or not session_id:
-            raise HostError(
-                "identity_session_failed",
-                "LocalCloud did not return an identity session capability",
-                {"project": config.project},
-            )
-        relay: dict[str, Any] | None = None
-        try:
-            profile = session.get("profile")
-            # Validates the profile before anything starts; the port is remapped once known.
-            _, endpoint_variables = identity_environment(profile, 1, {})
-            if observer is not None and hasattr(observer, "debug"):
-                observer.debug(
-                    f"Starting identity relay for session {session_id} "
-                    f"({session.get('serviceAccount')})"
+            session = client.create_identity_session(account)
+            capability = session.pop("capability", None)
+            session_id = str(session.get("id") or "")
+            if not isinstance(capability, str) or not capability or not session_id:
+                raise HostError(
+                    "identity_session_failed",
+                    "LocalCloud did not return an identity session capability",
+                    {"project": config.project},
                 )
-            relay = self.runtime.start_identity_relay(
-                current,
-                session_id=session_id,
-                capability=capability,
-                project=config.project,
-                account_key=account_key,
-                relay_profile=session.get("relay")
-                if isinstance(session.get("relay"), dict)
-                else None,
-                preferred_host_port=preferred_port,
-                endpoint_variables=endpoint_variables,
-            )
-            capability = None
+            relay: dict[str, Any] | None = None
+            try:
+                profile = session.get("profile")
+                # Validates the profile before anything starts; the port is remapped once known.
+                _, endpoint_variables = identity_environment(profile, 1, {})
+                if observer is not None and hasattr(observer, "debug"):
+                    observer.debug(
+                        f"Starting identity relay for session {session_id} "
+                        f"({session.get('serviceAccount')})"
+                    )
+                relay = self.runtime.start_identity_relay(
+                    current,
+                    session_id=session_id,
+                    capability=capability,
+                    project=config.project,
+                    account_key=account_key,
+                    relay_profile=session.get("relay")
+                    if isinstance(session.get("relay"), dict)
+                    else None,
+                    preferred_host_port=preferred_port,
+                    endpoint_variables=endpoint_variables,
+                )
+                capability = None
+            except BaseException:
+                capability = None
+                self._discard_identity_session(config, account_key, client, session_id, relay)
+                raise
+        # The relay can take the whole timeout to become ready, so the wait runs without the
+        # data-volume lock: start, stop, restart, reset and `--stop` stay usable meanwhile.
+        try:
             session = self._await_identity_relay(
                 client, session_id, relay, config.project, timeout=timeout
             )
@@ -1073,21 +1100,7 @@ class Controller:
                 profile, int(relay["host_port"])
             )
         except BaseException:
-            capability = None
-            if relay is not None:
-                for container in self.runtime.identity_relays(
-                    config.data_volume,
-                    project=config.project,
-                    account_key=account_key,
-                ):
-                    try:
-                        self.runtime.remove_identity_relay(container)
-                    except HostError:
-                        pass
-            try:
-                client.delete_identity_session(session_id)
-            except HostError:
-                pass
+            self._discard_identity_session(config, account_key, client, session_id, relay)
             raise
         return {
             "status": "started",
@@ -1116,33 +1129,41 @@ class Controller:
         """Remove identity relays (`lc env --identity --stop`) and end their sessions.
 
         Without `account` every relay of the selected data volume and project is removed. A
-        session whose LocalCloud is not running ends at its expiry.
+        session whose LocalCloud is not running ends at its expiry. The status is "partial"
+        when a relay could not be removed: it may still be running.
         """
-        current = self._resolve_runtime(config, reuse_remembered=True)
-        relays = self.runtime.identity_relays(
-            config.data_volume,
-            project=config.project,
-            account_key=identity_account_key(account) if account else None,
-        )
-        client = (
-            JavaMcpClient(current.url, project=config.project, user=config.user)
-            if current is not None and current.state == "running" and current.url
-            else None
-        )
-        failures: list[dict[str, Any]] = []
-        ended: list[str] = []
-        removed: list[str] = []
-        unset: list[str] = []
-        for relay in relays:
-            name = getattr(relay, "name", None) or getattr(relay, "id", "")
-            ended.extend(self._end_identity_relay(relay, client, failures=failures))
-            if not any(failure.get("container") == name for failure in failures):
-                removed.append(str(name))
-                for variable in identity_relay_variables(relay):
-                    if variable not in unset:
-                        unset.append(variable)
+        with data_volume_lock(self.paths, config.data_volume):
+            current = self._resolve_runtime(config)
+            relays = self.runtime.identity_relays(
+                config.data_volume,
+                project=config.project,
+                account_key=identity_account_key(account) if account else None,
+            )
+            client = (
+                JavaMcpClient(current.url, project=config.project, user=config.user)
+                if current is not None and current.state == "running" and current.url
+                else None
+            )
+            failures: list[dict[str, Any]] = []
+            ended: list[str] = []
+            removed: list[str] = []
+            unset: list[str] = []
+            for relay in relays:
+                name = getattr(relay, "name", None) or getattr(relay, "id", "")
+                ended.extend(self._end_identity_relay(relay, client, failures=failures))
+                if not any(failure.get("container") == name for failure in failures):
+                    removed.append(str(name))
+                    for variable in identity_relay_variables(relay):
+                        if variable not in unset:
+                            unset.append(variable)
         return {
-            "status": "stopped" if relays else "not_running",
+            "status": (
+                "not_running"
+                if not relays
+                else "stopped"
+                if len(removed) == len(relays)
+                else "partial"
+            ),
             "data_volume": config.data_volume,
             "project": config.project,
             "relays_removed": removed,
@@ -1182,6 +1203,35 @@ class Controller:
             failures.append({"session": session_id, "cause": error.message})
             return []
         return [session_id]
+
+    def _discard_identity_session(
+        self,
+        config: LocalCloudConfig,
+        account_key: str,
+        client: JavaMcpClient,
+        session_id: str,
+        relay: dict[str, Any] | None,
+    ) -> None:
+        """Undo a failed `identity_env`: remove the relay it started and end its session."""
+        if relay is not None:
+            for container in self.runtime.identity_relays(
+                config.data_volume,
+                project=config.project,
+                account_key=account_key,
+            ):
+                # Another `lc env --identity` may have replaced this relay meanwhile; only
+                # the relay of the session this call created is its own to remove.
+                labels = dict(getattr(container, "labels", None) or {})
+                if labels.get(IDENTITY_SESSION_LABEL) != session_id:
+                    continue
+                try:
+                    self.runtime.remove_identity_relay(container)
+                except HostError:
+                    pass
+        try:
+            client.delete_identity_session(session_id)
+        except HostError:
+            pass
 
     def _await_identity_relay(
         self,
@@ -1398,6 +1448,7 @@ class Controller:
             return result
         docker_cleanup = self.runtime.cleanup_resources(invalid_ownership)
         result["docker_resources"] = docker_cleanup["removed"]
+        result["failures"].extend(docker_cleanup["failures"])
         if active_stale:
             stale_volume = (
                 active_status.get("data_volume")
@@ -1431,17 +1482,62 @@ class Controller:
         observer: Any | None,
         config: LocalCloudConfig,
         environment: RuntimeRecord,
-    ) -> None:
+    ) -> bool:
+        """Hand the runtime's new log lines to the observer; False if it had none."""
         if observer is None or not hasattr(observer, "runtime_logs"):
-            return
+            return False
         # Continues the readiness wait's log cursor, so every line reaches
         # the terminal and startup-error telemetry exactly once.
         try:
             logs = self.runtime.follow_logs(config, environment)
         except Exception:
-            return
+            return False
         if logs:
             observer.runtime_logs(logs)
+        return bool(logs)
+
+    def _follows_running_runtime(
+        self, config: LocalCloudConfig, environment: RuntimeRecord
+    ) -> bool | None:
+        """Whether the followed container is still the running runtime; None
+        when Docker cannot say."""
+        try:
+            current = self.runtime.resolve(
+                config, preferred_container_id=environment.container_id
+            )
+        except Exception:
+            return None
+        return (
+            current is not None
+            and current.container_id == environment.container_id
+            and current.state == "running"
+        )
+
+    def _require_followed_runtime(
+        self, config: LocalCloudConfig, environment: RuntimeRecord
+    ) -> None:
+        # Tailing holds no lock, so another command may have stopped, replaced
+        # or removed the runtime: say that, not that its API stopped answering.
+        if self._follows_running_runtime(config, environment) is False:
+            raise HostError(
+                "runtime_not_running",
+                "LocalCloud stopped while its logs were being followed; run "
+                "'localcloud start' to start it again.",
+                {
+                    "data_volume": config.data_volume,
+                    "project": config.project,
+                    "user": config.user,
+                },
+            )
+
+    @staticmethod
+    def _tails_logs(observer: Any | None, tail: float | None) -> bool:
+        """Whether `_tail_runtime_logs` follows the logs at all."""
+        return (
+            observer is not None
+            and hasattr(observer, "runtime_logs")
+            and (tail is None or tail != 0)
+        )
 
     def _tail_runtime_logs(
         self,
@@ -1452,17 +1548,21 @@ class Controller:
         tail: float | None = 0.0,
         start_time: float | None = None,
     ) -> None:
-        if observer is None or not hasattr(observer, "runtime_logs"):
+        if not self._tails_logs(observer, tail):
             return
         if tail is None or tail < 0:
             try:
                 while True:
-                    self._emit_runtime_logs(observer, config, environment)
+                    # Tailing holds no lock, so another command may stop,
+                    # replace or remove this container: a quiet poll checks
+                    # that there is still a running runtime to follow.
+                    if not self._emit_runtime_logs(
+                        observer, config, environment
+                    ) and not self._follows_running_runtime(config, environment):
+                        break
                     time.sleep(0.5)
             except KeyboardInterrupt:
                 pass
-            return
-        if tail <= 0:
             return
         effective_start = start_time if start_time is not None else time.monotonic()
         while True:
@@ -1512,9 +1612,8 @@ class Controller:
             )
         )
 
-    @staticmethod
     def _manual_purge_steps(
-        config: LocalCloudConfig, current: RuntimeRecord | None
+        self, config: LocalCloudConfig, current: RuntimeRecord | None
     ) -> tuple[str, ...]:
         """Steps a user runs by hand to recreate all data on a volume.
 
@@ -1522,16 +1621,35 @@ class Controller:
         data volume is now always the user's explicit action, so the command
         prints these instead of executing anything."""
         steps: list[str] = []
+        removal: tuple[str, ...] = (
+            shlex.join(["docker", "volume", "rm", "-f", config.data_volume]),
+        )
         if current is not None:
             steps.append(
                 shlex.join(
                     ["localcloud", "stop", "--data-volume", config.data_volume]
                 )
             )
+            if not (
+                current.state == "running"
+                and current.data == "ephemeral"
+                and current.origin == "managed"
+            ):
+                # `stop` keeps this container, and Docker will not delete a
+                # volume that a container, running or not, still mounts: list
+                # what remove() runs, minus the stop already given above.
+                stopped = self._preview_stop(
+                    current.name or current.container_id or config.container_name
+                )
+                removal = tuple(
+                    command
+                    for command in self.runtime.preview_remove_commands(
+                        config, current, remove_volume=True, remove_network=False
+                    )
+                    if command not in stopped
+                )
         steps.append("# deletes ALL projects and data on this volume:")
-        steps.append(
-            shlex.join(["docker", "volume", "rm", "-f", config.data_volume])
-        )
+        steps.extend(removal)
         steps.append(
             shlex.join(
                 [

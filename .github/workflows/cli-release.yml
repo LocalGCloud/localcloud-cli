@@ -99,6 +99,7 @@ jobs:
         run: |
           uv run --frozen --extra release python scripts/generate-third-party-notices.py
           git diff --exit-code -- THIRD_PARTY_NOTICES
+          uv run --frozen --extra release python scripts/check-third-party-licenses.py
 
   build-native:
     name: Build ${{ matrix.asset }}
@@ -169,6 +170,13 @@ jobs:
           test "$(./dist/localcloud --version)" = "$expected"
           ./dist/localcloud --help >/dev/null
           ./dist/localcloud guide >/dev/null
+
+      # Needs no Docker: with no runtime the bridge lists its own status tool.
+      - name: Verify frozen MCP handshake
+        timeout-minutes: 2
+        run: >-
+          uv run --frozen python scripts/check-mcp-handshake.py
+          dist/localcloud --timeout 30
 
       # Skips (passes) until POSTHOG_PERSONAL_API_KEY and POSTHOG_PROJECT_ID are set.
       - name: Verify frozen telemetry reaches PostHog

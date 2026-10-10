@@ -267,13 +267,20 @@ def _read_json_object(path: Path) -> dict[str, Any]:
             {"path": str(path)},
         )
     servers = parsed.get("mcpServers")
-    if servers is not None and not isinstance(servers, dict):
+    if servers is None:
+        # A missing or null entry lists no servers.
+        parsed["mcpServers"] = {}
+    elif not isinstance(servers, dict):
         raise HostError(
             "invalid_client_config",
             f"'mcpServers' in {path} is not a JSON object",
             {"path": str(path)},
         )
     return parsed
+
+
+def _open_owner_only(path: str, flags: int) -> int:
+    return os.open(path, flags, 0o600)
 
 
 def update_mcp_config_file(
@@ -294,19 +301,31 @@ def update_mcp_config_file(
     action = "installed" if current is None else "updated"
     mcp_servers[server_name] = server_config
 
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    if config_path.is_file():
-        shutil.copy2(config_path, config_path.with_suffix(config_path.suffix + ".bak"))
-    tmp_path = config_path.parent / f".{config_path.name}.tmp.{os.getpid()}"
     try:
-        with open(tmp_path, "w", encoding="utf-8") as handle:
-            json.dump(existing_data, handle, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, config_path)
-    finally:
-        tmp_path.unlink(missing_ok=True)
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        if config_path.is_file():
+            shutil.copy2(config_path, config_path.with_suffix(config_path.suffix + ".bak"))
+        tmp_path = config_path.parent / f".{config_path.name}.tmp.{os.getpid()}"
+        try:
+            # Other servers' entries can hold credentials: the file is never
+            # more readable than the one it replaces.
+            with open(tmp_path, "w", encoding="utf-8", opener=_open_owner_only) as handle:
+                json.dump(existing_data, handle, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            if config_path.is_file():
+                shutil.copymode(config_path, tmp_path)
+            os.replace(tmp_path, config_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+    except OSError as error:
+        raise HostError(
+            "client_config_write_failed",
+            f"Configuration at {config_path} could not be written: "
+            f"{error.strerror or error}",
+            {"path": str(config_path), "cause": str(error)},
+        ) from error
     return action
 
 

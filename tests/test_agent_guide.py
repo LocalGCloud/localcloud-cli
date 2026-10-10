@@ -72,6 +72,7 @@ def test_guide_explains_volume_identity_and_catalog_first_workflow() -> None:
     assert "/var/lib/localcloud" in guide
     assert "attached containers, networks, or volumes" in guide
     assert "localcloud reset --all-projects" in guide
+    assert "`docker rm -f -v`" in guide
     assert "localcloud://api/catalog" in guide
     assert "localcloud_get_api_catalog" in guide
     assert "localcloud_call_api" in guide

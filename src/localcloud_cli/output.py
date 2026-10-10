@@ -745,6 +745,7 @@ _CONCISE_ERROR_FIELDS = {
     "project",
     "resource",
     "state",
+    "steps",
     "timeout_seconds",
     "url",
     "user",
@@ -832,7 +833,12 @@ def render_error(error: HostError, *, color: ColorMode = ColorMode.NONE) -> str:
         label = style_text(label_text, "label", color, bold=True)
         formatted = _format_value(value).replace("\n", " ")
         if scalar_sequence:
-            wrapped = _wrap_scalar_sequence(value, 160)
+            # Steps are commands to copy: one per line, never joined or wrapped.
+            wrapped = (
+                [_format_value(item) for item in value] or [""]
+                if key == "steps"
+                else _wrap_scalar_sequence(value, 160)
+            )
             lines.append(f"{label}: {style_text(wrapped[0], 'muted', color)}")
             indent = " " * (visible_width(label_text) + 2)
             lines.extend(

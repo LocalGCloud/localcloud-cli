@@ -1022,6 +1022,26 @@ def test_null_docker_socket_is_rejected(tmp_path: Path) -> None:
     assert caught.value.code == "invalid_config"
 
 
+@pytest.mark.parametrize(
+    "data", ["[persistent]", "{mode: persistent}", "5", "sometimes"]
+)
+def test_host_data_of_any_other_shape_is_rejected(tmp_path: Path, data: str) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        f"host:\n  data: {data}\n", encoding="utf-8"
+    )
+
+    # A list or map is an invalid config like any other value, never a TypeError.
+    with pytest.raises(HostError) as caught:
+        load_config(
+            directory=tmp_path,
+            paths=_paths(tmp_path),
+            active_runtime=None,
+        )
+
+    assert caught.value.code == "invalid_config"
+    assert caught.value.message == "host.data must be 'persistent' or 'ephemeral'"
+
+
 def test_non_null_empty_owned_values_are_rejected(tmp_path: Path) -> None:
     invalid = (
         'context:\n  user: ""\n',
@@ -1061,6 +1081,8 @@ def test_null_services_enabled_and_invalid_passthrough_shapes_are_rejected(
         "LOCALCLOUD_PROJECT",
         "LOCALCLOUD_DATA_DIR",
         "LOCALCLOUD_SERVICES",
+        "LOCALCLOUD_RUNTIME_NETWORK",
+        "LOCALCLOUD_DATA_VOLUME",
     ],
 )
 def test_host_environment_rejects_controller_owned_config_keys(
