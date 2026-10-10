@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
-from typing import Any
+from pathlib import Path
+from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 from .errors import HostError
@@ -57,6 +59,193 @@ def environment_config(
             ) from error
     validate_local_endpoints(rewritten)
     return rewritten
+
+
+# Proxy variables Google's client libraries and HTTP stacks read, in either case.
+_PROXY_VARIABLES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")
+_NO_PROXY_VARIABLES = ("NO_PROXY", "no_proxy")
+
+
+def identity_environment(
+    profile: Any,
+    host_port: int,
+    environ: Mapping[str, str] | None = None,
+) -> tuple[dict[str, str], list[str]]:
+    """The application environment of an identity session, from LocalCloud's typed SDK profile.
+
+    The profile (`IdentitySdkProfile` in LocalCloud's API contract) names every variable and the
+    `endpointVariables` that carry the relay's `metadataHost:metadataPort`. Those move to the
+    port the relay is published on before any application mints a token; tokens themselves are
+    never rewritten. When an HTTP(S) proxy is configured, the profile's `noProxy` hosts are added
+    to NO_PROXY and no_proxy so that libraries reach the loopback relay directly.
+
+    Returns the environment and its endpoint variables.
+    """
+    if not isinstance(profile, Mapping):
+        raise HostError(
+            "identity_sessions_unsupported",
+            "This LocalCloud image returns no identity SDK profile; update the image and restart LocalCloud",
+        )
+    variables = profile.get("environment")
+    endpoint_variables = profile.get("endpointVariables")
+    host = profile.get("metadataHost")
+    port = profile.get("metadataPort")
+    if (
+        profile.get("kind") != "gce-metadata"
+        or not isinstance(variables, Mapping)
+        or not all(isinstance(key, str) and isinstance(value, str) for key, value in variables.items())
+        or not isinstance(endpoint_variables, list)
+        or not endpoint_variables
+        or not all(isinstance(name, str) and name in variables for name in endpoint_variables)
+        or not isinstance(host, str)
+        or not isinstance(port, int)
+        or any(variables[name] != f"{host}:{port}" for name in endpoint_variables)
+    ):
+        raise HostError(
+            "identity_profile_invalid",
+            "LocalCloud returned an identity SDK profile this CLI cannot apply",
+            {"profile": {key: profile.get(key) for key in ("kind", "metadataHost", "metadataPort")}},
+        )
+    environment = {str(key): str(value) for key, value in variables.items()}
+    for name in endpoint_variables:
+        environment[name] = f"{host}:{int(host_port)}"
+    bypass = proxy_bypass(
+        environ if environ is not None else os.environ,
+        [str(value) for value in profile.get("noProxy") or [] if isinstance(value, str)],
+    )
+    environment.update(bypass)
+    return environment, list(endpoint_variables)
+
+
+def proxy_bypass(environ: Mapping[str, str], hosts: list[str]) -> dict[str, str]:
+    """NO_PROXY and no_proxy extended with `hosts` when a proxy is configured; else nothing.
+
+    Existing entries are kept in order, so the user's own exclusions still apply.
+    """
+    proxied = any(
+        (environ.get(name) or environ.get(name.lower()) or "").strip() for name in _PROXY_VARIABLES
+    )
+    if not proxied or not hosts:
+        return {}
+    entries: list[str] = []
+    for name in _NO_PROXY_VARIABLES:
+        for entry in (environ.get(name) or "").split(","):
+            entry = entry.strip()
+            if entry and entry not in entries:
+                entries.append(entry)
+    if "*" in entries:
+        return {name: "*" for name in _NO_PROXY_VARIABLES}
+    for host in hosts:
+        if host not in entries:
+            entries.append(host)
+    value = ",".join(entries)
+    return {name: value for name in _NO_PROXY_VARIABLES}
+
+
+def ambient_adc_warnings(
+    environ: Mapping[str, str] | None = None,
+    home: Path | None = None,
+) -> list[str]:
+    """Credentials Application Default Credentials prefers over the metadata server.
+
+    Google's client libraries read GOOGLE_APPLICATION_CREDENTIALS first, then gcloud's
+    application-default credentials file, and only then the metadata server an identity
+    session provides. They are reported with how to isolate them, never changed or deleted.
+    """
+    values = os.environ if environ is None else environ
+    warnings: list[str] = []
+    configured = (values.get("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+    if configured:
+        warnings.append(
+            f"GOOGLE_APPLICATION_CREDENTIALS={configured} takes precedence over the identity "
+            "session's metadata server: Google client libraries in this shell use it until "
+            "you unset GOOGLE_APPLICATION_CREDENTIALS. LocalCloud left it unchanged."
+        )
+    config_dir = (values.get("CLOUDSDK_CONFIG") or "").strip()
+    if config_dir:
+        well_known = Path(config_dir) / "application_default_credentials.json"
+    elif os.name == "nt" and values.get("APPDATA"):
+        well_known = Path(values["APPDATA"]) / "gcloud" / "application_default_credentials.json"
+    else:
+        base = home if home is not None else Path.home()
+        well_known = base / ".config" / "gcloud" / "application_default_credentials.json"
+    if well_known.is_file():
+        warnings.append(
+            f"gcloud application-default credentials at {well_known} take precedence over the "
+            "identity session's metadata server for libraries that read that file: start "
+            'applications with CLOUDSDK_CONFIG set to an empty directory, for example '
+            'CLOUDSDK_CONFIG="$(mktemp -d)" <command>. LocalCloud left the file unchanged.'
+        )
+    return warnings
+
+
+def _shell_value(value: str) -> str:
+    """A double-quoted shell word that keeps `value` literal."""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+    return f'"{escaped}"'
+
+
+def render_identity_environment(result: Mapping[str, Any], output_format: str) -> str:
+    """`lc env --identity` output in the same formats as `lc env`."""
+    environment = {str(key): str(value) for key, value in result["environment"].items()}
+    if any(_ENV_NAME.fullmatch(name) is None for name in environment):
+        raise HostError("identity_profile_invalid", "LocalCloud returned an invalid environment variable name")
+    endpoint_variables = [
+        str(name) for name in result.get("endpoint_variables") or [] if name in environment
+    ]
+    validate_local_endpoints(
+        {name: f"http://{environment[name]}" for name in endpoint_variables}
+    )
+    if output_format == "json":
+        return json.dumps(environment, indent=2)
+    session = result.get("session") or {}
+    summary = (
+        f"LocalCloud identity session {session.get('id')} for {session.get('service_account')} "
+        f"(project {result.get('project')}) expires {session.get('expires_at')}; "
+        "end it with: lc env --identity --stop"
+    )
+    comments = [f"# {line}" for line in summary.splitlines()]
+    warnings = [
+        f"# WARNING: {line}"
+        for warning in result.get("warnings") or []
+        for line in str(warning).splitlines()
+    ]
+    if output_format == "docker-compose":
+        lines = [
+            "# docker-compose environment variables",
+            *comments,
+            "# 127.0.0.1 is the Docker host's loopback; only host-networked services reach it.",
+            *warnings,
+            "environment:",
+            *(f"  {key}: {json.dumps(value)}" for key, value in environment.items()),
+        ]
+        return "\n".join(lines) + "\n"
+    lines = [
+        *comments,
+        *warnings,
+        *(f"export {key}={_shell_value(value)}" for key, value in environment.items()),
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def render_identity_stop(result: Mapping[str, Any], output_format: str) -> str:
+    """`lc env --identity --stop` output: unset the removed sessions' endpoint variables."""
+    if output_format == "json":
+        return json.dumps(dict(result), indent=2)
+    ended = ", ".join(result.get("sessions_ended") or []) or "none"
+    removed = len(result.get("relays_removed") or [])
+    summary = f"LocalCloud identity relays removed: {removed}; sessions ended: {ended}"
+    lines = [f"# {line}" for line in summary.splitlines()]
+    for failure in result.get("failures") or []:
+        subject = failure.get("session") or failure.get("container")
+        lines.extend(f"# WARNING: {line}" for line in f"{subject}: {failure.get('cause')}".splitlines())
+    unset = [str(name) for name in result.get("unset_variables") or [] if _ENV_NAME.fullmatch(str(name))]
+    if output_format != "docker-compose" and unset:
+        lines.append("unset " + " ".join(unset))
+    return "\n".join(lines) + "\n"
+
+
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def rewrite_endpoints(value: Any, endpoint_map: dict[str, Any]) -> Any:

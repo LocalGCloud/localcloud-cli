@@ -414,7 +414,7 @@ lc start --services default
 | `lc doctor` | Inspect Docker access, VM engine, and host setup; `--fix` interactively resolves issues |
 | `lc start` | Start the runtime; supports `--services`, `--local-only`, and auto-creating projects |
 | `lc status` | Show runtime health, ownership, endpoints, and Docker details |
-| `lc env` | Generate SDK, Terraform, or Docker Compose configuration |
+| `lc env` | Generate SDK, Terraform, or Docker Compose configuration; `--identity` starts a local identity session |
 | `lc console` | Open the web console for the selected project and user |
 | `lc logs` | Print recent runtime logs |
 | `lc restart` | Recreate container with local image (default: `--no-pull`; `--pull` to check registry) |
@@ -501,6 +501,18 @@ lc env --format docker-compose
 
 ```sh
 lc env --format json | jq '.STORAGE_EMULATOR_HOST'
+```
+
+**Signed local identity for host processes.** Application Default Credentials obtain LocalCloud-signed
+ID and access tokens for a service account from a 12-hour metadata relay on `127.0.0.1`. The command
+warns, without changing anything, when `GOOGLE_APPLICATION_CREDENTIALS` or gcloud's application-default
+credentials would take precedence, and keeps the relay out of a configured `HTTP(S)_PROXY`. See
+[`env --identity`](docs/cli-reference.md#env---identity).
+
+```sh
+eval "$(lc env --identity --account runner@my-project.iam.gserviceaccount.com)"
+python my_app.py          # google.auth.default() now returns the runner account
+eval "$(lc env --identity --stop)"
 ```
 
 **In CI.** Skip the registry check for reproducibility, disable log tailing, and fail loudly.
@@ -730,6 +742,20 @@ uv run lc --help                                          # run from source
 For live container lifecycle qualification, follow the [Lifecycle test runbook](docs/lifecycle-testing.md).
 
 Tests that need a live Docker engine are marked `docker`; deselect them with `-m "not docker"`.
+
+`lc env --identity` consumes LocalCloud's typed identity session contract. The fixtures in
+`tests/fixtures/identity/` are validated against the contract vendored in
+`tests/fixtures/identity/localcloud-contract.json`, which records the LocalCloud revision it came
+from; refresh it with `python3 scripts/sync-identity-contract.py --localcloud <checkout>`, and set
+`LOCALCLOUD_SOURCE=<checkout>` to also check it against that checkout. The end-to-end session test
+runs a real `lc start` and `lc env --identity` against an image (on Colima, use a `--basetemp`
+under your home directory so that Docker can bind-mount the configuration):
+
+```sh
+LOCALCLOUD_RUN_IDENTITY_E2E=1 LOCALCLOUD_IMAGE=localcloud:<tag> \
+  uv run --frozen --extra test python -m pytest -m docker \
+  tests/integration/test_identity_session_acceptance.py
+```
 
 ## License and support
 

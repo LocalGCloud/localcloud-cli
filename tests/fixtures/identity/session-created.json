@@ -1,0 +1,40 @@
+{
+  "id": "wib-0123456789abcdef01234567",
+  "name": "projects/local-gcp-project/identitySessions/wib-0123456789abcdef01234567",
+  "projectId": "local-gcp-project",
+  "serviceAccount": "default@local-gcp-project.iam.gserviceaccount.com",
+  "serviceAccountUniqueId": "104857600000000000001",
+  "state": "PENDING",
+  "createdAt": "2026-10-07T00:00:00Z",
+  "expiresAt": "2026-10-07T12:00:00Z",
+  "createdBy": "user:local-developer@localcloud.invalid",
+  "issuer": "https://identity.localcloud.internal/0123456789abcdef",
+  "capability": "lcrc1.fixture-capability-that-is-never-real",
+  "relay": {
+    "bindingId": "wib-0123456789abcdef01234567",
+    "command": ["/opt/localcloud/bin/localcloud-relay", "workload"],
+    "metadataPort": 8081,
+    "capabilityEnv": "LOCALCLOUD_RELAY_CAPABILITY",
+    "environment": {
+      "LOCALCLOUD_RELAY_METADATA_ADDR": "0.0.0.0:8081",
+      "LOCALCLOUD_RELAY_GATEWAY": "http://localcloud-runtime:5380"
+    },
+    "image": "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "network": "localcloud-network",
+    "extraHosts": ["host.docker.internal:host-gateway"]
+  },
+  "profile": {
+    "kind": "gce-metadata",
+    "projectId": "local-gcp-project",
+    "serviceAccount": "default@local-gcp-project.iam.gserviceaccount.com",
+    "metadataHost": "127.0.0.1",
+    "metadataPort": 8081,
+    "endpointVariables": ["GCE_METADATA_HOST", "GCE_METADATA_IP"],
+    "environment": {
+      "GCE_METADATA_HOST": "127.0.0.1:8081",
+      "GCE_METADATA_IP": "127.0.0.1:8081",
+      "GOOGLE_CLOUD_PROJECT": "local-gcp-project"
+    },
+    "noProxy": ["127.0.0.1", "localhost"]
+  }
+}

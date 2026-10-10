@@ -1,0 +1,377 @@
+{
+  "components": {
+    "schemas": {
+      "IdentityRelayProfile": {
+        "additionalProperties": false,
+        "description": "How to start the session's host relay from the LocalCloud image (C15, C16).",
+        "properties": {
+          "bindingId": {
+            "description": "The session ID the relay serves.",
+            "type": "string"
+          },
+          "capabilityEnv": {
+            "description": "The relay-only variable that carries the capability.",
+            "type": "string"
+          },
+          "command": {
+            "description": "Entrypoint and arguments: the relay binary in workload mode.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "environment": {
+            "additionalProperties": false,
+            "description": "Relay environment besides the capability.",
+            "properties": {
+              "LOCALCLOUD_RELAY_GATEWAY": {
+                "description": "LocalCloud origin as this LocalCloud's own relays reach it; a launcher on another network substitutes one it reaches.",
+                "type": "string"
+              },
+              "LOCALCLOUD_RELAY_METADATA_ADDR": {
+                "description": "Relay listen address.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "LOCALCLOUD_RELAY_METADATA_ADDR"
+            ],
+            "type": "object"
+          },
+          "extraHosts": {
+            "description": "host:address entries the relay needs.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "image": {
+            "description": "Relay image: the image LocalCloud's own relays use.",
+            "type": "string"
+          },
+          "imageUnavailable": {
+            "description": "Why no relay image is configured.",
+            "type": "string"
+          },
+          "metadataPort": {
+            "description": "Port of the relay's metadata listener in its container; publish it on 127.0.0.1 only.",
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "network": {
+            "description": "Runtime network LocalCloud's relays join.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bindingId",
+          "command",
+          "metadataPort",
+          "capabilityEnv",
+          "environment"
+        ],
+        "type": "object"
+      },
+      "IdentitySdkProfile": {
+        "additionalProperties": false,
+        "description": "The environment that points Application Default Credentials at the relay. A launcher that publishes the relay on another port replaces metadataPort in every endpointVariables value before the application starts; tokens are never rewritten.",
+        "properties": {
+          "endpointVariables": {
+            "description": "Variables whose value is metadataHost:metadataPort.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "environment": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Every variable the application needs.",
+            "required": [
+              "GCE_METADATA_HOST",
+              "GCE_METADATA_IP",
+              "GOOGLE_CLOUD_PROJECT"
+            ],
+            "type": "object"
+          },
+          "kind": {
+            "const": "gce-metadata",
+            "type": "string"
+          },
+          "metadataHost": {
+            "description": "Host the relay is published on.",
+            "type": "string"
+          },
+          "metadataPort": {
+            "description": "Port in the endpoint variables: the relay listener's own port, or the published one in a rendered profile.",
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "noProxy": {
+            "description": "Hosts to add to NO_PROXY when an HTTP(S) proxy is configured.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "projectId": {
+            "description": "Project the application sees.",
+            "type": "string"
+          },
+          "serviceAccount": {
+            "description": "Account the relay mints for.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "projectId",
+          "serviceAccount",
+          "metadataHost",
+          "metadataPort",
+          "endpointVariables",
+          "environment",
+          "noProxy"
+        ],
+        "type": "object"
+      },
+      "IdentitySession": {
+        "additionalProperties": false,
+        "description": "A host relay session. It never contains its capability.",
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "createdBy": {
+            "description": "Principal that created the session.",
+            "type": "string"
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "function": {
+            "description": "The externally run function the session was registered for, if any.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Session ID (a binding ID, wib-...).",
+            "type": "string"
+          },
+          "issuer": {
+            "description": "Issuer of every token the session's relay mints.",
+            "type": "string"
+          },
+          "name": {
+            "description": "projects/<project>/identitySessions/<id>.",
+            "type": "string"
+          },
+          "projectId": {
+            "description": "Project of the session.",
+            "type": "string"
+          },
+          "readyAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "revocationReason": {
+            "description": "deleted, expired, project_reset, reset, function_deleted or function_updated.",
+            "type": "string"
+          },
+          "revokedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "serviceAccount": {
+            "description": "Account the session mints for.",
+            "type": "string"
+          },
+          "serviceAccountUniqueId": {
+            "description": "Unique ID of that account.",
+            "type": "string"
+          },
+          "state": {
+            "description": "PENDING until the relay's handshake, ACTIVE while it may mint, REVOKED once deleted, expired or reset.",
+            "enum": [
+              "PENDING",
+              "ACTIVE",
+              "REVOKED"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "projectId",
+          "serviceAccount",
+          "serviceAccountUniqueId",
+          "state",
+          "createdAt",
+          "expiresAt",
+          "issuer"
+        ],
+        "type": "object"
+      },
+      "IdentitySessionCreated": {
+        "additionalProperties": false,
+        "description": "A new session with its capability, how to start its relay and the environment that points ADC at it.",
+        "properties": {
+          "capability": {
+            "description": "The relay capability, returned only here. Pass it only to the relay, in relay.capabilityEnv; never log, print or store it.",
+            "pattern": "^lcrc1\\.",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "createdBy": {
+            "description": "Principal that created the session.",
+            "type": "string"
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "function": {
+            "description": "The externally run function the session was registered for, if any.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Session ID (a binding ID, wib-...).",
+            "type": "string"
+          },
+          "issuer": {
+            "description": "Issuer of every token the session's relay mints.",
+            "type": "string"
+          },
+          "name": {
+            "description": "projects/<project>/identitySessions/<id>.",
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/IdentitySdkProfile"
+          },
+          "projectId": {
+            "description": "Project of the session.",
+            "type": "string"
+          },
+          "readyAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "relay": {
+            "$ref": "#/components/schemas/IdentityRelayProfile"
+          },
+          "revocationReason": {
+            "description": "deleted, expired, project_reset, reset, function_deleted or function_updated.",
+            "type": "string"
+          },
+          "revokedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "serviceAccount": {
+            "description": "Account the session mints for.",
+            "type": "string"
+          },
+          "serviceAccountUniqueId": {
+            "description": "Unique ID of that account.",
+            "type": "string"
+          },
+          "state": {
+            "description": "PENDING until the relay's handshake, ACTIVE while it may mint, REVOKED once deleted, expired or reset.",
+            "enum": [
+              "PENDING",
+              "ACTIVE",
+              "REVOKED"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "projectId",
+          "serviceAccount",
+          "serviceAccountUniqueId",
+          "state",
+          "createdAt",
+          "expiresAt",
+          "issuer",
+          "capability",
+          "relay",
+          "profile"
+        ],
+        "type": "object"
+      },
+      "IdentitySessionList": {
+        "additionalProperties": false,
+        "description": "Sessions without capabilities.",
+        "properties": {
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/IdentitySession"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessions"
+        ],
+        "type": "object"
+      },
+      "IdentitySessionRequest": {
+        "additionalProperties": false,
+        "description": "Creates a 12-hour host relay session. The project defaults to X-LocalCloud-Project, then the configured project; the account to default@<project>.",
+        "properties": {
+          "function": {
+            "description": "projects/<p>/locations/<l>/functions/<id>: registers that function's externally run process; the session serves its runtime account in its project (LC-ID-015-02).",
+            "type": "string"
+          },
+          "projectId": {
+            "description": "Google project ID of the session.",
+            "type": "string"
+          },
+          "serviceAccount": {
+            "description": "Account email, account ID (in projectId) or unique ID; omitted, empty or 'default' selects default@<project>.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    }
+  },
+  "operations": {
+    "DELETE /identity/sessions/{id}": {
+      "request": null,
+      "response": "#/components/schemas/IdentitySession"
+    },
+    "GET /identity/sessions": {
+      "request": null,
+      "response": "#/components/schemas/IdentitySessionList"
+    },
+    "GET /identity/sessions/{id}": {
+      "request": null,
+      "response": "#/components/schemas/IdentitySession"
+    },
+    "POST /identity/sessions": {
+      "request": "#/components/schemas/IdentitySessionRequest",
+      "response": "#/components/schemas/IdentitySessionCreated"
+    }
+  },
+  "source": {
+    "dirty": false,
+    "path": "specs/api/openapi/localcloud.json",
+    "repository": "localcloud",
+    "revision": "594daad1bcd60cfb06259e602cc684813cf75332"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "description": "Which LocalCloud wire message each identity fixture is. tests/test_identity_contract.py validates them against localcloud-contract.json; LocalCloud's ci/identity/check_profile_contract.py validates them against its own projection.",
+  "contract": "localcloud-contract.json",
+  "fixtures": {
+    "session-request.json": {"operation": "POST /identity/sessions", "body": "request"},
+    "session-request-account.json": {"operation": "POST /identity/sessions", "body": "request"},
+    "session-created.json": {"operation": "POST /identity/sessions", "body": "response"},
+    "session-active.json": {"operation": "GET /identity/sessions/{id}", "body": "response"},
+    "session-list.json": {"operation": "GET /identity/sessions", "body": "response"},
+    "session-revoked.json": {"operation": "DELETE /identity/sessions/{id}", "body": "response"}
+  }
+}
