@@ -166,13 +166,13 @@ LocalCloud ensures container stability for running agents:
 - A custom `--data-volume` is only used when hard container isolation is explicitly demanded.
 
 ### One Project per Repository
-Every command, the bridge included, selects the same project for a repository, so `lc env` in a terminal and the agents working in that repository see the same data:
+The bridge gives every coding session in a repository the same project, so agents working in different repositories keep their data apart:
 1. `--project-id`;
 2. `context.project` in the repository's own `localcloud.yaml` (or an explicit `--config`/`LOCALCLOUD_CONFIG`);
 3. the git repository's name, slugified into a project ID (`Payments_API.v2` becomes `payments-api-v2`). Worktrees share their main checkout's project; a repository rooted at the home directory is ignored;
 4. otherwise `local-gcp-project` (or the `context.project` of a shared home or remembered config).
 
-The bridge learns the repository from its working directory, or from the client's workspace roots (MCP `roots/list`) when the client provides them, as Cursor and VS Code do. A repository's project is created on first use (`lc start`, `lc env`, `lc console`, or an MCP connection) without restarting the runtime. Caller identity defaults to `local-developer` (normalized to `local-developer@localcloud.invalid`), attributing actions per agent or user.
+The bridge learns the repository from its working directory, or from the client's workspace roots (MCP `roots/list`) when the client provides them, as Cursor and VS Code do, and creates the project on connection without restarting the runtime. Only the bridge uses step 3: terminal commands such as `lc start` and `lc env` use `--project-id`, the configured `context.project`, or `local-gcp-project`. To work in the agents' project from a terminal, pass it (`eval "$(lc env --project-id payments-api-v2)"`), or set `context.project` in the repository's `localcloud.yaml` so both use it. Caller identity defaults to `local-developer` (normalized to `local-developer@localcloud.invalid`), attributing actions per agent or user.
 
 ### Concurrent Requests and Reconnection
 - Requests run concurrently: a long query does not hold up pings, cancellations or other calls, and a cancelled request gets no response. Tool calls, resource reads and prompts may run up to 10 minutes.
@@ -426,7 +426,8 @@ While the runtime is starting or unavailable, the bridge lists only its own `loc
 | The first tool call is slow | The first start downloads the runtime image; run `lc start --local-only` once beforehand to avoid the wait |
 | Status reports `mcp_connection_timeout` | Check `lc status` and `lc logs --tail 100`; retry with `localcloud mcp --connect-timeout 60` |
 | Status reports `runtime_not_running` with `--no-start` | Start it explicitly with `lc start`, or remove `--no-start` to allow automatic startup |
-| The agent uses a different project than `lc env` | The client started the bridge outside the repository and does not report workspace roots; install with `--project` in the repository, or pass `--project-id` |
+| The agent uses a different project than `lc env` | Expected inside a git repository: agents use the repository's project, `lc env` the configured or default one. Run `lc env --project-id <project>` with the project `localcloud_runtime_status` reports, or set `context.project` in the repository's `localcloud.yaml` |
+| The agent's project is not the repository's | The client started the bridge outside the repository and does not report workspace roots; install with `--project` in the repository, or pass `--project-id` |
 | A write operation is rejected | Inspect the operation's safety and runtime permission settings; client installation does not enable write/destructive permissions |
 | Tools are missing or a service is disabled | Inspect the connected runtime catalog, readiness and compatibility; CLI version alone does not determine runtime tools |
 | Protocol parser reports invalid JSON | Ensure the client launches `localcloud mcp` directly; wrappers must keep diagnostics off stdout |

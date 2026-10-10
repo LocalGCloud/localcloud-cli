@@ -1450,9 +1450,29 @@ def test_a_git_repository_selects_its_own_project(tmp_path: Path) -> None:
 
     for directory in (repository, repository / "src" / "handlers"):
         selected = load_config(
-            directory=directory, paths=_paths(tmp_path), active_runtime=None
+            directory=directory,
+            paths=_paths(tmp_path),
+            active_runtime=None,
+            project_from_git=True,
         )
         assert (selected.project, selected.project_source) == ("payments-api-v2", "git")
+
+
+@pytest.mark.usefixtures("real_git")
+def test_without_project_from_git_a_repository_keeps_the_configured_or_default_project(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path / "payments-api")
+    paths = _paths(tmp_path)
+
+    selected = load_config(directory=repository, paths=paths, active_runtime=None)
+    assert (selected.project, selected.project_source) == (DEFAULT_PROJECT, "default")
+
+    shared = paths.home / "localcloud.yaml"
+    shared.parent.mkdir(parents=True)
+    shared.write_text("context:\n  project: shared-project\n", encoding="utf-8")
+    selected = load_config(directory=repository, paths=paths, active_runtime=None)
+    assert selected.project == "shared-project"
 
 
 @pytest.mark.usefixtures("real_git")
@@ -1462,7 +1482,12 @@ def test_every_worktree_of_a_repository_shares_its_project(tmp_path: Path) -> No
     worktree = tmp_path / "agent-7f3a"
     _git("worktree", "add", "-q", str(worktree), cwd=repository)
 
-    selected = load_config(directory=worktree, paths=_paths(tmp_path), active_runtime=None)
+    selected = load_config(
+        directory=worktree,
+        paths=_paths(tmp_path),
+        active_runtime=None,
+        project_from_git=True,
+    )
 
     assert selected.project == "orders-service"
 
@@ -1494,7 +1519,13 @@ def test_project_precedence(tmp_path: Path) -> None:
     shared.write_text("context:\n  project: shared-project\n", encoding="utf-8")
 
     def select(directory: Path, **kwargs: object) -> tuple[str, str]:
-        config = load_config(directory=directory, paths=paths, active_runtime=None, **kwargs)
+        config = load_config(
+            directory=directory,
+            paths=paths,
+            active_runtime=None,
+            project_from_git=True,
+            **kwargs,
+        )
         return config.project, config.project_source
 
     # A shared (home) config's project does not override the repository's.

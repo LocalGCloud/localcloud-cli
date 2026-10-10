@@ -614,7 +614,7 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
             return controller.start(
                 config,
                 pull=pull,
-                ensure_project=_creates_project(config),
+                ensure_project=args.project_id is not None,
                 observer=observer,
                 tail=args.tail,
                 dry_run=args.dry_run,
@@ -637,7 +637,7 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
             return controller.restart(
                 config,
                 pull=pull,
-                ensure_project=_creates_project(config),
+                ensure_project=args.project_id is not None,
                 observer=observer,
                 tail=args.tail,
                 dry_run=args.dry_run,
@@ -666,11 +666,7 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
             return controller.status(config)
         if args.command == "logs":
             return controller.logs(config, tail=args.tail)
-        # A repository's project is created on first use, so `lc env` in a new
-        # checkout matches what its agents see over MCP.
-        target = controller.target(
-            config, ensure_project=config.project_source == "git"
-        )
+        target = controller.target(config)
         if args.command == "console":
             import webbrowser
             from urllib.parse import urlencode
@@ -744,12 +740,6 @@ def _run_mcp_bridge(
         auto_start=not args.no_start,
         prepare=prepare,
     )
-
-
-def _creates_project(config: LocalCloudConfig) -> bool:
-    """Whether start/restart create the selected project: one named by
-    --project-id or derived from the git repository."""
-    return config.project_source in {"flag", "git"}
 
 
 def _controller(args: argparse.Namespace, observer: _ExecutionObserver | None) -> Any:
@@ -867,6 +857,8 @@ def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConf
         "strict_port_validation": getattr(args, "strict_port_validation", False),
         "local_only": getattr(args, "local_only", False),
         "port_range": getattr(args, "port_range", None),
+        # Only the MCP bridge gives each git repository its own project.
+        "project_from_git": args.command == "mcp",
     }
     paths = getattr(controller, "paths", None) or HostPaths.from_environment()
     active_diagnostics: list[dict[str, Any]] = []
