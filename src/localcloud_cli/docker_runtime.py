@@ -3656,8 +3656,8 @@ def _resource_labels(resource: Any, *, reload: bool = False) -> dict[str, str]:
     labels = getattr(resource, "labels", None)
     if labels is None:
         attrs = getattr(resource, "attrs", None)
-        labels = attrs.get("Labels") if isinstance(attrs, dict) else None
-    return dict(labels or {})
+        labels = attrs.get("Labels") if isinstance(attrs, Mapping) else None
+    return dict(labels) if isinstance(labels, Mapping) else {}
 
 
 def _label_mismatches(

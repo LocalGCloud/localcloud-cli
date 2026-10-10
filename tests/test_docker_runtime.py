@@ -2343,6 +2343,37 @@ def test_resource_labels_handles_missing_labels_and_reload_failures() -> None:
     assert labels2 == {}
 
 
+@pytest.mark.parametrize("labels", [None, "invalid", 42, [(MANAGED_LABEL, "true")]])
+@pytest.mark.parametrize("via_attrs", [False, True])
+def test_resource_labels_rejects_non_mapping_metadata(
+    labels: Any, via_attrs: bool,
+) -> None:
+    resource = (
+        SimpleNamespace(attrs={"Labels": labels})
+        if via_attrs
+        else SimpleNamespace(labels=labels)
+    )
+
+    assert runtime_module._resource_labels(resource) == {}
+
+
+def test_malformed_labels_cannot_authorize_resource_removal() -> None:
+    removed: list[bool] = []
+    resource = SimpleNamespace(
+        id="malformed-volume",
+        labels=[(MANAGED_LABEL, "true")],
+        remove=lambda: removed.append(True),
+    )
+    failures: list[dict[str, Any]] = []
+
+    runtime_module._remove_verified(
+        resource, "volume", {MANAGED_LABEL: "true"}, failures,
+    )
+
+    assert removed == []
+    assert len(failures) == 1
+
+
 def test_doctor_catches_classify_resource_host_errors(
     ready_runtime: tuple[DockerRuntime, Client],
 ) -> None:
@@ -2859,6 +2890,30 @@ def test_resolve_falls_back_to_configured_ports_for_stopped_container(
     assert resolved is not None
     assert resolved.endpoint_map["5380"] == 49080
     assert resolved.published_ports["5410/udp"] == (("127.0.0.1", 53),)
+
+
+@pytest.mark.parametrize("configured_host_port", [None, ""])
+def test_resolve_uses_live_assigned_gateway_port(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+    configured_host_port: str | None,
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    created = runtime.create(config)
+    container = client.containers.get(created.container_id)
+    container.attrs["NetworkSettings"]["Ports"]["5380/tcp"] = [
+        {"HostIp": "127.0.0.1", "HostPort": "49080"}
+    ]
+    container.attrs["HostConfig"] = {"PortBindings": {"5380/tcp": [
+        {"HostIp": "127.0.0.1", "HostPort": configured_host_port}
+    ]}}
+
+    resolved = runtime.resolve(config)
+
+    assert resolved is not None
+    assert resolved.endpoint_map["5380"] == 49080
+    assert resolved.url == "http://127.0.0.1:49080"
 
 
 def test_endpoint_map_prefers_tcp_when_protocols_share_container_port(

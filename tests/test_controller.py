@@ -1440,6 +1440,54 @@ def test_stop_removes_fully_managed_ephemeral_runtime(tmp_path: Path) -> None:
     assert load_active_runtime(paths) is None
 
 
+@pytest.mark.parametrize("stop_last_active", [False, True])
+def test_ephemeral_stop_clears_only_the_selected_runtime(
+    tmp_path: Path, stop_last_active: bool,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(
+        tmp_path, paths=paths, yaml="host:\n  data: ephemeral\n", data_volume="ephemeral-a",
+    )
+    other_config = _config(tmp_path, paths=paths, data_volume="ephemeral-b")
+    record = _record(config, container_id="container-a")
+    other_record = _record(other_config, container_id="container-b")
+    records = [(record, config), (other_record, other_config)]
+    if stop_last_active:
+        records.reverse()
+    for remembered_record, remembered_config in records:
+        controller._record_active(remembered_record, remembered_config)
+    other_active = load_active_runtime(paths, data_volume=other_config.data_volume)
+    assert other_active is not None
+    runtime.record = record
+
+    result = controller.stop(config)
+
+    assert result["container"]["state"] == "removed"
+    assert load_active_runtime(paths, data_volume=config.data_volume) is None
+    assert load_active_runtime(paths, data_volume=other_config.data_volume) == other_active
+    assert load_active_runtime(paths) == other_active
+
+
+def test_ephemeral_stop_preserves_state_when_removal_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, yaml="host:\n  data: ephemeral\n")
+    runtime.record = _record(config)
+    controller._record_active(runtime.record, config)
+    before = paths.active_runtime.read_bytes()
+
+    def fail_remove(*args: Any, **kwargs: Any) -> None:
+        raise HostError("cleanup_failed", "Runtime removal failed")
+
+    monkeypatch.setattr(runtime, "remove", fail_remove)
+
+    with pytest.raises(HostError, match="Runtime removal failed"):
+        controller.stop(config)
+
+    assert paths.active_runtime.read_bytes() == before
+
+
 def test_reset_all_rejects_attached_resources_before_mutation(
     tmp_path: Path,
 ) -> None:
