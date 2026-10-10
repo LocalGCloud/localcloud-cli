@@ -146,7 +146,7 @@ MCP communicates via JSON-RPC 2.0 over standard input and output (`stdio`).
 
 ### The handshake never waits for Docker
 The bridge answers the client's MCP handshake at once and connects to the runtime in the background, so clients with short startup timeouts (Codex 10s, Claude Code 30s) never drop the server while LocalCloud starts.
-- **Runtime ready** (the usual case, about a second): the handshake, tools, resources and prompts come from the runtime unchanged.
+- **Runtime ready** (the usual case, about a second): the handshake, tools, resources and prompts come from the runtime, with missing tool display titles filled in.
 - **Runtime starting or unavailable**: the client sees a single `localcloud_runtime_status` tool and empty resource and prompt lists. Other tool calls wait up to 90 seconds for a starting runtime, then return an error result that says what is wrong and what to do (start Docker, fix `localcloud.yaml`, run `lc start` under `--no-start`, ...). `localcloud_runtime_status` retries immediately and reports `ready`, `starting` or `unavailable` with the project, data volume and next step.
 - **Runtime becomes ready later**: the bridge sends `tools/list_changed`, `resources/list_changed` and `prompts/list_changed`, and clients that support them reload the full catalog. Otherwise reconnect the server.
 - Problems are also written once to stderr, which clients keep in their MCP logs.
