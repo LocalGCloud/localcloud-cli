@@ -341,7 +341,9 @@ Installs LocalCloud MCP server configuration directly into the target AI client 
 lc mcp install --client {claude|claude-desktop|claude-code|cursor|gemini|antigravity|windsurf|cline|all} [--global|--project] [--bare] [--command-path CMD]
 ```
 
-Automatically resolves the absolute path to `localcloud` (prioritizing permanent system/Homebrew binaries like `/opt/homebrew/bin/localcloud` over local repository virtualenvs) and configures the target project. Use `--bare` to write portable bare `localcloud` commands, or `--command-path` to supply a custom command or alias like `/opt/homebrew/bin/lc`. When `--client all` is specified, it updates configurations for all supported clients present on the system. Pass `--global` (the default) to update user-level configurations across all projects, or `--project` for repository-scoped configuration.
+User-scoped installation resolves an absolute executable path, preferring permanent system/Homebrew binaries over repository virtualenvs. Project-scoped installation defaults to bare `localcloud`; add `--command-path "$(command -v localcloud)"` for an absolute path. Use `--bare` to request a bare command explicitly. `--client all` writes Cursor, Claude Code, Claude Desktop, Antigravity, and Windsurf configurations even if the applications are absent. Pass `--global` (the default) for user-level configuration or `--project` for repository scope in clients that support it.
+
+Use `--client claude-code` for Claude Code; `claude` is an alias for Claude Desktop. Codex uses `codex mcp add` rather than this installer. For Cline, use its own MCP configuration editor. See the [local client setup guide](mcp-marketplace-guide.md) for commands, connection checks, and GitHub plugin setup.
 
 For complete architectural details, client configuration files, and the full MCP tools catalog, see the [MCP Architecture & Guide](mcp.md).
 
