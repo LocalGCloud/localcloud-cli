@@ -44,6 +44,8 @@ def _transport_error(
         "method": method,
         "cause": str(error),
         "retryable": retryable,
+        # Nothing reached the server, so resending cannot repeat its effects.
+        "connect_failed": isinstance(error, httpx.ConnectError),
     }
     if isinstance(status_code, int):
         details["status_code"] = status_code
@@ -88,8 +90,13 @@ class JavaMcpClient:
             return httpx.request(method, url, **kwargs)
         return get_shared_http_client().request(method, url, **kwargs)
 
-    def forward(self, message: dict[str, Any]) -> dict[str, Any] | None:
-        return self._post_mcp(message, allow_empty=True)
+    def forward(
+        self,
+        message: dict[str, Any],
+        *,
+        timeout: float | httpx.Timeout | None = None,
+    ) -> dict[str, Any] | None:
+        return self._post_mcp(message, allow_empty=True, timeout=timeout)
 
     def rpc(self, method: str, params: dict[str, Any] | None = None) -> Any:
         payload = {
@@ -131,6 +138,7 @@ class JavaMcpClient:
         message: dict[str, Any],
         *,
         allow_empty: bool,
+        timeout: float | httpx.Timeout | None = None,
     ) -> dict[str, Any] | None:
         method = str(message.get("method") or "")
         try:
@@ -139,7 +147,7 @@ class JavaMcpClient:
                 f"{self.url}/mcp",
                 json=message,
                 headers=self._headers(),
-                timeout=self.timeout,
+                timeout=self.timeout if timeout is None else timeout,
             )
             response.raise_for_status()
         except Exception as error:

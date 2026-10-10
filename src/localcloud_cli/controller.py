@@ -295,7 +295,7 @@ class Controller:
                 *commands,
                 *(
                     (
-                        f"[LocalCloud API] ensure explicitly selected "
+                        f"[LocalCloud API] ensure selected "
                         f"project={config.project!r} user={config.user!r}",
                     )
                     if ensure_project
@@ -512,7 +512,7 @@ class Controller:
                 *commands,
                 *(
                     (
-                        f"[LocalCloud API] ensure explicitly selected "
+                        f"[LocalCloud API] ensure selected "
                         f"project={config.project!r} user={config.user!r}",
                     )
                     if ensure_project

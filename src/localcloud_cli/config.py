@@ -109,6 +109,7 @@ _ACTIVE_RUNTIME_UNSET = object()
 DOCKER_ACCESS_ENV = "LOCALCLOUD_DOCKER_ACCESS"
 DOCKER_DEPENDENCY = "docker"
 DockerAccessMode = Literal["auto", "true", "false"]
+ProjectSource = Literal["flag", "config", "git", "default"]
 
 
 
@@ -242,6 +243,11 @@ class LocalCloudConfig:
     # host.port_range / --port-range: host ports to use instead of the
     # canonical and built-in fallback ports.
     port_range: tuple[int, int] | None = None
+    # Where `project` came from: "flag" (--project-id), "config" (context.project
+    # of this directory's or an explicit config), "git" (the repository's main
+    # checkout name), or "default" (built in, or a shared config's
+    # context.project). Not part of the runtime identity.
+    project_source: ProjectSource = "default"
 
     def __post_init__(self) -> None:
         encoded = json.dumps(
@@ -609,7 +615,7 @@ def load_config(
     source_directory = _source_directory(directory)
     host_paths = paths if paths is not None else HostPaths.from_environment()
     explicit_path = Path(explicit) if explicit is not None else None
-    config_path = _select_config_path(
+    config_path, config_source = _select_config_path(
         source_directory,
         explicit_path,
         remembered,
@@ -661,10 +667,11 @@ def load_config(
     else:
         selected_data_volume = DEFAULT_DATA_VOLUME
 
-    selected_project = validate_project(
-        project
-        if project is not None
-        else context.get("project", DEFAULT_PROJECT)
+    selected_project, project_source = _select_project(
+        project,
+        context.get("project"),
+        config_source,
+        source_directory,
     )
     configured_user = context.get("user")
     selected_user = validate_user(
@@ -830,6 +837,7 @@ def load_config(
         data_volume=selected_data_volume,
         config_path=config_path,
         project=selected_project,
+        project_source=project_source,
         user=selected_user,
         services=selected_services,
         data=str(data),
@@ -1051,13 +1059,15 @@ def _select_config_path(
     explicit: Path | None,
     remembered: str | None,
     home_config: Path,
-) -> Path | None:
+) -> tuple[Path | None, str | None]:
+    """The config file to use and where it was found: "explicit", "environment",
+    "local", "remembered", or "home" (None when there is no file)."""
     if explicit is not None:
-        return _required_config_path(explicit, directory)
+        return _required_config_path(explicit, directory), "explicit"
 
     configured = os.environ.get("LOCALCLOUD_CONFIG")
     if configured is not None and configured.strip():
-        return _required_config_path(Path(configured), directory)
+        return _required_config_path(Path(configured), directory), "environment"
 
     local_config = directory / DEFAULT_CONFIG_NAME
     if local_config.exists():
@@ -1066,10 +1076,10 @@ def _select_config_path(
                 f"Configuration path is not a file: {local_config}",
                 config=str(local_config),
             )
-        return local_config.resolve()
+        return local_config.resolve(), "local"
 
     if remembered and remembered != DEFAULTS_CONFIG_LABEL:
-        return _required_config_path(Path(remembered), directory)
+        return _required_config_path(Path(remembered), directory), "remembered"
 
     if home_config.exists():
         if not home_config.is_file():
@@ -1077,8 +1087,53 @@ def _select_config_path(
                 f"Configuration path is not a file: {home_config}",
                 config=str(home_config),
             )
-        return home_config.resolve()
-    return None
+        return home_config.resolve(), "home"
+    return None, None
+
+
+# Config files chosen for this directory or this command. A remembered or home
+# config is shared across repositories, so its context.project does not override
+# the repository's own project.
+_PROJECT_PINNING_CONFIG_SOURCES = frozenset({"explicit", "environment", "local"})
+
+
+def _select_project(
+    flag: str | None,
+    configured: object | None,
+    config_source: str | None,
+    directory: Path,
+) -> tuple[str, ProjectSource]:
+    """--project-id, then context.project from this directory's (or an explicit)
+    config, then the git repository's name, then a shared config's
+    context.project, then the built-in default. The last two are both
+    "default": neither belongs to the directory."""
+    if flag is not None:
+        return validate_project(flag), "flag"
+    if configured is not None and config_source in _PROJECT_PINNING_CONFIG_SOURCES:
+        return validate_project(configured), "config"
+    git_project = detect_git_project(directory)
+    if git_project is not None:
+        return git_project, "git"
+    if configured is not None:
+        return validate_project(configured), "default"
+    return DEFAULT_PROJECT, "default"
+
+
+def workspace_project(directory: Path) -> tuple[str, ProjectSource] | None:
+    """The project a command run in `directory` would select on its own: the
+    context.project of its localcloud.yaml, else its git repository's name.
+    None when neither applies or `directory` cannot be read."""
+    try:
+        source_directory = _source_directory(directory)
+        local_config = source_directory / DEFAULT_CONFIG_NAME
+        if local_config.is_file():
+            context = _read_config(local_config).get("context")
+            if isinstance(context, dict) and context.get("project") is not None:
+                return validate_project(context["project"]), "config"
+    except HostError:
+        pass
+    git_project = detect_git_project(directory)
+    return (git_project, "git") if git_project is not None else None
 
 
 def _required_config_path(path: Path, directory: Path) -> Path:
@@ -1149,62 +1204,68 @@ def slugify_project_name(name: str) -> str | None:
 
 
 def detect_git_project(directory: Path | None) -> str | None:
-    """Find the main git checkout root and slugify its directory name as the project ID."""
+    """The project ID for the git repository containing `directory`: its main
+    checkout's directory name, so every worktree of a repository shares one
+    project. None outside a repository, and for a repository rooted at the home
+    directory (a dotfiles checkout is not a project)."""
     if directory is None:
         return None
     try:
-        resolved_dir = directory.resolve()
-    except Exception:
+        checkout = _git_main_checkout(str(Path(directory).resolve()))
+    except OSError:
         return None
+    if checkout is None or checkout == Path.home().resolve():
+        return None
+    return slugify_project_name(checkout.name)
 
-    # First, run git rev-parse --git-common-dir to find the main checkout root (handles worktrees)
+
+@lru_cache(maxsize=32)
+def _git_main_checkout(directory: str) -> Path | None:
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--git-common-dir"],
-            cwd=resolved_dir,
+            ["git", "rev-parse", "--git-common-dir", "--show-toplevel"],
+            cwd=directory,
             capture_output=True,
             text=True,
             timeout=3.0,
             check=False,
         )
-        if result.returncode == 0:
-            common_dir_str = result.stdout.strip()
-            if common_dir_str:
-                common_dir = Path(common_dir_str)
-                if not common_dir.is_absolute():
-                    common_dir = (resolved_dir / common_dir).resolve()
-                else:
-                    common_dir = common_dir.resolve()
-                # If common_dir is /path/to/repo/.git, the main checkout directory is /path/to/repo
-                main_checkout = common_dir.parent if common_dir.name == ".git" else common_dir
-                return slugify_project_name(main_checkout.name)
-    except Exception:
-        pass
+    except (OSError, subprocess.SubprocessError):
+        return _git_main_checkout_from_files(Path(directory))
+    lines = result.stdout.splitlines()
+    if result.returncode != 0 or not lines:
+        return None
+    common_dir = Path(lines[0])
+    if not common_dir.is_absolute():
+        common_dir = Path(directory) / common_dir
+    common_dir = common_dir.resolve()
+    if common_dir.name == ".git":
+        return common_dir.parent
+    # A submodule (.git/modules/<name>) or bare layout: use the checkout itself.
+    return Path(lines[1]).resolve() if len(lines) > 1 else None
 
-    # Filesystem fallback if git command is unavailable or fails
-    for candidate in (resolved_dir, *resolved_dir.parents):
-        git_target = candidate / ".git"
-        if git_target.is_file():
-            # A worktree git file: "gitdir: /path/to/main/.git/worktrees/..."
+
+def _git_main_checkout_from_files(directory: Path) -> Path | None:
+    """The same answer without a git executable: the nearest `.git`, following a
+    worktree's `gitdir:` pointer back to the main repository."""
+    for candidate in (directory, *directory.parents):
+        marker = candidate / ".git"
+        if marker.is_dir():
+            return candidate
+        if marker.is_file():
             try:
-                content = git_target.read_text(encoding="utf-8").strip()
-                if content.startswith("gitdir:"):
-                    gitdir_path = Path(content[len("gitdir:"):].strip())
-                    if not gitdir_path.is_absolute():
-                        gitdir_path = (candidate / gitdir_path).resolve()
-                    for parent in gitdir_path.parents:
-                        if parent.name == ".git":
-                            return slugify_project_name(parent.parent.name)
-            except Exception:
-                pass
-            return slugify_project_name(candidate.name)
-        elif git_target.is_dir():
-            return slugify_project_name(candidate.name)
-
+                content = marker.read_text(encoding="utf-8").strip()
+            except OSError:
+                return candidate
+            if content.startswith("gitdir:"):
+                gitdir = Path(content[len("gitdir:") :].strip())
+                if not gitdir.is_absolute():
+                    gitdir = (candidate / gitdir).resolve()
+                for parent in gitdir.parents:
+                    if parent.name == ".git":
+                        return parent.parent
+            return candidate
     return None
-
-
-_detect_git_project = detect_git_project
 
 
 def validate_project(value: object | None) -> str:
