@@ -139,9 +139,8 @@ class FakeController:
         self.calls.append(("logs", (config, tail)))
         return {"status": "logs", "data_volume": config.data_volume, "logs": "output"}
 
-    def target(self, config: Any, *, ensure_project: bool = False) -> dict[str, Any]:
+    def target(self, config: Any) -> dict[str, Any]:
         self.calls.append(("target", config))
-        self.ensure_project_calls.append(("target", ensure_project))
         return {
             "data_volume": config.data_volume,
             "url": "http://127.0.0.1:49080",
@@ -1355,7 +1354,7 @@ def _git_repository(path: Path) -> Path:
 
 
 @pytest.mark.usefixtures("real_git")
-def test_commands_in_a_git_repository_select_and_create_its_project(
+def test_only_mcp_takes_its_project_from_the_git_repository(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repository = _git_repository(tmp_path / "Orders Service")
@@ -1364,29 +1363,24 @@ def test_commands_in_a_git_repository_select_and_create_its_project(
     monkeypatch.setattr(
         "localcloud_cli.endpoints.environment_config", lambda *_args, **_kwargs: ""
     )
-
-    for command in ("start", "restart", "env"):
-        _execute(_parser().parse_args([command]))
-        controller = FakeController.instance
-        assert controller.calls[-1][1].project == "orders-service"
-        assert controller.ensure_project_calls == [
-            ("target" if command == "env" else command, True)
-        ]
-
-
-@pytest.mark.usefixtures("real_git")
-def test_commands_outside_a_repository_keep_the_default_project(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
+    bridges: list[Any] = []
     monkeypatch.setattr(
-        "localcloud_cli.endpoints.environment_config", lambda *_args, **_kwargs: ""
+        "localcloud_cli.mcp_stdio.run",
+        lambda config, **kwargs: bridges.append((config, kwargs["prepare"])),
     )
 
-    _execute(_parser().parse_args(["env"]))
+    for command in ("start", "env"):
+        _execute(_parser().parse_args([command]))
+        controller = FakeController.instance
+        assert controller.calls[-1][1].project == "local-gcp-project"
+    assert FakeController.instance.ensure_project_calls == []
 
-    assert FakeController.instance.calls[0][1].project == "local-gcp-project"
-    assert FakeController.instance.ensure_project_calls == [("target", False)]
+    _execute(_parser().parse_args(["mcp"]))
+
+    provisional, prepare = bridges[0]
+    assert (provisional.project, provisional.project_source) == ("orders-service", "git")
+    _, prepared = prepare()
+    assert prepared.project == "orders-service"
 
 
 def test_debug_start_enables_container_debug_and_startup_metrics() -> None:

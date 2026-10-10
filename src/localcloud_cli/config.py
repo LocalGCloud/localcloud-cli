@@ -611,7 +611,11 @@ def load_config(
     strict_port_validation: bool = False,
     local_only: bool = False,
     port_range: str | None = None,
+    project_from_git: bool = False,
 ) -> LocalCloudConfig:
+    """`project_from_git` lets the git repository containing `directory` name
+    the project when neither --project-id nor this directory's config does
+    (used by `lc mcp`, so each repository's agents get their own project)."""
     source_directory = _source_directory(directory)
     host_paths = paths if paths is not None else HostPaths.from_environment()
     explicit_path = Path(explicit) if explicit is not None else None
@@ -672,6 +676,7 @@ def load_config(
         context.get("project"),
         config_source,
         source_directory,
+        from_git=project_from_git,
     )
     configured_user = context.get("user")
     selected_user = validate_user(
@@ -1102,16 +1107,18 @@ def _select_project(
     configured: object | None,
     config_source: str | None,
     directory: Path,
+    *,
+    from_git: bool,
 ) -> tuple[str, ProjectSource]:
     """--project-id, then context.project from this directory's (or an explicit)
-    config, then the git repository's name, then a shared config's
-    context.project, then the built-in default. The last two are both
+    config, then (with `from_git`) the git repository's name, then a shared
+    config's context.project, then the built-in default. The last two are both
     "default": neither belongs to the directory."""
     if flag is not None:
         return validate_project(flag), "flag"
     if configured is not None and config_source in _PROJECT_PINNING_CONFIG_SOURCES:
         return validate_project(configured), "config"
-    git_project = detect_git_project(directory)
+    git_project = detect_git_project(directory) if from_git else None
     if git_project is not None:
         return git_project, "git"
     if configured is not None:

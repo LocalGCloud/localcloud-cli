@@ -322,9 +322,10 @@ lc mcp install --client all
 
 The bridge answers the client's handshake immediately and connects to LocalCloud
 in the background, starting a stopped or missing runtime (never replacing a
-running one) and creating the selected project. It selects the same project as
-every other command run in the repository, or in the workspace the client
-reports through MCP roots. Until the runtime is ready, the client sees a single
+running one) and creating the selected project. Unlike other commands, it gives
+each git repository its own project: without `--project-id` or a `context.project`
+in the repository's config, it uses the name of the repository it runs in, or of
+the workspace the client reports through MCP roots. Until the runtime is ready, the client sees a single
 `localcloud_runtime_status` tool and other calls return what to fix; when it
 becomes ready the bridge tells the client its tool, resource and prompt lists
 changed. `--no-start` never starts a runtime: the bridge reports

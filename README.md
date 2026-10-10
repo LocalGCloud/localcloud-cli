@@ -323,14 +323,13 @@ This is the one concept worth internalizing, because every flag follows from it:
 | Axis | Flag | What it selects | Scope |
 | :--- | :--- | :--- | :--- |
 | **Data volume** | `--data-volume` | The **durable runtime identity** — a named Docker volume mounted at `/var/lib/localcloud`. Two volumes are two independent LocalClouds. | Docker |
-| **Project** | `--project-id` | A **logical Google Cloud project** inside one runtime. Many projects share a volume. Inside a git repository it defaults to the repository's name, created on first use. | Request |
+| **Project** | `--project-id` | A **logical Google Cloud project** inside one runtime. Many projects share a volume. `start` and MCP startup create a missing one. | Request |
 | **User** | `--user` | The **attributed caller** sent to LocalCloud services, normalized to `<name>@localcloud.invalid` where a principal is required. | Request |
 
 Project and user are request context: switching them is instant and never touches Docker. Defaults are
-`localcloud-data` and `local-developer`. The project is the git repository's name (`Payments_API.v2` becomes
-`payments-api-v2`; worktrees share their repository's) unless `--project-id` or the repository's
-`localcloud.yaml` names one, so `lc env` and the repository's agents always use the same project. Outside
-a repository it is `local-gcp-project`.
+`localcloud-data`, `local-gcp-project`, and `local-developer`. The MCP bridge instead gives each git
+repository its own project, named after the repository, unless `--project-id` or the repository's
+`localcloud.yaml` names one.
 
 ### Ports
 
