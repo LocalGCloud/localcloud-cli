@@ -130,7 +130,19 @@ runtime to the canonical ports when they are free. LocalCloud images that predat
 
 ### Project context (`--project-id`)
 
-A single data volume can host multiple logical projects. Switching request context is immediate:
+A single data volume can host multiple logical projects. Every command selects the project the same
+way, so a repository's terminal commands and its MCP agents share one:
+
+1. `--project-id`;
+2. `context.project` of the directory's `localcloud.yaml`, or of an explicit `--config` / `LOCALCLOUD_CONFIG`;
+3. the git repository's name, slugified into a valid project ID (`Payments_API.v2` becomes
+   `payments-api-v2`). Worktrees use their main checkout's name; a repository at the home directory
+   is ignored;
+4. `context.project` of the home or remembered config, then `local-gcp-project`.
+
+`start`, `restart`, `env`, `console` and an MCP connection create a repository's project on first use;
+`start`, `restart` and MCP also create one named by `--project-id`. Switching request context is
+immediate:
 
 ```sh
 lc start --project-id project-alpha

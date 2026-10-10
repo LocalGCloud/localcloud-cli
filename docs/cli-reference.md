@@ -316,34 +316,60 @@ lc mcp --project-id my-project
 lc mcp --connect-timeout 30
 lc mcp --no-start
 lc mcp install --client cursor
-lc mcp install --client claude-desktop
-lc mcp install --client gemini
+lc mcp install --client claude-code --project
+lc mcp install --client all
 ```
 
-When invoked by an AI coding agent or client, the bridge automatically checks whether the LocalCloud runtime container is running and starts it if stopped. It also automatically ensures that the requested `--project-id` is created within the runtime. To disable automatic startup and require LocalCloud to already be running, pass `--no-start`.
+The bridge answers the client's handshake immediately and connects to LocalCloud
+in the background, starting a stopped or missing runtime (never replacing a
+running one) and creating the selected project. It selects the same project as
+every other command run in the repository, or in the workspace the client
+reports through MCP roots. Until the runtime is ready, the client sees a single
+`localcloud_runtime_status` tool and other calls return what to fix; when it
+becomes ready the bridge tells the client its tool, resource and prompt lists
+changed. `--no-start` never starts a runtime: the bridge reports
+`runtime_not_running` until `lc start` is run.
+
+Requests run concurrently, and a request refused because the runtime restarted
+or moved is sent again once after reconnecting.
 
 When run directly in an interactive terminal, the command reports the resolved
-LocalCloud `/mcp` endpoint on stderr before waiting for it to become ready.
-Startup waits at most 10 seconds by default; `--connect-timeout SECONDS`
-overrides that positive timeout. If the endpoint is still unavailable, the
-command exits with `mcp_connection_timeout`.
+LocalCloud `/mcp` endpoint and then `Connected to LocalCloud at …` on stderr.
+`--connect-timeout SECONDS` (default 10) bounds how long each connection
+attempt waits for the endpoint after the runtime starts; a runtime that is not
+ready by then is reported as `mcp_connection_timeout`.
 
 Once connected, the stdio bridge remains open without a session timeout while
 it accepts requests. Pressing Ctrl-C prints `MCP connection closed.`, exits
 with status 130, and does not emit a traceback. Non-interactive MCP launchers
-receive no lifecycle text, and stdout stays reserved for JSON-RPC traffic.
+receive no lifecycle text, only one stderr line per connection problem, and
+stdout stays reserved for JSON-RPC traffic.
 
 #### `mcp install`
 
-Installs LocalCloud MCP server configuration directly into the target AI client configuration file.
+Installs the LocalCloud MCP server entry into an AI client's configuration. It
+does not need Docker.
 
 ```sh
-lc mcp install --client {claude|claude-desktop|claude-code|cursor|gemini|antigravity|windsurf|cline|all} [--global|--project] [--bare] [--command-path CMD]
+lc mcp install --client {cursor|claude-code|claude-desktop|claude|gemini|antigravity|windsurf|cline|all} [--global|--project] [--bare] [--command-path CMD] [--project-id ID] [--data-volume NAME] [--user NAME]
 ```
 
-User-scoped installation resolves an absolute executable path, preferring permanent system/Homebrew binaries over repository virtualenvs. Project-scoped installation defaults to bare `localcloud`; add `--command-path "$(command -v localcloud)"` for an absolute path. Use `--bare` to request a bare command explicitly. `--client all` writes Cursor, Claude Code, Claude Desktop, Antigravity, and Windsurf configurations even if the applications are absent. Pass `--global` (the default) for user-level configuration or `--project` for repository scope in clients that support it.
+`--global` (the default) writes the user-level configuration, so every
+repository gets LocalCloud and the bridge selects each one's project. `--project`
+writes the repository's file for Cursor, Claude Code, Gemini CLI and
+Antigravity; the other clients have none. `--client all` configures every
+supported client installed on this machine and fails if it finds none. Only
+`--project-id`, `--data-volume` and `--user` values you pass are pinned in the
+entry. Claude Code is configured through `claude mcp add-json` when its CLI is
+installed. Existing settings and other servers are kept, the previous file is
+saved as `<name>.bak`, and each client is reported as installed, updated, or
+already up to date.
 
-Use `--client claude-code` for Claude Code; `claude` is an alias for Claude Desktop. Codex uses `codex mcp add` rather than this installer. For Cline, use its own MCP configuration editor. See the [local client setup guide](mcp-marketplace-guide.md) for commands, connection checks, and GitHub plugin setup.
+User-level entries get the absolute path of a permanent `localcloud` install
+(Homebrew or `~/.local/bin` before a virtualenv); repository entries get the
+bare `localcloud`. `--bare` and `--command-path` override that.
+
+Use `--client claude-code` for Claude Code; `claude` is an alias for Claude Desktop. Codex uses `codex mcp add` rather than this installer. See the [local client setup guide](mcp-marketplace-guide.md) for commands, connection checks, and GitHub plugin setup.
 
 For complete architectural details, client configuration files, and the full MCP tools catalog, see the [MCP Architecture & Guide](mcp.md).
 

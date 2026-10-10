@@ -1,6 +1,6 @@
 # LocalCloud SDK, Terraform, and MCP Integrations
 
-After running `eval "$(lc env)"`, official Google Cloud client libraries detect LocalCloud's loopback emulator endpoints.
+After running `eval "$(lc env)"`, official Google Cloud client libraries detect LocalCloud's loopback emulator endpoints. `lc env` also exports `GOOGLE_CLOUD_PROJECT`: inside a git repository it is the repository's project (its name, for example `orders-service`), elsewhere `local-gcp-project`. The examples use `local-gcp-project`; substitute your project or read `GOOGLE_CLOUD_PROJECT`.
 
 ## Python
 
