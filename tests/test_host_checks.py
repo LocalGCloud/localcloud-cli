@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import subprocess
@@ -82,6 +83,17 @@ def write_colima(
         disk = probe.home / ".colima" / "_lima" / "_disks" / instance
         disk.mkdir(parents=True, exist_ok=True)
         (disk / "datadisk").write_text("")
+
+
+def write_context(probe: HostProbe, name: str, endpoint: str) -> None:
+    """Select a Docker context that connects to `endpoint`, as `docker context use` does."""
+    docker = probe.home / ".docker"
+    meta = docker / "contexts" / "meta" / hashlib.sha256(name.encode()).hexdigest()
+    meta.mkdir(parents=True)
+    (meta / "meta.json").write_text(
+        json.dumps({"Name": name, "Endpoints": {"docker": {"Host": endpoint}}})
+    )
+    (docker / "config.json").write_text(json.dumps({"currentContext": name}))
 
 
 def engine(info: dict[str, Any]) -> Any:
@@ -240,6 +252,57 @@ def test_not_installed_without_homebrew_prints_steps(tmp_path: Path, system: str
     assert ids(findings) == ["docker_not_installed"]
     assert findings[0].fix is None
     assert step in findings[0].steps[0]
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    ["ssh://dev@build-mac.internal", "tcp://10.0.0.7:2375", "tcp://build.internal:2376"],
+)
+@pytest.mark.parametrize("selected_by", ["DOCKER_HOST", "context"])
+def test_remote_engine_gets_no_local_settings_or_fixes(
+    tmp_path: Path, endpoint: str, selected_by: str
+) -> None:
+    probe = mac_probe(
+        tmp_path,
+        tools=("colima",),
+        environ={"DOCKER_HOST": endpoint} if selected_by == "DOCKER_HOST" else {},
+    )
+    if selected_by == "context":
+        write_context(probe, "build", endpoint)
+    # This Mac's own Colima, which does not serve the remote engine named "colima".
+    write_colima(probe, "qemu", False)
+
+    host, findings = inspect(engine(COLIMA_INFO), probe=probe)
+
+    assert host.provider is None
+    assert host.summary() == "unknown"
+    assert findings == []
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    ["unix:///tmp/colima/docker.sock", "tcp://127.0.0.1:2375", "tcp://localhost:2375"],
+)
+def test_local_endpoints_keep_their_settings_and_fixes(tmp_path: Path, endpoint: str) -> None:
+    probe = mac_probe(tmp_path, tools=("colima",), environ={"DOCKER_HOST": endpoint})
+    write_colima(probe, "qemu", False)
+
+    host, findings = inspect(engine(COLIMA_INFO), probe=probe)
+
+    assert host.summary() == "Colima (QEMU)"
+    assert ids(findings) == ["qemu_vm"]
+
+
+def test_stopped_remote_context_is_not_started_as_a_local_app(tmp_path: Path) -> None:
+    probe = mac_probe(tmp_path, tools=("colima",))
+    write_context(probe, "colima-build", "ssh://dev@build-mac.internal")
+    write_colima(probe, "vz", True, profile="build")
+
+    host, findings = inspect(error=NOT_FOUND, probe=probe)
+
+    assert host.reason == "unreachable"
+    assert ids(findings) == ["docker_unreachable"]
+    assert findings[0].fix is None
 
 
 def test_not_running_starts_the_app_the_context_names(tmp_path: Path) -> None:

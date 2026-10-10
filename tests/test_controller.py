@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +19,7 @@ from localcloud_cli.config import (
     ActiveRuntime,
     HostPaths,
     LocalCloudConfig,
+    data_volume_lock,
     load_active_runtime,
     load_config,
     runtime_settings,
@@ -176,15 +179,21 @@ class FakeRuntime:
 
     def preview_remove_commands(
         self,
-        _config: LocalCloudConfig,
+        config: LocalCloudConfig,
         current: RuntimeRecord,
         *,
         remove_volume: bool,
         remove_network: bool = True,
     ) -> tuple[str, ...]:
         self.preview_remove_network.append(remove_network)
-        suffix = " --volume" if remove_volume else ""
-        return (f"docker rm {current.container_id}{suffix}",)
+        # Like DockerRuntime: stop if running, the container, then the volume.
+        commands = (
+            [f"docker stop -t 30 {current.name}"] if current.state == "running" else []
+        )
+        commands.append(f"docker rm {current.container_id}")
+        if remove_volume:
+            commands.append(f"docker volume rm -f {config.data_volume}")
+        return tuple(commands)
 
     def create(
         self,
@@ -1204,8 +1213,10 @@ def test_restart_requires_confirmation_before_alternative_port_replacement(
         "container_port": 5380,
         "protocol": "tcp",
     }
+    assert runtime.stops == 0
     assert runtime.removes == []
     assert runtime.creates == 0
+    assert runtime.record.state == "running"
 
 
 def test_start_requires_confirmation_before_alternative_port_create(
@@ -1241,8 +1252,56 @@ def test_restart_declined_alternative_mapping_does_not_mutate_docker(
         controller.restart(config, confirm_port_mapping=lambda _plan: False)
 
     assert caught.value.code == "port_mapping_declined"
+    assert runtime.stops == 0
     assert runtime.removes == []
     assert runtime.creates == 0
+    assert runtime.record.state == "running"
+
+
+def test_restart_asks_about_alternative_ports_while_the_runtime_still_runs(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    alternative_ports = {
+        f"{port}/tcp": (("127.0.0.1", 5508 + offset),)
+        for offset, port in enumerate(range(5380, 5406))
+    }
+    runtime.record = _record(config, published_ports=alternative_ports)
+    runtime.planned_ports = alternative_ports
+    stops_when_asked: list[int] = []
+
+    def decline(_plan: DockerRunPlan) -> bool:
+        stops_when_asked.append(runtime.stops)
+        return False
+
+    with pytest.raises(HostError) as caught:
+        controller.restart(config, confirm_port_mapping=decline)
+
+    assert caught.value.code == "port_mapping_declined"
+    assert stops_when_asked == [0]
+    assert runtime.stops == 0
+    assert runtime.record.state == "running"
+
+
+def test_restart_preflight_failure_leaves_the_running_runtime_untouched(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    runtime.preflight_error = HostError(
+        "invalid_image", "Selected LocalCloud image could not be pulled"
+    )
+
+    with pytest.raises(HostError) as caught:
+        controller.restart(config, pull=True)
+
+    assert caught.value.code == "invalid_image"
+    assert runtime.stops == 0
+    assert runtime.removes == []
+    assert runtime.creates == 0
+    assert runtime.record.state == "running"
 
 
 def test_restart_dry_run_prints_alternative_mapping_without_confirmation(
@@ -1519,6 +1578,46 @@ def test_reset_all_refuses_and_prints_manual_volume_steps(tmp_path: Path) -> Non
     assert any(line.startswith("localcloud start ") for line in steps)
     assert runtime.removes == []
     assert runtime.creates == 0
+
+
+def test_reset_all_steps_remove_the_stopped_container_before_its_volume(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+
+    with pytest.raises(HostError) as caught:
+        controller.reset(config, all_projects=True)
+
+    # `stop` keeps a persistent runtime's container, and Docker refuses to
+    # delete a volume that a container, running or not, still mounts.
+    assert [
+        step for step in caught.value.details["steps"] if not step.startswith("#")
+    ][:-1] == [
+        f"localcloud stop --data-volume {config.data_volume}",
+        "docker rm container-existing",
+        f"docker volume rm -f {config.data_volume}",
+    ]
+    assert runtime.preview_remove_network == [False]
+
+
+def test_reset_all_steps_leave_removal_to_stop_for_a_managed_ephemeral_runtime(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, yaml="host:\n  data: ephemeral\n")
+    runtime.record = _record(config)
+
+    with pytest.raises(HostError) as caught:
+        controller.reset(config, all_projects=True)
+
+    assert [
+        step for step in caught.value.details["steps"] if not step.startswith("#")
+    ][:-1] == [
+        f"localcloud stop --data-volume {config.data_volume}",
+        f"docker volume rm -f {config.data_volume}",
+    ]
 
 
 def test_reset_all_dry_run_renders_manual_steps_without_mutating(
@@ -2050,6 +2149,39 @@ def test_cleanup_with_nothing_to_clean(tmp_path: Path) -> None:
     assert result["failures"] == []
 
 
+def test_cleanup_reports_resources_that_could_not_be_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+    runtime.doctor_report = {
+        "status": "ok",
+        "invalid_ownership": [
+            {"kind": "container", "name": "broken", "error": {}},
+            {"kind": "network", "name": "busy-network", "error": {}},
+        ],
+    }
+    failure = {
+        "kind": "network",
+        "name": "busy-network",
+        "cause": "network busy-network has active endpoints",
+    }
+    monkeypatch.setattr(
+        runtime,
+        "cleanup_resources",
+        lambda _invalid: {
+            "removed": [{"kind": "container", "name": "broken"}],
+            "failures": [failure],
+        },
+    )
+
+    result = controller.cleanup()
+
+    assert result["status"] == "partial"
+    assert result["docker_resources"] == [{"kind": "container", "name": "broken"}]
+    assert result["failures"] == [failure]
+
+
 def test_start_includes_image_status_and_logs(tmp_path: Path) -> None:
     controller, runtime, paths = _controller(tmp_path)
     config = _config(tmp_path, paths=paths)
@@ -2169,6 +2301,129 @@ def test_tail_runtime_logs_handles_continuous_mode_on_interrupt(tmp_path: Path) 
     runtime.follow_logs = interrupting_logs  # type: ignore[assignment]
     controller._tail_runtime_logs(observer, config, runtime.record, tail=-1.0)
     assert observer.logs == ["log line"]
+
+
+@pytest.mark.parametrize("fate", ["stopped", "removed", "replaced"])
+def test_continuous_tail_ends_once_its_container_no_longer_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fate: str
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    observer = _RuntimeObserver()
+    tailed = runtime.record = _record(config)
+    polls = [0]
+
+    def follow_logs(_config: LocalCloudConfig, _current: RuntimeRecord) -> str:
+        polls[0] += 1
+        if polls[0] == 1:
+            return "log line"
+        if polls[0] == 2:
+            # Tailing holds no lock, so another command gets to the runtime.
+            runtime.record = {
+                "stopped": replace(tailed, state="exited", health=None),
+                "removed": None,
+                "replaced": _record(config, container_id="container-other"),
+            }[fate]
+            return "last line"
+        if fate == "stopped":
+            return ""
+        raise HostError("container_missing", "container no longer exists")
+
+    def sleep(_seconds: float) -> None:
+        assert polls[0] < 10, "still polling a container that no longer runs"
+
+    runtime.follow_logs = follow_logs  # type: ignore[assignment]
+    monkeypatch.setattr(controller_module.time, "sleep", sleep)
+
+    controller._tail_runtime_logs(observer, config, tailed, tail=-1.0)
+
+    assert observer.logs == ["log line", "last line"]
+
+
+def _data_volume_lock_is_free(paths: HostPaths, data_volume: str) -> bool:
+    acquired = threading.Event()
+
+    def take() -> None:
+        with data_volume_lock(paths, data_volume):
+            acquired.set()
+
+    threading.Thread(target=take, daemon=True).start()
+    return acquired.wait(1.0)
+
+
+@pytest.mark.parametrize("command", ["start", "restart"])
+def test_log_tailing_does_not_hold_the_data_volume_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    controller, _runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    lock_free: list[bool] = []
+    recorded: list[str | None] = []
+
+    def tail(*_args: Any, **_kwargs: Any) -> None:
+        lock_free.append(_data_volume_lock_is_free(paths, config.data_volume))
+        active = load_active_runtime(paths)
+        recorded.append(None if active is None else active.container_id)
+
+    monkeypatch.setattr(controller, "_tail_runtime_logs", tail)
+
+    getattr(controller, command)(config, observer=_RuntimeObserver(), tail=-1.0)
+
+    # stop, restart, reset and the MCP auto-start can run while this command
+    # follows logs, and they find the runtime it has already recorded.
+    assert lock_free == [True]
+    assert recorded == ["container-1"]
+
+
+@pytest.mark.parametrize("command", ["start", "restart"])
+@pytest.mark.parametrize("fate", ["stopped", "removed", "replaced"])
+def test_runtime_gone_while_its_logs_were_followed_is_reported_as_stopped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str, fate: str
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+
+    def tail(*_args: Any, **_kwargs: Any) -> None:
+        # Tailing holds no lock, so another command gets to the runtime.
+        assert runtime.record is not None
+        runtime.record = {
+            "stopped": replace(runtime.record, state="exited", health=None),
+            "removed": None,
+            "replaced": _record(config, container_id="container-other"),
+        }[fate]
+
+    monkeypatch.setattr(controller, "_tail_runtime_logs", tail)
+
+    with pytest.raises(HostError) as error:
+        getattr(controller, command)(config, observer=_RuntimeObserver(), tail=-1.0)
+
+    assert error.value.code == "runtime_not_running"
+    assert "stopped while its logs were being followed" in error.value.message
+
+
+@pytest.mark.parametrize("command", ["start", "restart"])
+@pytest.mark.parametrize("tailing", [{"observer": None}, {"tail": 0.0}])
+def test_result_is_read_under_the_data_volume_lock_when_nothing_is_tailed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str, tailing: dict[str, Any]
+) -> None:
+    controller, _runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    lock_free: list[bool] = []
+    payload = controller._payload
+
+    def locked_payload(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        lock_free.append(_data_volume_lock_is_free(paths, config.data_volume))
+        return payload(*args, **kwargs)
+
+    monkeypatch.setattr(controller, "_payload", locked_payload)
+
+    getattr(controller, command)(
+        config, **{"observer": _RuntimeObserver(), "tail": 5.0, **tailing}
+    )
+
+    # Without a tail there is nothing to wait for, so a queued stop cannot
+    # slip in between the start and the result that reports it.
+    assert lock_free == [False]
 
 
 def test_start_when_already_running_skips_tailing_and_observer_starting(
@@ -2338,13 +2593,26 @@ def test_replacement_preview_inspects_different_target_network(
     assert runtime.preview_network_exists[-1] is None
 
 
-def test_restart_stops_running_managed_container_before_preflight_and_creation(
-    tmp_path: Path,
+def test_restart_stops_running_managed_container_after_preflight_and_before_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     controller, runtime, paths = _controller(tmp_path)
     config = _config(tmp_path, paths=paths)
     runtime.record = _record(config, state="running")
     observer = _RuntimeObserver()
+    order: list[str] = []
+
+    def record_call(name: str) -> None:
+        original = getattr(runtime, name)
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            order.append(name)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(runtime, name, call)
+
+    for name in ("preflight_create", "stop", "remove", "create"):
+        record_call(name)
 
     result = controller.restart(config, observer=observer)
 
@@ -2353,6 +2621,7 @@ def test_restart_stops_running_managed_container_before_preflight_and_creation(
     assert observer.stopping_calls[0][0] == config
     assert observer.stopping_calls[0][1].container_id == "container-existing"
     assert config in observer.starting_calls
+    assert order == ["preflight_create", "stop", "remove", "create"]
     assert runtime.stops == 1
     assert runtime.creates == 1
 
@@ -2680,6 +2949,114 @@ def test_identity_stop_removes_relays_while_localcloud_is_stopped(identity) -> N
     assert result["sessions_ended"] == []
     assert result["failures"] == [
         {"session": "wib-1", "cause": "LocalCloud is not running; the session ends when it expires"}
+    ]
+
+
+def test_identity_stop_reports_a_relay_it_could_not_remove(
+    identity, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller, runtime, config, _probes = identity
+    controller.identity_env(config)
+    controller.identity_env(config, account="other@local-gcp-project.iam.gserviceaccount.com")
+    remove = runtime.remove_identity_relay
+    stuck = {"lc-identity-1", "lc-identity-2"}
+
+    def remove_unless_stuck(relay: Any) -> None:
+        if relay.name in stuck:
+            raise HostError(
+                "identity_relay_remove_failed", "Could not remove the LocalCloud identity relay"
+            )
+        remove(relay)
+
+    monkeypatch.setattr(runtime, "remove_identity_relay", remove_unless_stuck)
+
+    nothing = controller.stop_identity(config)
+    assert nothing["status"] == "partial", "relays that are still there were not stopped"
+    assert nothing["relays_removed"] == [] and nothing["unset_variables"] == []
+    assert _IdentityJava.deleted == [], "a relay that is still there keeps its session"
+
+    stuck.discard("lc-identity-2")
+    some = controller.stop_identity(config)
+    assert some["status"] == "partial"
+    assert some["relays_removed"] == ["lc-identity-2"]
+    assert some["sessions_ended"] == ["wib-2"]
+    assert some["failures"] == [
+        {"container": "lc-identity-1", "cause": "Could not remove the LocalCloud identity relay"}
+    ]
+    assert list(runtime.relays) == ["lc-identity-1"]
+
+
+def test_identity_env_rollback_leaves_the_relay_that_replaced_its_own(
+    identity, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller, runtime, config, _probes = identity
+    poll = _IdentityJava.identity_session
+    second: dict[str, Any] = {}
+
+    def replaced_while_waiting(self: Any, session_id: str) -> dict[str, Any]:
+        if session_id == "wib-1" and not second:
+            # Another `lc env --identity` replaces this one while it waits for its relay.
+            other = threading.Thread(
+                target=lambda: second.update(controller.identity_env(config))
+            )
+            other.start()
+            other.join(5.0)
+        return poll(self, session_id)
+
+    monkeypatch.setattr(_IdentityJava, "identity_session", replaced_while_waiting)
+
+    with pytest.raises(HostError) as caught:
+        controller.identity_env(config)
+
+    assert caught.value.code == "identity_session_failed"
+    assert second["session"]["id"] == "wib-2"
+    assert list(runtime.relays) == ["lc-identity-2"], "only its own relay is rolled back"
+    assert _IdentityJava.sessions["wib-2"]["state"] == "ACTIVE"
+
+
+def test_identity_relay_changes_hold_the_data_volume_lock_and_the_readiness_wait_does_not(
+    identity, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller, runtime, config, _probes = identity
+    lock = controller_module.data_volume_lock
+    held: list[str] = []
+    seen: list[tuple[str, bool]] = []
+
+    @contextmanager
+    def tracked(paths: HostPaths, data_volume: str) -> Any:
+        with lock(paths, data_volume):
+            held.append(data_volume)
+            try:
+                yield
+            finally:
+                held.remove(data_volume)
+
+    def watch(step: str) -> None:
+        call = getattr(runtime, step)
+
+        def watched(*args: Any, **kwargs: Any) -> Any:
+            seen.append((step, held == [config.data_volume]))
+            return call(*args, **kwargs)
+
+        monkeypatch.setattr(runtime, step, watched)
+
+    monkeypatch.setattr(controller_module, "data_volume_lock", tracked)
+    for step in ("start_identity_relay", "remove_identity_relay", "identity_relay_state"):
+        watch(step)
+
+    controller.identity_env(config)
+    controller.identity_env(config)
+    controller.stop_identity(config)
+
+    # start, stop, restart and reset hold the same lock, so none of them runs while a relay
+    # is replaced or removed; the wait for a relay's readiness leaves the lock to them.
+    assert seen == [
+        ("start_identity_relay", True),
+        ("identity_relay_state", False),
+        ("remove_identity_relay", True),
+        ("start_identity_relay", True),
+        ("identity_relay_state", False),
+        ("remove_identity_relay", True),
     ]
 
 

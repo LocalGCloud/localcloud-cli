@@ -1120,6 +1120,22 @@ def _result_failure_message(
         and any(fix.get("status") == "failed" for fix in result.get("fixes") or ())
     ):
         return "A setup fix failed; see Fixes"
+    if (
+        args.command == "env"
+        and getattr(args, "identity", False)
+        and getattr(args, "stop", False)
+        and isinstance(result, dict)
+        and result.get("status") == "partial"
+    ):
+        stuck = [
+            str(failure["container"])
+            for failure in result.get("failures") or ()
+            if failure.get("container")
+        ]
+        return (
+            f"Could not remove {len(stuck)} identity relay(s), which may still be running: "
+            f"{', '.join(stuck)}"
+        )
     return None
 
 
@@ -1626,8 +1642,10 @@ def _tail_seconds(value: str) -> float:
         raise argparse.ArgumentTypeError(
             f"Tail duration must be a valid number of seconds: {value!r}"
         ) from error
-    if val < 0:
-        raise argparse.ArgumentTypeError("Tail duration in seconds must be zero or greater")
+    if not math.isfinite(val) or val < 0:
+        raise argparse.ArgumentTypeError(
+            "Tail duration in seconds must be a finite number, zero or greater"
+        )
     return val
 
 

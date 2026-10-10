@@ -11,6 +11,8 @@ checks to ``CHECKS`` as more setup-related failures are learned.
 
 from __future__ import annotations
 
+import hashlib
+import ipaddress
 import json
 import os
 import platform
@@ -22,6 +24,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
+from urllib.parse import urlparse
 
 from .errors import HostError
 
@@ -109,6 +112,18 @@ class HostProbe:
         config = _load_json(self.read_text(self.home / ".docker" / "config.json")) or {}
         return str(config.get("currentContext") or "") or None
 
+    def context_endpoint(self, name: str | None) -> str | None:
+        """The Docker endpoint a context connects to, when Docker recorded one."""
+        if not name or name == "default":
+            return None
+        # Docker stores each context under the SHA-256 of its name.
+        directory = hashlib.sha256(name.encode("utf-8")).hexdigest()
+        meta = self.home / ".docker" / "contexts" / "meta" / directory / "meta.json"
+        endpoints = (_load_json(self.read_text(meta)) or {}).get("Endpoints")
+        docker = endpoints.get("docker") if isinstance(endpoints, dict) else None
+        host = docker.get("Host") if isinstance(docker, dict) else None
+        return host if isinstance(host, str) and host else None
+
 
 def default_probe() -> HostProbe:
     """The probe checks use when none is given; tests replace this."""
@@ -193,13 +208,16 @@ def describe_host(
     docker_host = str(probe.environ.get("DOCKER_HOST") or "").strip()
     # DOCKER_HOST overrides the context, as it does for the docker CLI.
     context = None if docker_host else probe.docker_context()
+    # An engine on another machine is none of this host's apps, whatever it is
+    # named, so their settings and fixes here must not be attached to it.
+    local = not _is_remote(docker_host or probe.context_endpoint(context))
     provider, profile = None, None
-    if info:
+    if info and local:
         if "Docker Desktop" in str(info.get("OperatingSystem") or ""):
             provider = "docker-desktop"
         else:
             provider, profile = _provider(str(info.get("Name") or ""))
-    if provider is None and context:
+    if provider is None and context and local:
         provider, profile = _provider(context)
     # Nothing names the app, so start the only one installed.
     if (
@@ -238,6 +256,25 @@ def describe_host(
         installed=installed,
         facts=facts,
     )
+
+
+def _is_remote(endpoint: str | None) -> bool:
+    """Whether a Docker endpoint is on another machine: SSH, or TCP to another host."""
+    if not endpoint:
+        return False
+    try:
+        parsed = urlparse(endpoint)
+        host = (parsed.hostname or "").lower()
+    except ValueError:
+        return True
+    if parsed.scheme == "ssh":
+        return True
+    if parsed.scheme not in {"tcp", "http", "https"} or host in {"", "localhost"}:
+        return False
+    try:
+        return not ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return True
 
 
 def _provider(name: str) -> tuple[str | None, str | None]:

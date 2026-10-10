@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import stat
 import subprocess
 from typing import Any
 
@@ -334,6 +335,52 @@ def test_merge_refuses_files_it_cannot_merge_and_leaves_them_alone(
     assert path.read_text(encoding="utf-8") == content
 
 
+def test_merge_treats_a_null_server_list_as_empty(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text('{"theme": "dark", "mcpServers": null}', encoding="utf-8")
+    entry = {"command": "localcloud", "args": ["mcp"]}
+
+    assert update_mcp_config_file(path, "localcloud", entry) == "installed"
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved == {"theme": "dark", "mcpServers": {"localcloud": entry}}
+
+
+@pytest.mark.parametrize("mode", [0o600, 0o640])
+def test_merge_keeps_the_permissions_of_an_existing_file(tmp_path: Path, mode: int) -> None:
+    path = tmp_path / "mcp.json"
+    path.write_text(
+        json.dumps({"mcpServers": {"other": {"command": "node", "env": {"TOKEN": "secret"}}}}),
+        encoding="utf-8",
+    )
+    path.chmod(mode)
+
+    update_mcp_config_file(path, "localcloud", {"command": "localcloud", "args": []})
+
+    assert stat.S_IMODE(path.stat().st_mode) == mode
+
+
+def test_merge_creates_a_file_only_its_owner_can_read(tmp_path: Path) -> None:
+    path = tmp_path / "mcp.json"
+
+    update_mcp_config_file(path, "localcloud", {"command": "localcloud", "args": []})
+
+    assert stat.S_IMODE(path.stat().st_mode) & 0o077 == 0
+
+
+def test_merge_reports_a_file_it_cannot_write(tmp_path: Path) -> None:
+    # Its directory cannot be created below a regular file.
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    path = blocker / "mcp.json"
+
+    with pytest.raises(HostError) as caught:
+        update_mcp_config_file(path, "localcloud", {"command": "localcloud", "args": []})
+
+    assert caught.value.code == "client_config_write_failed"
+    assert str(path) in caught.value.message
+
+
 # Claude Code ---------------------------------------------------------------
 
 
@@ -404,6 +451,16 @@ def test_claude_code_leaves_a_matching_entry_alone(home: Path, monkeypatch: pyte
     assert cli.calls == []
 
 
+def test_claude_code_treats_a_null_server_list_as_empty(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (home / ".claude.json").write_text('{"mcpServers": null}', encoding="utf-8")
+    cli = _ClaudeCli()
+
+    assert _install_claude(home, monkeypatch, cli)["status"] == "installed"
+    assert [call[0][:2] for call in cli.calls] == [["mcp", "add-json"]]
+
+
 def test_claude_code_cli_failure_is_reported_not_worked_around(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -471,6 +528,27 @@ def test_all_with_project_scope_skips_user_only_clients(home: Path, tmp_path: Pa
         ("cursor", "installed"),
         ("windsurf", "skipped"),
     ]
+
+
+def test_all_reports_a_config_it_cannot_write_and_continues(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (home / ".cursor").mkdir()
+    (home / ".codeium" / "windsurf").mkdir(parents=True)
+    (home / ".cline" / "data").mkdir(parents=True)
+    # Windsurf's configuration directory cannot be created below a regular file.
+    blocker = home / "not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(blocker))
+
+    result = install_mcp_server(client="all", command_override="localcloud")
+
+    assert [(r["client"], r["status"]) for r in result["results"]] == [
+        ("cursor", "installed"),
+        ("windsurf", "failed"),
+        ("cline", "installed"),
+    ]
+    assert str(blocker / "devin" / "mcp_config.json") in result["results"][1]["error"]
 
 
 def test_all_without_detected_clients_writes_nothing(home: Path) -> None:

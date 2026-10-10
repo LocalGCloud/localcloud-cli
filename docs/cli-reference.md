@@ -246,8 +246,11 @@ the one the Console uses, so it does not require `mcp.destructive`. It never
 touches the Docker data volume. `lc reset --all-projects` does not mutate
 anything: recreating every project means deleting the data volume, and
 localcloud never runs `docker volume rm` for you. It prints the steps (`lc stop`,
-`docker volume rm -f <volume>`, `lc start`) and exits non-zero so nothing is
-destroyed by accident.
+`docker rm -f -v <container>`, `docker volume rm -f <volume>`, `lc start`) and
+exits non-zero so nothing is destroyed by accident. The container is removed
+first because Docker refuses to delete a volume that a stopped container still
+mounts; an ephemeral runtime has no `docker rm` step, because `lc stop` already
+removes it.
 
 ### `stop`
 

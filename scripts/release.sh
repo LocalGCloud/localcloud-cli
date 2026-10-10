@@ -186,7 +186,7 @@ build_native() {
 }
 
 confirm_release_tree_state() {
-    release_commit=$1
+    release_source=$1
     tree_status=$(git status --porcelain --untracked-files=normal)
     [ -n "$tree_status" ] || return 0
 
@@ -196,10 +196,10 @@ confirm_release_tree_state() {
     fi
 
     printf 'warning: working tree is not clean.\n' >&2
-    printf 'Published artifacts will be built from commit %s; these local changes are excluded:\n' \
-        "$release_commit" >&2
+    printf 'Published artifacts will be built from %s; these local changes are excluded:\n' \
+        "$release_source" >&2
     printf '%s\n' "$tree_status" >&2
-    printf 'Release commit %s anyway? [y/N] ' "$release_commit" >&2
+    printf 'Release %s anyway? [y/N] ' "$release_source" >&2
 
     confirmation=
     if ! IFS= read -r confirmation; then
@@ -481,6 +481,8 @@ release_version() {
             ! git diff --cached --quiet -- src/localcloud_cli/__init__.py; then
             fail "src/localcloud_cli/__init__.py has uncommitted changes; commit or stash them first"
         fi
+        # Ask before the bump is pushed; the bump leaves the tree status as it is.
+        confirm_release_tree_state "a version bump on commit $head_commit"
         python_runner="python3"
         if ! command -v python3 >/dev/null 2>&1; then
             python_runner="python"
@@ -501,14 +503,16 @@ if count != 1:
 p.write_text(new_content, encoding='utf-8')
 "
         git add src/localcloud_cli/__init__.py
-        git commit -m "chore(release): bump version to $VERSION"
+        # The path keeps other staged changes out of the release commit.
+        git commit -m "chore(release): bump version to $VERSION" \
+            -- src/localcloud_cli/__init__.py
         git push "$SOURCE_REMOTE" "$SOURCE_BRANCH"
         head_commit=$(git rev-parse HEAD)
         remote_commit=$(git rev-parse "$SOURCE_REMOTE/$SOURCE_BRANCH")
         source_version=$VERSION
     fi
 
-    confirm_release_tree_state "$head_commit"
+    confirm_release_tree_state "commit $head_commit"
     [ "$source_version" = "$VERSION" ] ||
         fail "source version $source_version does not match $VERSION"
 
@@ -519,7 +523,7 @@ p.write_text(new_content, encoding='utf-8')
 
     build_native_executable
     smoke_native_executable "$VERSION"
-    confirm_release_tree_state "$head_commit"
+    confirm_release_tree_state "commit $head_commit"
 
     existing_release=$(published_release_tag)
     prepare_tag "$head_commit" "$existing_release"

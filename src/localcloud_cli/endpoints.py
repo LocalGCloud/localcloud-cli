@@ -497,10 +497,13 @@ def _validate_no_stale_canonical_endpoints(
     endpoint_map: dict[str, Any],
 ) -> None:
     _validate_no_unpublished_canonical_endpoints(value, endpoint_map)
+    # A canonical port that is also a host port is where another service's
+    # rewritten endpoint lands, so finding it does not mean it was missed.
+    host_ports = {str(host_port) for host_port in endpoint_map.values()}
     serialized = value if isinstance(value, str) else json.dumps(value)
     for canonical_port, host_port in endpoint_map.items():
         canonical = str(canonical_port)
-        if canonical == str(host_port):
+        if canonical in host_ports:
             continue
         stale_host = re.search(
             rf"(?:localhost|127\.0\.0\.1|\[::1\]):{re.escape(canonical)}(?!\d)",

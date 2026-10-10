@@ -863,6 +863,158 @@ def test_a_workspace_without_a_project_keeps_the_current_one(tmp_path: Path) -> 
     assert adapter.config is not None and adapter.config.project == PROJECT
 
 
+def _roots_answer(request: dict[str, Any], *uris: str) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": request["id"],
+        "result": {"roots": [{"uri": uri} for uri in uris]},
+    }
+
+
+@pytest.mark.usefixtures("real_git")
+@pytest.mark.parametrize(
+    "uri",
+    ["file://[bad/x", "file://[not-an-address]/x", f"file:///{'a' * 300}/x"],
+    ids=["unclosed-host", "invalid-host", "unreadable-path"],
+)
+def test_a_root_that_cannot_be_read_is_skipped(tmp_path: Path, uri: str) -> None:
+    repository = _git_repository(tmp_path / "billing-api")
+    adapter = McpAdapter(replace(CONFIG, project_source="default"), controller=RunningController())
+    request = _initialized_with_roots(adapter)
+
+    adapter.handle_response(_roots_answer(request, uri, repository.as_uri()))
+
+    assert adapter.config is not None and adapter.config.project == "billing-api"
+
+
+class _ProjectJava(FakeJava):
+    """Answers every request, recording the project each one was sent to."""
+
+    sent: list[tuple[str, str]] = []
+
+    def forward(self, message: dict[str, Any], **_kwargs: Any) -> dict[str, Any] | None:
+        if "id" in message:
+            _ProjectJava.sent.append((message["method"], self.project))
+        return {"jsonrpc": "2.0", "id": message.get("id"), "result": {}}
+
+
+class _SwitchController(RunningController):
+    """Holds the switch to `billing-api` until released, or fails it."""
+
+    def __init__(self, failure: Exception | None = None):
+        super().__init__()
+        self.failure = failure
+        self.switching = threading.Event()
+        self.release = threading.Event()
+
+    def target(self, config: LocalCloudConfig, **kwargs: Any) -> dict[str, Any]:
+        if config.project == "billing-api":
+            self.switching.set()
+            if self.failure is not None:
+                raise self.failure
+            self.release.wait(5)
+        return super().target(config, **kwargs)
+
+
+def _switching_adapter(
+    monkeypatch: pytest.MonkeyPatch, controller: _SwitchController
+) -> tuple[McpAdapter, dict[str, Any]]:
+    _ProjectJava.sent = []
+    monkeypatch.setattr(mcp_module, "JavaMcpClient", _ProjectJava)
+    adapter = McpAdapter(replace(CONFIG, project_source="default"), controller=controller)
+    return adapter, _initialized_with_roots(adapter)
+
+
+@pytest.mark.usefixtures("real_git")
+@pytest.mark.parametrize("method", ["tools/call", "resources/read", "prompts/get"])
+def test_a_request_during_a_project_switch_waits_for_the_new_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    monkeypatch.setattr(mcp_module, "_ROOTS_WAIT", 0.05)
+    repository = _git_repository(tmp_path / "billing-api")
+    controller = _SwitchController()
+    adapter, request = _switching_adapter(monkeypatch, controller)
+    answer = threading.Thread(
+        target=adapter.handle_response, args=(_roots_answer(request, repository.as_uri()),)
+    )
+    answer.start()
+    assert controller.switching.wait(5)
+
+    threading.Timer(0.3, controller.release.set).start()
+    response = adapter.handle(_request(2, method))
+    answer.join(5)
+
+    assert response == {"jsonrpc": "2.0", "id": 2, "result": {}}
+    assert _ProjectJava.sent[-1] == (method, "billing-api")
+    assert adapter.status()["state"] == "ready"
+
+
+@pytest.mark.usefixtures("real_git")
+def test_a_workspace_reported_during_a_project_switch_is_selected_next(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = _git_repository(tmp_path / "billing-api")
+    second = _git_repository(tmp_path / "orders-api")
+    controller = _SwitchController()
+    adapter, request = _switching_adapter(monkeypatch, controller)
+    answer = threading.Thread(
+        target=adapter.handle_response, args=(_roots_answer(request, first.as_uri()),)
+    )
+    answer.start()
+    assert controller.switching.wait(5)
+
+    adapter.handle({"jsonrpc": "2.0", "method": "notifications/roots/list_changed"})
+    (again,) = adapter.drain_outbox()
+    adapter.handle_response(_roots_answer(again, second.as_uri()))
+    controller.release.set()
+    answer.join(5)
+    adapter.handle(_request(2, "tools/call", name="localcloud_get_env"))
+
+    assert "orders-api" in controller.ensured
+    assert _ProjectJava.sent[-1] == ("tools/call", "orders-api")
+
+
+@pytest.mark.parametrize("method", ["tools/call", "resources/read", "prompts/get"])
+def test_a_client_that_never_reports_its_workspace_delays_a_request_briefly(
+    monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    monkeypatch.setattr(mcp_module, "_ROOTS_WAIT", 0.2)
+    adapter, _ = _switching_adapter(monkeypatch, _SwitchController())
+
+    started = time.monotonic()
+    response = adapter.handle(_request(2, method))
+    waited = time.monotonic() - started
+
+    assert response == {"jsonrpc": "2.0", "id": 2, "result": {}}
+    assert 0.15 < waited < 2.0
+    assert _ProjectJava.sent[-1] == (method, PROJECT)
+
+
+@pytest.mark.usefixtures("real_git")
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    [
+        (HostError("runtime_not_running", "LocalCloud stopped"), "runtime_not_running"),
+        (RuntimeError("boom"), "unexpected_error"),
+    ],
+    ids=["host-error", "bug"],
+)
+def test_a_failed_project_switch_leaves_the_bridge_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception, code: str
+) -> None:
+    repository = _git_repository(tmp_path / "billing-api")
+    adapter, request = _switching_adapter(monkeypatch, _SwitchController(failure))
+
+    adapter.handle_response(_roots_answer(request, repository.as_uri()))
+    started = time.monotonic()
+    response = adapter.handle(_request(2, "tools/call", name="localcloud_get_env"))
+
+    assert time.monotonic() - started < 1.0
+    assert response is not None and response["result"]["isError"] is True
+    assert adapter.status()["error"]["code"] == code
+    assert "tools/call" not in [method for method, _ in _ProjectJava.sent]
+
+
 # Stdio server --------------------------------------------------------------
 
 
@@ -962,3 +1114,52 @@ def test_a_cancelled_request_gets_no_response(monkeypatch: pytest.MonkeyPatch) -
     )
 
     assert [message["id"] for message in written] == [2]
+
+
+@pytest.mark.parametrize("request_id", [{}, [1]], ids=["object", "array"])
+def test_a_malformed_cancellation_does_not_end_the_bridge(
+    monkeypatch: pytest.MonkeyPatch, request_id: Any
+) -> None:
+    written = _serve(
+        monkeypatch,
+        RunningController(),
+        [
+            (
+                0.0,
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/cancelled",
+                    "params": {"requestId": request_id},
+                },
+            ),
+            (0.1, _request(1, "ping")),
+        ],
+    )
+
+    assert written == [{"jsonrpc": "2.0", "id": 1, "result": {}}]
+
+
+def test_a_failing_handler_does_not_end_the_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
+    handle = McpAdapter.handle
+
+    def failing(adapter: McpAdapter, message: dict[str, Any]) -> dict[str, Any] | None:
+        if str(message.get("method")).startswith("broken/") or "method" not in message:
+            raise RuntimeError("boom")
+        return handle(adapter, message)
+
+    monkeypatch.setattr(McpAdapter, "handle", failing)
+    monkeypatch.setattr(McpAdapter, "handle_response", failing)
+
+    written = _serve(
+        monkeypatch,
+        RunningController(),
+        [
+            (0.0, {"jsonrpc": "2.0", "id": 9, "result": {}}),
+            (0.0, {"jsonrpc": "2.0", "method": "broken/notification"}),
+            (0.0, _request(1, "broken/request")),
+            (0.1, _request(2, "ping")),
+        ],
+    )
+
+    assert [message["id"] for message in written] == [1, 2]
+    assert written[0]["error"]["code"] == -32603

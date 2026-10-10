@@ -3,15 +3,58 @@ from __future__ import annotations
 import json
 import runpy
 import sys
+import sysconfig
 import types
+from importlib import metadata
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_spec_trims_build_only_payloads(monkeypatch: Any, tmp_path: Path) -> None:
+@pytest.fixture(autouse=True)
+def license_environment(monkeypatch: Any, tmp_path: Path) -> Path:
+    """An interpreter and site-packages where every distribution has one license file."""
+    root = tmp_path / "license-environment"
+    (root / "stdlib").mkdir(parents=True)
+    (root / "stdlib" / "LICENSE.txt").write_text("interpreter license\n", encoding="utf-8")
+
+    def distribution(name: str) -> metadata.Distribution:
+        info = root / "site-packages" / f"{name}-1.dist-info"
+        (info / "licenses").mkdir(parents=True, exist_ok=True)
+        (info / "licenses" / "LICENSE").write_text("license\n", encoding="utf-8")
+        (info / "RECORD").write_text(
+            f"{info.name}/licenses/LICENSE,,\n{info.name}/RECORD,,\n", encoding="utf-8"
+        )
+        return metadata.Distribution.at(info)
+
+    stdlib_path = sysconfig.get_path
+    monkeypatch.setattr(metadata, "distribution", distribution)
+    monkeypatch.setattr(
+        sysconfig,
+        "get_path",
+        lambda name, *args, **kwargs: str(root / "stdlib")
+        if name == "stdlib"
+        else stdlib_path(name, *args, **kwargs),
+    )
+    return root
+
+
+def _notice_components() -> list[str]:
+    notices = (PROJECT_ROOT / "THIRD_PARTY_NOTICES").read_text(encoding="utf-8")
+    return [
+        line.split(" | ")[0]
+        for line in notices.splitlines()
+        if line.count(" | ") == 3 and not line.startswith(("Package | ", "------- | "))
+    ]
+
+
+def test_spec_trims_build_only_payloads(
+    monkeypatch: Any, tmp_path: Path, license_environment: Path
+) -> None:
     calls: dict[str, Any] = {}
     release_metadata_path = tmp_path / "build" / "_release.json"
     collected_datas = [("mcp/source.py", "mcp")]
@@ -88,19 +131,35 @@ def test_spec_trims_build_only_payloads(monkeypatch: Any, tmp_path: Path) -> Non
 
     _, analysis_kwargs = calls["analysis"]
     assert analysis_kwargs["binaries"] == []
-    assert analysis_kwargs["datas"] == localcloud_metadata + [
-        (
-            str(
-                PROJECT_ROOT
-                / "src"
-                / "localcloud_cli"
-                / "defaults"
-                / "localcloud.v1.yaml"
-            ),
-            "localcloud_cli/defaults",
-        ),
+    defaults = PROJECT_ROOT / "src" / "localcloud_cli" / "defaults"
+    own_datas = localcloud_metadata + [
+        (str(defaults / "localcloud.v1.yaml"), "localcloud_cli/defaults"),
+        (str(defaults / "localcloud.v1.json"), "localcloud_cli/defaults"),
         (str(release_metadata_path), "localcloud_cli"),
     ]
+    assert analysis_kwargs["datas"][: len(own_datas)] == own_datas
+    # Third-party distributions contribute their license files, not their metadata.
+    components = _notice_components()
+    assert {"CPython", "pyyaml", "pyinstaller"} <= set(components)
+    site_packages = license_environment / "site-packages"
+    assert analysis_kwargs["datas"][len(own_datas) :] == [
+        (
+            str(license_environment / "stdlib" / "LICENSE.txt"),
+            "third_party_licenses/CPython",
+        )
+        if component == "CPython"
+        else (
+            str(site_packages / f"{component}-1.dist-info" / "licenses" / "LICENSE"),
+            f"third_party_licenses/{component}",
+        )
+        for component in components
+    ]
+    # The frozen bundle carries every packaged default, as the wheel does.
+    assert {
+        source
+        for source, target in analysis_kwargs["datas"]
+        if target == "localcloud_cli/defaults"
+    } == {str(path) for path in defaults.iterdir() if path.is_file()}
     assert json.loads(release_metadata_path.read_text(encoding="utf-8")) == {
         "commit": "0123456789ab",
         "release_date": "2026-08-31",
@@ -189,4 +248,39 @@ def test_spec_falls_back_to_empty_when_git_fails(
 
     data = json.loads(release_metadata_path.read_text(encoding="utf-8"))
     assert data == {}
+
+
+def test_spec_refuses_a_notices_row_without_a_license_file(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    hooks = types.ModuleType("PyInstaller.utils.hooks")
+    hooks.collect_all = lambda *a, **kw: ([], [], [])  # type: ignore[attr-defined]
+    hooks.copy_metadata = lambda *a, **kw: []  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "PyInstaller", types.ModuleType("PyInstaller"))
+    monkeypatch.setitem(sys.modules, "PyInstaller.utils", types.ModuleType("PyInstaller.utils"))
+    monkeypatch.setitem(sys.modules, "PyInstaller.utils.hooks", hooks)
+    with_license = metadata.distribution
+
+    def distribution(name: str) -> metadata.Distribution:
+        if name == "pyyaml":
+            raise metadata.PackageNotFoundError(name)
+        return with_license(name)
+
+    monkeypatch.setattr(metadata, "distribution", distribution)
+    analysed: list[Any] = []
+
+    with pytest.raises(RuntimeError, match="no license file to ship for: pyyaml$"):
+        runpy.run_path(
+            str(PROJECT_ROOT / "localcloud.spec"),
+            init_globals={
+                "SPECPATH": str(PROJECT_ROOT),
+                "workpath": str(tmp_path / "build"),
+                "Analysis": lambda *a, **kw: analysed.append(kw),
+                "PYZ": lambda *args, **kwargs: object(),
+                "EXE": lambda *args, **kwargs: object(),
+                "COLLECT": lambda *args, **kwargs: object(),
+            },
+        )
+
+    assert analysed == []
 

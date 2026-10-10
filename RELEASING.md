@@ -118,7 +118,7 @@ signs every asset before the workflow deletes and recreates the GitHub release.
 
 The script:
 
-- automatically updates `__version__` in `src/localcloud_cli/__init__.py`, commits, and pushes to `origin/main` if the version does not already match `VERSION`;
+- automatically updates `__version__` in `src/localcloud_cli/__init__.py`, commits only that file, and pushes to `origin/main` if the version does not already match `VERSION`;
 - validates the branch, remote revision, committed version, lockfile, and
   notices;
 - warns and asks for confirmation when the local working tree is dirty;
@@ -181,8 +181,10 @@ test "$(uv run --frozen lc --version)" = "localcloud ${VERSION}"
 uv run --frozen --extra test python -m pytest
 uv run --frozen --extra release python scripts/generate-third-party-notices.py
 git diff --exit-code -- THIRD_PARTY_NOTICES
+uv run --frozen --extra release python scripts/check-third-party-licenses.py
 uv run --frozen --extra release python -m PyInstaller --clean --noconfirm localcloud.spec
 install -m 0755 scripts/localcloud-launcher.sh dist/localcloud
+uv run --frozen python scripts/check-mcp-handshake.py dist/localcloud --timeout 30
 uv run --frozen python scripts/check-startup-feedback.py dist/localcloud --timeout 2.0
 case "$(./dist/localcloud --version)" in "localcloud ${VERSION}"*) ;; *) exit 1 ;; esac
 ./dist/localcloud --help >/dev/null

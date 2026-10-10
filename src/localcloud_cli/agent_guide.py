@@ -145,9 +145,12 @@ Project and runtime lifecycle
 `localcloud reset` clears only the selected project, preserving every other
 project on the selected data volume. Use Console Re-seed Data to reload samples.
 `localcloud reset --all-projects` does not mutate anything. It prints the manual
-steps to recreate every project on the volume (stop, `docker volume rm -f`,
-start) and exits non-zero, because localcloud never deletes a Docker data volume
-itself. It is offered only for a fully CLI-managed runtime;
+steps to recreate every project on the volume (stop, `docker rm -f -v` the
+stopped container, `docker volume rm -f`, start) and exits non-zero, because
+localcloud never deletes a Docker data volume itself. Docker refuses to delete a
+volume that a stopped container still mounts, so run the steps in order; an
+ephemeral runtime has no `docker rm` step, because `stop` already removes it.
+It is offered only for a fully CLI-managed runtime;
 attached containers, networks, or volumes are rejected before the steps print.
 Persistent data survives stop/start and safe managed configuration replacement.
 `stop` may stop an attached runtime but never removes Docker resources the CLI

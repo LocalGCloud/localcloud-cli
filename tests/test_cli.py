@@ -1103,6 +1103,32 @@ def test_main_cleanup_partial_returns_failure_with_result(
     assert "Status    Partial" in captured.out
     assert "Failures" in captured.out
 
+
+def test_reset_all_projects_prints_its_manual_steps_without_verbose(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    steps = [
+        "localcloud stop --data-volume localcloud-data",
+        "# deletes ALL projects and data on this volume:",
+        "docker rm -f -v localcloud",
+        "docker volume rm -f localcloud-data",
+        "localcloud start --data-volume localcloud-data",
+    ]
+
+    def refuse(_self: FakeController, _config: Any, **_kwargs: Any) -> Any:
+        raise HostError(
+            "manual_volume_removal_required",
+            "run the listed steps yourself, then start again.",
+            {"data_volume": "localcloud-data", "steps": steps},
+        )
+
+    monkeypatch.setattr(FakeController, "reset", refuse)
+
+    assert main(["reset", "--all-projects"]) == 2
+    printed = [line.strip() for line in capsys.readouterr().err.splitlines()]
+    assert printed[-len(steps) :] == [f"Steps: {steps[0]}", *steps[1:]]
+
 def test_restart_and_start_pull_flags() -> None:
     parser = _parser()
     assert parser.parse_args(["restart"]).pull is False
@@ -1269,6 +1295,18 @@ def test_start_and_restart_tail_flags() -> None:
         parser.parse_args(["start", "--tail", "-5"])
     with pytest.raises(SystemExit):
         parser.parse_args(["start", "--tail", "invalid"])
+
+
+@pytest.mark.parametrize("command", ["start", "restart"])
+@pytest.mark.parametrize("value", ["nan", "inf", "Infinity", "1e999"])
+def test_tail_rejects_durations_that_would_never_end(
+    command: str, value: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as caught:
+        _parser().parse_args([command, "--tail", value])
+
+    assert caught.value.code == 2
+    assert "must be a finite number, zero or greater" in capsys.readouterr().err
 
 
 def test_accept_dynamic_ports_flag_dispatches_noninteractive_confirmation() -> None:
@@ -2543,3 +2581,40 @@ def test_env_identity_stop_unsets_and_requires_identity(
     for flags in (["--stop"], ["--account", "a@p.iam.gserviceaccount.com"]):
         assert main(["env", *flags]) == 2
         assert "require --identity" in capsys.readouterr().err
+
+
+def test_env_identity_stop_fails_when_a_relay_could_not_be_removed(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result: dict[str, Any] = {
+        "status": "partial",
+        "relays_removed": [],
+        "sessions_ended": [],
+        "unset_variables": [],
+        "failures": [
+            {"container": "lc-identity-1", "cause": "Could not remove the LocalCloud identity relay"}
+        ],
+    }
+    monkeypatch.setattr(FakeController, "stop_identity", lambda _self, _config, **_kwargs: result)
+
+    assert main(["env", "--identity", "--stop"]) == 1
+    captured = capsys.readouterr()
+    assert "Failed" in captured.err
+    assert (
+        "Could not remove 1 identity relay(s), which may still be running: lc-identity-1"
+        in captured.err
+    )
+    assert "No LocalCloud identity relay was running" not in captured.err
+    assert "# WARNING: lc-identity-1: Could not remove the LocalCloud identity relay" in captured.out
+
+    # A session that only ends at its expiry is reported without failing the command.
+    result.update(
+        status="stopped",
+        relays_removed=["lc-identity-1"],
+        failures=[
+            {"session": "wib-1", "cause": "LocalCloud is not running; the session ends when it expires"}
+        ],
+    )
+    assert main(["env", "--identity", "--stop"]) == 0
+    assert "Removed 1 identity relay(s); ended sessions: none" in capsys.readouterr().err

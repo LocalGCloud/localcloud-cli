@@ -303,6 +303,8 @@ class ContainerCollection(Collection):
         if failure is not None:
             error = failure(kwargs)
             if error is not None:
+                # A failed start leaves the created container behind, never started.
+                resource.status = resource.attrs["State"]["Status"] = "created"
                 self.add(resource)
                 raise error
         return self.add(resource)
@@ -2219,7 +2221,9 @@ class _GrowingLog:
             if since is None
             or runtime_module._timestamp_ns(line) / 1_000_000_000 >= since
         ]
-        return "".join(f"{line}\n" for line in selected[-kwargs["tail"]:]).encode()
+        if kwargs["tail"] != "all":
+            selected = selected[-kwargs["tail"]:]
+        return "".join(f"{line}\n" for line in selected).encode()
 
 
 def _stamp(second: int, nanos: int, text: str) -> str:
@@ -2232,13 +2236,47 @@ def test_log_cursor_returns_every_line_of_a_burst_exactly_once() -> None:
     container.write(*(_stamp(1, index, f"line {index}") for index in range(300)))
 
     first = cursor.read(container).splitlines()
-    container.write(_stamp(1, 300, "line 300"), _stamp(2, 0, "line 301"))
+    # More lines than a bounded read holds arrive before the next poll.
+    burst = runtime_module._LOG_READ_LIMIT + 1001
+    container.write(
+        _stamp(1, 300, "line 300"),
+        *(_stamp(2, index, f"line {301 + index}") for index in range(burst)),
+    )
     second = cursor.read(container).splitlines()
 
     assert [line.split(" ", 1)[1] for line in first + second] == [
-        f"line {index}" for index in range(302)
+        f"line {index}" for index in range(301 + burst)
     ]
     assert cursor.read(container) == ""
+
+
+def test_log_cursor_bounds_its_first_read_until_one_succeeds() -> None:
+    limit = runtime_module._LOG_READ_LIMIT
+    container = _GrowingLog()
+    container.write(*(_stamp(1, index, f"line {index}") for index in range(limit + 500)))
+    cursor = LogCursor.from_start(container)
+
+    def unavailable(**_kwargs: Any) -> bytes:
+        raise RuntimeError("daemon unavailable")
+
+    read_logs = container.logs
+    container.logs = unavailable  # type: ignore[assignment]
+    with pytest.raises(RuntimeError):
+        cursor.read(container)
+    container.logs = read_logs  # type: ignore[assignment]
+
+    # An old container's history is never pulled whole, even after a failed read.
+    lines = cursor.read(container).splitlines()
+    assert container.calls[0]["tail"] == limit
+    assert len(lines) == limit
+    assert lines[-1].endswith(f"line {limit + 499}")
+
+    # With nothing read yet there is no timestamp to resume from: stay bounded.
+    quiet = _GrowingLog()
+    tail = LogCursor(first_tail=12)
+    assert tail.read(quiet) == ""
+    assert tail.read(quiet) == ""
+    assert [call["tail"] for call in quiet.calls] == [12, limit]
 
 
 def test_log_cursor_skips_earlier_runs_of_a_restarted_container() -> None:
@@ -2437,6 +2475,37 @@ def test_cleanup_resources_removes_invalid_ownership(
     assert result["removed"] == [{"kind": "network", "name": "broken-network"}]
     assert result["failures"] == []
     assert "broken-network" not in client.networks.values
+
+
+@pytest.mark.parametrize(
+    "replacement_labels",
+    [{}, {MANAGED_LABEL: "true", RESOURCE_ROLE_LABEL: "network"}],
+    ids=["unlabelled", "valid"],
+)
+def test_cleanup_resources_spares_a_resource_replaced_since_inspection(
+    ready_runtime: tuple[DockerRuntime, Client],
+    replacement_labels: dict[str, str],
+) -> None:
+    runtime, client = ready_runtime
+    client.networks.add(Resource("replaced-network", {MANAGED_LABEL: "true"}))
+    client.volumes.add(Resource("broken-volume", {MANAGED_LABEL: "true"}))
+    invalid_ownership = runtime.doctor()["invalid_ownership"]
+    assert [entry["name"] for entry in invalid_ownership] == [
+        "replaced-network",
+        "broken-volume",
+    ]
+
+    # Removed and recreated under the same name before the cleanup runs.
+    replacement = client.networks.add(Resource("replaced-network", replacement_labels))
+    result = runtime.cleanup_resources(invalid_ownership)
+
+    assert result["removed"] == [{"kind": "volume", "name": "broken-volume"}]
+    assert replacement.removed == []
+    assert client.networks.values["replaced-network"] is replacement
+    assert [(item["kind"], item["name"]) for item in result["failures"]] == [
+        ("network", "replaced-network")
+    ]
+    assert "changed since inspection" in result["failures"][0]["cause"]
 
 
 def test_image_status_reports_local_and_missing(
@@ -2717,6 +2786,89 @@ def test_create_reports_port_conflict_when_bind_races_preflight(
         runtime.create(config)
 
     assert caught.value.code == "port_no_longer_available"
+
+
+def test_create_rolls_back_the_container_a_failed_run_left_behind(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    # `containers.run()` creates the container, then fails to start it.
+    client.containers.run_failure = lambda _kwargs: RuntimeError(
+        "Bind for 0.0.0.0:5380 failed: port is already allocated"
+    )
+
+    with pytest.raises(HostError) as caught:
+        runtime.create(config)
+
+    assert caught.value.code == "port_no_longer_available"
+    assert caught.value.details["rollback_failures"] == []
+    assert config.container_name not in client.containers.values
+    assert config.network_name not in client.networks.values
+    assert config.data_volume not in client.volumes.values
+    assert runtime.resolve(config) is None
+
+
+def test_create_never_removes_a_container_that_already_held_the_name(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    prepared = runtime.preflight_create(config, pull=False)
+    run_plan = runtime.plan_run(config, prepared[0])
+    # Takes the name after preflight, carrying the very labels a rollback verifies.
+    holder = client.containers.add(
+        Resource(config.container_name, dict(run_plan.labels), state="created")
+    )
+
+    with pytest.raises(HostError) as caught:
+        runtime.create(config, prepared_image=prepared, run_plan=run_plan)
+
+    assert caught.value.code == "resource_name_in_use"
+    assert client.containers.run_calls == []
+    assert holder.removed == []
+    assert client.containers.get(config.container_name) is holder
+
+
+class _NameConflict(Exception):
+    status_code = 409
+
+
+@pytest.mark.parametrize(
+    ("error", "state"),
+    [
+        (
+            _NameConflict(
+                'Conflict. The container name "/localcloud" is already in use by '
+                'container "0123456789ab"'
+            ),
+            "created",
+        ),
+        (RuntimeError("daemon closed the connection"), "running"),
+    ],
+    ids=["name-conflict", "already-started"],
+)
+def test_create_leaves_a_same_named_container_it_did_not_leave_behind(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+    error: Exception,
+    state: str,
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+
+    def failing_run(_image: str, **kwargs: Any) -> None:
+        client.containers.add(Resource(kwargs["name"], kwargs["labels"], state=state))
+        raise error
+
+    client.containers.run = failing_run  # type: ignore[assignment]
+    with pytest.raises(HostError) as caught:
+        runtime.create(config)
+
+    assert caught.value.code == "environment_create_failed"
+    assert client.containers.get(config.container_name).removed == []
 
 
 def test_resolve_records_configured_image_id_when_local_image_differs(
@@ -3248,3 +3400,35 @@ def test_identity_relay_falls_back_to_a_free_port_and_never_removes_other_contai
         runtime.remove_identity_relay(client.containers.get(record.name))
     assert refused.value.code == "ownership_mismatch"
     assert client.containers.get(record.name).removed == []
+
+
+def test_identity_relay_failed_run_never_removes_another_sessions_relay(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime, client = ready_runtime
+    record = runtime.create(_config(tmp_path))
+    name = runtime_module.identity_relay_name(record.data_volume, "raced-project", "default")
+    others: list[Resource] = []
+
+    def lose_the_name(_image: str, **kwargs: Any) -> Resource:
+        # Another `lc env --identity` created its relay under the same name first.
+        labels = {**kwargs["labels"], runtime_module.IDENTITY_SESSION_LABEL: "wib-other"}
+        others.append(client.containers.add(Resource(name, labels)))
+        raise RuntimeError(f'409 Conflict: the container name "/{name}" is already in use')
+
+    monkeypatch.setattr(client.containers, "run", lose_the_name)
+
+    with pytest.raises(HostError) as caught:
+        runtime.start_identity_relay(
+            record,
+            session_id="wib-mine",
+            capability="lcrc1.x",
+            project="raced-project",
+            account_key="default",
+        )
+
+    assert caught.value.code == "identity_relay_failed"
+    assert others[0].removed == []
+    assert client.containers.get(name) is others[0]

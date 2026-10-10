@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from datetime import date
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -130,8 +131,28 @@ datas += [
         str(project_root / "src" / "localcloud_cli" / "defaults" / "localcloud.v1.yaml"),
         "localcloud_cli/defaults",
     ),
+    (
+        str(project_root / "src" / "localcloud_cli" / "defaults" / "localcloud.v1.json"),
+        "localcloud_cli/defaults",
+    ),
     (str(release_metadata_path), "localcloud_cli"),
 ]
+
+
+def third_party_license_datas(root):
+    """A license file for every THIRD_PARTY_NOTICES row; without one the build fails.
+
+    Only the license files of each bundled distribution are shipped, not the
+    rest of its metadata, which the CLI never reads.
+    """
+    script = root / "scripts" / "check-third-party-licenses.py"
+    script_spec = importlib.util.spec_from_file_location("check_third_party_licenses", script)
+    check = importlib.util.module_from_spec(script_spec)
+    script_spec.loader.exec_module(check)
+    return check.license_datas(root / "THIRD_PARTY_NOTICES")
+
+
+datas += third_party_license_datas(project_root)
 
 analysis = Analysis(
     [str(project_root / "src" / "localcloud_cli" / "__main__.py")],
