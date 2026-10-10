@@ -11,7 +11,7 @@ see the [local client setup and GitHub plugin guide](mcp-marketplace-guide.md).
 
 ## Quickstart
 
-Requirements: **Docker engine, LocalCloud CLI, and the LocalCloud Docker image**. The CLI runs natively on macOS and Linux, includes the MCP bridge, and obtains the image when needed. No separate MCP server installation or Google Cloud account is required for local workflows.
+Requirements: **Docker engine, the latest LocalCloud CLI, and the LocalCloud Docker image**. The CLI runs natively on macOS and Linux, includes the MCP bridge, and obtains the image when needed. No separate MCP server installation or Google Cloud account is required for local workflows.
 
 ### Install LocalCloud
 
@@ -23,12 +23,17 @@ lc --version
 lc doctor
 ```
 
-For an existing Homebrew installation, run `brew update` and `brew upgrade localcloud` to use the current CLI.
+For an existing Homebrew installation, run `brew update` and `brew upgrade localcloud` to use the latest CLI.
 
 On macOS or Linux without Homebrew:
 
 ```sh
 curl -fsSL https://local.cloud/install.sh | sh
+```
+
+If the installer prints an instruction to source your shell configuration or export `PATH`, run it in the current terminal before continuing:
+
+```sh
 localcloud --version
 localcloud doctor
 ```
@@ -43,7 +48,7 @@ For Cursor:
 lc mcp install --client cursor
 ```
 
-Reload the client and enable the `localcloud` MCP server. The bridge starts or reuses the runtime automatically. The first connection can take longer while Docker downloads the runtime image. To start it deliberately with ports bound to localhost before connecting:
+Reload the client and enable the `localcloud` MCP server. The bridge starts or reuses the runtime automatically. The first connection can take longer while Docker downloads the runtime image. New runtimes publish Docker ports on all host interfaces by default. To start with ports bound to localhost before connecting:
 
 ```sh
 lc start --local-only
@@ -53,7 +58,7 @@ For Claude Code, use `lc mcp install --client claude-code`; for Claude Desktop, 
 
 ### Existing environments and updates
 
-Use the current LocalCloud CLI and image together. Connecting MCP or updating the CLI reuses an existing container; it does not replace an older runtime. If a strict client rejects a tool schema, deliberately update the selected runtime and reconnect.
+Use the latest LocalCloud CLI and image together. Connecting MCP or updating the CLI reuses an existing container; it does not replace an older runtime. If a strict client rejects a tool schema, deliberately update the selected runtime and reconnect.
 
 Inspect `lc status`. To deliberately upgrade the selected runtime while retaining its named data volume:
 
@@ -65,7 +70,7 @@ Include the same `--data-volume` and configuration file you normally use if you 
 
 ### Native archives and plugin packages
 
-The [release assets](https://github.com/LocalGCloud/localcloud-cli/releases/latest) provide native CLI archives and a GitHub plugin ZIP. Configure Claude Desktop through the installed CLI as shown in the [local setup guide](mcp-marketplace-guide.md#claude-desktop). The plugin ZIP is not an MCP desktop-extension bundle. Only use a `.mcpb` package when that artifact is explicitly present in a release and supported by your client; the current CLI release does not include one. Claude and Codex GitHub plugins use the separately installed CLI.
+Get native CLI archives and available plugin packages from the [latest release assets](https://github.com/LocalGCloud/localcloud-cli/releases/latest). Configure Claude Desktop through the installed CLI as shown in the [local setup guide](mcp-marketplace-guide.md#claude-desktop). A plugin ZIP is not an MCP desktop-extension bundle. Only use a `.mcpb` package when that artifact is explicitly present in a release and supported by your client. Claude and Codex GitHub plugins use the separately installed CLI.
 
 ### Complete a first task
 
@@ -141,8 +146,8 @@ MCP communicates via JSON-RPC 2.0 over standard input and output (`stdio`).
 ### On-Demand Auto-Start
 When an AI agent launches `localcloud mcp`, the CLI checks if the container runtime is running:
 - **If stopped or missing**: Automatically starts the container in the background (`Controller.start(ensure_project=True, allow_replace=False)`).
-- **Concurrency protection**: Takes the per-volume file lock (`data_volume_lock`) and uses the full readiness budget (60s), ensuring concurrent agents starting at the same time do not race or time out.
-- **Manual override**: Passing `--no-start` disables auto-start, exiting with code `runtime_not_running` if LocalCloud is not already running.
+- **Concurrency protection**: Takes the per-volume file lock (`data_volume_lock`) to serialize startup for agents sharing a volume. Startup can still time out if the runtime does not become ready within its readiness budget.
+- **Manual override**: Passing `--no-start` disables auto-start and reports `runtime_not_running` if LocalCloud is not already running.
 
 ### Non-Replacement Policy
 LocalCloud ensures container stability for running agents:
@@ -178,24 +183,24 @@ lc mcp install --client claude-code
 # Install for Claude Desktop (user-level in claude_desktop_config.json)
 lc mcp install --client claude-desktop
 
-# Install for Antigravity (the gemini alias selects Antigravity configuration)
-lc mcp install --client gemini
+# Install for Antigravity
+lc mcp install --client antigravity
 
 # Install for Windsurf
 lc mcp install --client windsurf
 
-# Write the Cursor, Claude Code, Claude Desktop, Antigravity and Windsurf configurations
+# Configure supported clients
 lc mcp install --client all
 ```
 
-`all` configures the five clients listed above, even if their applications are not installed. Codex uses its own registration command. Cline and Gemini CLI should use the manual instructions below: Cline's extension settings path is not qualified by the installer, and the `gemini` alias configures Antigravity.
+Use `lc mcp install --help` to discover supported clients. `all` may create configuration for applications that are not installed; select a client explicitly when you only want to configure that application. Codex uses its own registration command. Use the manual instructions below for Cline and Gemini CLI; Cline's extension settings path is not qualified by the installer.
 
 ### Installation Options
 | Flag | Description |
 |---|---|
-| `--client <name>` | Target AI client: `cursor` (default), `claude-code`, `claude-desktop`, `gemini`, `windsurf`, `cline`, or `all`. |
+| `--client <name>` | Target AI client, such as `cursor` (default), `claude-code`, `claude-desktop`, `antigravity`, or `windsurf`. Check `lc mcp install --help` for all supported names. |
 | `--global` | Install into user-level configuration (default: true). |
-| `--project` | Select repository scope in supported clients such as Claude Code and Cursor. Desktop and Windsurf still use user configuration. Add `--command-path "$(command -v localcloud)"` for an absolute path. |
+| `--project` | Select repository scope in supported clients such as Claude Code and Cursor. Claude Desktop, Windsurf and the installer's Cline path still use user configuration. Add `--command-path "$(command -v localcloud)"` for an absolute path. |
 | `--project-id <id>` | Pin a specific GCP project ID (defaults to shared `local-gcp-project`). |
 | `--data-volume <name>` | Specify a non-default Docker volume. (Omitted by default). |
 | `--user <name>` | Specify the caller identity (default: `local-developer`). |
@@ -256,7 +261,7 @@ Open Cline's **MCP Servers** settings and its configuration editor. Merge the `l
 
 ### Gemini CLI
 
-The `--client gemini` alias configures Antigravity. To configure **Gemini CLI**, use Gemini's own command:
+To configure **Gemini CLI**, use Gemini's own command:
 
 ```sh
 gemini mcp add --scope user localcloud "$(command -v localcloud)" mcp
@@ -304,14 +309,14 @@ claude mcp add --scope user localcloud -- "$(command -v localcloud)" mcp
 
 ## 5. Authoritative MCP Catalog
 
-The read-only runtime catalog verified for this guide (runtime MCP version 0.1.3) exposes **27 tools**, **14 resources**, **7 resource templates**, and **6 prompts**. CLI and runtime versions are independent. Catalogs can vary with the runtime image and enabled permissions: `tools/list`, `resources/list`, `resources/templates/list`, and `prompts/list` from the connected runtime are authoritative.
+CLI and runtime releases are independent. Available tools, resources, templates and prompts can vary with the runtime image and enabled permissions. Discover them through `tools/list`, `resources/list`, `resources/templates/list`, and `prompts/list` on the connected runtime; those responses are authoritative. The entries below describe common capabilities, not a fixed catalog size.
 
-### Tools (27)
+### Tools
 1. **API Discovery & Invocation**:
    - `localcloud_get_api_catalog`: Discovers methods and schemas exposed by LocalCloud's management API catalog.
    - `localcloud_call_api`: Invokes a catalogued local management operation using its operation ID and typed parameters.
 2. **Service & Project Inspection**:
-   - `localcloud_list_services`: List all running GCP services, status, and loopback ports.
+   - `localcloud_list_services`: List configured services with endpoints, status, protocol and compatibility metadata.
    - `localcloud_get_service`: Get detailed endpoints, ports, and configuration for a specific service.
    - `localcloud_list_projects`: List all logical GCP projects currently initialized in the container.
    - `localcloud_get_project`: Get details for a specific project.
@@ -331,7 +336,7 @@ The read-only runtime catalog verified for this guide (runtime MCP version 0.1.3
 6. **Diagnostics & Logging**:
    - `localcloud_get_diagnostics`: Retrieve recent diagnostic findings and health events.
    - `localcloud_get_recent_requests`: Inspect recent HTTP requests received by the LocalCloud gateway.
-   - `localcloud_get_logs`: Fetch runtime container and emulator logs.
+   - `localcloud_get_logs`: Get log-oriented diagnostics from LocalCloud's request log. Use `lc logs` for container stdout/stderr.
 7. **Scenarios, Recipes & State**:
    - `localcloud_list_recipes`: List pre-configured scenario recipes.
    - `localcloud_get_recipe`: Get definition and seed actions for a recipe.
@@ -341,8 +346,10 @@ The read-only runtime catalog verified for this guide (runtime MCP version 0.1.3
    - `localcloud_export_state`: Export runtime project state.
    - `localcloud_list_checkpoints`: List saved project checkpoints.
    - `localcloud_diff_project`: Compare current project state against a checkpoint.
+8. **Local Identity**:
+   - `localcloud_identity_check`: Inspect the local identity issuer or verify LocalCloud-issued tokens without returning credentials.
 
-### Resources (14)
+### Resources
 - `localcloud://api/catalog`: LocalCloud management API operations and schemas.
 - `localcloud://api/openapi`: OpenAPI specifications for LocalCloud management facades.
 - `localcloud://services`: Enabled services and assigned loopback ports.
@@ -358,7 +365,7 @@ The read-only runtime catalog verified for this guide (runtime MCP version 0.1.3
 - `localcloud://terraform/readiness`: Terraform provider readiness checks.
 - `localcloud://schema/seed`: Seed schemas for emulated services.
 
-### Resource Templates (7)
+### Resource Templates
 - `localcloud://schema/seed/{service}`
 - `localcloud://readiness/{service}`
 - `localcloud://compatibility/{service}`
@@ -367,7 +374,7 @@ The read-only runtime catalog verified for this guide (runtime MCP version 0.1.3
 - `localcloud://browse/{service}/{resourceType}`
 - `localcloud://browse/{service}/{resourceType}/{resourceId}`
 
-### Prompts (6)
+### Prompts
 - `use-localcloud-instead-of-gcp`: Instructs coding agents to direct all Google Cloud client libraries, SDKs, and Terraform configurations to LocalCloud emulators rather than real GCP.
 - `debug-localcloud-service`: Guidance for diagnosing service health and connectivity.
 - `write-localcloud-integration-test`: Template and best practices for writing integration tests against LocalCloud.
