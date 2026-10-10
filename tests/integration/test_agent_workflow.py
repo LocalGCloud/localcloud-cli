@@ -22,8 +22,9 @@ _READINESS_TIMEOUT = 60.0
 _READINESS_POLL_INTERVAL = 1.0
 _READINESS_REQUEST_TIMEOUT = 10.0
 _SEEDED_PROJECT = "local-project"
-_SEEDED_GCS_BUCKETS = {"app-assets", "demo-bucket", "user-profiles"}
-_SEEDED_BIGQUERY_DATASETS = {"app_analytics", "dataset"}
+# What the image's seed.yaml creates; other buckets on a long-lived volume are not seed data.
+_SEEDED_GCS_BUCKETS = {"app-assets", "user-profiles"}
+_SEEDED_BIGQUERY_DATASETS = {"app_analytics"}
 
 
 def _invoke(
@@ -101,7 +102,7 @@ def _read_seeded_data(
     }
     gcs_url = (
         f"http://127.0.0.1:{int(current.endpoint_map['5382'])}"
-        "/storage/v1/b/demo-bucket"
+        "/storage/v1/b/app-assets"
     )
     bigquery_url = (
         f"http://127.0.0.1:{int(current.endpoint_map['5388'])}"
@@ -120,7 +121,7 @@ def _read_seeded_data(
         bigquery_response.raise_for_status()
     gcs_payload = gcs_response.json()
     bigquery_payload = bigquery_response.json()
-    if gcs_payload.get("name") != "demo-bucket":
+    if gcs_payload.get("name") != "app-assets":
         raise RuntimeError("seeded GCS bucket payload is invalid")
     dataset_reference = bigquery_payload.get("datasetReference", {})
     if dataset_reference.get("projectId") != _SEEDED_PROJECT:
