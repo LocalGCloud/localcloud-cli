@@ -138,16 +138,25 @@ def get_client_config_path(
             return home / ".cursor" / "mcp.json"
         return directory / ".cursor" / "mcp.json"
 
-    if norm_client in ("gemini", "antigravity"):
+    if norm_client == "gemini":
+        if is_global or directory is None:
+            return home / ".gemini" / "settings.json"
+        return directory / ".agents" / "mcp_config.json"
+
+    if norm_client == "antigravity":
         if is_global or directory is None:
             return home / ".gemini" / "antigravity" / "mcp_config.json"
         return directory / ".agents" / "mcp_config.json"
 
     if norm_client == "windsurf":
-        return home / ".codeium" / "windsurf" / "mcp_config.json"
+        if is_global or directory is None:
+            return home / ".codeium" / "windsurf" / "mcp_config.json"
+        return directory / ".codeium" / "windsurf" / "mcp_config.json"
 
-    if norm_client in ("cline", "roo"):
-        return home / ".cline" / "mcp_settings.json"
+    if norm_client == "cline":
+        if is_global or directory is None:
+            return home / ".cline" / "mcp_settings.json"
+        return directory / ".cline" / "mcp_settings.json"
 
     raise HostError(
         "unsupported_client",
@@ -161,10 +170,12 @@ def update_mcp_config_file(
     server_name: str,
     server_config: dict[str, Any],
 ) -> str:
-    """Read, modify, and write back the client's MCP configuration JSON file atomically.
+    """Read, modify, and write back the client's MCP configuration JSON file atomically with backup.
 
     Returns:
-        'installed' if a new server entry was created, or 'updated' if existing.
+        'installed' if a new server entry was created,
+        'updated' if an existing entry was modified,
+        'unchanged' if existing entry already matches server_config.
     """
     config_path.parent.mkdir(parents=True, exist_ok=True)
     existing_data: dict[str, Any] = {}
@@ -174,8 +185,15 @@ def update_mcp_config_file(
             content = config_path.read_text(encoding="utf-8").strip()
             if content:
                 parsed = json.loads(content)
-                if isinstance(parsed, dict):
-                    existing_data = parsed
+                if not isinstance(parsed, dict):
+                    raise HostError(
+                        "invalid_client_config",
+                        f"Existing configuration at {config_path} is not a JSON object",
+                        {"path": str(config_path)},
+                    )
+                existing_data = parsed
+        except HostError:
+            raise
         except Exception as error:
             raise HostError(
                 "invalid_client_config",
@@ -183,18 +201,39 @@ def update_mcp_config_file(
                 {"path": str(config_path), "cause": str(error)},
             ) from error
 
-    mcp_servers = existing_data.setdefault("mcpServers", {})
-    if not isinstance(mcp_servers, dict):
+    mcp_servers = existing_data.get("mcpServers")
+    if mcp_servers is None:
         mcp_servers = {}
         existing_data["mcpServers"] = mcp_servers
+    elif not isinstance(mcp_servers, dict):
+        raise HostError(
+            "invalid_client_config",
+            f"'mcpServers' in {config_path} is not a JSON object",
+            {"path": str(config_path)},
+        )
 
     if server_name in mcp_servers:
+        if mcp_servers[server_name] == server_config:
+            return "unchanged"
         action = "updated"
     mcp_servers[server_name] = server_config
 
-    tmp_path = config_path.with_suffix(f".tmp.{os.getpid()}")
+    # Create backup if original file exists
+    if config_path.is_file():
+        backup_path = config_path.with_suffix(config_path.suffix + ".bak")
+        try:
+            shutil.copy2(config_path, backup_path)
+        except Exception:
+            pass
+
+    # Atomic write with fsync
+    tmp_path = config_path.parent / f".{config_path.name}.tmp.{os.getpid()}"
     try:
-        tmp_path.write_text(json.dumps(existing_data, indent=2) + "\n", encoding="utf-8")
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(existing_data, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp_path, config_path)
     finally:
         if tmp_path.exists():
@@ -252,6 +291,31 @@ def _install_claude_code(
     }
 
 
+def _is_client_installed(client: str, directory: Path | None = None) -> bool:
+    """Check if the client is installed or present on this machine."""
+    norm = client.lower().replace("_", "-")
+    home = Path.home()
+    if norm in ("claude", "claude-desktop"):
+        if sys.platform == "darwin":
+            return (home / "Library" / "Application Support" / "Claude").is_dir() or Path("/Applications/Claude.app").exists()
+        elif sys.platform == "win32":
+            appdata = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
+            return (appdata / "Claude").is_dir()
+        else:
+            return (home / ".config" / "Claude").is_dir()
+    if norm == "claude-code":
+        return bool(shutil.which("claude")) or (home / ".claude.json").exists() or (home / ".claude").is_dir()
+    if norm == "cursor":
+        return bool(shutil.which("cursor")) or (home / ".cursor").is_dir() or (directory is not None and (directory / ".cursor").is_dir())
+    if norm in ("gemini", "antigravity"):
+        return bool(shutil.which("gemini")) or (home / ".gemini").is_dir() or (directory is not None and (directory / ".agents").is_dir())
+    if norm == "windsurf":
+        return bool(shutil.which("windsurf")) or (home / ".codeium" / "windsurf").is_dir() or (directory is not None and (directory / ".codeium" / "windsurf").is_dir())
+    if norm == "cline":
+        return (home / ".cline").is_dir() or (home / "Library" / "Application Support" / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev").is_dir() or (directory is not None and (directory / ".cline").is_dir())
+    return False
+
+
 def install_mcp_server(
     config: LocalCloudConfig,
     *,
@@ -276,7 +340,9 @@ def install_mcp_server(
 
     if norm_client == "all":
         results: list[dict[str, Any]] = []
-        target_clients = ["cursor", "claude-code", "claude-desktop", "gemini", "windsurf"]
+        all_candidates = ["cursor", "claude-code", "claude-desktop", "gemini", "windsurf", "cline"]
+        installed_candidates = [c for c in all_candidates if _is_client_installed(c, directory)]
+        target_clients = installed_candidates if installed_candidates else all_candidates
         for target in target_clients:
             try:
                 if target == "claude-code":
@@ -302,8 +368,9 @@ def install_mcp_server(
                     "client": target,
                     "error": str(err),
                 })
+        has_success = any(r.get("status") in ("installed", "updated", "unchanged") for r in results)
         return {
-            "status": "installed",
+            "status": "installed" if has_success else "failed",
             "results": results,
         }
 

@@ -558,14 +558,29 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
 
         return update()
     if args.command == "mcp" and getattr(args, "mcp_subcommand", None) == "install":
-        from .config import load_config
+        from .config import DEFAULT_CONFIG_NAME, _read_config, detect_git_project, load_config
         from .mcp_install import install_mcp_server
+
+        project_id = args.project_id
+        if project_id is None:
+            local_config_file = Path.cwd() / DEFAULT_CONFIG_NAME
+            has_local_project = False
+            if local_config_file.is_file():
+                try:
+                    local_raw = _read_config(local_config_file)
+                    if isinstance(local_raw, dict) and isinstance(local_raw.get("context"), dict):
+                        has_local_project = bool(local_raw["context"].get("project"))
+                except Exception:
+                    pass
+            if not has_local_project:
+                project_id = detect_git_project(Path.cwd())
 
         config = load_config(
             directory=Path.cwd(),
             data_volume=args.data_volume,
-            project=args.project_id,
+            project=project_id,
             user=args.user,
+            active_runtime=None,
         )
         return install_mcp_server(
             config,
@@ -815,14 +830,29 @@ class _FileConfigSource:
 
 
 def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConfig:
-    from .config import HostPaths, load_active_runtime, load_config
+    from .config import DEFAULT_CONFIG_NAME, HostPaths, _read_config, detect_git_project, load_active_runtime, load_config
 
     explicit_value = getattr(args, "config", None)
     explicit = Path(explicit_value) if explicit_value is not None else None
+
+    project = getattr(args, "project_id", None)
+    if args.command == "mcp" and project is None:
+        local_config_file = Path.cwd() / DEFAULT_CONFIG_NAME
+        has_local_project = False
+        if local_config_file.is_file():
+            try:
+                local_raw = _read_config(local_config_file)
+                if isinstance(local_raw, dict) and isinstance(local_raw.get("context"), dict):
+                    has_local_project = bool(local_raw["context"].get("project"))
+            except Exception:
+                pass
+        if not has_local_project:
+            project = detect_git_project(Path.cwd())
+
     overrides = {
         "directory": Path.cwd(),
         "data_volume": getattr(args, "data_volume", None),
-        "project": getattr(args, "project_id", None),
+        "project": project,
         "user": getattr(args, "user", None),
         "container_name": getattr(args, "container_name", None),
         "network_name": getattr(args, "network_name", None),

@@ -6,8 +6,10 @@ import hashlib
 import json
 import os
 import re
-import threading
+import subprocess
 import tempfile
+import threading
+import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -1126,7 +1128,9 @@ def slugify_project_name(name: str) -> str | None:
     """Convert an arbitrary repository or directory name into a valid GCP project ID."""
     if not name:
         return None
-    lowered = name.strip().lower()
+    # Normalize unicode to ASCII equivalents (e.g. Ünïcödé -> Unicode)
+    normalized = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    lowered = normalized.strip().lower()
     cleaned = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
     if not cleaned:
         return None
@@ -1144,19 +1148,63 @@ def slugify_project_name(name: str) -> str | None:
     return None
 
 
-def _detect_git_project(directory: Path | None) -> str | None:
-    """Find the nearest git root and slugify its directory name as the default project ID."""
+def detect_git_project(directory: Path | None) -> str | None:
+    """Find the main git checkout root and slugify its directory name as the project ID."""
     if directory is None:
         return None
     try:
-        current = directory.resolve()
+        resolved_dir = directory.resolve()
     except Exception:
         return None
-    for candidate in (current, *current.parents):
-        git_dir = candidate / ".git"
-        if git_dir.exists():
+
+    # First, run git rev-parse --git-common-dir to find the main checkout root (handles worktrees)
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=resolved_dir,
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+            check=False,
+        )
+        if result.returncode == 0:
+            common_dir_str = result.stdout.strip()
+            if common_dir_str:
+                common_dir = Path(common_dir_str)
+                if not common_dir.is_absolute():
+                    common_dir = (resolved_dir / common_dir).resolve()
+                else:
+                    common_dir = common_dir.resolve()
+                # If common_dir is /path/to/repo/.git, the main checkout directory is /path/to/repo
+                main_checkout = common_dir.parent if common_dir.name == ".git" else common_dir
+                return slugify_project_name(main_checkout.name)
+    except Exception:
+        pass
+
+    # Filesystem fallback if git command is unavailable or fails
+    for candidate in (resolved_dir, *resolved_dir.parents):
+        git_target = candidate / ".git"
+        if git_target.is_file():
+            # A worktree git file: "gitdir: /path/to/main/.git/worktrees/..."
+            try:
+                content = git_target.read_text(encoding="utf-8").strip()
+                if content.startswith("gitdir:"):
+                    gitdir_path = Path(content[len("gitdir:"):].strip())
+                    if not gitdir_path.is_absolute():
+                        gitdir_path = (candidate / gitdir_path).resolve()
+                    for parent in gitdir_path.parents:
+                        if parent.name == ".git":
+                            return slugify_project_name(parent.parent.name)
+            except Exception:
+                pass
             return slugify_project_name(candidate.name)
+        elif git_target.is_dir():
+            return slugify_project_name(candidate.name)
+
     return None
+
+
+_detect_git_project = detect_git_project
 
 
 def validate_project(value: object | None) -> str:
