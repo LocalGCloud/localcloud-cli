@@ -117,6 +117,41 @@ lc mcp install --client cursor
 
 The default target is `~/.cursor/mcp.json`. Restart Cursor, open its MCP settings, enable `localcloud`, and check that tools appear. For `.cursor/mcp.json` in the current workspace with an absolute executable path, use `lc mcp install --client cursor --project --command-path "$(command -v localcloud)"`. Manual configuration uses the same `mcpServers` JSON shown for Claude Desktop.
 
+### Kilo CLI
+
+Have Docker running and start LocalCloud before connecting:
+
+```sh
+command -v localcloud
+lc start --local-only
+```
+
+Create `kilo.json` in your project, replacing the example executable path with the output above:
+
+```json
+{
+  "mcp": {
+    "localcloud": {
+      "type": "local",
+      "command": ["/absolute/path/to/localcloud", "mcp"],
+      "enabled": true,
+      "timeout": 120000
+    }
+  },
+  "permission": {
+    "localcloud_*": "ask"
+  }
+}
+```
+
+Merge this into an existing file rather than replacing other settings. Run `kilo mcp list` and check that `localcloud` is connected, then use the connection-check prompt below. Current Kilo CLI and VS Code extension versions share the `mcp` object with `type: "local"` and a command array; the extension also supports `kilo.jsonc`. Keep approval enabled when the agent calls tools. See [Kilo's MCP guide](https://kilo.ai/docs/automate/mcp/using-in-kilo-code) and the [distribution record](mcp-distribution-log.md) for the curated listing's status.
+
+### LobeHub listing
+
+The [LocalCloud listing](https://lobehub.com/mcp/localgcloud-localcloud-cli) is claimed by the brand account. Use the installed native CLI over local stdio with an absolute `command` path and `args: ["mcp"]`, following the JSON example for Claude Desktop. Local execution needs Docker and the CLI on the same machine as the MCP client.
+
+The listing currently retains incorrect crawler-generated npm and HTTP install options. A setup notice pointing to this guide was saved through the publisher CLI, but its public rendering remained unconfirmed at the latest check. [LobeHub issue #20765](https://github.com/lobehub/lobehub/issues/20765) requests corrected native stdio configuration; it was automatically closed as a listing request, and a [clarifying bug comment](https://github.com/lobehub/lobehub/issues/20765#issuecomment-6107154855) awaits maintainer response. Do not use `npx localcloud-cli` or the web-console URL as an MCP endpoint. The marketplace metadata and tool catalog were refreshed; installation through those generated options is not qualified.
+
 ### Other local clients
 
 | Client | Setup |
