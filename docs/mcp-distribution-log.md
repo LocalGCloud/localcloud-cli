@@ -1,6 +1,6 @@
 # LocalCloud MCP distribution record
 
-Maintainer reference for every MCP integration, listing, submission, and launch announcement made during this rollout. Started and reconciled **2026-10-09 (Pacific time)**. Kilo, LobeHub, Claude review, and the Antigravity submission were checked or updated on **2026-10-11**; the OpenAI follow-up was sent on **2026-10-10**. Other GitHub status checks below were made on 2026-10-10 at 01:45 UTC.
+Maintainer reference for every MCP integration, listing, submission, and launch announcement made during this rollout. Started and reconciled **2026-10-09 (Pacific time)**. Kilo, LobeHub, Claude review, the Antigravity submission, and daily.dev eligibility were checked or updated on **2026-10-11**; the OpenAI follow-up was sent on **2026-10-10**. Other GitHub status checks below were made on 2026-10-10 at 01:45 UTC.
 
 **GitHub plugins and direct local MCP installation are available. Official Claude review is pending; an OpenAI public-directory submission has not been made.** Third-party placements have their own statuses below. A submitted form, open PR, or private management page is not an approved public listing.
 
@@ -67,6 +67,7 @@ These are candidates or deferred routes, not created listings.
 | MCPHub | Deferred; login requires legal acceptance | [Registry](https://www.mcphub.app/registry) | Recorded 2026-10-09. No completed account or submission. |
 | mcpdirectory.dev | Automatic ingestion candidate; listing unverified | [Directory](https://mcpdirectory.dev/) | Recorded 2026-10-09. No manual route or LocalCloud result found; do not assume ingestion from a withdrawn registry entry. |
 | mcpdirectory.app | Deferred; service unavailable at last check | [Directory](https://mcpdirectory.app/) | Recorded 2026-10-09: HTTP 502 / DNS failure. No submission. |
+| daily.dev plugin marketplace | Eligibility inquiry sent; awaiting response; no marketplace submission | [Marketplace scope](https://docs.daily.dev/plugin-marketplace/) · [Submission form](https://daily.dev/marketplace/submit) · [Official contact](https://daily.dev/contact/) · [Content rules](https://docs.daily.dev/content-guidelines/) | Checked 2026-10-11: the documentation and live form describe plugins built on the daily.dev API; LocalCloud's native stdio MCP does not use that API. At the owner's request, sent an eligibility inquiry from orbitor.cloud@gmail.com to the published support address, hi@daily.dev, asking whether a standalone MCP server can receive a free listing and what submission route applies. Gmail confirmed sending; the exact sent-folder message and address headers were verified. Requested LocalCloud as public publisher and Cloud Orbiter as contact. Await the provider's response before submitting. Direct posting and Squads are separate visibility routes subject to content rules, including restrictions on AI-generated and primarily promotional content. No account, marketplace submission, post, Squad, or public placement was created in this check. |
 
 ## Product pages and announcements
 
