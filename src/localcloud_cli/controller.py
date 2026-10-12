@@ -19,6 +19,7 @@ from .config import (
     clear_active_runtime,
     clear_legacy_host_state,
     data_volume_lock,
+    is_estargz_image,
     load_active_runtime,
     load_config,
     runtime_settings,
@@ -41,6 +42,8 @@ _READINESS_REQUEST_TIMEOUT = 5.0
 _READINESS_POLL_INTERVAL = 1.0
 _IDENTITY_RELAY_TIMEOUT = 45.0
 _IDENTITY_POLL_INTERVAL = 0.25
+# Ending the session of a failed `lc env --identity` is best effort.
+_IDENTITY_CLEANUP_TIMEOUT = 10.0
 
 
 @dataclass(frozen=True)
@@ -74,6 +77,10 @@ class Controller:
         self._remembered_resolution: (
             tuple[LocalCloudConfig, RuntimeRecord | None] | None
         ) = None
+
+    def image_missing(self, image: str) -> bool:
+        """Whether neither Docker nor the image's registry has `image`."""
+        return self.runtime.image_missing(image)
 
     def remembered_config(self, config: LocalCloudConfig) -> str | None:
         current = self.runtime.resolve(
@@ -370,17 +377,19 @@ class Controller:
             self._record_active(environment, config)
 
             def payload() -> dict[str, Any]:
-                return self._payload(
-                    status,
-                    environment,
-                    config,
-                    include_sdk=True,
-                    changed_fields=changed_fields,
-                    logs=(
-                        self._runtime_logs(config, environment)
-                        if status != "already_running"
-                        else None
-                    ),
+                return self._with_lazy_pulling(
+                    self._payload(
+                        status,
+                        environment,
+                        config,
+                        include_sdk=True,
+                        changed_fields=changed_fields,
+                        logs=(
+                            self._runtime_logs(config, environment)
+                            if status != "already_running"
+                            else None
+                        ),
+                    )
                 )
 
             if status == "already_running" or not self._tails_logs(observer, tail):
@@ -579,13 +588,15 @@ class Controller:
             self._record_active(environment, config)
 
             def payload() -> dict[str, Any]:
-                return self._payload(
-                    status,
-                    environment,
-                    config,
-                    include_sdk=True,
-                    changed_fields=changed_fields,
-                    logs=self._runtime_logs(config, environment),
+                return self._with_lazy_pulling(
+                    self._payload(
+                        status,
+                        environment,
+                        config,
+                        include_sdk=True,
+                        changed_fields=changed_fields,
+                        logs=self._runtime_logs(config, environment),
+                    )
                 )
 
             if not self._tails_logs(observer, tail):
@@ -877,7 +888,7 @@ class Controller:
             )
         )
         result["container"]["image_details"] = image_details
-        return result
+        return self._with_lazy_pulling(result)
 
     def logs(self, config: LocalCloudConfig, tail: int = 200) -> dict[str, Any]:
         current = self._resolve_runtime(
@@ -1229,7 +1240,9 @@ class Controller:
                 except HostError:
                     pass
         try:
-            client.delete_identity_session(session_id)
+            client.delete_identity_session(
+                session_id, timeout=_IDENTITY_CLEANUP_TIMEOUT
+            )
         except HostError:
             pass
 
@@ -1260,7 +1273,19 @@ class Controller:
                     f"The identity relay is {state} before it became ready",
                     {"container": relay["container"], "logs": logs},
                 )
-            session = client.identity_session(session_id)
+            try:
+                # Each request stays inside the wait's own budget.
+                session = client.identity_session(
+                    session_id,
+                    timeout=min(_READINESS_REQUEST_TIMEOUT, max(0.1, deadline - time.monotonic())),
+                )
+            except HostError as error:
+                if not is_retryable_java_error(error):
+                    raise
+                # A gateway that is slow or restarting is waited out like the relay.
+                last_problem = f"LocalCloud did not answer ({error.message})"
+                time.sleep(_IDENTITY_POLL_INTERVAL)
+                continue
             if session.get("state") == "REVOKED":
                 raise HostError(
                     "identity_session_failed",
@@ -1296,7 +1321,24 @@ class Controller:
         # The runtime already holds the Docker connection; never open another.
         return inspect(getattr(self.runtime, "client", None), connect=False)
 
+    def _with_lazy_pulling(self, result: dict[str, Any]) -> dict[str, Any]:
+        """For an eStargz image, add whether this engine pulls it lazily, when Docker says."""
+        from .host_checks import lazy_pulling, storage_driver
+
+        container = result.get("container") or {}
+        image = container.get("actual_image") or container.get("configured_image")
+        if not isinstance(image, str) or not is_estargz_image(image):
+            return result
+        report = lazy_pulling(
+            storage_driver(getattr(self.runtime, "client", None)), estargz=True
+        )
+        if report is not None:
+            result["lazy_pulling"] = report
+        return result
+
     def doctor(self, setup: tuple[Any, list[Any]] | None = None) -> dict[str, Any]:
+        from .host_checks import lazy_pulling
+
         result = self.runtime.doctor()
         host, findings = setup if setup is not None else self.setup_report()
         result["docker_host"] = host.summary()
@@ -1321,6 +1363,10 @@ class Controller:
         # The image `start` would use (host.image, LOCALCLOUD_IMAGE, or the
         # active runtime's), not only the built-in default.
         image = local_config.image if local_config is not None else DEFAULT_IMAGE
+        # With the host, so the report carries the steps for its Docker app.
+        lazy = lazy_pulling(host.storage_driver, host, estargz=is_estargz_image(image))
+        if lazy is not None:
+            result["lazy_pulling"] = lazy
         image_details = self.runtime.image_details(image)
         result["default_image"] = f"{image} {image_details['formatted']}"
         result["image_details"] = image_details
@@ -1902,29 +1948,48 @@ class Controller:
         if any(item.get("project_id") == project for item in projects):
             return False
 
-        client = self._readiness_client(
-            environment,
-            project,
-            user,
-            deadline=deadline,
-            config=config,
-            phase="project_create",
-        )
         creation_error: Exception | None = None
-        try:
-            client.create_project()
-        except Exception as error:
-            if not is_retryable_java_error(error):
-                raise HostError(
-                    "project_create_failed",
-                    "LocalCloud project could not be ensured",
-                    {
-                        "data_volume": environment.data_volume,
-                        "project": project,
-                        "cause": self._error_details(error),
-                    },
-                ) from error
-            creation_error = error
+        while True:
+            client = self._readiness_client(
+                environment,
+                project,
+                user,
+                deadline=deadline,
+                config=config,
+                phase="project_create",
+                last_error=creation_error,
+            )
+            try:
+                client.create_project()
+                creation_error = None
+                break
+            except Exception as error:
+                if not is_retryable_java_error(error):
+                    raise HostError(
+                        "project_create_failed",
+                        "LocalCloud project could not be ensured",
+                        {
+                            "data_volume": environment.data_volume,
+                            "project": project,
+                            "cause": self._error_details(error),
+                        },
+                    ) from error
+                creation_error = error
+                if not (
+                    isinstance(error, HostError)
+                    and error.details.get("connect_failed")
+                ):
+                    # The request may have reached LocalCloud: look for the
+                    # project below instead of creating it twice.
+                    break
+                # Nothing reached LocalCloud, so sending again is safe.
+                self._wait_for_readiness_retry(
+                    deadline,
+                    config,
+                    environment,
+                    "project_create",
+                    error,
+                )
 
         last_transport_error = creation_error
         last_error: Exception | None = creation_error

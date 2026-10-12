@@ -2518,6 +2518,52 @@ def test_image_status_reports_local_and_missing(
     assert runtime.image_status("absent:latest") == "not available locally"
 
 
+def test_image_missing_needs_both_docker_and_the_registry_to_lack_it(
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    client.images.add("present:latest", Image("sha256:present"))
+    client.images.registry_data["published:latest"] = SimpleNamespace(id="sha256:published")
+
+    assert runtime.image_missing("absent:latest") is True
+    assert runtime.image_missing("present:latest") is False
+    assert runtime.image_missing("published:latest") is False
+
+
+def test_image_missing_is_false_when_it_cannot_be_told(
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+
+    class RegistryUnreachable(Exception):
+        status_code = 500
+
+    def unreachable(_name: str) -> None:
+        raise RegistryUnreachable("dial tcp: no route to host")
+
+    client.images.get_registry_data = unreachable  # type: ignore[assignment]
+    assert runtime.image_missing("absent:latest") is False
+
+    client.images.get = unreachable  # type: ignore[assignment]
+    assert runtime.image_missing("absent:latest") is False
+
+
+def test_image_missing_when_the_registry_has_no_such_repository(
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+
+    class Denied(Exception):
+        status_code = 403
+
+    def denied(_name: str) -> None:
+        raise Denied("denied: requested access to the resource is denied")
+
+    client.images.get_registry_data = denied  # type: ignore[assignment]
+
+    assert runtime.image_missing("localcloud:dev-estargz") is True
+
+
 def test_image_details_reports_local_and_remote(
     ready_runtime: tuple[DockerRuntime, Client],
 ) -> None:
@@ -2662,6 +2708,69 @@ def test_create_reuses_prepared_image_without_pulling_again(
 
     assert record.image_status == "pulled from registry"
     assert client.images.pulls == [config.image]
+
+
+def test_create_refuses_a_tag_that_moved_to_an_unqualified_image_after_preflight(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    prepared = runtime.preflight_create(config, pull=False)
+    # `containers.run()` resolves the tag again: it now names another image.
+    client.images.add(config.image, Image("sha256:moved", qualified=False))
+
+    with pytest.raises(HostError) as caught:
+        runtime.create(config, prepared_image=prepared)
+
+    assert caught.value.code == "managed_image_capability_missing"
+    assert client.containers.values == {}
+    assert client.networks.values == {}
+    assert client.volumes.values == {}
+
+
+def test_create_refuses_a_tag_that_moved_to_an_image_without_the_gateway_port(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    prepared = runtime.preflight_create(config, pull=False)
+    client.images.add(config.image, Image("sha256:moved", exposed={"8080/tcp": {}}))
+
+    with pytest.raises(HostError) as caught:
+        runtime.create(config, prepared_image=prepared)
+
+    assert caught.value.code == "invalid_image"
+    assert client.containers.values == {}
+
+
+def test_create_accepts_a_tag_that_moved_to_another_qualified_image(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    prepared = runtime.preflight_create(config, pull=False)
+    client.images.add(config.image, Image("sha256:newer"))
+
+    record = runtime.create(config, prepared_image=prepared)
+
+    assert record.image_id == "sha256:newer"
+    assert record.state == "running"
+
+
+def test_create_inspects_no_second_image_when_the_tag_did_not_move(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+
+    record = runtime.create(config, pull=False)
+
+    assert record.image_id == "sha256:qualified"
+    assert "sha256:qualified" not in client.images.gets
 
 
 def test_create_pulls_when_newer_image_available_on_registry(
@@ -3243,6 +3352,73 @@ def test_teardown_network_if_owned_preserves_network_when_other_containers_attac
     runtime._teardown_network_if_owned(config, network, failures)
     assert failures == []
     assert network.removed == []
+
+
+def test_teardown_network_if_owned_removes_a_network_only_its_own_container_is_on(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    created = runtime.create(config)
+    network = client.networks.values[created.network_name]
+    # Docker keys the attached containers by ID, not by name.
+    network.attrs["Containers"] = {created.container_id: {"Name": config.container_name}}
+
+    failures: list[dict[str, Any]] = []
+    runtime._teardown_network_if_owned(config, network, failures)
+
+    assert failures == []
+    assert len(network.removed) == 1
+
+
+def test_teardown_network_if_owned_keeps_a_network_with_an_unnamed_container(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    created = runtime.create(config)
+    network = client.networks.values[created.network_name]
+    network.attrs["Containers"] = {"unknown-container-id": {}}
+
+    failures: list[dict[str, Any]] = []
+    runtime._teardown_network_if_owned(config, network, failures)
+
+    assert failures == []
+    assert network.removed == []
+
+
+def test_a_network_two_data_volumes_share_outlives_the_first_runtime_removed(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    first_dir, second_dir = tmp_path / "first", tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    first = _config(first_dir)
+    second = _config(
+        second_dir, data_volume="localcloud-data-two", network_name=first.network_name
+    )
+    first_record = runtime.create(first)
+    second_record = runtime.create(second)
+    assert second_record.network_name == first_record.network_name
+    assert second_record.ownership["network"] == "managed"
+    network = client.networks.values[first.network_name]
+
+    # The network carries the labels of the data volume that created it.
+    network.attrs["Containers"] = {second_record.container_id: {"Name": second_record.name}}
+    runtime.remove(first, first_record, remove_volume=True, remove_network=True)
+
+    assert network.removed == []
+    assert first.network_name in client.networks.values
+    assert runtime.resolve(second) is not None
+
+    network.attrs["Containers"] = {}
+    runtime.remove(second, second_record, remove_volume=True, remove_network=True)
+
+    assert len(network.removed) == 1
 
 
 def test_classify_resource_allows_managed_network_with_different_data_volume(

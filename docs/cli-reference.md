@@ -49,6 +49,12 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
   their existing bindings.
 - `--memory` overrides `host.memory` (default: `4g`).
 - `--image` overrides `host.image` and `LOCALCLOUD_IMAGE` (default: `agentcloud/localcloud:latest`).
+- `--estargz` runs the eStargz build of the selected image: the same tag with `-estargz` appended, such as
+  `agentcloud/localcloud:latest-estargz`. Docker pulls it lazily when the Stargz Snapshotter is its storage
+  driver, and downloads it whole otherwise; the **Lazy pulling** row says which (see [doctor](#doctor)). A
+  runtime keeps the build it was started with unless `host.image` or `LOCALCLOUD_IMAGE` names another, and
+  `--no-estargz` returns to the regular build. The option needs an image named by tag. When neither Docker
+  nor the registry has an eStargz build for that tag, the CLI warns and runs the regular build.
 - `--services` overrides `services.enabled` with a comma-separated list of service IDs, or `default` to use the built-in set.
 - `--pull` is enabled by default: checks for a newer image on Docker Hub and pulls only if an update is available. `--no-pull` uses the locally available image only (pulling only if absent locally).
 - New runtimes prefer the canonical host ports. If that complete set is unavailable,
@@ -295,6 +301,34 @@ and its exit code. Switching a VM restarts it, so running containers stop. A fix
 and runs only after you type `delete`. `--fix` needs an interactive terminal and does not run with
 `--verbose`. The CLI never runs `sudo` or installer scripts.
 
+**Lazy pulling** says whether Docker pulls LocalCloud's image lazily. Every LocalCloud tag also has an
+[eStargz](https://github.com/containerd/stargz-snapshotter/blob/main/docs/estargz.md) build, which
+`lc start --estargz` runs. When the
+[Stargz Snapshotter](https://github.com/containerd/stargz-snapshotter) is Docker's storage driver (`stargz` in
+`docker info`), Docker starts that build after fetching only the files it reads, so the download is smaller and
+LocalCloud starts sooner. The row reads `on` when the snapshotter is the storage driver and `start` would use
+the eStargz build, and `available` when the snapshotter is there and `start` would use the regular build. With
+any other storage driver it reads `off` and Docker downloads the whole image first; LocalCloud works the same
+either way, so this is never a **Setup** finding and has no `--fix`. `lc doctor` prints the steps for the
+Docker app it found:
+
+| Docker host | Steps |
+| :--- | :--- |
+| Colima | In the VM (`colima ssh`), install the Stargz Snapshotter and register it with containerd, following its [install guide](https://github.com/containerd/stargz-snapshotter/blob/main/docs/INSTALL.md). Then `colima stop`, `colima start --edit`, and under `docker:` set `features: {containerd-snapshotter: true}` and `storage-driver: stargz` |
+| Docker Engine (Linux, or a remote engine) | On the engine's host, install the Stargz Snapshotter the same way, set `"features": {"containerd-snapshotter": true}` and `"storage-driver": "stargz"` in `/etc/docker/daemon.json`, and restart containerd and Docker |
+| Docker Desktop, Rancher Desktop | They manage their own VM, and LocalCloud has no steps for adding the snapshotter to it |
+
+Install the snapshotter before selecting the storage driver. After the change Docker hides the containers
+created under the previous storage driver, so run `lc start --estargz`: it creates a new container on the
+same data volume. Named volumes, including LocalCloud's data volume, are kept, and so are images already in Docker's
+containerd image store. An engine that was on the classic `overlay2` driver pulls its images again. The Colima
+steps were run on Colima 0.10.1 with Docker 29.2.1 and Stargz Snapshotter 0.19.0.
+
+`start`, `restart` and `status` show the row, without the steps, only for a runtime on the eStargz build:
+`on`, or `off` when the Stargz Snapshotter is not Docker's storage driver and Docker downloaded the whole
+image. With `--verbose` it is `lazy_pulling`: `enabled`, `storage_driver`, `summary`, and in `doctor` also
+`steps`. The row is left out when Docker does not report a storage driver.
+
 `lc doctor` works without Docker: it exits with `docker_unavailable`, whose `details.reason` is
 `not_installed`, `not_running`, `unreachable` or `permission_denied`, and prints the matching finding.
 
@@ -418,7 +452,8 @@ Antigravity; the other clients have none. `--client all` configures every
 supported client installed on this machine and fails if it finds none. Only
 `--project-id`, `--data-volume` and `--user` values you pass are pinned in the
 entry. Claude Code is configured through `claude mcp add-json` when its CLI is
-installed. Existing settings and other servers are kept, the previous file is
+installed; if that command fails while replacing an entry, the previous entry is
+put back. Existing settings and other servers are kept, the previous file is
 saved as `<name>.bak`, and each client is reported as installed, updated, or
 already up to date.
 

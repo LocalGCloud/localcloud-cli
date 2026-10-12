@@ -953,6 +953,47 @@ def test_doctor_summary_shows_docker_host_setup_and_fixes() -> None:
     assert "             Applied: Turn on Rosetta" in lines
 
 
+def test_doctor_summary_lists_lazy_pulling_and_its_steps() -> None:
+    payload = {
+        "status": "ok",
+        "docker_host": "Colima (VZ, Rosetta on)",
+        "lazy_pulling": {
+            "enabled": False,
+            "storage_driver": "overlayfs",
+            "summary": "off (storage driver overlayfs): Docker downloads the whole image.",
+            "steps": ["Install the Stargz Snapshotter", "Then set storage-driver"],
+        },
+        "default_image": "agentcloud/localcloud:latest (Local)",
+    }
+
+    lines = render_summary("doctor", payload).splitlines()
+
+    assert lines[1:5] == [
+        "Docker host   Colima (VZ, Rosetta on)",
+        "Lazy pulling  off (storage driver overlayfs): Docker downloads the whole image.",
+        "              Step: Install the Stargz Snapshotter",
+        "              Step: Then set storage-driver",
+    ]
+
+
+@pytest.mark.parametrize("command", ["start", "restart", "status"])
+def test_runtime_summaries_show_lazy_pulling(command: str) -> None:
+    payload = {
+        "status": "running",
+        "services": ["gcs"],
+        "lazy_pulling": {
+            "enabled": True,
+            "storage_driver": "stargz",
+            "summary": "on (Stargz Snapshotter)",
+        },
+    }
+
+    lines = render_summary(command, payload).splitlines()
+
+    assert lines[-1] == "Lazy pulling  on (Stargz Snapshotter)"
+    assert "Lazy pulling" not in render_summary(command, {"status": "running"})
+
+
 def test_doctor_summary_omits_setup_when_there_are_no_findings() -> None:
     summary = render_summary(
         "doctor", {"status": "ok", "docker_host": "unknown", "setup_findings": []}

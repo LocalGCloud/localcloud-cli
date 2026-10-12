@@ -472,6 +472,64 @@ def test_claude_code_cli_failure_is_reported_not_worked_around(
     assert not (home / ".claude.json").exists()
 
 
+class _RemovingClaudeCli(_ClaudeCli):
+    """Like the real CLI, `remove` takes the entry out of the config file."""
+
+    def __init__(self, config: Path, *, fail: str | None = None):
+        super().__init__(fail=fail)
+        self.config = config
+
+    def __call__(self, argv: list[str], *, cwd: Path, **kwargs: Any) -> Any:
+        if argv[2] == "remove":
+            data = json.loads(self.config.read_text(encoding="utf-8"))
+            del data["mcpServers"][argv[-1]]
+            self.config.write_text(json.dumps(data), encoding="utf-8")
+        return super().__call__(argv, cwd=cwd, **kwargs)
+
+
+def test_claude_code_keeps_the_previous_entry_when_the_update_fails(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    previous = {"command": "old", "args": []}
+    config = home / ".claude.json"
+    config.write_text(
+        json.dumps({"mcpServers": {"localcloud": previous, "other": {"command": "x"}}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HostError) as caught:
+        _install_claude(home, monkeypatch, _RemovingClaudeCli(config, fail="add-json"))
+
+    assert caught.value.code == "client_cli_failed"
+    assert "boom" in caught.value.message
+    assert "previous registration was kept" in caught.value.message
+    assert caught.value.details["previous_entry_restored"] is True
+    saved = json.loads(config.read_text(encoding="utf-8"))
+    assert saved["mcpServers"] == {"localcloud": previous, "other": {"command": "x"}}
+
+
+def test_claude_code_reports_a_previous_entry_it_could_not_put_back(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = home / ".claude.json"
+    config.write_text(
+        json.dumps({"mcpServers": {"localcloud": {"command": "old", "args": []}}}),
+        encoding="utf-8",
+    )
+
+    def unwritable(*_args: Any, **_kwargs: Any) -> str:
+        raise HostError("client_config_write_failed", "read-only file system")
+
+    monkeypatch.setattr(mcp_install, "update_mcp_config_file", unwritable)
+
+    with pytest.raises(HostError) as caught:
+        _install_claude(home, monkeypatch, _RemovingClaudeCli(config, fail="add-json"))
+
+    assert caught.value.code == "client_cli_failed"
+    assert "could not be restored" in caught.value.message
+    assert caught.value.details["previous_entry_restored"] is False
+
+
 def test_claude_code_project_scope_runs_in_the_repository(
     home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

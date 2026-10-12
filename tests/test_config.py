@@ -16,6 +16,7 @@ from localcloud_cli.config import (
     HostPaths,
     data_volume_lock,
     default_resource_names,
+    is_estargz_image,
     load_active_runtime,
     load_config,
     resolve_docker_socket,
@@ -29,7 +30,7 @@ from localcloud_cli.constants import (
     DEFAULT_PROJECT,
     DEFAULT_USER,
 )
-from localcloud_cli.errors import HostError
+from localcloud_cli.errors import ConfigError, HostError
 
 
 def _paths(tmp_path: Path) -> HostPaths:
@@ -1234,6 +1235,73 @@ def test_image_override_wins_over_config(tmp_path: Path) -> None:
         directory=tmp_path, paths=_paths(tmp_path), image="clirepo/localcloud:dev"
     )
     assert selected.image == "clirepo/localcloud:dev"
+
+
+@pytest.mark.parametrize(
+    ("image", "estargz", "selected"),
+    [
+        ("agentcloud/localcloud:latest", True, "agentcloud/localcloud:latest-estargz"),
+        ("agentcloud/localcloud:0.1.6", True, "agentcloud/localcloud:0.1.6-estargz"),
+        ("agentcloud/localcloud", True, "agentcloud/localcloud:latest-estargz"),
+        ("localhost:5000/localcloud", True, "localhost:5000/localcloud:latest-estargz"),
+        ("localhost:5000/localcloud:dev", True, "localhost:5000/localcloud:dev-estargz"),
+        ("agentcloud/localcloud:latest-estargz", True, "agentcloud/localcloud:latest-estargz"),
+        ("agentcloud/localcloud:latest-estargz", False, "agentcloud/localcloud:latest"),
+        ("agentcloud/localcloud:latest", False, "agentcloud/localcloud:latest"),
+        ("agentcloud/localcloud:latest-estargz", None, "agentcloud/localcloud:latest-estargz"),
+        ("agentcloud/localcloud:latest", None, "agentcloud/localcloud:latest"),
+    ],
+)
+def test_estargz_selects_the_estargz_build_of_the_image(
+    tmp_path: Path, image: str, estargz: bool | None, selected: str
+) -> None:
+    config = load_config(
+        directory=tmp_path, paths=_paths(tmp_path), image=image, estargz=estargz
+    )
+
+    assert config.image == selected
+    assert is_estargz_image(config.image) is selected.endswith("-estargz")
+
+
+def test_estargz_applies_to_the_configured_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    assert (
+        load_config(directory=tmp_path, paths=paths, estargz=True).image
+        == "agentcloud/localcloud:latest-estargz"
+    )
+    monkeypatch.setenv("LOCALCLOUD_IMAGE", "registry.example/localcloud:env")
+    assert (
+        load_config(directory=tmp_path, paths=paths, estargz=True).image
+        == "registry.example/localcloud:env-estargz"
+    )
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  image: yamlrepo/localcloud:yaml\n", encoding="utf-8"
+    )
+    assert (
+        load_config(directory=tmp_path, paths=paths, estargz=True).image
+        == "yamlrepo/localcloud:yaml-estargz"
+    )
+
+
+@pytest.mark.parametrize(
+    "image",
+    ["registry.example/localcloud@sha256:" + "a" * 64, "sha256:" + "a" * 64],
+)
+def test_estargz_needs_an_image_named_by_tag(tmp_path: Path, image: str) -> None:
+    with pytest.raises(ConfigError) as error:
+        load_config(directory=tmp_path, paths=_paths(tmp_path), image=image, estargz=True)
+
+    assert error.value.code == "invalid_config"
+    assert error.value.details == {"image": image}
+    # Without it, and with --no-estargz, a pinned image is left as it is.
+    for estargz in (None, False):
+        config = load_config(
+            directory=tmp_path, paths=_paths(tmp_path), image=image, estargz=estargz
+        )
+        assert config.image == image
+        assert is_estargz_image(config.image) is False
 
 
 def test_services_override_wins_over_config(tmp_path: Path) -> None:

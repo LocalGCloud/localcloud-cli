@@ -367,7 +367,24 @@ def _install_claude_code(
 
     if current is not None:
         claude_mcp("remove", "--scope", scope, server_name)
-    claude_mcp("add-json", "--scope", scope, server_name, json.dumps(server_config))
+    try:
+        claude_mcp("add-json", "--scope", scope, server_name, json.dumps(server_config))
+    except HostError as error:
+        if current is not None:
+            # `remove` already took the old entry out: put it back, so a failed
+            # update leaves the previous registration working.
+            try:
+                update_mcp_config_file(config_path, server_name, current)
+                restored = True
+            except HostError:
+                restored = False
+            error.details["previous_entry_restored"] = restored
+            error.message += (
+                "; the previous registration was kept"
+                if restored
+                else "; the previous registration was removed and could not be restored"
+            )
+        raise
     return {
         "status": "installed" if current is None else "updated",
         "config_path": str(config_path),

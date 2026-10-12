@@ -153,6 +153,7 @@ _COMMON_FIELDS = (
     FieldSpec("container.image_status", "Image status", "status"),
     FieldSpec("container.url", "URL", "url"),
     FieldSpec("services", "Services"),
+    FieldSpec("lazy_pulling", "Lazy pulling", "muted"),
     FieldSpec("changed_fields", "Changed", "warning"),
     FieldSpec("reset_scope", "Reset scope", "warning"),
     FieldSpec("warning", "Warning", "warning"),
@@ -161,6 +162,7 @@ _DOCTOR_FIELDS = (
     FieldSpec("status", "Status", "status"),
     FieldSpec("docker", "Docker", "docker"),
     FieldSpec("docker_host", "Docker host"),
+    FieldSpec("lazy_pulling", "Lazy pulling", "muted"),
     FieldSpec("default_image", "Image", "image"),
     FieldSpec("ports", "Ports", "ports"),
     FieldSpec("legacy_resources", "Legacy resources", "warning"),
@@ -475,6 +477,8 @@ def render_summary(
             )
         if field.path == "fixes" and isinstance(value, (list, tuple)):
             value = "\n".join(fix_outcome_lines(value))
+        if field.path == "lazy_pulling" and isinstance(value, Mapping):
+            value = "\n".join(lazy_pulling_lines(value))
         if command == "doctor" and field.path == "docker":
             docker_cmd_path = _resolve_path(payload, "docker_command_path")
             if docker_cmd_path is not _MISSING and docker_cmd_path:
@@ -777,6 +781,13 @@ def finding_lines(finding: Mapping[str, Any]) -> list[str]:
     if isinstance(fix, Mapping):
         lines.append(f"Fix: {fix.get('summary')}; run 'lc doctor --fix'")
     lines.extend(f"Step: {step}" for step in finding.get("steps") or ())
+    return lines
+
+
+def lazy_pulling_lines(report: Mapping[str, Any]) -> list[str]:
+    """A lazy-pulling report (host_checks.lazy_pulling()) as display lines."""
+    lines = [str(report.get("summary") or ("on" if report.get("enabled") else "off"))]
+    lines.extend(f"Step: {step}" for step in report.get("steps") or ())
     return lines
 
 

@@ -97,11 +97,15 @@ def render(version: str, checksums_path: Path) -> str:
 
       lc is an alias for localcloud; both commands behave identically.
 
-      Diagnose Docker and start LocalCloud:
-        lc doctor
-        lc start
+      Quick start:
+        lc doctor                 # check Docker setup
+        lc start                  # start the LocalCloud runtime
+        eval "$(lc env)"          # export Google Cloud SDK environment
+        lc console                # open web console (http://localhost:5380)
 
-      Then open http://localhost:5380.
+      AI coding agents:
+        lc mcp                    # stdio MCP bridge for Claude, Cursor, Codex
+        lc guide                  # coding-agent prompt and usage guide
     EOS
   end
 

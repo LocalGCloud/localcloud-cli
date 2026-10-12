@@ -502,6 +502,12 @@ def test_identity_session_api_calls_carry_project_and_caller(
     }
     assert all(call["headers"]["X-LocalCloud-Project"] == PROJECT for call in calls)
     assert all(call["headers"]["X-LocalCloud-User"] == USER for call in calls)
+    assert [call["timeout"] for call in calls] == [60.0, 60.0, 60.0]
+
+    client.identity_session("wib-1", timeout=2.5)
+    client.delete_identity_session("wib-1", timeout=10.0)
+
+    assert [call["timeout"] for call in calls[3:]] == [2.5, 10.0]
 
 
 @pytest.mark.parametrize(

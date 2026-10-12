@@ -2,6 +2,8 @@
 
 DEFAULT_CONFIG_NAME = "localcloud.yaml"
 DEFAULT_IMAGE = "agentcloud/localcloud:latest"
+# Every published tag T has an eStargz build of the same image, tagged T-estargz.
+ESTARGZ_TAG_SUFFIX = "-estargz"
 DEFAULT_MEMORY = "4g"
 DEFAULT_TLS_PORT = 5381
 DEFAULTS_CONFIG_LABEL = "<defaults>"

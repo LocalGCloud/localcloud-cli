@@ -108,6 +108,12 @@ On Apple Silicon, run the Docker VM on **VZ with Rosetta** rather than QEMU: it 
 known issues with LocalCloud (the BigQuery emulator can fail under it). `lc doctor` reports the Docker
 app, its VM type and Rosetta, and `lc doctor --fix` offers to switch Colima or Rancher Desktop.
 
+LocalCloud's image also has an eStargz build, and `lc start --estargz` runs it. With the
+[Stargz Snapshotter](https://github.com/containerd/stargz-snapshotter) as Docker's storage driver, Docker
+pulls it lazily: a smaller download and a faster start. Without the snapshotter LocalCloud works the same
+and Docker downloads the whole image. `lc doctor` reports **Lazy pulling** and the
+[steps to turn it on](docs/cli-reference.md#doctor).
+
 ### macOS and Linux
 
 ```sh

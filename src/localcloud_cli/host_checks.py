@@ -7,6 +7,9 @@ only through ``apply_fix``, after the caller has confirmed them.
 The first checks cover a known failure: on Apple Silicon, a Docker VM running
 under QEMU broke the BigQuery emulator, and VZ with Rosetta fixed it. Add new
 checks to ``CHECKS`` as more setup-related failures are learned.
+
+``lazy_pulling`` is not a check: an engine that downloads whole images works,
+only slower, so it is reported on its own and never as a finding.
 """
 
 from __future__ import annotations
@@ -44,6 +47,10 @@ _VM_LABELS = {"vz": "VZ", "qemu": "QEMU", "docker-vmm": "Docker VMM"}
 # Docker engine and context names that identify Docker Desktop.
 _DOCKER_DESKTOP_NAMES = {"docker-desktop", "desktop-linux"}
 _ROSETTA_INSTALL = ("softwareupdate", "--install-rosetta", "--agree-to-license")
+# Docker's storage driver when the Stargz Snapshotter backs it. Docker Engine
+# pulls lazily by default with it (docs.docker.com/engine/storage/containerd).
+_STARGZ_DRIVER = "stargz"
+STARGZ_INSTALL = "https://github.com/containerd/stargz-snapshotter/blob/main/docs/INSTALL.md"
 
 
 def _run_command(argv: Sequence[str], timeout: float) -> Any:
@@ -177,6 +184,7 @@ class DockerHost:
     reason: str | None = None  # not_installed | not_running | unreachable | permission_denied
     installed: tuple[str, ...] = ()
     facts: Mapping[str, Any] = field(default_factory=dict)
+    storage_driver: str | None = None  # The engine's, from `docker info`.
 
     @property
     def label(self) -> str:
@@ -255,6 +263,7 @@ def describe_host(
         reason=reason,
         installed=installed,
         facts=facts,
+        storage_driver=_storage_driver(info),
     )
 
 
@@ -597,6 +606,97 @@ def _rosetta(host: DockerHost, probe: HostProbe) -> Finding | None:
         probe,
         switch=False,
     )
+
+
+def _storage_driver(info: Any) -> str | None:
+    return _lower(info.get("Driver")) if isinstance(info, Mapping) else None
+
+
+def storage_driver(client: Any) -> str | None:
+    """The engine's storage driver, or None when Docker does not report one."""
+    try:
+        return _storage_driver(client.info())
+    except Exception:
+        return None
+
+
+def _lazy_pulling_steps(host: DockerHost) -> tuple[str, ...]:
+    # Seen on Colima 0.10.1 with Docker 29.2.1: the containers are hidden, named
+    # volumes keep their data.
+    restart = (
+        "Then run 'lc start --estargz': Docker hides containers created under the previous "
+        "storage driver, and named volumes, including LocalCloud's data, are kept"
+    )
+    if host.provider == "colima":
+        args = _profile_args(host)
+        return (
+            f"In the Colima VM ('{shlex.join(('colima', 'ssh', *args))}'), install the Stargz "
+            f"Snapshotter and register it with containerd: {STARGZ_INSTALL}",
+            "Then set 'features: {containerd-snapshotter: true}' and 'storage-driver: stargz' "
+            f"under 'docker:' in colima.yaml: '{shlex.join(('colima', 'stop', *args))}', then "
+            f"'{shlex.join(('colima', 'start', *args, '--edit'))}'",
+            restart,
+        )
+    if host.provider is not None:
+        # Docker Desktop and Rancher Desktop own their VM's Docker Engine.
+        return (
+            f"{host.label} manages its own VM, and LocalCloud has no steps for adding the "
+            "Stargz Snapshotter to it. The snapshotter is set up on the Docker Engine host: "
+            f"{STARGZ_INSTALL}",
+        )
+    return (
+        "On the Docker Engine host, install the Stargz Snapshotter and register it with "
+        f"containerd: {STARGZ_INSTALL}",
+        'Then set "features": {"containerd-snapshotter": true} and "storage-driver": "stargz" '
+        "in /etc/docker/daemon.json, and restart containerd and Docker",
+        restart,
+    )
+
+
+def lazy_pulling(
+    driver: str | None, host: DockerHost | None = None, *, estargz: bool = False
+) -> dict[str, Any] | None:
+    """Whether Docker pulls LocalCloud's image lazily; with a host, the steps that turn it on.
+
+    Lazy pulling needs the Stargz Snapshotter as Docker's storage driver and the
+    image's eStargz build (`estargz`, selected with --estargz). None when the
+    driver is unknown and, without a host, when the regular build is selected.
+    """
+    if not driver:
+        return None
+    available = driver == _STARGZ_DRIVER
+    if available and estargz:
+        return {"enabled": True, "storage_driver": driver, "summary": "on (Stargz Snapshotter)"}
+    if host is None:
+        if not estargz:
+            return None
+        return {
+            "enabled": False,
+            "storage_driver": driver,
+            "summary": (
+                "off: the Stargz Snapshotter is not Docker's storage driver, so Docker "
+                "downloads the whole eStargz image; see 'lc doctor'."
+            ),
+        }
+    gain = (
+        "'lc start --estargz' pulls LocalCloud's eStargz image lazily, for a smaller download "
+        "and a faster start"
+    )
+    if available:
+        return {
+            "enabled": False,
+            "storage_driver": driver,
+            "summary": f"available (Stargz Snapshotter): {gain}.",
+        }
+    return {
+        "enabled": False,
+        "storage_driver": driver,
+        "summary": (
+            f"off (storage driver {driver}): Docker downloads the whole image before "
+            f"LocalCloud starts. With the Stargz Snapshotter, {gain}."
+        ),
+        "steps": list(_lazy_pulling_steps(host)),
+    }
 
 
 CHECKS: tuple[Callable[[DockerHost, HostProbe], Finding | None], ...] = (

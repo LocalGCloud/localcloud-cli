@@ -293,12 +293,17 @@ class JavaMcpClient:
         method: str,
         path: str,
         payload: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         """Call LocalCloud's /identity/sessions API as this project and user."""
         url = f"{self.url}{path}"
         headers = self._headers()
         headers["Accept"] = "application/json"
-        request_args: dict[str, Any] = {"headers": headers, "timeout": self.timeout}
+        request_args: dict[str, Any] = {
+            "headers": headers,
+            "timeout": self.timeout if timeout is None else timeout,
+        }
         if payload is not None:
             request_args["json"] = payload
         try:
@@ -353,12 +358,18 @@ class JavaMcpClient:
             payload["serviceAccount"] = service_account
         return self._identity_api("POST", "/identity/sessions", payload)
 
-    def identity_session(self, session_id: str) -> dict[str, Any]:
-        return self._identity_api("GET", f"/identity/sessions/{quote(session_id, safe='')}")
-
-    def delete_identity_session(self, session_id: str) -> dict[str, Any]:
+    def identity_session(
+        self, session_id: str, *, timeout: float | None = None
+    ) -> dict[str, Any]:
         return self._identity_api(
-            "DELETE", f"/identity/sessions/{quote(session_id, safe='')}"
+            "GET", f"/identity/sessions/{quote(session_id, safe='')}", timeout=timeout
+        )
+
+    def delete_identity_session(
+        self, session_id: str, *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        return self._identity_api(
+            "DELETE", f"/identity/sessions/{quote(session_id, safe='')}", timeout=timeout
         )
 
     def reset_project(self) -> dict[str, Any]:

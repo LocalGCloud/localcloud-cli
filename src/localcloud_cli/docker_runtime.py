@@ -1011,6 +1011,9 @@ class DockerRuntime:
                 **run_plan.run_kwargs(),
             )
             container.reload()
+            self._require_started_image_passes_preflight(
+                config, container, image, observer
+            )
             container_id = _resource_identity(container)
             record = self.resolve(
                 config,
@@ -1395,16 +1398,18 @@ class DockerRuntime:
                 or getattr(network, "containers", [])
             )
             if attached_containers:
-                other_containers = [
-                    cid
-                    for cid in (
-                        attached_containers.keys()
-                        if isinstance(attached_containers, dict)
-                        else [getattr(c, "id", None) for c in attached_containers]
-                    )
-                    if cid and cid != getattr(config, "container_name", None)
-                ]
-                if other_containers:
+                # Docker keys the attached containers by ID: the name tells this
+                # runtime's container from one of another data volume, which
+                # may share the network. An unnamed one counts as another's.
+                attached_names = (
+                    [
+                        entry.get("Name") if isinstance(entry, dict) else None
+                        for entry in attached_containers.values()
+                    ]
+                    if isinstance(attached_containers, dict)
+                    else [getattr(c, "name", None) for c in attached_containers]
+                )
+                if any(name != config.container_name for name in attached_names):
                     return
         except Exception:
             pass
@@ -1907,6 +1912,26 @@ class DockerRuntime:
                 continue
             removed.append({"kind": kind, "name": name})
         return {"removed": removed, "failures": failures}
+
+    def image_missing(self, image_name: str) -> bool:
+        """Whether Docker holds no copy of the image and its registry does not publish it.
+
+        False when either cannot be told, such as with an unreachable registry.
+        """
+        try:
+            self.client.images.get(image_name)
+            return False
+        except Exception as error:
+            if not _is_not_found(error):
+                return False
+        get_registry_data = getattr(self.client.images, "get_registry_data", None)
+        if not callable(get_registry_data):
+            return False
+        try:
+            get_registry_data(image_name)
+        except Exception as error:
+            return _is_not_found(error) or _is_access_denied(error)
+        return False
 
     def image_status(self, image_name: str) -> str:
         if image_name in self._resolved_image_details:
@@ -2552,6 +2577,29 @@ class DockerRuntime:
         self._resolved_image_details.clear()
         emit("Pull complete")
         return image
+
+    def _require_started_image_passes_preflight(
+        self,
+        config: LocalCloudConfig,
+        container: Any,
+        image: Any,
+        observer: Any | None,
+    ) -> None:
+        """`containers.run()` resolves the image tag again, so the tag can name
+        another image than the one preflight checked: that image is checked too."""
+        started_id = str(getattr(container, "attrs", {}).get("Image") or "")
+        if not started_id or started_id == _image_id(image):
+            return
+        try:
+            started = self.client.images.get(started_id)
+        except Exception as error:
+            raise HostError(
+                "invalid_image",
+                "The image the LocalCloud container started from could not be inspected",
+                {"image": config.image, "image_id": started_id, "cause": str(error)},
+            ) from error
+        self._require_runtime_ownership_capability(config, started)
+        self._validate_image_port_metadata(config, started, observer)
 
     @staticmethod
     def _require_runtime_ownership_capability(
@@ -4196,6 +4244,14 @@ def _is_not_found(error: Exception) -> bool:
         "NotFound",
         "ImageNotFound",
     }
+
+
+def _is_access_denied(error: Exception) -> bool:
+    # A registry's answer for a repository that does not exist, or needs a login.
+    status_code = getattr(error, "status_code", None)
+    if status_code is None:
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+    return status_code in {401, 403}
 
 
 def _is_name_conflict(error: Exception) -> bool:

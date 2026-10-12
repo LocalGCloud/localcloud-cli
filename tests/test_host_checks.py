@@ -20,8 +20,10 @@ from localcloud_cli.host_checks import (
     describe_host,
     docker_unavailable_error,
     inspect,
+    lazy_pulling,
     localcloud_volumes,
     run_checks,
+    storage_driver,
 )
 
 COLIMA_INFO = {"Name": "colima", "OperatingSystem": "Ubuntu 24.04.4 LTS"}
@@ -384,6 +386,96 @@ def test_broken_checks_and_commands_never_raise(monkeypatch: pytest.MonkeyPatch,
     host, findings = inspect(SimpleNamespace(info=info), probe=mac_probe(tmp_path / "slow"))
     assert host.reachable is True
     assert findings == []
+
+
+def test_stargz_storage_driver_means_lazy_pulling_is_on(tmp_path: Path) -> None:
+    host, findings = inspect(engine({"Driver": "stargz"}), probe=mac_probe(tmp_path, system="Linux"))
+
+    assert host.storage_driver == "stargz"
+    assert findings == []
+    assert lazy_pulling(host.storage_driver, host, estargz=True) == {
+        "enabled": True,
+        "storage_driver": "stargz",
+        "summary": "on (Stargz Snapshotter)",
+    }
+    # The regular build is downloaded whole, whatever the storage driver.
+    assert lazy_pulling(host.storage_driver, host) == {
+        "enabled": False,
+        "storage_driver": "stargz",
+        "summary": (
+            "available (Stargz Snapshotter): 'lc start --estargz' pulls LocalCloud's eStargz "
+            "image lazily, for a smaller download and a faster start."
+        ),
+    }
+
+
+def test_other_storage_drivers_report_lazy_pulling_off_without_a_finding(tmp_path: Path) -> None:
+    probe = mac_probe(tmp_path, tools=("colima",))
+    write_colima(probe, "vz", True, profile="dev")
+
+    host, findings = inspect(engine({"Name": "colima-dev", "Driver": "overlayfs"}), probe=probe)
+
+    # Downloading the whole image is slower, not a setup problem.
+    assert findings == []
+    report = lazy_pulling(host.storage_driver, host)
+    assert report is not None
+    assert (report["enabled"], report["storage_driver"]) == (False, "overlayfs")
+    assert report["summary"] == (
+        "off (storage driver overlayfs): Docker downloads the whole image before LocalCloud "
+        "starts. With the Stargz Snapshotter, 'lc start --estargz' pulls LocalCloud's eStargz "
+        "image lazily, for a smaller download and a faster start."
+    )
+    assert lazy_pulling(host.storage_driver, host, estargz=True) == report
+    assert "'colima ssh -p dev'" in report["steps"][0]
+    assert host_checks.STARGZ_INSTALL in report["steps"][0]
+    assert "storage-driver: stargz" in report["steps"][1]
+    assert "'colima stop -p dev', then 'colima start -p dev --edit'" in report["steps"][1]
+    assert report["steps"][2].startswith("Then run 'lc start --estargz': Docker hides containers")
+    assert len(report["steps"]) == 3
+
+
+def test_lazy_pulling_steps_follow_the_docker_app(tmp_path: Path) -> None:
+    desktop = lazy_pulling("overlayfs", DockerHost(provider="docker-desktop"))
+    assert desktop is not None and len(desktop["steps"]) == 1
+    assert desktop["steps"][0].startswith("Docker Desktop manages its own VM")
+
+    # An engine no local app serves: Docker Engine on Linux, or a remote one.
+    engine_host = lazy_pulling("overlay2", DockerHost())
+    assert engine_host is not None
+    assert engine_host["steps"][0].startswith("On the Docker Engine host, install the Stargz Snapshotter")
+    assert '"storage-driver": "stargz"' in engine_host["steps"][1]
+    assert "/etc/docker/daemon.json" in engine_host["steps"][1]
+    assert "named volumes, including LocalCloud's data, are kept" in engine_host["steps"][2]
+
+
+def test_lazy_pulling_outside_doctor_covers_only_the_estargz_build() -> None:
+    assert lazy_pulling("overlayfs", estargz=True) == {
+        "enabled": False,
+        "storage_driver": "overlayfs",
+        "summary": (
+            "off: the Stargz Snapshotter is not Docker's storage driver, so Docker downloads "
+            "the whole eStargz image; see 'lc doctor'."
+        ),
+    }
+    assert lazy_pulling("stargz", estargz=True) == {
+        "enabled": True,
+        "storage_driver": "stargz",
+        "summary": "on (Stargz Snapshotter)",
+    }
+    assert lazy_pulling("overlayfs") is None
+    assert lazy_pulling("stargz") is None
+
+
+def test_unknown_storage_driver_reports_nothing() -> None:
+    def info() -> dict[str, Any]:
+        raise RuntimeError("timeout")
+
+    assert storage_driver(engine({"Driver": "Stargz"})) == "stargz"
+    assert storage_driver(engine({})) is None
+    assert storage_driver(SimpleNamespace(info=info)) is None
+    assert storage_driver(None) is None
+    assert lazy_pulling(None, estargz=True) is None
+    assert lazy_pulling(None, DockerHost(provider="colima"), estargz=True) is None
 
 
 def test_apply_fix_shows_each_command_and_stops_at_a_failure() -> None:

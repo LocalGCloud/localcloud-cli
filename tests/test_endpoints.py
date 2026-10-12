@@ -78,6 +78,196 @@ def test_validate_local_endpoints_allows_descriptive_urls() -> None:
     validate_local_endpoints(value)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"SPANNER_EMULATOR_HOST": "192.0.2.10:9010"},
+        {"LOCALCLOUD_SPANNER_GRPC_AUTHORITY": "192.0.2.10:5383"},
+        {"endpoint": "db.example.com:5383"},
+        {"services": [{"env_value": "[2001:db8::1]:5383"}]},
+        'export PUBSUB_EMULATOR_HOST="192.0.2.10:8085"\n',
+        "export LOCALCLOUD_SPANNER_GRPC_AUTHORITY=192.0.2.10:5383\n",
+        'environment:\n  PUBSUB_EMULATOR_HOST: "192.0.2.10:8085"\n',
+        '{\n  "PUBSUB_EMULATOR_HOST": "192.0.2.10:8085",\n  "GOOGLE_CLOUD_PROJECT": "demo"\n}',
+    ],
+    ids=[
+        "emulator-host",
+        "grpc-authority",
+        "endpoint-field",
+        "ipv6",
+        "shell",
+        "shell-unquoted",
+        "docker-compose",
+        "json-text",
+    ],
+)
+def test_validate_local_endpoints_rejects_non_loopback_endpoints_without_a_scheme(
+    value: object,
+) -> None:
+    with pytest.raises(HostError) as caught:
+        validate_local_endpoints(value)
+
+    assert caught.value.code == "nonlocal_endpoint"
+
+
+def test_validate_local_endpoints_allows_loopback_endpoints_without_a_scheme() -> None:
+    validate_local_endpoints(
+        {
+            "SPANNER_EMULATOR_HOST": "localhost:9010",
+            "FIRESTORE_EMULATOR_HOST": "127.0.0.1:8080",
+            "BIGTABLE_EMULATOR_HOST": "[::1]:8086",
+            "LOCALCLOUD_SPANNER_GRPC_AUTHORITY": "LOCALHOST:5383",
+            # Not endpoints, whatever their shape.
+            "GOOGLE_CLOUD_PROJECT": "example.com:12345",
+            "LOCALCLOUD_TLS_UNAVAILABLE_SERVICES": "redis,mysql",
+            "LOCALCLOUD_PRINCIPAL": "agent@localcloud.invalid",
+        }
+    )
+    validate_local_endpoints(
+        'export SPANNER_EMULATOR_HOST="localhost:9010"\n'
+        'export GOOGLE_CLOUD_PROJECT="example.com:12345"\n'
+        "# Reach the database at db.example.com:5432\n"
+    )
+
+
+def test_environment_config_rejects_a_non_loopback_emulator_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeJava:
+        def __init__(self, url: str, project: str, user: str):
+            pass
+
+        def environment(self, output_format: str) -> str:
+            return 'export SPANNER_EMULATOR_HOST="192.0.2.10:5383"\n'
+
+    monkeypatch.setattr(endpoints_module, "JavaMcpClient", FakeJava)
+
+    with pytest.raises(HostError) as caught:
+        environment_config(
+            {"url": "http://127.0.0.1:49080", "endpoint_map": {"5383": 49083}},
+            "agent-project-1",
+            "integration-agent",
+            "shell",
+        )
+
+    assert caught.value.code == "nonlocal_endpoint"
+
+
+def test_transform_endpoint_payload_checks_scheme_less_endpoints_of_generated_records() -> None:
+    service = {"endpoint": "localhost:5383", "env_var": "SPANNER_EMULATOR_HOST", "env_value": "localhost:5383"}
+
+    assert transform_endpoint_payload(service, {"5383": 49083}) == {
+        "endpoint": "127.0.0.1:49083",
+        "env_var": "SPANNER_EMULATOR_HOST",
+        "env_value": "127.0.0.1:49083",
+    }
+    with pytest.raises(HostError) as caught:
+        transform_endpoint_payload({**service, "endpoint": "192.0.2.10:5383"}, {"5383": 49083})
+    assert caught.value.code == "nonlocal_endpoint"
+
+
+def test_transform_endpoint_payload_leaves_the_users_own_hosts_alone() -> None:
+    # A function's variables and a stored file are the user's, not LocalCloud's endpoints.
+    function = {
+        "name": "projects/demo/locations/us-central1/functions/worker",
+        "environmentVariables": {"REDIS_HOST": "redis:6379", "DB_HOST": "10.0.0.5:5432"},
+    }
+    dotenv = {"type": "text", "text": "REDIS_HOST=redis:6379\nDB_HOST=10.0.0.5:5432\n"}
+
+    assert transform_endpoint_payload(function, {"5383": 49083}) == function
+    assert transform_endpoint_payload(dotenv, {"5383": 49083}) == dotenv
+
+
+_USER_FUNCTION = {
+    "name": "projects/demo/locations/us-central1/functions/worker",
+    "environmentVariables": {
+        "WEBHOOK_URL": "https://hooks.example.com/x",
+        "TOKEN_URL": "https://oauth2.googleapis.com/token",
+        "PUBSUB_EMULATOR_HOST": "localhost:5383",
+        # A canonical port this runtime does not publish.
+        "CACHE_HOST": "localhost:5390",
+    },
+}
+_USER_KEY_FILE = {
+    "type": "text",
+    "text": json.dumps(
+        {
+            "type": "service_account",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+    ),
+}
+_USER_DOTENV = {
+    "type": "text",
+    "text": "API_URL=https://api.example.com\nSTORAGE_EMULATOR_HOST=http://localhost:5383\n",
+}
+
+
+def test_transform_endpoint_payload_never_rejects_the_users_own_content() -> None:
+    endpoint_map = {"5383": 49083}
+
+    function = transform_endpoint_payload(_USER_FUNCTION, endpoint_map, user_content=True)
+    key_file = transform_endpoint_payload(_USER_KEY_FILE, endpoint_map, user_content=True)
+    dotenv = transform_endpoint_payload(_USER_DOTENV, endpoint_map, user_content=True)
+
+    # Only ports this runtime publishes are moved; nothing else is touched.
+    assert function["environmentVariables"] == {
+        "WEBHOOK_URL": "https://hooks.example.com/x",
+        "TOKEN_URL": "https://oauth2.googleapis.com/token",
+        "PUBSUB_EMULATOR_HOST": "127.0.0.1:49083",
+        "CACHE_HOST": "localhost:5390",
+    }
+    assert key_file == _USER_KEY_FILE
+    assert dotenv["text"] == (
+        "API_URL=https://api.example.com\nSTORAGE_EMULATOR_HOST=http://127.0.0.1:49083\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "code"),
+    [
+        (_USER_FUNCTION, "nonlocal_endpoint"),
+        ({"TOKEN_URL": "https://oauth2.googleapis.com/token"}, "real_google_endpoint"),
+        (_USER_KEY_FILE, "nonlocal_endpoint"),
+        (_USER_DOTENV, "nonlocal_endpoint"),
+        ({"CACHE_HOST": "localhost:5390"}, "stale_endpoint"),
+    ],
+    ids=["variables", "google-url", "key-file", "dotenv", "unpublished-port"],
+)
+def test_transform_endpoint_payload_still_checks_what_localcloud_generates(
+    value: object, code: str
+) -> None:
+    with pytest.raises(HostError) as caught:
+        transform_endpoint_payload(value, {"5383": 49083})
+
+    assert caught.value.code == code
+
+
+def test_transform_endpoint_payload_checks_localclouds_records_inside_user_content() -> None:
+    # A diagnostics bundle: captured requests are the user's, service rows are LocalCloud's.
+    diagnostics = {
+        "recent_requests": [{"request_body": json.dumps(_USER_FUNCTION)}],
+        "services": [
+            {"endpoint": "localhost:5383", "env_var": "SPANNER_EMULATOR_HOST"},
+        ],
+    }
+
+    transformed = transform_endpoint_payload(diagnostics, {"5383": 49083}, user_content=True)
+
+    assert transformed["services"][0]["endpoint"] == "127.0.0.1:49083"
+    assert "https://hooks.example.com/x" in transformed["recent_requests"][0]["request_body"]
+
+    diagnostics["services"][0]["endpoint"] = "https://spanner.googleapis.com"
+    with pytest.raises(HostError) as caught:
+        transform_endpoint_payload(diagnostics, {"5383": 49083}, user_content=True)
+    assert caught.value.code == "real_google_endpoint"
+
+    terraform = {"endpoint_env": "export X_CUSTOM_ENDPOINT=http://192.0.2.10:5383/\n", "real_google_cloud_fallback": False}
+    with pytest.raises(HostError) as caught:
+        transform_endpoint_payload(terraform, {"5383": 49083}, user_content=True)
+    assert caught.value.code == "nonlocal_endpoint"
+
 
 def test_environment_config_uses_running_environment_without_daemon_state(
     monkeypatch: pytest.MonkeyPatch,

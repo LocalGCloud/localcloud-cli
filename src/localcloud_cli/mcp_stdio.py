@@ -32,6 +32,13 @@ _HANDSHAKE_WAIT = 4.0
 _LIST_WAIT = 3.0
 _CALL_WAIT = 90.0
 _ROOTS_WAIT = 2.0
+# How long a connected runtime then has to answer the handshake or a list itself.
+_REPLY_WAIT = 3.0
+# How long a list the runtime answered after that is kept for the client to ask again.
+_LATE_LIST_TTL = 30.0
+# Worker threads for the requests in _LONG_METHODS, apart from the ones pings,
+# cancellations, lists and the stdio streams share.
+_CALL_THREADS = 40
 # A failed connection is retried at most this often.
 _RETRY_INTERVAL = 5.0
 
@@ -69,6 +76,24 @@ _LIST_CHANGED = (
     "notifications/resources/list_changed",
     "notifications/prompts/list_changed",
 )
+# Tools and resources whose results hold the user's own data (API responses,
+# stored objects, query rows, captured requests) rather than LocalCloud's
+# description of itself. A result of anything else, a tool of a later runtime
+# included, is checked in full for endpoints that lead away from LocalCloud.
+_USER_CONTENT_TOOLS = frozenset(
+    {
+        "localcloud_call_api",
+        "localcloud_browse_resources",
+        "localcloud_query_data",
+        "localcloud_export_state",
+        "localcloud_diff_project",
+        "localcloud_get_logs",
+        "localcloud_get_recent_requests",
+        "localcloud_get_diagnostics",
+    }
+)
+_RESOURCE_TOOL = "localcloud_read_resource"
+_USER_CONTENT_RESOURCES = ("localcloud://browse/", "localcloud://diagnostics/")
 # Projects a client's workspace may replace: ones the bridge chose by itself.
 _WORKSPACE_PROJECT_SOURCES = {"git", "default"}
 
@@ -121,6 +146,8 @@ class McpAdapter:
         self._client_initialized = False
         self._client_capabilities: dict[str, Any] = {}
         self._outbox: list[dict[str, Any]] = []
+        # Lists the runtime answered too late for the request that asked for them.
+        self._late_lists: dict[tuple[str, str | None], tuple[float, dict[str, Any]]] = {}
         self._cancelled: set[Any] = set()
         self._workspace: tuple[str, Any] | None = None
         self._roots_request = 0
@@ -181,15 +208,21 @@ class McpAdapter:
                 self._error = None
                 self._logged_error = None
                 self._generation += 1
-                if self._degraded:
-                    self._degraded = False
-                    self._outbox.extend(
-                        {"jsonrpc": "2.0", "method": method} for method in _LIST_CHANGED
-                    )
+                self._late_lists.clear()
+                self._tell_lists_changed()
             if self.on_connected is not None and self.mcp_url is not None:
                 self.on_connected(self.mcp_url)
         finally:
             self._attempt_done.set()
+
+    def _tell_lists_changed(self) -> None:
+        """Have a client that saw lists without the runtime's items ask again.
+        The caller holds the lock."""
+        if self._degraded:
+            self._degraded = False
+            self._outbox.extend(
+                {"jsonrpc": "2.0", "method": method} for method in _LIST_CHANGED
+            )
 
     def _fail(self, error: HostError) -> None:
         with self._lock:
@@ -306,13 +339,13 @@ class McpAdapter:
         if self.config is not None and self.config.project != config.project:
             self._use_project(self.config)
 
-    def _reconnect(self, generation: int) -> bool:
+    def _reconnect(self, generation: int, wait: float) -> bool:
         """After the runtime refused a connection (stopped, restarted, or moved
         ports), connect again unless another request already did."""
         with self._lock:
             if self._generation == generation and self._state == "connected":
                 self._state = "idle"
-        return self.ensure_connected(_CALL_WAIT)
+        return self.ensure_connected(wait)
 
     # Workspace roots -------------------------------------------------------
 
@@ -448,7 +481,11 @@ class McpAdapter:
         capabilities = params.get("capabilities")
         self._client_capabilities = capabilities if isinstance(capabilities, dict) else {}
         if self.ensure_connected(_HANDSHAKE_WAIT):
-            response = self._forward(message)
+            # A runtime that is slow to answer, or gone again, gets no more of
+            # the client's startup timeout: it reconnects in the background.
+            response = self._forward(
+                message, timeout=_REPLY_WAIT, reconnect_wait=0.0
+            )
             if "result" in response:
                 return response
         self._degraded = True
@@ -472,12 +509,56 @@ class McpAdapter:
             },
         }
 
-    def _list(self, message: dict[str, Any]) -> dict[str, Any]:
-        if self.ensure_connected(_LIST_WAIT):
+    def _list_reply(self, message: dict[str, Any]) -> dict[str, Any] | None:
+        """The runtime's answer to a list, waited for at most `_REPLY_WAIT`.
+
+        The request itself goes on. When the runtime answers it later, the
+        answer is kept and the client is told its lists changed, so that asking
+        again gets that answer instead of another wait."""
+        params = message.get("params")
+        cursor = params.get("cursor") if isinstance(params, dict) else None
+        key = (message["method"], cursor if isinstance(cursor, str) else None)
+        with self._lock:
+            late = self._late_lists.pop(key, None)
+        if late is not None and time.monotonic() < late[0]:
+            return {**late[1], "id": message["id"]}
+
+        answered = threading.Event()
+        answers: list[dict[str, Any]] = []
+        gave_up = False
+
+        def forward() -> None:
             response = self._forward(message)
-            if "result" in response:
+            with self._lock:
+                answers.append(response)
+                if gave_up and self._degraded and "result" in response:
+                    self._late_lists[key] = (
+                        time.monotonic() + _LATE_LIST_TTL,
+                        response,
+                    )
+                    self._tell_lists_changed()
+            answered.set()
+
+        threading.Thread(
+            target=forward, name="localcloud-mcp-list", daemon=True
+        ).start()
+        answered.wait(_REPLY_WAIT)
+        with self._lock:
+            if answers:
+                return answers[0]
+            gave_up = True
+            self._degraded = True
+        return None
+
+    def _list(self, message: dict[str, Any]) -> dict[str, Any]:
+        response: dict[str, Any] | None = {}
+        if self.ensure_connected(_LIST_WAIT):
+            response = self._list_reply(message)
+            if response is not None and "result" in response:
                 return response
-        self._degraded = True
+        if response is not None:
+            # A list that is still on its way was noted by _list_reply.
+            self._degraded = True
         method = message["method"]
         items = [_STATUS_TOOL_DEFINITION] if method == "tools/list" else []
         return {"jsonrpc": "2.0", "id": message["id"], "result": {_LIST_KEYS[method]: items}}
@@ -547,16 +628,25 @@ class McpAdapter:
             }
         return _error(message["id"], -32000, text, {"code": problem.code})
 
-    def _forward(self, message: dict[str, Any]) -> dict[str, Any]:
+    def _forward(
+        self,
+        message: dict[str, Any],
+        *,
+        timeout: float | httpx.Timeout | None = None,
+        reconnect_wait: float | None = None,
+    ) -> dict[str, Any]:
         request_id = message.get("id")
         method = str(message.get("method"))
-        timeout = _LONG_REQUEST_TIMEOUT if method in _LONG_METHODS else None
+        if timeout is None and method in _LONG_METHODS:
+            timeout = _LONG_REQUEST_TIMEOUT
         try:
             generation = self._generation
             try:
                 response = self.java.forward(message, timeout=timeout)
             except HostError as error:
-                if not error.details.get("connect_failed") or not self._reconnect(generation):
+                if not error.details.get("connect_failed") or not self._reconnect(
+                    generation, _CALL_WAIT if reconnect_wait is None else reconnect_wait
+                ):
                     raise
                 # Nothing reached the old address, so sending again is safe.
                 response = self.java.forward(message, timeout=timeout)
@@ -569,7 +659,9 @@ class McpAdapter:
             if method in {"tools/call", "resources/read"} and "result" in response:
                 response = dict(response)
                 response["result"] = transform_endpoint_payload(
-                    response["result"], self.endpoint_map
+                    response["result"],
+                    self.endpoint_map,
+                    user_content=_holds_user_content(message),
                 )
             if method == "tools/list" and isinstance(response.get("result"), dict):
                 tools = response["result"].get("tools")
@@ -607,6 +699,22 @@ class McpAdapter:
             return _error(request_id, -32000, error.message, {"code": error.code})
         except Exception as error:
             return _error(request_id, -32603, "LocalCloud MCP adapter failed", str(error))
+
+
+def _holds_user_content(message: dict[str, Any]) -> bool:
+    """Whether a tools/call or resources/read request reads the user's own data."""
+    params = message.get("params")
+    params = params if isinstance(params, dict) else {}
+    uri: Any = None
+    if message.get("method") == "resources/read":
+        uri = params.get("uri")
+    else:
+        name = params.get("name")
+        if name != _RESOURCE_TOOL:
+            return isinstance(name, str) and name in _USER_CONTENT_TOOLS
+        arguments = params.get("arguments")
+        uri = arguments.get("uri") if isinstance(arguments, dict) else None
+    return isinstance(uri, str) and uri.startswith(_USER_CONTENT_RESOURCES)
 
 
 def _error(request_id: Any, code: int, message: str, data: Any) -> dict[str, Any]:
@@ -752,10 +860,17 @@ async def _run_sdk(
                     )
                 await write_stream.send(SessionMessage(parsed))
 
+            call_threads = anyio.CapacityLimiter(_CALL_THREADS)
+
             async def respond(message: dict[str, Any]) -> None:
                 try:
                     response = await anyio.to_thread.run_sync(
-                        adapter.handle, message, abandon_on_cancel=True
+                        adapter.handle,
+                        message,
+                        abandon_on_cancel=True,
+                        limiter=call_threads
+                        if message.get("method") in _LONG_METHODS
+                        else None,
                     )
                 except Exception as error:
                     # A failed handler must not end the bridge for every other
@@ -794,6 +909,7 @@ async def _run_sdk(
                         tasks.start_soon(accept_response, message)
                         continue
                     # Requests run concurrently: a long call does not hold up
-                    # pings, cancellations, or other calls.
+                    # pings, cancellations, or other calls. Nor do many: long
+                    # calls wait on worker threads of their own.
                     tasks.start_soon(respond, message)
                 tasks.cancel_scope.cancel()

@@ -359,6 +359,7 @@ class FakeJavaClient:
     catalog_error: Exception | None = None
     timeouts: list[float] = []
     create_error: Exception | None = None
+    create_failures: list[Exception] = []
     create_commits_before_error = False
 
     def __init__(
@@ -391,6 +392,8 @@ class FakeJavaClient:
 
     def create_project(self) -> None:
         type(self).create_calls += 1
+        if type(self).create_failures:
+            raise type(self).create_failures.pop(0)
         error = type(self).create_error
         if error is not None:
             if type(self).create_commits_before_error:
@@ -419,6 +422,7 @@ def fake_java(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeJavaClient.catalog_failures = []
     FakeJavaClient.catalog_error = None
     FakeJavaClient.create_error = None
+    FakeJavaClient.create_failures = []
     FakeJavaClient.create_commits_before_error = False
     FakeJavaClient.timeouts = []
     monkeypatch.setattr(controller_module, "JavaMcpClient", FakeJavaClient)
@@ -457,6 +461,20 @@ def _java_transport_error(
             "cause": f"HTTP {status_code}",
             "retryable": retryable,
             "status_code": status_code,
+        },
+    )
+
+
+def _java_connection_refused() -> HostError:
+    return HostError(
+        "java_project_api_unavailable",
+        "Java LocalCloud project API request failed",
+        {
+            "url": "http://127.0.0.1:49080/projects",
+            "method": "POST",
+            "cause": "[Errno 61] Connection refused",
+            "retryable": True,
+            "connect_failed": True,
         },
     )
 
@@ -920,6 +938,59 @@ def test_start_preserves_transient_create_failure_at_visibility_timeout(
     assert last_error["details"]["status_code"] == 503
     assert last_error["details"]["retryable"] is True
     assert FakeJavaClient.create_calls == 1
+    assert clock.now == 60.0
+
+
+def test_start_resends_project_creation_the_gateway_refused(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(
+        tmp_path,
+        paths=paths,
+        yaml="context:\n  project: new-project\n",
+    )
+    runtime.record = _record(config)
+    FakeJavaClient.create_failures = [
+        _java_connection_refused(),
+        _java_connection_refused(),
+    ]
+    clock = FakeClock()
+    monkeypatch.setattr(controller_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
+
+    result = controller.start(config, ensure_project=True)
+
+    assert result["status"] == "already_running"
+    assert FakeJavaClient.create_calls == 3
+    assert "new-project" in FakeJavaClient.projects
+    assert clock.now < 5.0
+
+
+def test_start_reports_project_creation_refused_until_the_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(
+        tmp_path,
+        paths=paths,
+        yaml="context:\n  project: new-project\n",
+    )
+    runtime.record = _record(config)
+    FakeJavaClient.create_error = _java_connection_refused()
+    clock = FakeClock()
+    monkeypatch.setattr(controller_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
+
+    with pytest.raises(HostError) as caught:
+        controller.start(config, ensure_project=True)
+
+    assert caught.value.code == "runtime_readiness_timeout"
+    assert caught.value.details["phase"] == "project_create"
+    assert caught.value.details["last_error"]["details"]["connect_failed"] is True
+    assert FakeJavaClient.create_calls > 1
     assert clock.now == 60.0
 
 
@@ -2725,6 +2796,113 @@ def test_doctor_without_findings_reports_an_unknown_host(tmp_path: Path) -> None
 
     assert result["docker_host"] == "unknown"
     assert result["setup_findings"] == []
+    assert "lazy_pulling" not in result  # Docker named no storage driver.
+
+
+def test_doctor_reports_lazy_pulling_with_the_steps_to_turn_it_on(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+    runtime.client = SimpleNamespace(info=lambda: {"Driver": "overlayfs"})
+
+    result = controller.doctor()
+
+    assert result["lazy_pulling"]["enabled"] is False
+    assert result["lazy_pulling"]["storage_driver"] == "overlayfs"
+    assert len(result["lazy_pulling"]["steps"]) == 3
+    assert result["setup_findings"] == []
+
+
+@pytest.mark.parametrize(
+    ("image", "enabled", "summary"),
+    [
+        ("agentcloud/localcloud:latest-estargz", True, "on (Stargz Snapshotter)"),
+        ("agentcloud/localcloud:latest", False, "available (Stargz Snapshotter): "),
+    ],
+)
+def test_doctor_reports_lazy_pulling_for_the_image_start_would_use(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    image: str,
+    enabled: bool,
+    summary: str,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+    runtime.client = SimpleNamespace(info=lambda: {"Driver": "stargz"})
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LOCALCLOUD_IMAGE", image)
+
+    result = controller.doctor()
+
+    assert result["default_image"].startswith(image)
+    assert result["lazy_pulling"]["enabled"] is enabled
+    assert result["lazy_pulling"]["summary"].startswith(summary)
+    assert "steps" not in result["lazy_pulling"]
+
+
+@pytest.mark.parametrize(
+    ("driver", "enabled"), [("stargz", True), ("overlayfs", False), (None, None)]
+)
+def test_start_restart_and_status_report_lazy_pulling_for_the_estargz_build(
+    tmp_path: Path, driver: str | None, enabled: bool | None
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, estargz=True)
+    runtime.client = SimpleNamespace(info=lambda: {"Driver": driver} if driver else {})
+
+    results = [
+        controller.start(config),
+        controller.restart(config),
+        controller.status(config),
+    ]
+
+    for result in results:
+        if enabled is None:
+            assert "lazy_pulling" not in result
+        else:
+            assert result["lazy_pulling"]["enabled"] is enabled
+            assert "steps" not in result["lazy_pulling"]  # lc doctor lists them.
+
+
+def test_the_regular_build_reports_no_lazy_pulling(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    asked: list[str] = []
+    runtime.client = SimpleNamespace(info=lambda: asked.append("info") or {"Driver": "stargz"})
+
+    results = [
+        controller.start(config),
+        controller.restart(config),
+        controller.status(config),
+    ]
+
+    assert all("lazy_pulling" not in result for result in results)
+    assert asked == []  # Docker is not asked about a build it downloads whole.
+
+
+def test_status_reports_lazy_pulling_for_the_image_the_container_runs(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    runtime.client = SimpleNamespace(info=lambda: {"Driver": "stargz"})
+    controller.start(_config(tmp_path, paths=paths, estargz=True))
+
+    # host.image names the regular build; the running container is not replaced by `status`.
+    pinned = _config(
+        tmp_path, paths=paths, yaml="host:\n  image: agentcloud/localcloud:latest\n"
+    )
+    result = controller.status(pinned)
+
+    assert result["container"]["actual_image"] == "agentcloud/localcloud:latest-estargz"
+    assert result["lazy_pulling"]["enabled"] is True
+
+
+def test_stop_and_reset_do_not_report_lazy_pulling(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, estargz=True)
+    runtime.client = SimpleNamespace(info=lambda: {"Driver": "overlayfs"})
+    controller.start(config)
+
+    assert "lazy_pulling" not in controller.reset(config)
+    assert "lazy_pulling" not in controller.stop(config)
 
 
 # --- lc env --identity -----------------------------------------------------------------------------
@@ -2795,6 +2973,9 @@ class _IdentityJava(FakeJavaClient):
     deleted: list[str] = []
     activate = True
     adjust: Any = None
+    session_failures: list[Exception] = []
+    session_timeouts: list[float | None] = []
+    delete_timeouts: list[float | None] = []
 
     def create_identity_session(self, service_account: str | None = None) -> dict[str, Any]:
         session_id = f"wib-{len(type(self).created) + 1}"
@@ -2807,13 +2988,21 @@ class _IdentityJava(FakeJavaClient):
         }
         return session
 
-    def identity_session(self, session_id: str) -> dict[str, Any]:
+    def identity_session(
+        self, session_id: str, *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        type(self).session_timeouts.append(timeout)
+        if type(self).session_failures:
+            raise type(self).session_failures.pop(0)
         session = type(self).sessions[session_id]
         if type(self).activate and session["state"] == "PENDING":
             session["state"] = "ACTIVE"
         return dict(session)
 
-    def delete_identity_session(self, session_id: str) -> dict[str, Any]:
+    def delete_identity_session(
+        self, session_id: str, *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        type(self).delete_timeouts.append(timeout)
         type(self).deleted.append(session_id)
         type(self).sessions[session_id]["state"] = "REVOKED"
         return dict(type(self).sessions[session_id])
@@ -2826,6 +3015,9 @@ def identity(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     _IdentityJava.deleted = []
     _IdentityJava.activate = True
     _IdentityJava.adjust = None
+    _IdentityJava.session_failures = []
+    _IdentityJava.session_timeouts = []
+    _IdentityJava.delete_timeouts = []
     monkeypatch.setattr(controller_module, "JavaMcpClient", _IdentityJava)
     monkeypatch.setattr(controller_module, "_IDENTITY_POLL_INTERVAL", 0.0)
     probes: list[str] = []
@@ -2920,6 +3112,68 @@ def test_identity_env_times_out_without_the_handshake(identity) -> None:
     assert runtime.relays == {} and _IdentityJava.deleted == ["wib-1"]
 
 
+def _identity_gateway_error(*, retryable: bool = True) -> HostError:
+    return HostError(
+        "java_identity_api_unavailable",
+        "LocalCloud identity session API request failed",
+        {"cause": "timed out", "retryable": retryable},
+    )
+
+
+def test_identity_relay_wait_keeps_a_stalled_gateway_inside_its_budget(
+    identity, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller, runtime, config, _probes = identity
+    clock = FakeClock()
+    monkeypatch.setattr(controller_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
+    monkeypatch.setattr(controller_module, "_IDENTITY_POLL_INTERVAL", 0.25)
+    timeouts: list[float | None] = []
+
+    def stalled(
+        _client: Any, _session_id: str, *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        # The gateway holds every request until the client gives up on it.
+        timeouts.append(timeout)
+        clock.now += 60.0 if timeout is None else timeout
+        raise _identity_gateway_error()
+
+    monkeypatch.setattr(_IdentityJava, "identity_session", stalled)
+
+    with pytest.raises(HostError) as caught:
+        controller.identity_env(config)
+
+    assert caught.value.code == "identity_relay_timeout"
+    assert "LocalCloud identity session API request failed" in caught.value.message
+    assert all(timeout is not None and timeout <= 5.0 for timeout in timeouts)
+    assert 45.0 <= clock.now < 46.0
+    assert runtime.relays == {} and _IdentityJava.deleted == ["wib-1"]
+    assert _IdentityJava.delete_timeouts == [controller_module._IDENTITY_CLEANUP_TIMEOUT]
+
+
+def test_identity_relay_wait_outlasts_a_gateway_error_that_passes(identity) -> None:
+    controller, _runtime, config, _probes = identity
+    _IdentityJava.session_failures = [_identity_gateway_error(), _identity_gateway_error()]
+
+    result = controller.identity_env(config)
+
+    assert result["session"]["state"] == "ACTIVE"
+    assert len(_IdentityJava.session_timeouts) == 3
+    assert _IdentityJava.deleted == []
+
+
+def test_identity_relay_wait_ends_on_a_gateway_error_that_will_not_pass(identity) -> None:
+    controller, runtime, config, _probes = identity
+    _IdentityJava.session_failures = [_identity_gateway_error(retryable=False)]
+
+    with pytest.raises(HostError) as caught:
+        controller.identity_env(config)
+
+    assert caught.value.code == "java_identity_api_unavailable"
+    assert len(_IdentityJava.session_timeouts) == 1
+    assert runtime.relays == {} and _IdentityJava.deleted == ["wib-1"]
+
+
 def test_identity_stop_removes_relays_and_ends_sessions(identity) -> None:
     controller, runtime, config, _probes = identity
     controller.identity_env(config)
@@ -2993,7 +3247,9 @@ def test_identity_env_rollback_leaves_the_relay_that_replaced_its_own(
     poll = _IdentityJava.identity_session
     second: dict[str, Any] = {}
 
-    def replaced_while_waiting(self: Any, session_id: str) -> dict[str, Any]:
+    def replaced_while_waiting(
+        self: Any, session_id: str, *, timeout: float | None = None
+    ) -> dict[str, Any]:
         if session_id == "wib-1" and not second:
             # Another `lc env --identity` replaces this one while it waits for its relay.
             other = threading.Thread(
@@ -3001,7 +3257,7 @@ def test_identity_env_rollback_leaves_the_relay_that_replaced_its_own(
             )
             other.start()
             other.join(5.0)
-        return poll(self, session_id)
+        return poll(self, session_id, timeout=timeout)
 
     monkeypatch.setattr(_IdentityJava, "identity_session", replaced_while_waiting)
 
@@ -3157,7 +3413,9 @@ def test_relay_readiness_probe_never_goes_through_an_environment_proxy(
     controller = Controller(runtime=cast(Any, _IdentityRuntime()), paths=paths)
 
     class Active:
-        def identity_session(self, session_id: str) -> dict[str, Any]:
+        def identity_session(
+            self, session_id: str, *, timeout: float | None = None
+        ) -> dict[str, Any]:
             return identity_fixtures.active_session(session_id=session_id)
 
     def relay(method: str, target: str, headers: dict[str, str]) -> tuple[int, Any]:

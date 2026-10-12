@@ -568,6 +568,92 @@ def test_public_google_endpoint_in_generated_tool_content_is_rejected() -> None:
     assert response["error"]["data"]["code"] == "real_google_endpoint"
 
 
+_USER_RESULT = {
+    "content": [{"type": "text", "text": "API_URL=https://api.example.com\nDB_HOST=localhost:5382\n"}],
+    "structuredContent": {
+        "environmentVariables": {
+            "WEBHOOK_URL": "https://hooks.example.com/x",
+            "TOKEN_URL": "https://oauth2.googleapis.com/token",
+            "STORAGE_EMULATOR_HOST": "http://localhost:5382",
+        }
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "request_",
+    [
+        _request(1, "tools/call", name="localcloud_call_api", arguments={"path": "/v2/x"}),
+        _request(1, "tools/call", name="localcloud_browse_resources"),
+        _request(1, "tools/call", name="localcloud_query_data"),
+        _request(1, "tools/call", name="localcloud_export_state"),
+        _request(1, "tools/call", name="localcloud_diff_project"),
+        _request(1, "tools/call", name="localcloud_get_logs"),
+        _request(1, "tools/call", name="localcloud_get_recent_requests"),
+        _request(1, "tools/call", name="localcloud_get_diagnostics"),
+        _request(
+            1,
+            "tools/call",
+            name="localcloud_read_resource",
+            arguments={"uri": "localcloud://browse/cloudfunctions/functions/worker"},
+        ),
+        _request(1, "resources/read", uri="localcloud://browse/gcs/objects/app.env"),
+        _request(1, "resources/read", uri="localcloud://diagnostics/latest"),
+    ],
+    ids=lambda request_: request_["params"].get("name") or request_["params"]["uri"],
+)
+def test_the_users_own_urls_in_a_result_do_not_fail_the_request(
+    request_: dict[str, Any],
+) -> None:
+    FakeJava.responses = {request_["method"]: {"jsonrpc": "2.0", "result": _USER_RESULT}}
+    adapter = McpAdapter(CONFIG, controller=RunningController())
+
+    response = adapter.handle(request_)
+
+    assert response is not None and "error" not in response
+    result = response["result"]
+    assert result["structuredContent"]["environmentVariables"] == {
+        "WEBHOOK_URL": "https://hooks.example.com/x",
+        "TOKEN_URL": "https://oauth2.googleapis.com/token",
+        "STORAGE_EMULATOR_HOST": "http://127.0.0.1:49081",
+    }
+    assert result["content"][0]["text"] == (
+        "API_URL=https://api.example.com\nDB_HOST=127.0.0.1:49081\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "request_",
+    [
+        _request(1, "tools/call", name="localcloud_get_env"),
+        _request(1, "tools/call", name="localcloud_generate_sdk_env"),
+        _request(1, "tools/call", name="localcloud_validate_agent_config"),
+        _request(1, "tools/call", name="localcloud_a_tool_of_a_later_runtime"),
+        _request(1, "tools/call", name=["localcloud_call_api"]),
+        _request(1, "tools/call", name="localcloud_read_resource", arguments={"uri": "localcloud://env/json"}),
+        _request(1, "tools/call", name="localcloud_read_resource", arguments={"uri": ["localcloud://browse/x"]}),
+        _request(1, "tools/call", name="localcloud_read_resource"),
+        _request(1, "resources/read", uri="localcloud://env/shell"),
+        _request(1, "resources/read", uri="localcloud://services"),
+    ],
+    ids=lambda request_: str(
+        request_["params"].get("arguments", {}).get("uri")
+        or request_["params"].get("name")
+        or request_["params"].get("uri")
+    ),
+)
+def test_what_localcloud_generates_is_still_checked_for_real_endpoints(
+    request_: dict[str, Any],
+) -> None:
+    FakeJava.responses = {request_["method"]: {"jsonrpc": "2.0", "result": _USER_RESULT}}
+    adapter = McpAdapter(CONFIG, controller=RunningController())
+
+    response = adapter.handle(request_)
+
+    assert response is not None
+    assert response["error"]["data"]["code"] in {"real_google_endpoint", "nonlocal_endpoint"}
+
+
 def test_config_context_is_forwarded_to_java() -> None:
     controller = RunningController()
 
@@ -697,6 +783,244 @@ def test_a_call_waits_for_a_runtime_that_is_starting(monkeypatch: pytest.MonkeyP
     assert call == {"jsonrpc": "2.0", "id": 2, "result": {"content": []}}
 
 
+def test_the_handshake_gives_a_connected_runtime_a_short_time_to_answer() -> None:
+    FakeJava.responses = {
+        "initialize": {"jsonrpc": "2.0", "result": {"serverInfo": {"name": "localcloud", "version": "test"}}},
+        "tools/list": {"jsonrpc": "2.0", "result": {"tools": []}},
+        "tools/call": {"jsonrpc": "2.0", "result": {"content": []}},
+    }
+    adapter = McpAdapter(CONFIG, controller=RunningController())
+    timeouts: dict[str, Any] = {}
+
+    class RecordingJava(FakeJava):
+        def forward(self, message: dict[str, Any], **kwargs: Any) -> dict[str, Any] | None:
+            timeouts[message["method"]] = kwargs.get("timeout")
+            return super().forward(message)
+
+    adapter.java = RecordingJava("http://127.0.0.1:49080", PROJECT, USER)
+
+    initialized = adapter.handle(_request(1, "initialize", protocolVersion="2025-06-18"))
+    adapter.handle(_request(2, "tools/list"))
+    adapter.handle(_request(3, "tools/call", name="localcloud_get_env"))
+
+    assert initialized is not None and initialized["result"]["serverInfo"]["version"] == "test"
+    assert timeouts == {
+        "initialize": mcp_module._REPLY_WAIT,
+        "tools/list": None,
+        "tools/call": mcp_module._LONG_REQUEST_TIMEOUT,
+    }
+    assert mcp_module._HANDSHAKE_WAIT + mcp_module._REPLY_WAIT < 10
+
+
+def test_the_handshake_is_answered_when_the_runtime_is_slow_to_answer_it() -> None:
+    adapter = McpAdapter(CONFIG, controller=RunningController())
+
+    class StalledJava(FakeJava):
+        def forward(self, message: dict[str, Any], **_kwargs: Any) -> dict[str, Any] | None:
+            raise HostError(
+                "java_mcp_unavailable",
+                "Java LocalCloud MCP request failed",
+                {"connect_failed": False, "retryable": True, "cause": "timed out"},
+            )
+
+    adapter.java = StalledJava("http://127.0.0.1:49080", PROJECT, USER)
+
+    initialized = adapter.handle(_request(1, "initialize", protocolVersion="2025-06-18"))
+
+    assert initialized is not None
+    assert initialized["result"]["protocolVersion"] == "2025-06-18"
+    assert STATUS_TOOL in initialized["result"]["instructions"]
+
+
+def test_the_handshake_does_not_wait_for_a_runtime_that_refuses_the_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A call waits this long for the reconnect; the handshake must not.
+    monkeypatch.setattr(mcp_module, "_CALL_WAIT", 3.0)
+    release = threading.Event()
+
+    class RestartingController(RunningController):
+        def target(self, config: LocalCloudConfig, **kwargs: Any) -> dict[str, Any]:
+            if self.targets:
+                release.wait(5)
+            return super().target(config, **kwargs)
+
+    controller = RestartingController()
+    adapter = McpAdapter(CONFIG, controller=controller)
+    sent: list[str] = []
+
+    class RefusingJava(FakeJava):
+        def forward(self, message: dict[str, Any], **_kwargs: Any) -> dict[str, Any] | None:
+            sent.append(message["method"])
+            raise _refused()
+
+    adapter.java = RefusingJava("http://127.0.0.1:49080", PROJECT, USER)
+    started = time.monotonic()
+    try:
+        initialized = adapter.handle(_request(1, "initialize", protocolVersion="2025-06-18"))
+        elapsed = time.monotonic() - started
+
+        assert initialized is not None
+        assert STATUS_TOOL in initialized["result"]["instructions"]
+        assert elapsed < 1.0
+        assert sent == ["initialize"]
+        # The reconnect goes on in the background for the requests that follow.
+        assert adapter.status()["state"] == "starting"
+    finally:
+        release.set()
+    assert adapter.ensure_connected(5)
+    adapter.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    assert [m["method"] for m in adapter.drain_outbox()] == [
+        "notifications/tools/list_changed",
+        "notifications/resources/list_changed",
+        "notifications/prompts/list_changed",
+    ]
+
+
+def _refused() -> HostError:
+    return HostError(
+        "java_mcp_unavailable",
+        "Java LocalCloud MCP request failed",
+        {"connect_failed": True, "retryable": True},
+    )
+
+
+def _listing_adapter(java: type[FakeJava]) -> McpAdapter:
+    adapter = McpAdapter(CONFIG, controller=RunningController())
+    adapter.java = java("http://127.0.0.1:49080", PROJECT, USER)
+    adapter.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    return adapter
+
+
+def _outbox_within(adapter: McpAdapter, seconds: float) -> list[str]:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        messages = adapter.drain_outbox()
+        if messages:
+            return [message["method"] for message in messages]
+        time.sleep(0.01)
+    return []
+
+
+_REAL_TOOLS = {"tools": [{"name": "localcloud_get_env"}]}
+_LISTED_TOOLS = [
+    {"name": "localcloud_get_env", "title": "Get env", "annotations": {"title": "Get env"}}
+]
+
+
+def test_a_list_the_runtime_answers_late_reaches_the_client_when_it_arrives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mcp_module, "_REPLY_WAIT", 0.05)
+    release = threading.Event()
+    forwarded: list[str] = []
+
+    class SlowJava(FakeJava):
+        def forward(self, message: dict[str, Any], **_kwargs: Any) -> dict[str, Any] | None:
+            if message.get("method") != "tools/list":
+                return None
+            forwarded.append(message["method"])
+            release.wait(5)
+            return {"jsonrpc": "2.0", "id": message["id"], "result": _REAL_TOOLS}
+
+    adapter = _listing_adapter(SlowJava)
+    started = time.monotonic()
+    try:
+        first = adapter.handle(_request(1, "tools/list"))
+        elapsed = time.monotonic() - started
+        told_early = adapter.drain_outbox()
+    finally:
+        release.set()
+
+    assert first is not None
+    assert [tool["name"] for tool in first["result"]["tools"]] == [STATUS_TOOL]
+    assert elapsed < 1.0
+    assert told_early == []
+    assert _outbox_within(adapter, 3) == list(mcp_module._LIST_CHANGED)
+
+    # The client asks again: it gets the answer that arrived, not another wait.
+    second = adapter.handle(_request(2, "tools/list"))
+    third = adapter.handle(_request(3, "tools/list"))
+
+    assert second == {"jsonrpc": "2.0", "id": 2, "result": {"tools": _LISTED_TOOLS}}
+    assert third == {"jsonrpc": "2.0", "id": 3, "result": {"tools": _LISTED_TOOLS}}
+    assert forwarded == ["tools/list", "tools/list"]
+    assert adapter.drain_outbox() == []
+
+
+def test_a_list_answered_in_time_is_asked_of_the_runtime_every_time() -> None:
+    FakeJava.responses = {"tools/list": {"jsonrpc": "2.0", "result": _REAL_TOOLS}}
+    adapter = _listing_adapter(FakeJava)
+    FakeJava.calls.clear()
+
+    first = adapter.handle(_request(1, "tools/list"))
+    second = adapter.handle(_request(2, "tools/list"))
+
+    assert first is not None and first["result"]["tools"] == _LISTED_TOOLS
+    assert second is not None and second["id"] == 2
+    assert [call["method"] for call in FakeJava.calls] == ["tools/list", "tools/list"]
+    assert adapter.drain_outbox() == []
+
+
+def test_a_list_the_runtime_fails_late_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mcp_module, "_REPLY_WAIT", 0.05)
+    release = threading.Event()
+    finished = threading.Event()
+
+    class FailingJava(FakeJava):
+        def forward(self, message: dict[str, Any], **_kwargs: Any) -> dict[str, Any] | None:
+            if message.get("method") != "resources/list":
+                return None
+            release.wait(5)
+            finished.set()
+            raise HostError(
+                "java_mcp_unavailable",
+                "Java LocalCloud MCP request failed",
+                {"connect_failed": False, "retryable": True},
+            )
+
+    adapter = _listing_adapter(FailingJava)
+    try:
+        first = adapter.handle(_request(1, "resources/list"))
+    finally:
+        release.set()
+
+    assert first == {"jsonrpc": "2.0", "id": 1, "result": {"resources": []}}
+    assert finished.wait(3)
+    assert _outbox_within(adapter, 0.2) == []
+
+
+def test_a_late_list_is_not_kept_for_long(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mcp_module, "_REPLY_WAIT", 0.05)
+    monkeypatch.setattr(mcp_module, "_LATE_LIST_TTL", 0.0)
+    release = threading.Event()
+    forwarded: list[str] = []
+
+    class SlowOnceJava(FakeJava):
+        def forward(self, message: dict[str, Any], **_kwargs: Any) -> dict[str, Any] | None:
+            if message.get("method") != "prompts/list":
+                return None
+            forwarded.append(message["method"])
+            if len(forwarded) == 1:
+                release.wait(5)
+            return {"jsonrpc": "2.0", "id": message["id"], "result": {"prompts": [{"name": "recipe"}]}}
+
+    adapter = _listing_adapter(SlowOnceJava)
+    try:
+        first = adapter.handle(_request(1, "prompts/list"))
+    finally:
+        release.set()
+    assert first == {"jsonrpc": "2.0", "id": 1, "result": {"prompts": []}}
+    assert _outbox_within(adapter, 3) == list(mcp_module._LIST_CHANGED)
+
+    second = adapter.handle(_request(2, "prompts/list"))
+
+    assert second == {"jsonrpc": "2.0", "id": 2, "result": {"prompts": [{"name": "recipe"}]}}
+    assert forwarded == ["prompts/list", "prompts/list"]
+
+
 def test_docker_is_resolved_again_after_it_becomes_available() -> None:
     attempts: list[int] = []
     controller = RunningController()
@@ -720,14 +1044,6 @@ def test_docker_is_resolved_again_after_it_becomes_available() -> None:
 
 
 # Reconnection --------------------------------------------------------------
-
-
-def _refused() -> HostError:
-    return HostError(
-        "java_mcp_unavailable",
-        "Java LocalCloud MCP request failed",
-        {"connect_failed": True, "retryable": True},
-    )
 
 
 def test_a_refused_connection_reconnects_and_resends_once(
@@ -1029,8 +1345,13 @@ def _serve(
     monkeypatch: pytest.MonkeyPatch,
     controller: Any,
     incoming: list[tuple[float, dict[str, Any]]],
+    *,
+    shared_threads: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Run the stdio server over in-memory streams; return what it wrote."""
+    """Run the stdio server over in-memory streams; return what it wrote.
+
+    `shared_threads` shrinks anyio's default worker threads, the ones the real
+    stdio streams read and write with."""
     import mcp.server.stdio as stdio_module
 
     written: list[dict[str, Any]] = []
@@ -1054,6 +1375,8 @@ def _serve(
                 async for message in client_read:
                     written.append(message.message.model_dump(by_alias=True, exclude_unset=True))
 
+        if shared_threads is not None:
+            anyio.to_thread.current_default_thread_limiter().total_tokens = shared_threads
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(feed)
             tasks.start_soon(collect)
@@ -1085,6 +1408,68 @@ def test_a_long_call_does_not_hold_up_other_requests(monkeypatch: pytest.MonkeyP
     )
 
     assert [message["id"] for message in written] == [2, 3, 1, 4]
+
+
+def test_stuck_calls_do_not_use_up_the_threads_pings_need(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StuckJava(FakeJava):
+        def forward(self, message: dict[str, Any], **_kwargs: Any) -> dict[str, Any] | None:
+            if message.get("method") in {"tools/call", "resources/read", "prompts/get"}:
+                time.sleep(0.6)
+            return {"jsonrpc": "2.0", "id": message.get("id"), "result": {}}
+
+    monkeypatch.setattr(mcp_module, "JavaMcpClient", StuckJava)
+
+    written = _serve(
+        monkeypatch,
+        RunningController(),
+        [
+            (0.0, _request(1, "tools/call", name="localcloud_query_data")),
+            (0.0, _request(2, "resources/read", uri="localcloud://api/catalog")),
+            (0.0, _request(3, "prompts/get", name="localcloud_recipe")),
+            (0.1, _request(4, "ping")),
+            (0.0, _request(5, "tools/list")),
+            (1.0, _request(6, "ping")),
+        ],
+        shared_threads=2,
+    )
+
+    assert [message["id"] for message in written][:2] == [4, 5]
+    assert sorted(message["id"] for message in written) == [1, 2, 3, 4, 5, 6]
+
+
+def test_calls_beyond_their_own_threads_wait_and_are_still_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mcp_module, "_CALL_THREADS", 1)
+    running: list[int] = []
+    overlap: list[int] = []
+
+    class SlowJava(FakeJava):
+        def forward(self, message: dict[str, Any], **_kwargs: Any) -> dict[str, Any] | None:
+            if message.get("method") == "tools/call":
+                running.append(1)
+                overlap.append(len(running))
+                time.sleep(0.2)
+                running.pop()
+            return {"jsonrpc": "2.0", "id": message.get("id"), "result": {}}
+
+    monkeypatch.setattr(mcp_module, "JavaMcpClient", SlowJava)
+
+    written = _serve(
+        monkeypatch,
+        RunningController(),
+        [
+            (0.0, _request(1, "tools/call", name="localcloud_query_data")),
+            (0.0, _request(2, "tools/call", name="localcloud_query_data")),
+            (0.05, _request(3, "ping")),
+            (0.6, _request(4, "ping")),
+        ],
+    )
+
+    assert [message["id"] for message in written] == [3, 1, 2, 4]
+    assert overlap == [1, 1]
 
 
 def test_a_cancelled_request_gets_no_response(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -35,6 +35,8 @@ ENDPOINT_CONFIG_ASSIGNMENT = re.compile(
     r"(?im)^\s*(?:export\s+)?[\"']?"
     r"(?P<key>[A-Z][A-Z0-9_]*)[\"']?\s*[:=]"
 )
+# An endpoint without a scheme, the form emulator-host and gRPC-authority variables take.
+_SCHEME_LESS_ENDPOINT = re.compile(r"(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+):\d{1,5}")
 
 
 def environment_config(
@@ -285,7 +287,27 @@ def _validate_url_target(raw: str) -> None:
         )
 
 
-def validate_local_endpoints(value: Any, *, in_endpoint_context: bool = True) -> None:
+def _validate_scheme_less_endpoints(value: str, *, whole: bool) -> None:
+    """`host:port` endpoints must be on this machine, like the URLs."""
+    candidates = [value] if whole else []
+    for line in value.splitlines():
+        assignment = ENDPOINT_CONFIG_ASSIGNMENT.search(line)
+        if assignment and _is_endpoint_variable(assignment.group("key")):
+            candidates.append(line[assignment.end():])
+    for candidate in candidates:
+        candidate = candidate.strip().rstrip(",;").strip("\"'")
+        if _SCHEME_LESS_ENDPOINT.fullmatch(candidate):
+            _validate_url_target(f"http://{candidate}")
+
+
+def validate_local_endpoints(
+    value: Any,
+    *,
+    in_endpoint_context: bool = True,
+    scheme_less: bool = True,
+) -> None:
+    """`scheme_less=False` checks URLs only. It is for content that can be the
+    user's own, where `REDIS_HOST=redis:6379` is not an endpoint of LocalCloud."""
     if isinstance(value, str):
         if REAL_GOOGLE.search(value):
             raise HostError(
@@ -305,6 +327,8 @@ def validate_local_endpoints(value: Any, *, in_endpoint_context: bool = True) ->
                 elif re.match(r"^\s*https?://", line.strip()):
                     for match in re.finditer(r"https?://[^\s\"']+", line):
                         _validate_url_target(match.group(0).rstrip("\\,}"))
+        if scheme_less:
+            _validate_scheme_less_endpoints(value, whole=in_endpoint_context)
         return
 
     if isinstance(value, dict):
@@ -317,15 +341,23 @@ def validate_local_endpoints(value: Any, *, in_endpoint_context: bool = True) ->
                 )
             child_is_endpoint = (
                 _is_endpoint_value_key(key_str)
-                or _is_endpoint_env_key(key_str)
+                or _is_endpoint_variable(key_str)
             )
-            validate_local_endpoints(child, in_endpoint_context=child_is_endpoint)
+            validate_local_endpoints(
+                child,
+                in_endpoint_context=child_is_endpoint,
+                scheme_less=scheme_less,
+            )
         return
 
 
     if isinstance(value, (list, tuple, set)):
         for item in value:
-            validate_local_endpoints(item, in_endpoint_context=in_endpoint_context)
+            validate_local_endpoints(
+                item,
+                in_endpoint_context=in_endpoint_context,
+                scheme_less=scheme_less,
+            )
         return
 
 
@@ -335,13 +367,23 @@ def transform_endpoint_payload(
     endpoint_map: dict[str, Any],
     *,
     endpoint_context: bool = False,
+    user_content: bool = False,
 ) -> Any:
+    """Move the endpoints in a result to this runtime's host ports, and refuse
+    one that leads away from it.
+
+    `user_content` marks a result that holds the user's own data: an API
+    response, a stored file, a captured request. A function's `WEBHOOK_URL` or a
+    key file's `token_uri` there is not an endpoint LocalCloud hands out, so
+    only LocalCloud's own endpoint records in it are checked; the rest is
+    rewritten and never refused."""
     if isinstance(value, list):
         return [
             transform_endpoint_payload(
                 item,
                 endpoint_map,
                 endpoint_context=endpoint_context,
+                user_content=user_content,
             )
             for item in value
         ]
@@ -349,10 +391,14 @@ def transform_endpoint_payload(
         if isinstance(value, str):
             if endpoint_context:
                 return _rewrite_nested_generated_value(value, endpoint_map)
-            return _transform_endpoint_text(value, endpoint_map)
+            return _transform_endpoint_text(
+                value, endpoint_map, user_content=user_content
+            )
         return value
 
-    generated_record = endpoint_context or _is_endpoint_record(value)
+    generated_record = endpoint_context or _is_endpoint_record(
+        value, user_content=user_content
+    )
     env_mapping = any(_is_endpoint_env_key(str(key)) for key in value)
     transformed: dict[Any, Any] = {}
     for key, child in value.items():
@@ -364,18 +410,26 @@ def transform_endpoint_payload(
                 child, endpoint_map, port=True
             )
         elif env_mapping and _is_endpoint_env_key(str(key)):
-            transformed[key] = _rewrite_endpoint_value(child, endpoint_map)
+            # Any mapping with such a key gets here, a function's own variables included.
+            transformed[key] = (
+                rewrite_endpoints(child, endpoint_map)
+                if user_content and not generated_record
+                else _rewrite_endpoint_value(child, endpoint_map, generated=False)
+            )
         elif (
             normalized_key == "text"
             and isinstance(child, str)
             and (value.get("type") == "text" or "mimeType" in value)
         ):
-            transformed[key] = _transform_endpoint_text(child, endpoint_map)
+            transformed[key] = _transform_endpoint_text(
+                child, endpoint_map, user_content=user_content
+            )
         else:
             transformed[key] = transform_endpoint_payload(
                 child,
                 endpoint_map,
                 endpoint_context=generated_record,
+                user_content=user_content,
             )
     return transformed
 
@@ -390,6 +444,11 @@ def _is_endpoint_env_key(key: str) -> bool:
     )
 
 
+def _is_endpoint_variable(key: str) -> bool:
+    """A variable that holds an endpoint, gRPC authorities (`host:port`) included."""
+    return _is_endpoint_env_key(key) or key.upper().endswith("_AUTHORITY")
+
+
 def _is_endpoint_value_key(key: str) -> bool:
     normalized = key.lower()
     return (
@@ -399,9 +458,10 @@ def _is_endpoint_value_key(key: str) -> bool:
     )
 
 
-def _is_endpoint_record(value: dict[Any, Any]) -> bool:
+def _is_endpoint_record(value: dict[Any, Any], *, user_content: bool = False) -> bool:
     keys = {str(key).lower() for key in value}
-    if {"token_uri", "auth_uri"} <= keys:
+    # A service-account or OAuth client file of the user's has these two as well.
+    if {"token_uri", "auth_uri"} <= keys and not user_content:
         return True
     if "endpoint_env" in keys and "real_google_cloud_fallback" in keys:
         return True
@@ -422,6 +482,7 @@ def _rewrite_endpoint_value(
     endpoint_map: dict[str, Any],
     *,
     port: bool = False,
+    generated: bool = True,
 ) -> Any:
     rewritten = value
     if port and not isinstance(value, bool):
@@ -434,7 +495,7 @@ def _rewrite_endpoint_value(
     # safe; `_rewrite_nested_generated_value` below deliberately skips this
     # check since it runs on generic nested strings that could false-positive
     # (e.g. descriptive text mentioning a real hostname).
-    validate_local_endpoints(rewritten)
+    validate_local_endpoints(rewritten, scheme_less=generated)
     return rewritten
 
 
@@ -445,23 +506,32 @@ def _rewrite_nested_generated_value(
     return _rewrite_and_check_stale(value, endpoint_map)
 
 
-def _rewrite_endpoint_config(value: str, endpoint_map: dict[str, Any]) -> str:
+def _rewrite_endpoint_config(
+    value: str, endpoint_map: dict[str, Any], *, user_content: bool = False
+) -> str:
     if not any(
         _is_endpoint_env_key(match.group("key"))
         for match in ENDPOINT_CONFIG_ASSIGNMENT.finditer(value)
     ):
         return value
-    return _rewrite_endpoint_value(value, endpoint_map)
+    if user_content:
+        return rewrite_endpoints(value, endpoint_map)
+    # Text with such an assignment can be a file of the user's as well as LocalCloud's.
+    return _rewrite_endpoint_value(value, endpoint_map, generated=False)
 
 
-def _transform_endpoint_text(value: str, endpoint_map: dict[str, Any]) -> str:
+def _transform_endpoint_text(
+    value: str, endpoint_map: dict[str, Any], *, user_content: bool = False
+) -> str:
     try:
         parsed = json.loads(value)
     except (json.JSONDecodeError, TypeError):
-        return _rewrite_endpoint_config(value, endpoint_map)
+        return _rewrite_endpoint_config(value, endpoint_map, user_content=user_content)
     if not isinstance(parsed, (dict, list)):
-        return _rewrite_endpoint_config(value, endpoint_map)
-    transformed = transform_endpoint_payload(parsed, endpoint_map)
+        return _rewrite_endpoint_config(value, endpoint_map, user_content=user_content)
+    transformed = transform_endpoint_payload(
+        parsed, endpoint_map, user_content=user_content
+    )
     if transformed == parsed:
         return value
     return json.dumps(transformed, ensure_ascii=False, separators=(",", ":"))

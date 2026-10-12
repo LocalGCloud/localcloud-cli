@@ -28,6 +28,7 @@ from .constants import (
     DEFAULT_PROJECT,
     DEFAULT_TLS_PORT,
     DEFAULT_USER,
+    ESTARGZ_TAG_SUFFIX,
 )
 
 from .errors import ConfigError, HostError
@@ -605,6 +606,7 @@ def load_config(
     tls: bool | None = None,
     memory: str | None = None,
     image: str | None = None,
+    estargz: bool | None = None,
     services: list[str] | str | None = None,
     paths: HostPaths | None = None,
     active_runtime: ActiveRuntime | None | object = _ACTIVE_RUNTIME_UNSET,
@@ -726,6 +728,8 @@ def load_config(
             ):
                 image = active.image
             image = _non_blank_string("host.image", image or DEFAULT_IMAGE)
+    if estargz is not None:
+        image = estargz_image(image, estargz)
 
     memory = _non_blank_string(
         "host.memory",
@@ -1370,6 +1374,38 @@ def _non_blank_string(name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         _invalid_config(f"{name} must be a non-empty string", value=value)
     return value.strip()
+
+
+def _image_tag(image: str) -> tuple[str, str] | None:
+    """The repository and tag of an image named by tag; None for a digest or an image ID."""
+    if "@" in image or image.startswith("sha256:"):
+        return None
+    repository, colon, tag = image.rpartition(":")
+    if not colon or "/" in tag:
+        return image, "latest"
+    return repository, tag
+
+
+def is_estargz_image(image: str) -> bool:
+    """Whether `image` names an eStargz build: a tag ending in -estargz."""
+    parts = _image_tag(image)
+    return parts is not None and parts[1].endswith(ESTARGZ_TAG_SUFFIX)
+
+
+def estargz_image(image: str, enabled: bool) -> str:
+    """`image` as its eStargz build when `enabled`, otherwise as its regular build."""
+    if is_estargz_image(image) == enabled:
+        return image
+    parts = _image_tag(image)
+    if parts is None:
+        raise ConfigError(
+            "invalid_config",
+            "--estargz needs an image named by tag, not by digest or image ID",
+            {"image": image},
+        )
+    repository, tag = parts
+    tag = f"{tag}{ESTARGZ_TAG_SUFFIX}" if enabled else tag.removesuffix(ESTARGZ_TAG_SUFFIX)
+    return f"{repository}:{tag}"
 
 
 def _environment(value: object) -> dict[str, str]:
