@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bundle the four published CLI archives as one local MCP desktop extension."""
+"""Bundle the published CLI archives as one local MCP desktop extension."""
 
 from __future__ import annotations
 
@@ -14,16 +14,15 @@ import tempfile
 from urllib.request import urlopen
 
 
-PLATFORMS = ("darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64")
+PLATFORMS = ("darwin-arm64", "linux-arm64", "linux-amd64")
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = """#!/bin/sh
 set -eu
 case "$(uname -s)/$(uname -m)" in
   Darwin/arm64) platform=darwin-arm64 ;;
-  Darwin/x86_64) platform=darwin-amd64 ;;
   Linux/aarch64|Linux/arm64) platform=linux-arm64 ;;
   Linux/x86_64) platform=linux-amd64 ;;
-  *) echo 'LocalCloud MCP supports macOS and Linux on ARM64 or x86_64.' >&2; exit 1 ;;
+  *) echo 'LocalCloud MCP supports macOS on Apple Silicon and Linux on ARM64 or x86_64.' >&2; exit 1 ;;
 esac
 bundle_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 exec "$bundle_dir/bin/$platform/localcloud" mcp "$@"
@@ -70,7 +69,7 @@ def main() -> None:
             "version": version,
             "description": "A free local cloud environment for AI agents to build, test, and debug Google Cloud applications.",
             "long_description": "Includes LocalCloud CLI " + version +
-                ". Requires macOS 13+ or Linux glibc 2.35+, and running Docker. "
+                ". Requires macOS 13+ on Apple Silicon or Linux glibc 2.35+, and running Docker. "
                 "The MCP bridge starts or reuses your local cloud runtime. "
                 "Use runtime 0.1.5 or newer for strict-client tool schema validation. "
                 "Website: https://local.cloud/ Guide: https://local.cloud/docs/mcp/",
@@ -90,7 +89,7 @@ def main() -> None:
         shutil.copy2(ROOT / "docs/assets/localcloud-mcp-icon.png", bundle / "icon.png")
         (bundle / "README.md").write_text(
             f"# LocalCloud MCP\n\nA free local cloud environment for AI coding agents.\n\n"
-            f"This bundle includes LocalCloud CLI {version} for macOS 13+ and Linux glibc 2.35+ on ARM64/x86_64. "
+            f"This bundle includes LocalCloud CLI {version} for macOS 13+ on Apple Silicon and Linux glibc 2.35+ on ARM64/x86_64. "
             "Docker must be running. Your MCP client starts the bridge, which starts or reuses "
             "the LocalCloud runtime on your machine. Runtime 0.1.5+ is required for strict-client "
             "tool schema validation; CLI and runtime versions are independent.\n\n"

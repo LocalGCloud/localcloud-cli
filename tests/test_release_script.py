@@ -383,8 +383,6 @@ esac
             [
                 "SHA256SUMS",
                 "SHA256SUMS.sigstore.json",
-                "localcloud-darwin-amd64.tar.gz",
-                "localcloud-darwin-amd64.tar.gz.sigstore.json",
                 "localcloud-darwin-arm64.tar.gz",
                 "localcloud-darwin-arm64.tar.gz.sigstore.json",
                 "localcloud-linux-amd64.tar.gz",

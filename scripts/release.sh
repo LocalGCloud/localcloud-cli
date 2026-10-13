@@ -384,8 +384,6 @@ expected_release_assets() {
     cat <<'EOF'
 SHA256SUMS
 SHA256SUMS.sigstore.json
-localcloud-darwin-amd64.tar.gz
-localcloud-darwin-amd64.tar.gz.sigstore.json
 localcloud-darwin-arm64.tar.gz
 localcloud-darwin-arm64.tar.gz.sigstore.json
 localcloud-linux-amd64.tar.gz
@@ -549,7 +547,7 @@ p.write_text(new_content, encoding='utf-8')
             printf 'warning: published releases should be immutable; consider bumping the version instead.\n' >&2
         fi
         dispatch_and_watch \
-            "Build and publish four native CLI archives" \
+            "Build and publish three native CLI archives" \
             "$RELEASE_WORKFLOW" "$SOURCE_REPO" \
             --ref "$TAG" -f "force=$FORCE_RELEASE"
         CLI_RUN_URL=$WORKFLOW_RUN_URL

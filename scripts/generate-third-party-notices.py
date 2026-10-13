@@ -16,7 +16,6 @@ from packaging.markers import Marker, default_environment
 ROOT_PACKAGE = "localcloud-cli"
 SUPPORTED_TARGETS = (
     ("darwin", "Darwin", "arm64"),
-    ("darwin", "Darwin", "x86_64"),
     ("linux", "Linux", "aarch64"),
     ("linux", "Linux", "x86_64"),
 )

@@ -42,7 +42,6 @@ def _check_handshake(bridge, timeout):
 
 @pytest.mark.parametrize("system,machine,platform", [
     ("Darwin", "arm64", "darwin-arm64"),
-    ("Darwin", "x86_64", "darwin-amd64"),
     ("Linux", "aarch64", "linux-arm64"),
     ("Linux", "arm64", "linux-arm64"),
     ("Linux", "x86_64", "linux-amd64"),
@@ -67,17 +66,30 @@ def test_bundle_launcher_selects_native_cli_and_preserves_arguments(tmp_path, sy
     assert result.stdout.splitlines() == ["mcp", "--project-id", "project with spaces"]
 
 
-def test_bundle_launcher_rejects_unsupported_platform(tmp_path):
+@pytest.mark.parametrize("system,machine", [
+    ("unsupported", "unsupported"),
+    ("Darwin", "x86_64"),
+], ids=["unknown", "intel-mac"])
+def test_bundle_launcher_rejects_unsupported_platform(tmp_path, system, machine):
     launcher = tmp_path / "launcher.sh"
     launcher.write_text(module.LAUNCHER)
     uname = tmp_path / "uname"
-    uname.write_text("#!/bin/sh\necho unsupported\n")
+    uname.write_text(f"#!/bin/sh\ncase $1 in -s) echo {system};; -m) echo {machine};; esac\n")
     uname.chmod(0o755)
     result = subprocess.run(["/bin/sh", str(launcher)], env={"PATH": str(tmp_path)},
                             capture_output=True, text=True)
     assert result.returncode == 1
-    assert "supports macOS and Linux" in result.stderr
+    assert result.stderr == (
+        "LocalCloud MCP supports macOS on Apple Silicon and Linux on ARM64 or x86_64.\n"
+    )
     assert result.stdout == ""
+
+
+def test_bundle_ships_one_cli_per_supported_platform():
+    assert module.PLATFORMS == ("darwin-arm64", "linux-arm64", "linux-amd64")
+    selected = [word.removeprefix("platform=") for word in module.LAUNCHER.split()
+                if word.startswith("platform=")]
+    assert selected == list(module.PLATFORMS)
 
 
 def test_mcp_handshake_check_accepts_a_bridge_that_answers_without_docker(tmp_path):

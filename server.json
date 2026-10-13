@@ -30,7 +30,7 @@
       "supportUrl": "https://github.com/LocalGCloud/localcloud-cli/issues",
       "minimumCliVersion": "0.1.9",
       "minimumRuntimeVersion": "0.1.5",
-      "prerequisites": ["Docker", "macOS 13+ or Linux glibc 2.35+", "ARM64 or x86_64"],
+      "prerequisites": ["Docker", "macOS 13+ on Apple Silicon, or Linux glibc 2.35+ on ARM64 or x86_64"],
       "installation": "https://local.cloud/docs/mcp/"
     }
   }

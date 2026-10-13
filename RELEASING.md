@@ -133,8 +133,8 @@ The script:
 - verifies the exact archive, checksum, formula, and Sigstore asset set; and
 - dispatches and watches the idempotent Homebrew tap publisher.
 
-The GitHub workflow remains responsible for native macOS and Linux builds on
-ARM64 and AMD64 runners. The local script does not cross-compile. A matching
+The GitHub workflow remains responsible for the native builds: macOS on ARM64,
+and Linux on ARM64 and AMD64 runners. The local script does not cross-compile. A matching
 tag may be reused after a failed workflow. If a complete GitHub release already
 exists, the default behavior verifies and reuses it before resuming Homebrew
 publication. With `--force`, a conflicting tag is moved to the current prepared
@@ -212,7 +212,7 @@ gh run watch "${tap_run_url##*/}" \
 ```
 
 `cli-release.yml` verifies the selected tag, runs source validation with
-`pytest -m "not docker"`, builds all four native archives, and creates the
+`pytest -m "not docker"`, builds all three native archives, and creates the
 GitHub release. On each platform, the frozen binary runs `start` with an
 unreachable Docker host. When the PostHog settings above are configured, the
 workflow then requires PostHog to accept the
@@ -257,7 +257,6 @@ commit before `brew info` or installation.
 Confirm that the release contains these files:
 
 - `localcloud-darwin-arm64.tar.gz`
-- `localcloud-darwin-amd64.tar.gz`
 - `localcloud-linux-arm64.tar.gz`
 - `localcloud-linux-amd64.tar.gz`
 - `SHA256SUMS`

@@ -111,9 +111,6 @@ jobs:
           - runner: macos-15
             expected_machine: arm64
             asset: localcloud-darwin-arm64.tar.gz
-          - runner: macos-15-intel
-            expected_machine: x86_64
-            asset: localcloud-darwin-amd64.tar.gz
           - runner: ubuntu-22.04-arm
             expected_machine: aarch64
             asset: localcloud-linux-arm64.tar.gz
@@ -246,10 +243,10 @@ jobs:
         shell: bash
         working-directory: release-assets
         run: |
-          expected="localcloud-darwin-amd64.tar.gz localcloud-darwin-arm64.tar.gz localcloud-linux-amd64.tar.gz localcloud-linux-arm64.tar.gz"
+          expected="localcloud-darwin-arm64.tar.gz localcloud-linux-amd64.tar.gz localcloud-linux-arm64.tar.gz"
           actual=$(printf '%s\n' localcloud-*.tar.gz | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
           test "$actual" = "$expected"
-          sha256sum localcloud-darwin-amd64.tar.gz localcloud-darwin-arm64.tar.gz localcloud-linux-amd64.tar.gz localcloud-linux-arm64.tar.gz > SHA256SUMS
+          sha256sum localcloud-darwin-arm64.tar.gz localcloud-linux-amd64.tar.gz localcloud-linux-arm64.tar.gz > SHA256SUMS
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
@@ -295,7 +292,7 @@ jobs:
             "CLI source revision:" "$RELEASE_COMMIT" \
             "CLI release date:" "$RELEASE_DATE" \
             "Runtime Docker image:" "$IMAGE" \
-            "Supported hosts: macOS 13+ and Linux with glibc 2.35+ (Ubuntu 22.04 equivalent)." \
+            "Supported hosts: macOS 13+ on Apple Silicon and Linux with glibc 2.35+ (Ubuntu 22.04 equivalent)." \
             > release-notes.txt
           gh release create "$GITHUB_REF_NAME" \
             release-assets/* \

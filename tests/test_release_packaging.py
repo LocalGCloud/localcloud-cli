@@ -16,7 +16,6 @@ WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "cli-release.yml"
 LICENSE_CHECK = PROJECT_ROOT / "scripts" / "check-third-party-licenses.py"
 ASSETS = (
     "localcloud-darwin-arm64.tar.gz",
-    "localcloud-darwin-amd64.tar.gz",
     "localcloud-linux-arm64.tar.gz",
     "localcloud-linux-amd64.tar.gz",
 )
@@ -89,6 +88,53 @@ def test_rendered_homebrew_formula_installs_and_tests_lc_alias(tmp_path: Path) -
         'assert_equal canonical_version, shell_output("#{bin}/lc --version")'
         in formula
     )
+    # Intel Macs get Homebrew's own "arm64 architecture is required" refusal.
+    macos = formula.split("  on_macos do\n")[1].split("  end\n")[0]
+    assert macos.splitlines() == [
+        "    depends_on arch: :arm64",
+        "    depends_on macos: :ventura",
+        "",
+        '    url "https://github.com/LocalGCloud/localcloud-cli/releases/download/'
+        'v0.1.0/localcloud-darwin-arm64.tar.gz"',
+        f'    sha256 "{"0" * 64}"',
+    ]
+    assert formula.count('url "') == len(ASSETS)
+
+
+def test_homebrew_formula_rejects_a_release_with_an_intel_macos_archive(
+    tmp_path: Path,
+) -> None:
+    checksums = tmp_path / "SHA256SUMS"
+    checksums.write_text(
+        "".join(
+            f"{'0' * 64}  {asset}\n"
+            for asset in (*ASSETS, "localcloud-darwin-amd64.tar.gz")
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/render-homebrew-formula.py",
+            "--version",
+            "0.1.0",
+            "--checksums",
+            str(checksums),
+            "--output",
+            str(tmp_path / "localcloud.rb"),
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert result.stderr == (
+        "error: invalid checksum asset set "
+        "(unexpected: localcloud-darwin-amd64.tar.gz)\n"
+    )
+    assert not (tmp_path / "localcloud.rb").exists()
 
 
 def test_every_locked_runtime_distribution_has_a_license_file_to_ship() -> None:
@@ -214,3 +260,22 @@ def test_release_workflow_checks_the_mcp_handshake_of_each_frozen_binary() -> No
     ]
     # A binary that hangs outside the script's own timeout still fails the job.
     assert handshake["timeout-minutes"] <= 5
+
+
+def test_release_workflow_builds_and_publishes_only_the_supported_archives() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    matrix = workflow["jobs"]["build-native"]["strategy"]["matrix"]["include"]
+    verify = next(
+        step
+        for step in _workflow_steps("publish-release")
+        if step.get("name") == "Verify asset set and generate checksums"
+    )
+    archives = " ".join(sorted(ASSETS))
+
+    assert {entry["asset"]: entry["expected_machine"] for entry in matrix} == {
+        "localcloud-darwin-arm64.tar.gz": "arm64",
+        "localcloud-linux-arm64.tar.gz": "aarch64",
+        "localcloud-linux-amd64.tar.gz": "x86_64",
+    }
+    assert f'expected="{archives}"' in verify["run"]
+    assert f"sha256sum {archives} > SHA256SUMS" in verify["run"]

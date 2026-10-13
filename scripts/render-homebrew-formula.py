@@ -11,7 +11,6 @@ from pathlib import Path
 
 ASSETS = {
     "darwin_arm64": "localcloud-darwin-arm64.tar.gz",
-    "darwin_amd64": "localcloud-darwin-amd64.tar.gz",
     "linux_arm64": "localcloud-linux-arm64.tar.gz",
     "linux_amd64": "localcloud-linux-amd64.tar.gz",
 }
@@ -63,15 +62,11 @@ def render(version: str, checksums_path: Path) -> str:
   license :cannot_represent
 
   on_macos do
+    depends_on arch: :arm64
     depends_on macos: :ventura
 
-    if Hardware::CPU.arm?
-      url "{base}/{ASSETS['darwin_arm64']}"
-      sha256 "{checksums[ASSETS['darwin_arm64']]}"
-    else
-      url "{base}/{ASSETS['darwin_amd64']}"
-      sha256 "{checksums[ASSETS['darwin_amd64']]}"
-    end
+    url "{base}/{ASSETS['darwin_arm64']}"
+    sha256 "{checksums[ASSETS['darwin_arm64']]}"
   end
 
   on_linux do

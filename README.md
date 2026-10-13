@@ -144,8 +144,10 @@ Signed release archives with Sigstore verification bundles are published for:
 
 | Platform | Architectures | Minimum |
 | :--- | :--- | :--- |
-| macOS | Apple Silicon, Intel | macOS 13+ |
+| macOS | Apple Silicon | macOS 13+ |
 | Linux | `x86_64`, `aarch64` | glibc 2.35+ (Ubuntu 22.04+) |
+
+Intel Macs are not supported: 0.1.11 was the last release with an Intel macOS archive.
 
 Windows users can run the container directly — see the
 [Docker setup instructions](https://local.cloud/docs/getting-started/).
