@@ -50,7 +50,6 @@ PAYLOAD: dict[str, Any] = {
 
 def test_summary_uses_relevant_fields_in_stable_order() -> None:
     assert render_summary("start", PAYLOAD).splitlines() == [
-        "Status       Running",
         "Config       localcloud.yaml",
         "Data volume  localcloud-data",
         "Origin       managed",
@@ -78,16 +77,18 @@ def test_summary_uses_precise_human_status_values(
     status: str,
     expected: str,
 ) -> None:
-    lines = render_summary(command, {"status": status}).splitlines()
-    assert lines[0].endswith(expected)
+    # The closing line reports the outcome; the row is there on request.
+    assert render_summary(command, {"status": status}) == ""
+    lines = render_summary(command, {"status": status}, ["status"]).splitlines()
+    assert lines == [f"Status  {expected}"]
 
 
 @pytest.mark.parametrize(
     ("formatted", "expected"),
     [
         (
-            "(Local: ID: qualified , sha256:qualified)",
-            "Image        agentcloud/localcloud:latest (Local: ID: qualified , sha256:qualified)",
+            "(ID: qualified)",
+            "Image        agentcloud/localcloud:latest (ID: qualified)",
         ),
         (
             "(not available locally)",
@@ -205,7 +206,7 @@ def test_summary_wraps_values_with_hanging_indent_at_visible_width() -> None:
         "container": {
             "configured_image": "agentcloud/localcloud:latest",
             "image_details": {
-                "formatted": "(Local: ID: abcdef123456 , sha256:abcdef123456)"
+                "formatted": "(ID: abcdef123456)"
             },
         },
         "services": [
@@ -437,8 +438,10 @@ def test_40_column_panel_preserves_full_artwork_and_context() -> None:
 
     for artwork_line in render_cloud(color=ColorMode.NONE):
         assert artwork_line.strip() in plain_text
-    for label in ("Data Volume:", "Project:", "User:", "Config:", "Data:", "Featured:"):
+    for label in ("Data Volume:", "Project:", "User:", "Config:", "Featured:"):
         assert label in plain_text
+    assert "Data:" not in plain_text
+    assert "(overridable by ./localcloud.yaml)" in plain_text
     assert "● 3 selected · ○ 24 off" in plain_text
     assert {visible_width(line) for line in lines} == {38}
 
@@ -455,7 +458,7 @@ def test_narrow_lifecycle_lines_do_not_wrap() -> None:
     frame = reporter._frame(1.0, 0.0)
     assert all(visible_width(line) <= 20 for line in frame)
     assert visible_width(
-        reporter._status_line("Done", "LocalCloud is ready", "success", 0.0)
+        reporter._status_line("[OK]", "LocalCloud is ready", "success", 0.0)
     ) <= 20
 
 
@@ -487,7 +490,7 @@ def test_non_tty_reporter_emits_stable_lifecycle_lines() -> None:
     reporter.succeed("LocalCloud runtime is running")
     assert stream.getvalue().splitlines() == [
         "Processing   Inspecting data volume 'localcloud-data'…",
-        "Done         LocalCloud runtime is running  2.5s",
+        "[OK] LocalCloud runtime is running  2.5s",
     ]
 
 
@@ -519,8 +522,8 @@ def test_interactive_reporter_draws_panel_and_restores_cursor() -> None:
     output = stream.getvalue()
     assert "\x1b[?25l" in output
     assert "LocalCloud" in strip_ansi(output)
-    assert "Done" in strip_ansi(output)
-    assert output.endswith("\x1b[?25h")
+    assert strip_ansi(output).splitlines()[-1].startswith("[OK] LocalCloud is ready")
+    assert output.count("\x1b[?25l") == output.count("\x1b[?25h") == 1
 
 
 def test_no_color_reporter_keeps_panel_static() -> None:
@@ -568,9 +571,8 @@ def test_wide_panel_structure_and_color_coding() -> None:
     assert "localcloud (or lc)" in plain_text
     assert "status | start | stop | restart" in plain_text
     assert "eval $(lc env)" in plain_text
-    assert "Supported Services" in plain_text
-    assert "27 GCP Services" in plain_text
-    assert "● 22 active · ○ 5 opt" in plain_text
+    assert "Supported Services (● 22 enabled · ○ 5 disabled)" in plain_text
+    assert "GCP Services" not in plain_text
     # Check default enabled services
     assert "● Storage" in plain_text
     assert "● Pub/Sub" in plain_text
@@ -645,9 +647,8 @@ def test_80_column_wide_panel_structure() -> None:
     )
     lines = render_panel(context, 80, color=ColorMode.NONE)
     plain_text = "\n".join(lines)
-    assert "27 GCP Services" in plain_text
-    assert "● 22 active · ○ 5 opt" in plain_text
-    assert "Supported Services" in plain_text
+    assert "GCP Services" not in plain_text
+    assert "Supported Services (● 22 enabled · ○ 5 disabled)" in plain_text
     assert "● Storage" in plain_text
     assert "○ Firestore" in plain_text
     assert "○ Cloud Run" in plain_text
@@ -698,7 +699,7 @@ def test_reporter_write_line_emits_lines_in_plain_and_interactive_mode() -> None
     plain_output = plain_stream.getvalue()
     assert "2026-08-18T10:00:00Z [INFO] Service starting\n" in plain_output
     assert "2026-08-18T10:00:01Z [INFO] Ready\n" in plain_output
-    assert "Done" in plain_output
+    assert plain_output.splitlines()[-1].startswith("[OK] LocalCloud is ready")
 
     interactive_stream = TtyBuffer()
     times = iter([0.0, 0.1, 0.2, 0.3])
@@ -716,8 +717,8 @@ def test_reporter_write_line_emits_lines_in_plain_and_interactive_mode() -> None
     interactive_output = interactive_stream.getvalue()
     assert "Log line 1" in interactive_output
     assert "Log line 2" in interactive_output
-    assert "Done" in strip_ansi(interactive_output)
-    assert interactive_output.endswith("\x1b[?25h")
+    assert strip_ansi(interactive_output).splitlines()[-1].startswith("[OK]")
+    assert interactive_output.count("\x1b[?25h") == 1
 
 
 def test_reporter_panel_settles_above_log_stream() -> None:
@@ -753,7 +754,7 @@ def test_reporter_panel_settles_above_log_stream() -> None:
     panel_pos = plain.find("LocalCloud v")
     log1_pos = plain.find("2026-08-18T14:30:01Z [INFO] Service starting")
     log2_pos = plain.find("2026-08-18T14:30:02Z [INFO] Ready")
-    done_pos = plain.find("Done")
+    done_pos = plain.find("[OK]")
 
     assert panel_pos < log1_pos < log2_pos < done_pos
 
@@ -944,19 +945,22 @@ def test_doctor_summary_shows_docker_host_setup_and_fixes() -> None:
 
     lines = render_summary("doctor", payload).splitlines()
 
-    assert "Docker host  Colima (QEMU)" in lines
-    assert "Setup        Colima runs a QEMU virtual machine." in lines
-    assert "             Fix: Recreate Colima on VZ with Rosetta; run 'lc doctor --fix'" in lines
-    assert "             Step: In Docker Desktop, open Settings > General" in lines
-    assert "Fixes        Declined: Recreate Colima" in lines
-    assert "             Failed: Start Colima ('colima start' exited with 1)" in lines
-    assert "             Applied: Turn on Rosetta" in lines
+    assert lines[0] == "Docker  29.8.1 · Colima (QEMU)"
+    assert not any(line.startswith(("Status", "Docker host")) for line in lines)
+    assert "Setup   Colima runs a QEMU virtual machine." in lines
+    assert "        Fix: Recreate Colima on VZ with Rosetta; run 'lc doctor --fix'" in lines
+    assert "        Step: In Docker Desktop, open Settings > General" in lines
+    assert "Fixes   Declined: Recreate Colima" in lines
+    assert "        Failed: Start Colima ('colima start' exited with 1)" in lines
+    assert "        Applied: Turn on Rosetta" in lines
 
 
 def test_doctor_summary_lists_lazy_pulling_and_its_steps() -> None:
     payload = {
         "status": "ok",
-        "docker_host": "Colima (VZ, Rosetta on)",
+        "docker": "29.8.1",
+        "docker_command_path": "/opt/homebrew/bin/docker",
+        "docker_host": "Colima 0.10.1 (VZ, Rosetta on)",
         "lazy_pulling": {
             "enabled": False,
             "storage_driver": "overlayfs",
@@ -968,8 +972,8 @@ def test_doctor_summary_lists_lazy_pulling_and_its_steps() -> None:
 
     lines = render_summary("doctor", payload).splitlines()
 
-    assert lines[1:5] == [
-        "Docker host   Colima (VZ, Rosetta on)",
+    assert lines[:4] == [
+        "Docker        29.8.1 (/opt/homebrew/bin/docker) · Colima 0.10.1 (VZ, Rosetta on)",
         "Lazy pulling  off (storage driver overlayfs): Docker downloads the whole image.",
         "              Step: Install the Stargz Snapshotter",
         "              Step: Then set storage-driver",
@@ -995,12 +999,19 @@ def test_runtime_summaries_show_lazy_pulling(command: str) -> None:
 
 
 def test_doctor_summary_omits_setup_when_there_are_no_findings() -> None:
-    summary = render_summary(
-        "doctor", {"status": "ok", "docker_host": "unknown", "setup_findings": []}
-    )
+    payload = {
+        "status": "ok",
+        "docker": "29.8.1",
+        "docker_host": "unknown",
+        "setup_findings": [],
+    }
 
-    assert "Setup" not in summary
-    assert "Docker host  unknown" in summary
+    # A host no Docker app could be named for adds nothing to the Docker row.
+    assert render_summary("doctor", payload) == "Docker  29.8.1"
+    assert render_summary("doctor", payload, ["docker_host"]).splitlines() == [
+        "Docker       29.8.1",
+        "Docker host  unknown",
+    ]
 
 
 def test_render_findings_skips_a_message_the_error_already_printed() -> None:
@@ -1035,3 +1046,142 @@ def test_render_findings_skips_a_message_the_error_already_printed() -> None:
     assert render_findings([unreachable], skip_message=message) == ""
     colored = render_findings(findings[1:], color=ColorMode.ANSI16)
     assert strip_ansi(colored).startswith("Setup  Colima runs")
+
+
+# --- Closing [OK]/[FAIL] line, the doctor's Docker row, the config hint, panel context ---
+
+
+def _context(**overrides: Any) -> PanelContext:
+    values: dict[str, Any] = {
+        "data_volume": "localcloud-data",
+        "project": "local-gcp-project",
+        "user": "local-developer",
+        "services": "default",
+        "data": "persistent",
+        "config": None,
+    }
+    return PanelContext(**{**values, **overrides})
+
+
+def _panes(lines: list[str]) -> list[str]:
+    """Each boxed row's right-hand (or only) pane."""
+    return [line.split("│")[-2].rstrip() for line in lines if "│" in line]
+
+
+def test_summary_names_the_file_that_overrides_built_in_defaults() -> None:
+    defaults = render_summary("start", {**PAYLOAD, "config": "built-in defaults"})
+
+    assert (
+        "Config       built-in defaults (overridable by ./localcloud.yaml)"
+        in defaults.splitlines()
+    )
+    assert "overridable" not in render_summary("start", PAYLOAD)
+
+
+def test_doctor_docker_row_names_the_docker_host() -> None:
+    payload = {
+        "status": "ok",
+        "docker": "29.8.1",
+        "docker_command_path": "/opt/homebrew/bin/docker",
+        "docker_host": "Colima 0.10.1 (VZ, Rosetta on)",
+    }
+
+    plain = render_summary("doctor", payload)
+    colored = render_summary("doctor", payload, color=ColorMode.ANSI16)
+
+    assert plain == (
+        "Docker  29.8.1 (/opt/homebrew/bin/docker) · Colima 0.10.1 (VZ, Rosetta on)"
+    )
+    assert "\x1b[97mColima 0.10.1\x1b[0m\x1b[90m (VZ, Rosetta on)\x1b[0m" in colored
+    assert strip_ansi(colored) == plain
+
+
+def test_wide_panel_has_only_the_heading_and_logo_on_the_left() -> None:
+    lines = render_panel(_context(), 100, color=ColorMode.NONE)
+
+    left = [line.split("│")[1].strip() for line in lines if line.count("│") == 3]
+
+    assert [cell for cell in left if cell] == [
+        "LocalCloud overview",
+        *(row.strip() for row in render_cloud(color=ColorMode.NONE)),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("width", "expected"),
+    [
+        (100, ["  Config: built-in defaults (overridable by ./localcloud.yaml)"]),
+        (80, ["  Config: built-in defaults", "          (overridable by ./localcloud.yaml)"]),
+        (60, ["  Config: built-in defaults", "          (overridable by ./localcloud.yaml)"]),
+        (40, ["  Config: built-in defaults", "  (overridable by ./localcloud.yaml)"]),
+    ],
+)
+def test_panel_config_names_the_file_that_overrides_built_in_defaults(
+    width: int, expected: list[str]
+) -> None:
+    panes = _panes(render_panel(_context(), width, color=ColorMode.NONE))
+    start = panes.index(expected[0])
+
+    assert panes[start : start + len(expected)] == expected
+    with_file = render_panel(_context(config="/tmp/localcloud.yaml"), width)
+    assert "overridable" not in "\n".join(with_file)
+
+
+@pytest.mark.parametrize("width", [100, 80, 60])
+def test_panel_shows_the_data_mode_only_when_it_is_not_persistent(width: int) -> None:
+    persistent = "\n".join(render_panel(_context(), width, color=ColorMode.NONE))
+    ephemeral = "\n".join(
+        render_panel(_context(data="ephemeral"), width, color=ColorMode.NONE)
+    )
+
+    assert "Data:" not in persistent
+    assert "Data: ephemeral" in ephemeral
+
+
+def test_reporter_writes_the_outcome_after_output_that_follows_settle() -> None:
+    stream = TtyBuffer()
+    times = iter([0.0, 0.1, 0.2])
+    reporter = LifecycleReporter(
+        stream=stream,
+        environ={"TERM": "xterm-256color"},
+        clock=lambda: next(times),
+        width=80,
+        fps=1,
+    )
+    reporter.start("Checking Docker…")
+    reporter.settle()
+    settled = stream.getvalue()
+    stream.write("Docker  29.8.1\n")
+    reporter.fail("A setup fix failed; see Fixes")
+
+    # The animation is over once settled: its frame is cleared and the cursor is back.
+    assert settled.endswith("\x1b[?25h")
+    lines = strip_ansi(stream.getvalue()).splitlines()
+    assert lines[-2] == "Docker  29.8.1"
+    assert lines[-1].startswith("[FAIL] A setup fix failed; see Fixes  ")
+
+
+def test_non_tty_reporter_marks_a_failure() -> None:
+    stream = io.StringIO()
+    times = iter([10.0, 10.5])
+    reporter = LifecycleReporter(stream=stream, clock=lambda: next(times))
+    reporter.start("Checking Docker…")
+    reporter.settle()
+    reporter.fail("Docker is not running")
+
+    assert stream.getvalue().splitlines() == [
+        "Processing   Checking Docker…",
+        "[FAIL] Docker is not running  0.5s",
+    ]
+
+
+def test_closing_line_keeps_the_label_and_time_apart_when_narrow() -> None:
+    reporter = LifecycleReporter(
+        stream=TtyBuffer(),
+        environ={"TERM": "xterm-256color", "NO_COLOR": "1"},
+        clock=lambda: 0.0,
+        width=10,
+        fps=1,
+    )
+
+    assert reporter._status_line("[OK]", "LocalCloud is ready", "success", 0.0) == "[OK]  0.0s"

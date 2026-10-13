@@ -19,6 +19,7 @@ import ipaddress
 import json
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -44,6 +45,7 @@ _LABELS = {
     "docker-desktop": "Docker Desktop",
 }
 _VM_LABELS = {"vz": "VZ", "qemu": "QEMU", "docker-vmm": "Docker VMM"}
+_VERSION = re.compile(r"\d+(?:\.\d+)+")
 # Docker engine and context names that identify Docker Desktop.
 _DOCKER_DESKTOP_NAMES = {"docker-desktop", "desktop-linux"}
 _ROSETTA_INSTALL = ("softwareupdate", "--install-rosetta", "--agree-to-license")
@@ -185,23 +187,28 @@ class DockerHost:
     installed: tuple[str, ...] = ()
     facts: Mapping[str, Any] = field(default_factory=dict)
     storage_driver: str | None = None  # The engine's, from `docker info`.
+    version: str | None = None  # The Docker app's own, from `host_version`.
 
     @property
     def label(self) -> str:
-        label = _LABELS.get(self.provider or "", "unknown")
+        return self._named(_LABELS.get(self.provider or "", "unknown"))
+
+    def _named(self, name: str) -> str:
         if self.provider == "colima" and self.profile not in {None, "default"}:
-            label = f"{label} profile '{self.profile}'"
-        return label
+            return f"{name} profile '{self.profile}'"
+        return name
 
     def summary(self) -> str:
         if self.provider is None:
             return "unknown"
+        name = _LABELS.get(self.provider, "unknown")
+        label = self._named(f"{name} {self.version}" if self.version else name)
         parts = [_VM_LABELS.get(self.vm_type, self.vm_type)] if self.vm_type else []
         if self.vm_type == "vz" and self.rosetta is not None:
             parts.append(f"Rosetta {'on' if self.rosetta else 'off'}")
         if not self.reachable:
             parts.append("not running" if self.reason == "not_running" else "unreachable")
-        return f"{self.label} ({', '.join(parts)})" if parts else self.label
+        return f"{label} ({', '.join(parts)})" if parts else label
 
 
 def describe_host(
@@ -390,6 +397,49 @@ _SETTINGS_READERS: dict[str, Callable[[HostProbe, str | None], Settings]] = {
     "rancher-desktop": _rancher_settings,
     "docker-desktop": _docker_desktop_settings,
 }
+
+
+def _homebrew_version(probe: HostProbe, formula: str) -> str | None:
+    """The version in a Homebrew command's path (Cellar/<formula>/<version>/),
+    which saves running the command."""
+    path = probe.which(formula)
+    if not path:
+        return None
+    parts = Path(path).resolve().parts
+    for index in range(len(parts) - 2):
+        if parts[index] == "Cellar" and parts[index + 1] == formula:
+            # A HEAD build's directory names no version; the command then says.
+            return parts[index + 2] if _VERSION.search(parts[index + 2]) else None
+    return None
+
+
+def host_version(
+    host: DockerHost, probe: HostProbe | None = None, *, client: Any | None = None
+) -> str | None:
+    """The version of the Docker app serving the host, when it gives one. Never raises.
+
+    Colima and Rancher Desktop may be asked with a command (about 0.4 s for
+    Colima), so this is for ``lc doctor`` and not for every run.
+    """
+    probe = probe or default_probe()
+    try:
+        if host.provider == "colima":
+            # `colima version` also asks the running VM, which takes twice as long.
+            text = _homebrew_version(probe, "colima") or probe.run(["colima", "--version"])
+        elif host.provider == "rancher-desktop":
+            rdctl = host.facts.get("rdctl")
+            text = probe.run([str(rdctl), "version"]) if rdctl else None
+        elif host.provider == "docker-desktop" and client is not None:
+            # The engine names its platform "Docker Desktop 4.37.1 (178610)".
+            engine_platform = client.version().get("Platform") or {}
+            text = str(engine_platform.get("Name") or "")
+            text = text if "Docker Desktop" in text else None
+        else:
+            text = None
+    except Exception:
+        return None
+    match = _VERSION.search(text or "")
+    return match.group(0) if match else None
 
 
 def _profile_args(host: DockerHost) -> tuple[str, ...]:

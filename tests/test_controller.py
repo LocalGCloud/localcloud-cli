@@ -68,7 +68,7 @@ class FakeRuntime:
             "location": "Local",
             "image_id": "qualified",
             "sha": "sha256:qualified",
-            "formatted": "(Local: ID: qualified , sha256:qualified)",
+            "formatted": "(ID: qualified)",
         }
         self.image_details_images: list[str] = []
         self.image_status_images: list[str] = []
@@ -1772,7 +1772,7 @@ def test_status_reports_runtime_identity_and_image(tmp_path: Path) -> None:
     assert result["container"]["configured_image"] == config.image
     assert result["container"]["actual_image"] == config.image
     assert result["container"]["image_details"]["formatted"] == (
-        "(Local: ID: qualified , sha256:qualified)"
+        "(ID: qualified)"
     )
     assert result["mount"]["source"] == "team-data"
 
@@ -2270,7 +2270,7 @@ def test_doctor_includes_image_details(tmp_path: Path) -> None:
 
     result = controller.doctor()
 
-    assert "(Local: ID: qualified , sha256:qualified)" in result["default_image"]
+    assert "(ID: qualified)" in result["default_image"]
     assert result["image_details"]["location"] == "Local"
     assert "image_status" not in result
 
@@ -2770,7 +2770,9 @@ def test_doctor_reports_the_docker_host_and_setup_findings(
     )
 
     def run(argv: Any, _timeout: float) -> Any:
-        return SimpleNamespace(returncode=0, stdout="1\n")
+        asks_version = list(argv) == ["colima", "--version"]
+        stdout = "colima version 0.10.1\n" if asks_version else "1\n"
+        return SimpleNamespace(returncode=0, stdout=stdout)
 
     monkeypatch.setattr(
         host_checks,
@@ -2783,7 +2785,7 @@ def test_doctor_reports_the_docker_host_and_setup_findings(
 
     result = controller.doctor()
 
-    assert result["docker_host"] == "Colima (QEMU)"
+    assert result["docker_host"] == "Colima 0.10.1 (QEMU)"
     assert [finding["id"] for finding in result["setup_findings"]] == ["qemu_vm"]
     assert result["setup_findings"][0]["fix"]["deletes_data"] is True
 

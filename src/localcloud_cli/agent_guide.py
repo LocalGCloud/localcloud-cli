@@ -60,7 +60,7 @@ Copy-paste first run
 
    localcloud doctor
 
-   Continue when the concise summary reports `Status` as `OK`. Review any
+   Continue when the last line starts with `[OK]`. Review any
    legacy-resource warning separately; LocalCloud never removes those resources
    automatically. Use `localcloud doctor --verbose` when machine-readable JSON
    is required.

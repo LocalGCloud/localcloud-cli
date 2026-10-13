@@ -15,10 +15,15 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, TextIO
 
 from . import __version__
+from .constants import DEFAULT_CONFIG_NAME
 from .errors import HostError
 
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _MISSING = object()
+_BUILT_IN_DEFAULTS = "built-in defaults"
+# A localcloud.yaml in the working directory is read before the defaults.
+_CONFIG_OVERRIDE_HINT = f"(overridable by ./{DEFAULT_CONFIG_NAME})"
+_DOCKER_HOST_SEPARATOR = " · "
 _SPINNERS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _CLOUD = (
     "     ╭────╮     ",
@@ -142,8 +147,10 @@ class PanelContext:
     heading: str = "LocalCloud overview"
 
 
+# The closing [OK] or [FAIL] line reports the outcome, so the status is a row
+# only when --fields asks for it.
+_STATUS_FIELD = FieldSpec("status", "Status", "status")
 _COMMON_FIELDS = (
-    FieldSpec("status", "Status", "status"),
     FieldSpec("config", "Config", "muted"),
     FieldSpec("data_volume", "Data volume"),
     FieldSpec("origin", "Origin"),
@@ -159,9 +166,8 @@ _COMMON_FIELDS = (
     FieldSpec("warning", "Warning", "warning"),
 )
 _DOCTOR_FIELDS = (
-    FieldSpec("status", "Status", "status"),
+    # The Docker row also names the Docker host.
     FieldSpec("docker", "Docker", "docker"),
-    FieldSpec("docker_host", "Docker host"),
     FieldSpec("lazy_pulling", "Lazy pulling", "muted"),
     FieldSpec("default_image", "Image", "image"),
     FieldSpec("ports", "Ports", "ports"),
@@ -173,6 +179,7 @@ _DOCTOR_FIELDS = (
     FieldSpec("warning", "Warning", "warning"),
 )
 _DOCTOR_EXTRA_FIELDS = (
+    FieldSpec("docker_host", "Docker host"),
     FieldSpec("cli_version", "CLI version", "muted"),
     FieldSpec("docker_command_path", "Docker command path", "muted"),
     FieldSpec("docker_path", "Docker path"),
@@ -186,7 +193,6 @@ _DOCTOR_EXTRA_FIELDS = (
     FieldSpec("invalid_ownership", "Invalid ownership", "warning"),
 )
 _CLEANUP_FIELDS = (
-    FieldSpec("status", "Status", "status"),
     FieldSpec("dry_run", "Dry run", "muted"),
     FieldSpec("docker_resources", "Docker resources", "warning"),
     FieldSpec("active_runtime_stale", "Active runtime stale", "warning"),
@@ -195,7 +201,6 @@ _CLEANUP_FIELDS = (
     FieldSpec("failures", "Failures", "error"),
 )
 _CONSOLE_FIELDS = (
-    FieldSpec("status", "Status", "status"),
     FieldSpec("data_volume", "Data volume"),
     FieldSpec("project", "Project"),
     FieldSpec("user", "User"),
@@ -243,9 +248,9 @@ DEFAULT_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
         if field.path == "container.configured_image"
         else field
         for field in (
-            *_COMMON_FIELDS[:8],
+            *_COMMON_FIELDS[:7],
             FieldSpec("ports", "Ports", "ports"),
-            *_COMMON_FIELDS[8:],
+            *_COMMON_FIELDS[7:],
         )
         if field.path
         not in {
@@ -262,11 +267,11 @@ DEFAULT_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
 }
 ALLOWED_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
     command: (
-        tuple(dict.fromkeys((*defaults, *_DOCTOR_EXTRA_FIELDS)))
+        tuple(dict.fromkeys((*defaults, _STATUS_FIELD, *_DOCTOR_EXTRA_FIELDS)))
         if command == "doctor"
-        else defaults
+        else (*defaults, _STATUS_FIELD)
         if command == "cleanup"
-        else tuple(dict.fromkeys((*defaults, *_EXTRA_COMMON)))
+        else tuple(dict.fromkeys((*defaults, _STATUS_FIELD, *_EXTRA_COMMON)))
     )
     for command, defaults in DEFAULT_FIELDS.items()
 }
@@ -483,6 +488,11 @@ def render_summary(
             docker_cmd_path = _resolve_path(payload, "docker_command_path")
             if docker_cmd_path is not _MISSING and docker_cmd_path:
                 value = f"{value} ({docker_cmd_path})"
+            docker_host = _resolve_path(payload, "docker_host")
+            if docker_host is not _MISSING and docker_host and docker_host != "unknown":
+                value = f"{value}{_DOCKER_HOST_SEPARATOR}{docker_host}"
+        if field.path == "config" and value == _BUILT_IN_DEFAULTS:
+            value = f"{value} {_CONFIG_OVERRIDE_HINT}"
         if field.style == "status":
             value = _human_status(value)
         resolved.append((field, value))
@@ -509,8 +519,10 @@ def render_summary(
                 else _wrap_visible(strip_ansi(logical_line), value_width)
             )
             for value_line in value_lines:
-                if field.style in {"image", "docker"}:
+                if field.style == "image":
                     rendered_value = _render_image_value(value_line, color)
+                elif field.style == "docker":
+                    rendered_value = _render_docker_value(value_line, color)
                 elif field.style == "ports":
                     rendered_value = _render_ports_value(value_line, color)
                 else:
@@ -629,6 +641,14 @@ def _render_image_value(value: str, color: ColorMode) -> str:
         return style_text(value, "primary", color)
     name, suffix = value[:split], value[split:]
     return style_text(name, "primary", color) + style_text(suffix, "muted", color)
+
+
+def _render_docker_value(value: str, color: ColorMode) -> str:
+    """The Docker engine and, after the separator, the Docker host."""
+    return style_text(_DOCKER_HOST_SEPARATOR, "muted", color).join(
+        _render_image_value(part, color)
+        for part in value.split(_DOCKER_HOST_SEPARATOR)
+    )
 
 
 def _resolve_path(payload: Mapping[str, Any], path: str) -> Any:
@@ -1137,10 +1157,10 @@ def _format_services_summary(
 
 def _format_config_value(config_path: str | Path | None) -> str:
     if not config_path:
-        return "built-in defaults"
+        return _BUILT_IN_DEFAULTS
     raw_str = str(config_path).strip()
-    if not raw_str or raw_str == "built-in defaults":
-        return "built-in defaults"
+    if not raw_str or raw_str == _BUILT_IN_DEFAULTS:
+        return _BUILT_IN_DEFAULTS
     path = Path(config_path)
     try:
         resolved = path.resolve()
@@ -1160,22 +1180,57 @@ def _format_config_value(config_path: str | Path | None) -> str:
     return raw_str
 
 
+def _config_context_rows(
+    config: str | Path | None,
+    width: int,
+    color: ColorMode,
+) -> list[str]:
+    """The Config line and, for the built-in defaults, the file that overrides them."""
+    name = _format_config_value(config)
+    if name != _BUILT_IN_DEFAULTS:
+        return [_format_context_line("Config", name, "ctx_config", width, color)]
+    prefix = "  Config: "
+    plain = f"{prefix}{name} {_CONFIG_OVERRIDE_HINT}"
+    if visible_width(plain) <= width:
+        return [
+            style_text(prefix, "muted", color)
+            + style_text(name, "ctx_config", color)
+            + style_text(f" {_CONFIG_OVERRIDE_HINT}", "muted", color)
+            + " " * (width - visible_width(plain))
+        ]
+    # Too narrow for one line, so the hint goes under the value, or at the
+    # margin when it would not fit there either.
+    hint = " " * len(prefix) + _CONFIG_OVERRIDE_HINT
+    if visible_width(hint) > width:
+        hint = truncate_visible(f"  {_CONFIG_OVERRIDE_HINT}", width)
+    return [
+        _format_context_line("Config", name, "ctx_config", width, color),
+        style_text(hint, "muted", color) + " " * max(0, width - visible_width(hint)),
+    ]
+
+
+def _shows_data_mode(context: PanelContext) -> bool:
+    # The data volume already says the data is kept; only another mode is news.
+    return context.data != "persistent"
+
+
 def _panel_context_rows(
     context: PanelContext,
     width: int,
     color: ColorMode,
 ) -> list[str]:
-    config_name = _format_config_value(context.config)
-    return [
+    rows = [
         _format_context_line(
             "Data Volume", context.data_volume, "g_yellow", width, color
         ),
         _format_context_line("Project", context.project, "g_blue", width, color),
         _format_context_line("User", context.user, "g_green", width, color),
-        _format_context_line("Config", config_name, "ctx_config", width, color),
-        _format_context_line("Data", context.data, "primary", width, color),
-        _format_services_summary(context.services, width, color),
     ]
+    if _shows_data_mode(context):
+        rows.append(_format_context_line("Data", context.data, "primary", width, color))
+    rows.extend(_config_context_rows(context.config, width, color))
+    rows.append(_format_services_summary(context.services, width, color))
+    return rows
 
 
 def _format_context_pair(
@@ -1294,18 +1349,6 @@ def _wide_panel(
     enabled_count = sum(1 for _, _, enabled in all_services if enabled)
     disabled_count = len(all_services) - enabled_count
 
-    badge_services = style_text(f"{len(all_services)} GCP Services", "welcome", color, bold=True)
-    badge_status = (
-        style_text("●", "success", color)
-        + style_text(f" {enabled_count} active ", "cmd_desc", color)
-        + style_text("·", "muted", color)
-        + style_text(" ○", "muted", color)
-        + style_text(f" {disabled_count} opt", "muted", color)
-    )
-    left_rows.append(_centered(badge_services, split_width))
-    left_rows.append(_centered(badge_status, split_width))
-    left_rows.append(" " * split_width)
-
     right_rows: list[str] = []
     tips_header = " Top commands"
     right_rows.append(
@@ -1344,7 +1387,6 @@ def _wide_panel(
         style_text(context_header, "section_header", color, bold=True)
         + " " * max(0, right_width - visible_width(context_header))
     )
-    config_name = _format_config_value(context.config)
     if right_width >= 60:
         right_rows.append(
             _format_context_pair(
@@ -1358,21 +1400,23 @@ def _wide_panel(
                 color,
             )
         )
-        right_rows.append(
-            _format_context_pair(
-                "User",
-                context.user,
-                "g_green",
-                "Config",
-                config_name,
-                "ctx_config",
-                right_width,
-                color,
+        if _shows_data_mode(context):
+            right_rows.append(
+                _format_context_pair(
+                    "User",
+                    context.user,
+                    "g_green",
+                    "Data",
+                    context.data,
+                    "primary",
+                    right_width,
+                    color,
+                )
             )
-        )
-        right_rows.append(
-            _format_context_line("Data", context.data, "primary", right_width, color)
-        )
+        else:
+            right_rows.append(
+                _format_context_line("User", context.user, "g_green", right_width, color)
+            )
     else:
         right_rows.append(
             _format_context_line("Project", context.project, "g_blue", right_width, color)
@@ -1383,12 +1427,11 @@ def _wide_panel(
         right_rows.append(
             _format_context_line("User", context.user, "g_green", right_width, color)
         )
-        right_rows.append(
-            _format_context_line("Config", config_name, "ctx_config", right_width, color)
-        )
-        right_rows.append(
-            _format_context_line("Data", context.data, "primary", right_width, color)
-        )
+        if _shows_data_mode(context):
+            right_rows.append(
+                _format_context_line("Data", context.data, "primary", right_width, color)
+            )
+    right_rows.extend(_config_context_rows(context.config, right_width, color))
 
     row_count = max(len(left_rows), len(right_rows))
     left_rows.extend([" " * split_width] * (row_count - len(left_rows)))
@@ -1623,11 +1666,33 @@ class LifecycleReporter:
             self.stream.flush()
         return input_stream.readline().strip()
 
+    def settle(self) -> None:
+        """Stop the animation and clear its frame, so the command's output can
+        be printed before the closing line."""
+        if self._finished or not self.enabled:
+            return
+        self._stop_worker()
+        if self.capabilities.cursor:
+            with self._lock:
+                self._clear_frame()
+                if self._panel is not None and not self._panel_settled:
+                    for line in render_panel(
+                        self._panel,
+                        self.width,
+                        phase=self._phase,
+                        progress=1.0,
+                        color=self.capabilities.color,
+                    ):
+                        self.stream.write(line + "\n")
+                    self._panel_settled = True
+                self.stream.flush()
+        self._restore_cursor()
+
     def succeed(self, message: str) -> None:
-        self._finish("Done", message, "success")
+        self._finish("[OK]", message, "success")
 
     def fail(self, message: str) -> None:
-        self._finish("Failed", message, "error")
+        self._finish("[FAIL]", message, "error")
 
     def close(self) -> None:
         if self._finished:
@@ -1642,26 +1707,16 @@ class LifecycleReporter:
         if not self.enabled:
             self._finished = True
             return
-        self._stop_worker()
+        self.settle()
         elapsed = self._elapsed()
         if self.capabilities.cursor:
-            with self._lock:
-                self._clear_frame()
-                if self._panel is not None and not self._panel_settled:
-                    for line in render_panel(
-                        self._panel,
-                        self.width,
-                        phase=self._phase,
-                        progress=1.0,
-                        color=self.capabilities.color,
-                    ):
-                        self.stream.write(line + "\n")
-                    self._panel_settled = True
-                self.stream.write(self._status_line(status, message, role, elapsed) + "\n")
-                self.stream.flush()
+            line = self._status_line(status, message, role, elapsed)
         else:
-            self._write_plain(status, f"{message}  {elapsed:.1f}s", role=role)
-        self._restore_cursor()
+            label = style_text(status, role, self.capabilities.color, bold=True)
+            line = f"{label} {message}  {elapsed:.1f}s"
+        with self._lock:
+            self.stream.write(line + "\n")
+            self.stream.flush()
         self._finished = True
 
     def _animate(self) -> None:
@@ -1749,20 +1804,20 @@ class LifecycleReporter:
         return 0.0 if self._started is None else max(0.0, self.clock() - self._started)
 
     def _status_line(self, status: str, message: str, role: str, elapsed: float) -> str:
-        styled = style_text(status.ljust(13), role, self.capabilities.color, bold=True)
+        styled = style_text(status, role, self.capabilities.color, bold=True)
         elapsed_text = style_text(f"{elapsed:.1f}s", "muted", self.capabilities.color)
-        overhead = visible_width(styled) + visible_width(elapsed_text) + 2
+        overhead = visible_width(styled) + visible_width(elapsed_text) + 3
         available = max(0, self.width - overhead)
         if available > 0:
             truncated = truncate_visible(message, available)
-            return f"{styled}{truncated}  {elapsed_text}"
-        if self.width >= visible_width(styled) + visible_width(elapsed_text):
+            return f"{styled} {truncated}  {elapsed_text}"
+        if self.width > visible_width(styled) + visible_width(elapsed_text):
             gap = " " * (self.width - visible_width(styled) - visible_width(elapsed_text))
             return f"{styled}{gap}{elapsed_text}"
         return truncate_visible(styled, self.width)
 
-    def _write_plain(self, status: str, message: str, *, role: str | None = None) -> None:
-        selected_role = role or ("processing" if status == "Processing" else "primary")
-        label = style_text(status.ljust(13), selected_role, self.capabilities.color, bold=True)
+    def _write_plain(self, status: str, message: str) -> None:
+        role = "processing" if status == "Processing" else "primary"
+        label = style_text(status.ljust(13), role, self.capabilities.color, bold=True)
         self.stream.write(f"{label}{message}\n")
         self.stream.flush()

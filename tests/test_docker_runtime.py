@@ -2574,12 +2574,21 @@ def test_image_details_reports_local_and_remote(
     assert local_details["location"] == "Local"
     assert local_details["image_id"] == "present_qual"
     assert local_details["sha"] == "sha256:present_qualified_id_1234567890"
-    assert local_details["formatted"] == "(Local: ID: present_qual , sha256:present_qualified_id_1234567890)"
+    # The summary text carries the short ID; the digest stays in "sha".
+    assert local_details["formatted"] == "(ID: present_qual)"
 
     remote_details = runtime.image_details("absent:latest")
     assert remote_details["location"] == "Remote"
     assert remote_details["image_id"] == "not available locally"
     assert remote_details["formatted"] == "(not available locally)"
+
+    # A registry digest is long, so it is reported as "sha" and not in the text.
+    client.images.get_registry_data = lambda _name: SimpleNamespace(  # type: ignore[assignment]
+        id="sha256:registry_digest", attrs={"Descriptor": {"digest": "sha256:registry_digest"}}
+    )
+    registry_details = runtime.image_details("registry-only:latest")
+    assert registry_details["sha"] == "sha256:registry_digest"
+    assert registry_details["formatted"] == "(not available locally)"
 
 
 def test_missing_image_pull_streams_layer_progress_to_observer(

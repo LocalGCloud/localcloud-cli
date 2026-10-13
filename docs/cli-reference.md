@@ -279,7 +279,7 @@ lc doctor
 lc doctor --fix    # offer to fix what it finds, asking before each change
 ```
 
-**Docker host** names the Docker app (Colima, Rancher Desktop, Docker Desktop, or `unknown`), its VM type and, on VZ, whether Rosetta is on. **Setup** lists findings; each has an `id` in
+**Docker** shows the engine version and the `docker` command, then the Docker app (Colima, Rancher Desktop or Docker Desktop) with its version, its VM type and, on VZ, whether Rosetta is on. An engine that none of these apps serves shows no app; `--verbose` reports it as `docker_host: unknown`. **Setup** lists findings; each has an `id` in
 `--verbose` output (`setup_findings`):
 
 | Finding | When | `--fix` |
@@ -470,6 +470,10 @@ For complete architectural details, client configuration files, and the full MCP
 ### Interactive terminals
 
 Interactive commands display lifecycle spinners and elapsed time. `doctor`, `status`, and `reset` also display the colorful LocalCloud artwork and resolved context. `start`, `restart`, and `stop` keep progress compact while logs stream.
+
+Every command ends with one line on stderr, after its summary: `[OK]` and what happened, or `[FAIL]` and what went wrong, followed by the elapsed time. The summary therefore has no status row; `--fields status` adds one. `lc status` ends with `[FAIL]` for an unhealthy container and still exits 0, because the check itself worked.
+
+The resolved context shows `Data` only when the data is `ephemeral`; a data volume alone means the data is kept. When no config file applies, `Config` reads `built-in defaults (overridable by ./localcloud.yaml)`.
 
 Service selection uses both color and symbols: `●` means selected and `○` means off. The state remains legible when color is disabled.
 

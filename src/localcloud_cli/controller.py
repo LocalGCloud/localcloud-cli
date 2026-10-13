@@ -1337,11 +1337,12 @@ class Controller:
         return result
 
     def doctor(self, setup: tuple[Any, list[Any]] | None = None) -> dict[str, Any]:
-        from .host_checks import lazy_pulling
+        from .host_checks import host_version, lazy_pulling
 
         result = self.runtime.doctor()
         host, findings = setup if setup is not None else self.setup_report()
-        result["docker_host"] = host.summary()
+        version = host_version(host, client=getattr(self.runtime, "client", None))
+        result["docker_host"] = replace(host, version=version).summary()
         result["setup_findings"] = [finding.to_dict() for finding in findings]
         active_status, active_diagnostics = self._active_runtime_info()
         result["active_runtime"] = active_status

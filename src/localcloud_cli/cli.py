@@ -485,20 +485,28 @@ def main(argv: list[str] | None = None) -> int:
         result = _execute(args, observer=observer)
         findings = _diagnose(telemetry, None, result)
         failure_message = _result_failure_message(args, result)
+        # The outcome is the last line, after the command's own output.
         if reports_progress:
-            if failure_message is None:
-                reporter.succeed(_success_message(args, result))
-            else:
-                reporter.fail(failure_message)
+            reporter.settle()
         _print_result(args, result, fields)
+        if reports_progress:
+            _flush_stdout()
+            if failure_message is not None:
+                reporter.fail(failure_message)
+            elif _reports_unhealthy(args, result):
+                reporter.fail(_success_message(args, result))
+            else:
+                reporter.succeed(_success_message(args, result))
         _offer_after_failure(args, observer, findings)
         return 1 if failure_message is not None else 0
     except HostError as error:
         failure = error
         findings = _diagnose(telemetry, error, None)
         if reports_progress:
-            reporter.fail(error.message)
+            reporter.settle()
         _print_error(args, error)
+        if reports_progress:
+            reporter.fail(error.message)
         _offer_after_failure(args, observer, findings)
         return 2
     except KeyboardInterrupt:
@@ -526,7 +534,7 @@ def main(argv: list[str] | None = None) -> int:
         # raw traceback, and only surface the traceback when --debug is set.
         failure = error
         if reports_progress:
-            reporter.fail("LocalCloud command failed unexpectedly")
+            reporter.settle()
         _print_error(
             args,
             HostError(
@@ -535,6 +543,8 @@ def main(argv: list[str] | None = None) -> int:
                 {"type": type(error).__name__, "cause": str(error)},
             ),
         )
+        if reports_progress:
+            reporter.fail("LocalCloud command failed unexpectedly")
         if debug:
             raise
         return 1
@@ -1018,6 +1028,14 @@ def _print_native(value: str) -> None:
         sys.stdout.write("\n")
 
 
+def _flush_stdout() -> None:
+    """Send the buffered output ahead of the closing line on stderr."""
+    try:
+        sys.stdout.flush()
+    except OSError:
+        pass  # The reader closed the pipe; the closing line still goes to stderr.
+
+
 def _print_error(args: argparse.Namespace, error: HostError) -> None:
     color = terminal_capabilities(sys.stderr).color
     if getattr(args, "verbose", False):
@@ -1135,6 +1153,15 @@ def _success_message(args: argparse.Namespace, result: Any) -> str:
     if command == "env":
         return "SDK configuration generated"
     return f"LocalCloud {command} completed"
+
+
+def _reports_unhealthy(args: argparse.Namespace, result: Any) -> bool:
+    """`lc status` worked (exit 0), but an unhealthy container is not [OK]."""
+    return (
+        args.command == "status"
+        and isinstance(result, dict)
+        and result.get("status") == "unhealthy"
+    )
 
 
 def _result_failure_message(

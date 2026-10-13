@@ -1960,12 +1960,11 @@ class DockerRuntime:
     def _image_details_result(
         location: str, short_id: str, sha: str
     ) -> dict[str, Any]:
+        # The summary shows the short ID; the full digest stays in "sha".
         if location == "Local":
-            formatted = f"({location}: ID: {short_id} , {sha})"
-        elif sha == "unknown":
-            formatted = "(not available locally)"
+            formatted = f"(ID: {short_id})"
         else:
-            formatted = f"(not available locally · registry digest: {sha})"
+            formatted = "(not available locally)"
         return {
             "location": location,
             "image_id": short_id,

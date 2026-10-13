@@ -202,7 +202,7 @@ class FakeController:
         self.calls.append(("doctor", None))
         result: dict[str, Any] = {
             "status": "ok",
-            "default_image": "agentcloud/localcloud:latest (Local: ID: qualified , sha256:qualified)",
+            "default_image": "agentcloud/localcloud:latest (ID: qualified)",
         }
         if setup is not None:
             result["setup_findings"] = [finding.to_dict() for finding in setup[1]]
@@ -915,8 +915,11 @@ def test_main_returns_concise_host_error_by_default(
     assert main(["status"]) == 2
     captured = capsys.readouterr()
     assert "Processing" in captured.err
-    assert "Failed" in captured.err
-    assert "Error [runtime_not_running] start it" in captured.err
+    # The error comes first; the outcome is the last line.
+    assert captured.err.splitlines()[-2:] == [
+        "Error [runtime_not_running] start it",
+        "[FAIL] start it  0.0s",
+    ]
 
 
 def test_dry_run_sends_and_counts_no_telemetry(
@@ -1103,9 +1106,10 @@ def test_main_cleanup_partial_returns_failure_with_result(
 
     assert main(["cleanup"]) == 1
     captured = capsys.readouterr()
-    assert "Failed" in captured.err
-    assert "LocalCloud cleanup completed with failures" in captured.err
-    assert "Status    Partial" in captured.out
+    assert captured.err.splitlines()[-1].startswith(
+        "[FAIL] LocalCloud cleanup completed with failures"
+    )
+    assert "Status" not in captured.out
     assert "Failures" in captured.out
 
 
@@ -1132,7 +1136,8 @@ def test_reset_all_projects_prints_its_manual_steps_without_verbose(
 
     assert main(["reset", "--all-projects"]) == 2
     printed = [line.strip() for line in capsys.readouterr().err.splitlines()]
-    assert printed[-len(steps) :] == [f"Steps: {steps[0]}", *steps[1:]]
+    assert printed[-len(steps) - 1 : -1] == [f"Steps: {steps[0]}", *steps[1:]]
+    assert printed[-1].startswith("[FAIL] run the listed steps yourself")
 
 def test_restart_and_start_pull_flags() -> None:
     parser = _parser()
@@ -2106,7 +2111,8 @@ def test_main_doctor_success_message(
     monkeypatch.chdir(tmp_path)
     assert main(["doctor"]) == 0
     captured = capsys.readouterr()
-    assert "LocalCloud is ready to start" in captured.err
+    assert captured.err.splitlines()[-1].startswith("[OK] LocalCloud is ready to start")
+    assert "Status" not in captured.out
 
 
 def test_main_without_args_defaults_to_help_and_includes_required_note(
@@ -2681,7 +2687,7 @@ def test_env_identity_stop_fails_when_a_relay_could_not_be_removed(
 
     assert main(["env", "--identity", "--stop"]) == 1
     captured = capsys.readouterr()
-    assert "Failed" in captured.err
+    assert "[FAIL]" in captured.err
     assert (
         "Could not remove 1 identity relay(s), which may still be running: lc-identity-1"
         in captured.err
@@ -2699,3 +2705,43 @@ def test_env_identity_stop_fails_when_a_relay_could_not_be_removed(
     )
     assert main(["env", "--identity", "--stop"]) == 0
     assert "Removed 1 identity relay(s); ended sessions: none" in capsys.readouterr().err
+
+
+# --- The closing [OK]/[FAIL] line ---
+
+
+def test_the_outcome_is_printed_after_the_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    # One stream for both, as in `lc status 2>&1`.
+    combined = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", combined)
+    monkeypatch.setattr(sys, "stderr", combined)
+
+    assert main(["status"]) == 0
+
+    lines = combined.getvalue().splitlines()
+    assert lines[-2] == "Data volume  localcloud-data"
+    assert lines[-1].startswith("[OK] LocalCloud container is running")
+
+
+@pytest.mark.parametrize(
+    ("status", "label"),
+    [("running", "[OK]"), ("stopped", "[OK]"), ("unhealthy", "[FAIL]")],
+)
+def test_status_marks_an_unhealthy_container_without_failing_the_command(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    label: str,
+) -> None:
+    monkeypatch.setattr(
+        FakeController,
+        "status",
+        lambda _self, config: {"status": status, "data_volume": config.data_volume},
+    )
+
+    assert main(["status"]) == 0
+    captured = capsys.readouterr()
+    assert captured.err.splitlines()[-1].startswith(
+        f"{label} LocalCloud container is {status}"
+    )
+    assert "Status" not in captured.out

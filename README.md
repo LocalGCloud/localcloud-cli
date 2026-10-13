@@ -39,11 +39,8 @@ $ lc doctor
 │           ╭────╮           │────────────────────────────────────────────────────────────────│
 │        ╭──╯    ╰──╮        │ Context                                                        │
 │       ╭─╯        ╰─╮       │  Data Volume: localcloud-data        Project: local-gcp-project│
-│      ╭╯            ╰╮      │  User: local-developer                Config: built-in defaults│
-│      ╰──────────────╯      │  Data: persistent                                              │
-│                            │                                                                │
-│      27 GCP Services       │                                                                │
-│   ● 22 active · ○ 5 opt    │                                                                │
+│      ╭╯            ╰╮      │  User: local-developer                                         │
+│      ╰──────────────╯      │  Config: built-in defaults (overridable by ./localcloud.yaml)  │
 │                            │                                                                │
 ├────────────────────────────┴────────────────────────────────────────────────────────────────┤
 │ Supported Services (● 22 enabled · ○ 5 disabled)                                            │
@@ -55,10 +52,10 @@ $ lc doctor
 ╰─────────────────────────────────────────────────────────────────────────────────────────────╯
  Tip: Run localcloud guide for AI agent workflows, or lc for the fast alias.
 
-Status  OK
-Docker  29.8.1 (/opt/homebrew/bin/docker)
-Image   agentcloud/localcloud:latest
+Docker  29.8.1 (/opt/homebrew/bin/docker) · Colima 0.10.1 (VZ, Rosetta on)
+Image   agentcloud/localcloud:latest (ID: 6c619bcf17c5)
 Ports   5380-5406 (in use by localcloud)
+[OK] LocalCloud is ready to start  0.5s
 ```
 
 ## Why LocalCloud
@@ -173,7 +170,8 @@ lc doctor
 ```
 
 Confirms Docker connectivity, reports the Docker app and its VM setup, and shows the resolved LocalCloud
-context. Continue when `Status` is `OK`. It creates no LocalCloud state, so it is always safe to run first.
+context. Continue when the last line starts with `[OK]`. It creates no LocalCloud state, so it is always safe
+to run first.
 If it lists **Setup** findings, `lc doctor --fix` offers to fix them, asking before each change.
 
 ### 2. Start the runtime
@@ -183,9 +181,7 @@ lc start
 ```
 
 ```console
-Done          LocalCloud is ready
-Status        Running
-Config        built-in defaults
+Config        built-in defaults (overridable by ./localcloud.yaml)
 Data volume   localcloud-data
 Origin        managed
 Project       local-gcp-project
@@ -198,6 +194,7 @@ Services      alloydb, bigquery, bigtable, cloudbilling, cloudfunctions, cloudia
               cloudresourcemanager, cloudscheduler, cloudsql, cloudtasks, dataproc, gcs, kms,
               logging, memorystore, monitoring, secretmanager, serviceusage, sheets, spanner,
               workflows
+[OK] LocalCloud is ready  8.4s
 ```
 
 `start` checks the registry for a newer image by default (`--no-pull` to skip), publishes the canonical

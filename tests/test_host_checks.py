@@ -5,6 +5,7 @@ import io
 import json
 import subprocess
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,6 +20,7 @@ from localcloud_cli.host_checks import (
     apply_fix,
     describe_host,
     docker_unavailable_error,
+    host_version,
     inspect,
     lazy_pulling,
     localcloud_volumes,
@@ -516,3 +518,78 @@ def test_localcloud_volumes_names_managed_and_default_volumes(monkeypatch: pytes
     monkeypatch.setattr(host_checks, "_docker_client", lambda: client)
 
     assert localcloud_volumes() == ["localcloud-data", "team-data"]
+
+
+# --- The Docker app's version, shown in the doctor's Docker row ---
+
+
+def _version_probe(tmp_path: Path, colima: Path | None, commands: Any) -> HostProbe:
+    return HostProbe(
+        environ={},
+        home=tmp_path / "home",
+        system="Darwin",
+        run=commands,
+        which=lambda name: str(colima) if colima and name == "colima" else None,
+        applications=(),
+    )
+
+
+def test_colima_version_comes_from_its_homebrew_path_without_running_it(tmp_path: Path) -> None:
+    cellar = tmp_path / "Cellar" / "colima" / "0.10.1" / "bin"
+    cellar.mkdir(parents=True)
+    (cellar / "colima").write_text("")
+    link = tmp_path / "bin" / "colima"
+    link.parent.mkdir()
+    link.symlink_to(cellar / "colima")
+    ran: list[list[str]] = []
+
+    def run(argv: Sequence[str], _timeout: float) -> Any:
+        ran.append(list(argv))
+        return subprocess.CompletedProcess(list(argv), 0, "colima version 9.9.9\n", "")
+
+    host = DockerHost(provider="colima", profile="dev", vm_type="vz", rosetta=True)
+
+    version = host_version(host, _version_probe(tmp_path, link, run))
+
+    assert version == "0.10.1"
+    assert ran == []
+    assert replace(host, version=version).summary() == (
+        "Colima 0.10.1 profile 'dev' (VZ, Rosetta on)"
+    )
+    assert host.summary() == "Colima profile 'dev' (VZ, Rosetta on)"
+
+
+def test_colima_outside_homebrew_is_asked_for_its_version(tmp_path: Path) -> None:
+    binary = tmp_path / "bin" / "colima"
+    binary.parent.mkdir()
+    binary.write_text("")
+    commands = Commands({("colima", "--version"): (0, "colima version 0.9.1\n")})
+
+    host = DockerHost(provider="colima", vm_type="qemu")
+
+    assert host_version(host, _version_probe(tmp_path, binary, commands)) == "0.9.1"
+    # A command that fails or is missing leaves the version out.
+    assert host_version(host, _version_probe(tmp_path, None, Commands())) is None
+
+
+def test_rancher_desktop_and_docker_desktop_versions(tmp_path: Path) -> None:
+    commands = Commands(
+        {("/rd/rdctl", "version"): (0, "rdctl client version: 1.16.0, targeting server version: v1\n")}
+    )
+    probe = _version_probe(tmp_path, None, commands)
+    rancher = DockerHost(provider="rancher-desktop", facts={"rdctl": "/rd/rdctl"})
+    desktop = DockerHost(provider="docker-desktop", vm_type="vz", rosetta=True)
+
+    def client(platform: str) -> Any:
+        return SimpleNamespace(version=lambda: {"Version": "28.0.1", "Platform": {"Name": platform}})
+
+    def broken() -> Any:
+        raise RuntimeError("docker stopped answering")
+
+    assert host_version(rancher, probe) == "1.16.0"
+    assert host_version(desktop, probe, client=client("Docker Desktop 4.37.1 (178610)")) == "4.37.1"
+    # The engine's own version is not the app's.
+    assert host_version(desktop, probe, client=client("Docker Engine - Community")) is None
+    assert host_version(desktop, probe, client=SimpleNamespace(version=broken)) is None
+    assert host_version(desktop, probe) is None
+    assert host_version(DockerHost(), probe) is None
