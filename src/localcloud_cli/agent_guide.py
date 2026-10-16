@@ -77,8 +77,8 @@ Copy-paste first run
 
 3. Copy the returned `mcp.command` and `mcp.args` into a stdio-only MCP client,
    or install it automatically using `localcloud mcp install --client cursor`
-   (supports `claude-code`, `claude-desktop`, `cursor`, `gemini`, `windsurf`,
-   `cline`, or `all`). For a Streamable HTTP client, use `mcp.direct_url`
+   (supports `claude-code`, `claude-desktop`, `cursor`, `gemini`, `antigravity`,
+   `windsurf`, `cline`, or `all`). For a Streamable HTTP client, use `mcp.direct_url`
    together with every returned `mcp.headers` entry so the selected project and
    caller are carried on each request. Generated MCP arguments pin
    `--data-volume` when using isolated volumes so a long-lived bridge cannot

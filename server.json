@@ -3,7 +3,7 @@
   "name": "cloud.local/localcloud",
   "title": "LocalCloud MCP",
   "description": "A free local cloud environment for AI agents to build, test, and debug Google Cloud applications.",
-  "version": "0.1.9",
+  "version": "0.1.12",
   "websiteUrl": "https://local.cloud/",
   "repository": {
     "url": "https://github.com/LocalGCloud/localcloud-cli",
@@ -19,8 +19,8 @@
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/LocalGCloud/localcloud-cli/releases/download/v0.1.9/localcloud-mcp-0.1.9.mcpb",
-      "fileSha256": "6788f9208230cce57d2d92453c15806819531d63fca4f0eff37dc39fd0175987",
+      "identifier": "https://github.com/LocalGCloud/localcloud-cli/releases/download/v0.1.12/localcloud-mcp-0.1.12.mcpb",
+      "fileSha256": "ecf34a2f6d5ea57c6dd742970e78ab3285ba519409402af1e3d48cea99c29722",
       "transport": { "type": "stdio" }
     }
   ],

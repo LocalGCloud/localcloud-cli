@@ -265,6 +265,31 @@ Confirm that the release contains these files:
 
 Deploy the website installer only after the GitHub release and Homebrew formula resolve publicly. Then verify `https://local.cloud/install.sh` on a clean supported host.
 
+### Plugin, MCP bundle, and registry versions
+
+These versions are independent of the CLI version. Do not bump them as part of
+every CLI release.
+
+| File | Version means | Bump when |
+| :--- | :--- | :--- |
+| `plugins/localcloud/plugin.json`, `plugins/localcloud/.claude-plugin/plugin.json`, and the `version` in `.claude-plugin/marketplace.json` | The marketplace plugin (`localcloud-plugin.zip`) | Anything under `plugins/` changes. All three must match. `scripts/build-marketplace-plugin.py` and the tests reject a mismatch between the two manifests |
+| `server.json` (`version`, the `.mcpb` URL in `identifier`, and `fileSha256`) | The published `.mcpb` bundle on the official MCP Registry | A new `.mcpb` has been built and uploaded. Never before |
+
+CI builds `localcloud-plugin.zip` for every release but does not build the
+`.mcpb`. Build it by hand against a published release, then update `server.json`
+from the result:
+
+```sh
+python3 scripts/build-mcpb.py "$VERSION" --output dist/mcp   # prints path and sha256
+```
+
+Upload that file to the `v${VERSION}` release, set `server.json` `version`,
+`identifier` (`.../download/v${VERSION}/localcloud-mcp-${VERSION}.mcpb`) and
+`fileSha256` from the printed digest, then publish to the registry. `server.json`
+must always name an `.mcpb` that exists with that exact checksum, so it can lag the
+CLI version. Its `minimumCliVersion` and `minimumRuntimeVersion` are compatibility
+floors, not the latest versions.
+
 ## 6. Troubleshooting
 
 **`error: source version X does not match Y`**

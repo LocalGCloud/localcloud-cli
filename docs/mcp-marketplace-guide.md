@@ -158,11 +158,11 @@ The listing currently retains incorrect crawler-generated npm and HTTP install o
 | --- | --- |
 | Windsurf | `lc mcp install --client windsurf`, then restart and check MCP settings. |
 | Antigravity | `lc mcp install --client antigravity`, then restart and check MCP settings. |
-| Gemini CLI | Use [Gemini CLI's own registration command](mcp.md#gemini-cli); LocalCloud's `gemini` alias selects Antigravity. |
+| Gemini CLI | `lc mcp install --client gemini` (or [Gemini CLI's own registration command](mcp.md#gemini-cli)), then restart and check MCP settings. |
 | VS Code / GitHub Copilot | Follow the [VS Code example](mcp.md#vs-code--github-copilot), which uses a `servers` JSON wrapper. |
-| Cline | Use [Cline's MCP configuration editor](mcp.md#cline) rather than assuming an extension settings path. |
+| Cline | `lc mcp install --client cline`, then restart and check MCP settings. To edit by hand, use [Cline's MCP configuration editor](mcp.md#cline). |
 
-`lc mcp install --client all` writes Cursor, Claude Code, Claude Desktop, Antigravity, and Windsurf configurations, even if their applications are absent. Select individual clients when setting up only the tools you use. Codex is configured separately with `codex mcp add`.
+`lc mcp install --client all` configures only the supported clients it detects on this machine, and fails if it finds none. Select individual clients when setting up only the tools you use. Codex is configured separately with `codex mcp add`.
 
 ## Optional GitHub plugin setup
 

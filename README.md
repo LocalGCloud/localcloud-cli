@@ -32,7 +32,7 @@ libraries it already uses, just pointed at loopback.
 
 ```console
 $ lc doctor
-╭── LocalCloud v0.1.9 ────────────────────────────────────────────────────────────────────────╮
+╭── LocalCloud v0.1.12 ───────────────────────────────────────────────────────────────────────╮
 │                            │ Top commands                                                   │
 │ Checking LocalCloud setup  │  localcloud (or lc)    status | start | stop | restart         │
 │                            │  eval $(lc env)        Exports env vars that redirect cloud se…│
@@ -156,7 +156,7 @@ Windows users can run the container directly — see the
 
 ```console
 $ lc --version
-localcloud 0.1.9 (commit 60bd923c80ee, released 2026-10-09)
+localcloud 0.1.12 (commit 6e45b85cad86, released 2026-10-13)
 ```
 
 Release builds embed their exact source commit and release date, so a binary can always be traced back.
@@ -193,9 +193,9 @@ Image status  Available locally
 URL           http://127.0.0.1:5380
 Ports         5380-5406
 Services      alloydb, bigquery, bigtable, cloudbilling, cloudfunctions, cloudiam,
-              cloudresourcemanager, cloudscheduler, cloudsql, cloudtasks, dataproc, gcs, kms,
-              logging, memorystore, monitoring, secretmanager, serviceusage, sheets, spanner,
-              workflows
+              cloudresourcemanager, cloudscheduler, cloudsql, cloudtasks, dataproc, gcs,
+              kms, logging, memorystore, monitoring, pubsub, secretmanager, serviceusage,
+              sheets, spanner, workflows
 [OK] LocalCloud is ready  8.4s
 ```
 
@@ -582,19 +582,22 @@ lc mcp install --client claude-desktop
 # Register directly in Codex (CLI and local desktop sessions)
 codex mcp add localcloud -- "$(command -v localcloud)" mcp
 
-# Install for Gemini / Antigravity (~/.gemini/antigravity/mcp_config.json)
+# Install for Gemini CLI (~/.gemini/settings.json)
 lc mcp install --client gemini
+
+# Install for Antigravity (~/.gemini/config/mcp_config.json)
+lc mcp install --client antigravity
 
 # Install for Windsurf (~/.codeium/windsurf/mcp_config.json)
 lc mcp install --client windsurf
 
-# Write Cursor, Claude Code, Claude Desktop, Antigravity and Windsurf configurations
+# Configure every supported client installed on this machine
 lc mcp install --client all
 ```
 
-Use `claude-code` explicitly for Claude Code; `claude` is a Claude Desktop alias. Codex uses its own registration command. For Cline, use the [client's MCP configuration editor](docs/mcp.md#cline). Choose a direct connection or the GitHub plugin per client to avoid duplicate tools.
+Use `claude-code` explicitly for Claude Code; `claude` is a Claude Desktop alias. `--client all` configures only the clients it detects and fails if it finds none. Codex uses its own registration command. `--client cline` writes Cline's shared settings file; see [Cline](docs/mcp.md#cline) to edit it by hand. Choose a direct connection or the GitHub plugin per client to avoid duplicate tools.
 
-- **Global by default**: Installs into user-level configuration (`--global`). Use `--project` with a client that supports repository scope, such as Claude Code or Cursor. Claude Desktop and Windsurf always use user configuration. For a project installation in a GUI client, add `--command-path "$(command -v localcloud)"` to keep an absolute executable path.
+- **Global by default**: Installs into user-level configuration (`--global`). Use `--project` with a client that supports repository scope (Cursor, Claude Code, Gemini CLI, or Antigravity). Claude Desktop, Windsurf, and Cline always use user configuration. For a project installation in a GUI client, add `--command-path "$(command -v localcloud)"` to keep an absolute executable path.
 - **Desktop PATH resilience**: On macOS, automatically resolves to permanent system binaries (`/opt/homebrew/bin/localcloud` or `/usr/local/bin/localcloud`), ensuring GUI applications launched from the Dock or Finder run smoothly without shell PATH issues.
 - **Custom overrides**: Pass `--command-path <CMD>` to supply a custom executable (e.g. `lc` or `/opt/homebrew/bin/lc`), or `--bare` to force the bare `localcloud` command.
 

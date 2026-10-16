@@ -169,7 +169,7 @@ LocalCloud ensures container stability for running agents:
 ### One Project per Repository
 The bridge gives every coding session in a repository the same project, so agents working in different repositories keep their data apart:
 1. `--project-id`;
-2. `context.project` in the repository's own `localcloud.yaml` (or an explicit `--config`/`LOCALCLOUD_CONFIG`);
+2. `context.project` in the repository's own `localcloud.yaml` (or an explicit `LOCALCLOUD_CONFIG`);
 3. the git repository's name, slugified into a project ID (`Payments_API.v2` becomes `payments-api-v2`). Worktrees share their main checkout's project; a repository rooted at the home directory is ignored;
 4. otherwise `local-gcp-project` (or the `context.project` of a shared home or remembered config).
 

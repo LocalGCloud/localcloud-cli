@@ -103,7 +103,7 @@ arguments of its own.
 
 ## AI Coding Agents and MCP
 
-LocalCloud supports the [Model Context Protocol](https://modelcontextprotocol.io). AI coding agents can inspect, seed, test, and manage 25+ local Google Cloud services running inside LocalCloud.
+LocalCloud supports the [Model Context Protocol](https://modelcontextprotocol.io). AI coding agents can inspect, seed, test, and manage 27 local Google Cloud services running inside LocalCloud.
 
 For a complete local walkthrough with Claude Code, Claude Desktop, Codex, and Cursor, follow the [client setup guide](mcp-marketplace-guide.md), including connection checks and a first SDK test.
 
@@ -124,23 +124,26 @@ lc mcp install --client claude-desktop
 # Register in Codex (CLI and local desktop sessions)
 codex mcp add localcloud -- "$(command -v localcloud)" mcp
 
-# Install for Gemini / Antigravity (~/.gemini/antigravity/mcp_config.json)
+# Install for Gemini CLI (~/.gemini/settings.json)
 lc mcp install --client gemini
+
+# Install for Antigravity (~/.gemini/config/mcp_config.json)
+lc mcp install --client antigravity
 
 # Install for Windsurf (~/.codeium/windsurf/mcp_config.json)
 lc mcp install --client windsurf
 
-# Write Cursor, Claude Code, Claude Desktop, Antigravity and Windsurf configurations
+# Configure every supported client installed on this machine
 lc mcp install --client all
 ```
 
-`claude-code` and `claude-desktop` are separate targets; the shorter `claude` alias selects Desktop. `all` writes the five listed client configurations even if their applications are absent. For Cline, use [its MCP configuration editor](mcp.md#cline).
+`claude-code` and `claude-desktop` are separate targets; the shorter `claude` alias selects Desktop. `all` configures only the supported clients it detects on this machine and fails if it finds none. `--client cline` writes Cline's shared settings file; see [Cline](mcp.md#cline) to edit it by hand.
 
 #### Key Capabilities
 - **Automatic on-demand startup**: The bridge automatically checks if the LocalCloud container is running and starts it if stopped. To require manual control and disable auto-start, pass `--no-start`.
 - **Single shared container**: All agents and workspaces share the default `localcloud-data` Docker volume and container instance, preserving host RAM and compute.
 - **System binary resolution**: User-level installations prioritize permanent system installations (e.g. `/opt/homebrew/bin/localcloud` or `/usr/local/bin/localcloud`) so GUI applications launched from macOS Dock/Finder find the binary without shell PATH issues, and agent setups survive repository virtualenv deletion.
-- **Custom command overrides**: Pass `--command-path <CMD>` for an explicit executable path, or `--bare` for a bare command name. `--project` selects repository scope in supported clients such as Claude Code and Cursor; Claude Desktop and Windsurf always use user configuration. For a project install with an absolute path, add `--command-path "$(command -v localcloud)"`.
+- **Custom command overrides**: Pass `--command-path <CMD>` for an explicit executable path, or `--bare` for a bare command name. `--project` selects repository scope in Cursor, Claude Code, Gemini CLI, and Antigravity; Claude Desktop, Windsurf, and Cline always use user configuration. For a project install with an absolute path, add `--command-path "$(command -v localcloud)"`.
 
 ### Manual Configuration Examples
 
@@ -194,7 +197,7 @@ to print authoritative workflow guidance directly into the terminal or context w
 
 ## Related References
 
-- [Quick Start](../README.md#quick-start)
+- [Quickstart](../README.md#quickstart)
 - [LocalCloud MCP Architecture and Complete Tool Catalog](mcp.md)
 - [CLI commands and output modes](cli-reference.md)
 - [Configuration and runtime identity](configuration.md)

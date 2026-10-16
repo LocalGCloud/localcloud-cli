@@ -2,6 +2,23 @@
 
 [`README.md`](../README.md) covers installation and the shortest path to a running environment. This reference documents every command and output mode. `lc` and `localcloud` share the same commands, flags, and behavior.
 
+Run `lc --version` for the installed version, and `lc COMMAND --help` for the flags and valid `--fields` paths of one command.
+
+## Shared options
+
+Most commands accept these options. A command's `--help` lists exactly what it supports.
+
+| Option | Commands | Purpose |
+| :--- | :--- | :--- |
+| `--data-volume NAME` | all runtime commands | Selects the runtime by its Docker data volume (default: the active runtime, else `localcloud-data`) |
+| `--project-id ID` | `start`, `restart`, `reset`, `console`, `env`, `mcp`, `mcp install` | Project within the runtime (default: `context.project`, else `local-gcp-project`) |
+| `--user NAME` | same as `--project-id` | Caller identity sent to LocalCloud services (default: `local-developer`) |
+| `--container-name NAME`, `--network-name NAME` | `start`, `restart`, `reset` | Override the managed Docker container or network name (also `host.container_name`, `host.network_name`) |
+| `--verbose` | most commands | Complete JSON result instead of the concise summary ([details](#complete-json-with---verbose)) |
+| `--fields PATH[,PATH...]` | `doctor`, `start`, `restart`, `reset`, `stop`, `status` | Append JSON paths to the concise summary ([details](#additional-summary-fields-with---fields)) |
+| `--dry-run` | `start`, `restart`, `reset`, `stop`, `cleanup` | Print planned mutations without changing anything ([details](#lifecycle-dry-runs-and-debug-diagnostics)) |
+| `--debug` | all runtime commands | Diagnostics on stderr, including a copyable `docker run` command |
+
 ## Commands
 
 ### `update`
@@ -56,6 +73,8 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
   `--no-estargz` returns to the regular build. The option needs an image named by tag. When neither Docker
   nor the registry has an eStargz build for that tag, the CLI warns and runs the regular build.
 - `--services` overrides `services.enabled` with a comma-separated list of service IDs, or `default` to use the built-in set.
+- `--tail [SECONDS]` sets how long `start` and `restart` stream the container log after the runtime is ready. The default is 5 seconds; `--tail 0` skips it, and `--tail` with no value streams until you press Ctrl-C. (`lc logs --tail LINES` is a different option: it counts lines.)
+- `--skip-config-validation` (or `LOCALCLOUD_SKIP_CONFIG_VALIDATION=1`) skips the CLI's own checks of `localcloud.yaml` when they disagree with what a newer image accepts. The file is still passed through unchanged; see [Configuration](configuration.md#removed-flat-keys). Available on `start`, `restart`, and `reset`.
 - `--pull` is enabled by default: checks for a newer image on Docker Hub and pulls only if an update is available. `--no-pull` uses the locally available image only (pulling only if absent locally).
 - New runtimes prefer the canonical host ports. If that complete set is unavailable,
   the CLI proposes one contiguous mapping from `5508-5539`, then `5821-5840`,
@@ -527,6 +546,17 @@ Each command's `--help` output lists its valid field paths. Invalid input report
 - `NO_COLOR=1` or a dumb terminal disables ANSI color escapes.
 - TrueColor, ANSI-256, and ANSI-16 palettes degrade according to terminal capabilities.
 - Symbols and text continue to carry status when color is unavailable.
+
+## Exit codes
+
+| Code | Meaning |
+| :---: | :--- |
+| `0` | Success. `lc status` also exits 0 when the container is unhealthy, because the check itself worked |
+| `1` | Completed with failures (for example a partial `cleanup`), or an unexpected internal error |
+| `2` | LocalCloud error: invalid input, a Docker problem, or a failed operation, shown as `Error [code] message` (with `--verbose`, the same fields as JSON) |
+| `130` | Interrupted with Ctrl-C |
+
+See the README's [troubleshooting table](../README.md#troubleshooting) for common error codes and fixes.
 
 ## Related References
 
