@@ -50,6 +50,8 @@ LEGACY_HOST_FILES = ("state.db", "daemon.sock", "daemon.pid", "daemon.lock", "da
 PROJECT_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 USER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+@-]{0,126}$")
 ENVIRONMENT_KEY_PATTERN = re.compile(r"^LOCALCLOUD_[A-Z0-9_]+$")
+# What Docker accepts as a memory limit: bytes, or a number with a b/k/m/g unit.
+MEMORY_PATTERN = re.compile(r"^\d+(\.\d+)?([bkmg]b?)?$", re.IGNORECASE)
 CONFIG_FIELDS = {
     "version",
     "context",
@@ -731,8 +733,8 @@ def load_config(
     if estargz is not None:
         image = estargz_image(image, estargz)
 
-    memory = _non_blank_string(
-        "host.memory",
+    memory = _memory_limit(
+        "--memory" if memory is not None else "host.memory",
         memory if memory is not None else host_value("memory", DEFAULT_MEMORY),
     )
     docker_access_override = os.environ.get(DOCKER_ACCESS_ENV)
@@ -1374,6 +1376,16 @@ def _non_blank_string(name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         _invalid_config(f"{name} must be a non-empty string", value=value)
     return value.strip()
+
+
+def _memory_limit(name: str, value: object) -> str:
+    # Checked here so that a typo fails before `lc start` pulls an image.
+    memory = _non_blank_string(name, value)
+    if not MEMORY_PATTERN.fullmatch(memory):
+        _invalid_config(
+            f"{name} must be a size such as 4g or 512m", value=value
+        )
+    return memory
 
 
 def _image_tag(image: str) -> tuple[str, str] | None:

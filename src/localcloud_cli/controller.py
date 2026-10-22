@@ -870,6 +870,14 @@ class Controller:
             status = "running"
 
         image_name = current.configured_image if current is not None else config.image
+        if (
+            current is not None
+            and current.image_id
+            and current.image_id != current.configured_image_id
+        ):
+            # The tag has moved since the container was created (a pull or a
+            # local build); describe the image the container actually runs.
+            image_name = current.image_id
         image_details = self.runtime.image_details(image_name)
         image_status = (
             "available locally"

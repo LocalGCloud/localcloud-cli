@@ -1227,6 +1227,28 @@ def test_memory_defaults_to_config_without_cli_override(tmp_path: Path) -> None:
     assert selected.memory == "2g"
 
 
+@pytest.mark.parametrize("memory", ["4g", "512m", "1.5g", "8GB", "4096"])
+def test_memory_accepts_docker_sizes(tmp_path: Path, memory: str) -> None:
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path), memory=memory)
+    assert selected.memory == memory
+
+
+def test_memory_override_rejects_a_value_docker_cannot_parse(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError) as caught:
+        load_config(directory=tmp_path, paths=_paths(tmp_path), memory="nonsense")
+    assert caught.value.code == "invalid_config"
+    assert caught.value.message == "--memory must be a size such as 4g or 512m"
+
+
+def test_memory_config_rejects_a_value_docker_cannot_parse(tmp_path: Path) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  memory: 4 gigs\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError) as caught:
+        load_config(directory=tmp_path, paths=_paths(tmp_path))
+    assert caught.value.message == "host.memory must be a size such as 4g or 512m"
+
+
 def test_image_override_wins_over_config(tmp_path: Path) -> None:
     (tmp_path / "localcloud.yaml").write_text(
         "host:\n  image: yamlrepo/localcloud:yaml\n", encoding="utf-8"

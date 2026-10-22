@@ -1819,6 +1819,23 @@ def test_status_looks_up_details_for_the_image_it_renders(tmp_path: Path) -> Non
     assert runtime.image_details_images == ["example/custom-localcloud:latest"]
 
 
+def test_status_describes_the_container_image_after_the_tag_moves(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = replace(
+        _record(config),
+        image_id="sha256:running",
+        configured_image_id="sha256:pulled-later",
+    )
+
+    result = controller.status(config)
+
+    assert result["container"]["configured_image"] == config.image
+    assert runtime.image_details_images == ["sha256:running"]
+
+
 def test_status_uses_server_reported_effective_services_when_ready(
     tmp_path: Path,
 ) -> None:

@@ -506,7 +506,8 @@ def main(argv: list[str] | None = None) -> int:
             reporter.settle()
         _print_error(args, error)
         if reports_progress:
-            reporter.fail(error.message)
+            # The error above already carries the message.
+            reporter.fail(f"LocalCloud {args.command} failed")
         _offer_after_failure(args, observer, findings)
         return 2
     except KeyboardInterrupt:

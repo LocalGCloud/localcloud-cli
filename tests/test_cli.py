@@ -918,7 +918,7 @@ def test_main_returns_concise_host_error_by_default(
     # The error comes first; the outcome is the last line.
     assert captured.err.splitlines()[-2:] == [
         "Error [runtime_not_running] start it",
-        "[FAIL] start it  0.0s",
+        "[FAIL] LocalCloud status failed  0.0s",
     ]
 
 
@@ -1137,7 +1137,7 @@ def test_reset_all_projects_prints_its_manual_steps_without_verbose(
     assert main(["reset", "--all-projects"]) == 2
     printed = [line.strip() for line in capsys.readouterr().err.splitlines()]
     assert printed[-len(steps) - 1 : -1] == [f"Steps: {steps[0]}", *steps[1:]]
-    assert printed[-1].startswith("[FAIL] run the listed steps yourself")
+    assert printed[-1].startswith("[FAIL] LocalCloud reset failed  ")
 
 def test_restart_and_start_pull_flags() -> None:
     parser = _parser()
@@ -1278,6 +1278,14 @@ def test_start_and_restart_memory_image_services_dispatch() -> None:
     _execute(_parser().parse_args(["restart", "--services", "default"]))
     _, config = FakeController.instance.calls[-1]
     assert config.services is None
+
+
+@pytest.mark.parametrize("command", ["start", "restart"])
+def test_invalid_memory_fails_before_the_runtime_is_touched(command: str) -> None:
+    with pytest.raises(HostError) as caught:
+        _execute(_parser().parse_args([command, "--memory", "nonsense"]))
+    assert caught.value.code == "invalid_config"
+    assert command not in [name for name, _ in FakeController.instance.calls]
 
 
 @pytest.mark.parametrize("command", ["start", "restart"])
