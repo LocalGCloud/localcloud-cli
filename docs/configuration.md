@@ -34,7 +34,7 @@ Configuration selection order is:
 2. host `LOCALCLOUD_CONFIG`;
 3. `./localcloud.yaml`;
 4. the runtime's remembered config;
-5. `$HOME/.localcloud/localcloud.yaml` (or `LOCALCLOUD_HOME/localcloud.yaml`);
+5. `~/.local/share/localcloud/localcloud.yaml` (or `$LOCALCLOUD_HOME/localcloud.yaml` when `LOCALCLOUD_HOME` is set);
 6. no user file.
 
 A selected explicit, environment, or remembered path that is missing or unreadable fails instead of falling back.

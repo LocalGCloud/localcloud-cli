@@ -394,7 +394,7 @@ host-port mapping without prompting or mutating Docker.
 
 The rendered `docker run` command is the minimal operator-equivalent command:
 it omits image-inherited environment, image labels, and CLI-internal management
-metadata. When selected, `$HOME/.localcloud/localcloud.yaml` and a user seed
+metadata. When selected, `~/.local/share/localcloud/localcloud.yaml` and a user seed
 file appear as read-only `-v` bind mounts.
 
 Use `--debug` for diagnostics on stderr. For a selected or planned runtime,
