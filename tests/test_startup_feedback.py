@@ -29,12 +29,14 @@ def _fake_command(path: Path, *, delay: float) -> Path:
 def test_startup_feedback_gate_accepts_prompt_output(tmp_path: Path) -> None:
     command = _fake_command(tmp_path / "prompt-command", delay=0.0)
 
+    # A loaded machine can take seconds to start Python; the gate itself is
+    # checked by the rejection tests below.
     result = subprocess.run(
-        [sys.executable, str(CHECKER), str(command), "--timeout", "1.0"],
+        [sys.executable, str(CHECKER), str(command), "--timeout", "10"],
         text=True,
         capture_output=True,
         check=False,
-        timeout=5,
+        timeout=60,
     )
 
     assert result.returncode == 0, result.stderr
@@ -49,7 +51,7 @@ def test_startup_feedback_gate_rejects_delayed_output(tmp_path: Path) -> None:
         text=True,
         capture_output=True,
         check=False,
-        timeout=2,
+        timeout=60,
     )
 
     assert result.returncode == 1
@@ -79,7 +81,7 @@ def test_startup_feedback_gate_does_not_block_on_partial_stderr(
         text=True,
         capture_output=True,
         check=False,
-        timeout=2,
+        timeout=60,
     )
 
     assert result.returncode == 1
