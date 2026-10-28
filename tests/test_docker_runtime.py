@@ -2339,6 +2339,104 @@ def test_wait_ready_bounds_requests_and_sleep_by_absolute_deadline(
     assert sleeps == [1.0]
 
 
+class _Response:
+    def __init__(self, status_code: int, payload: dict[str, Any]) -> None:
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
+
+
+_HEALTHY = _Response(200, {"status": "healthy"})
+_BIGQUERY_WARMING = _Response(
+    503,
+    {
+        "ready": False,
+        "services": [
+            {"id": "gcs", "enabled": True, "ready": True, "phase": "running"},
+            {
+                "id": "bigquery",
+                "enabled": True,
+                "ready": False,
+                "phase": "running",
+                "failure_code": None,
+            },
+            {"id": "spanner", "enabled": False, "ready": False},
+        ],
+    },
+)
+
+
+def _fake_clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    now = [0.0]
+    monkeypatch.setattr(runtime_module.time, "monotonic", lambda: now[0])
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    monkeypatch.setattr(runtime_module.time, "sleep", sleep)
+    return now
+
+
+def test_wait_ready_waits_for_readiness_after_health(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_clock(monkeypatch)
+    requested: list[str] = []
+    readiness = [_BIGQUERY_WARMING, _BIGQUERY_WARMING, _Response(200, {"ready": True})]
+
+    def get(url: str, **_kwargs: Any) -> _Response:
+        requested.append(url.rsplit("/", 1)[1])
+        return _HEALTHY if url.endswith("/health") else readiness.pop(0)
+
+    monkeypatch.setattr(runtime_module.httpx, "get", get)
+
+    result = DockerRuntime.wait_ready("http://127.0.0.1:5380", deadline=30.0)
+
+    assert result == {"status": "healthy"}
+    assert requested == ["health", "readiness", "readiness", "readiness"]
+
+
+def test_wait_ready_accepts_an_image_without_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_clock(monkeypatch)
+    monkeypatch.setattr(
+        runtime_module.httpx,
+        "get",
+        lambda url, **_kwargs: _HEALTHY
+        if url.endswith("/health")
+        else _Response(404, {}),
+    )
+
+    result = DockerRuntime.wait_ready("http://127.0.0.1:5380", deadline=30.0)
+
+    assert result == {"status": "healthy"}
+
+
+def test_wait_ready_names_the_services_that_never_became_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_clock(monkeypatch)
+    monkeypatch.setattr(
+        runtime_module.httpx,
+        "get",
+        lambda url, **_kwargs: _HEALTHY
+        if url.endswith("/health")
+        else _BIGQUERY_WARMING,
+    )
+
+    with pytest.raises(HostError) as caught:
+        DockerRuntime.wait_ready("http://127.0.0.1:5380", deadline=10.0)
+
+    assert caught.value.code == "services_not_ready"
+    assert caught.value.message.endswith(": bigquery")
+    assert caught.value.details["services"] == [
+        {"id": "bigquery", "phase": "running"}
+    ]
+
+
 @pytest.mark.parametrize(
     "url",
     [

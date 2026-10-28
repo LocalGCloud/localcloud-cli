@@ -2044,13 +2044,17 @@ class DockerRuntime:
         observer: Any | None = None,
         cursor: LogCursor | None = None,
     ) -> dict[str, Any]:
+        """Wait until the gateway is healthy (/health) and every enabled service
+        can be called (/readiness), and return the /health document."""
         normalized = _validate_base_url(url)
         timeout = max(0.0, deadline - time.monotonic())
         last_error = "not attempted"
+        health: dict[str, Any] | None = None
+        not_ready: list[dict[str, Any]] = []
         if observer is not None and hasattr(observer, "debug"):
             observer.debug(
-                f"Waiting for runtime readiness at {normalized}/health "
-                f"(timeout {timeout:.1f}s)"
+                f"Waiting for runtime readiness at {normalized}/health and "
+                f"{normalized}/readiness (timeout {timeout:.1f}s)"
             )
 
         last_log_emit = 0.0
@@ -2103,28 +2107,64 @@ class DockerRuntime:
             if remaining <= 0:
                 break
             try:
-                response = _http_get(
-                    f"{normalized}/health",
-                    timeout=min(3.0, remaining),
-                )
-                if response.status_code == 200:
-                    payload = response.json()
-                    if payload.get("status") in {"healthy", "ok", "ready"}:
+                if health is None:
+                    response = _http_get(
+                        f"{normalized}/health",
+                        timeout=min(3.0, remaining),
+                    )
+                    if response.status_code == 200:
+                        payload = response.json()
+                        if payload.get("status") in {"healthy", "ok", "ready"}:
+                            health = payload
+                            if observer is not None and hasattr(observer, "debug"):
+                                observer.debug(
+                                    f"Runtime health succeeded at {normalized}/health"
+                                )
+                        else:
+                            last_error = f"health returned {payload}"
+                    else:
+                        last_error = f"HTTP {response.status_code}"
+                if health is not None:
+                    # /health only says the gateway is up; services such as
+                    # BigQuery answer seconds later, which /readiness reports.
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    response = _http_get(
+                        f"{normalized}/readiness",
+                        timeout=min(3.0, remaining),
+                    )
+                    # An image without /readiness answers 404; /health is all it has.
+                    if response.status_code in {200, 404}:
                         _emit_logs(force=True)
                         if observer is not None and hasattr(observer, "debug"):
                             observer.debug(
-                                f"Runtime readiness succeeded at {normalized}/health"
+                                f"Runtime readiness succeeded at {normalized}/readiness"
                             )
-                        return payload
-                    last_error = f"health returned {payload}"
-                else:
-                    last_error = f"HTTP {response.status_code}"
+                        return health
+                    not_ready = _services_not_ready(response)
+                    last_error = f"readiness HTTP {response.status_code}"
             except Exception as error:
                 last_error = str(error)
             _emit_logs()
             remaining = deadline - time.monotonic()
             if remaining > 0:
                 time.sleep(min(1.0, remaining))
+        logs = _container_logs(container) if container is not None else ""
+        if health is not None:
+            names = ", ".join(str(item["id"]) for item in not_ready)
+            raise HostError(
+                "services_not_ready",
+                "LocalCloud started, but some services were not ready in time"
+                + (f": {names}" if names else ""),
+                {
+                    "url": normalized,
+                    "timeout_seconds": timeout,
+                    "services": not_ready,
+                    "last_error": last_error,
+                    "logs": logs,
+                },
+            )
         raise HostError(
             "health_timeout",
             "LocalCloud did not become healthy",
@@ -2132,7 +2172,7 @@ class DockerRuntime:
                 "url": normalized,
                 "timeout_seconds": timeout,
                 "last_error": last_error,
-                "logs": _container_logs(container) if container is not None else "",
+                "logs": logs,
             },
         )
 
@@ -3977,6 +4017,28 @@ def _normalize_image_reference(value: str) -> str:
     elif first == "index.docker.io":
         repository = f"docker.io/{'/'.join(parts[1:])}"
     return f"{repository.lower()}{suffix}"
+
+
+def _services_not_ready(response: Any) -> list[dict[str, Any]]:
+    """The enabled services a /readiness document reports as not ready."""
+    try:
+        services = response.json().get("services")
+    except Exception:
+        return []
+    if not isinstance(services, list):
+        return []
+    return [
+        {
+            key: service[key]
+            for key in ("id", "phase", "failure_code", "failure_reason")
+            if service.get(key) is not None
+        }
+        for service in services
+        if isinstance(service, dict)
+        and service.get("id")
+        and service.get("enabled", True)
+        and not service.get("ready")
+    ]
 
 
 def _resolve_readiness_deadline(deadline: float | None) -> float:

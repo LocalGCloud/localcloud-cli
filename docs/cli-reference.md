@@ -52,7 +52,9 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
 
 - Reuses an existing running container attached to the same volume.
 - Creates project contexts when they do not exist.
-- Waits up to 60 seconds for container health and service readiness.
+- Waits up to 60 seconds for the gateway to report healthy (`/health`) and then for every enabled
+  service to answer (`/readiness`); BigQuery, for one, needs a few seconds after the gateway is up.
+  A service still not ready at the deadline fails the command with `services_not_ready`, naming it.
 - TLS is disabled by default. `--tls` enables it; `--no-tls` overrides an enabled configuration value.
 - `--no-ui` runs headless: the gateway serves no web console, while every service API, the admin
   API, MCP, `/health`, and `/readiness` work as usual. It sets `LOCALCLOUD_CONSOLE=false` on the
