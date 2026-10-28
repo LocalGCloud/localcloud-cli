@@ -26,6 +26,7 @@ from localcloud_cli.errors import HostError
 class FakeController:
     instance: "FakeController"
     missing_images: frozenset[str] = frozenset()
+    console: bool | None = None
 
     def __init__(self) -> None:
         type(self).instance = self
@@ -154,6 +155,10 @@ class FakeController:
             "project": config.project,
             "user": config.user,
         }
+
+    def console_enabled(self, url: str) -> bool | None:
+        self.calls.append(("console_enabled", url))
+        return self.console
 
     def identity_env(
         self, config: Any, *, account: str | None = None, observer: Any | None = None
@@ -1221,6 +1226,44 @@ def test_start_and_restart_tls_dispatch_defaults_to_disabled() -> None:
     _execute(_parser().parse_args(["restart", "--tls"]))
     _, config = FakeController.instance.calls[-1]
     assert config.environment["LOCALCLOUD_TLS_ENABLED"] == "true"
+
+
+def test_start_and_restart_ui_flags_set_console_environment() -> None:
+    parser = _parser()
+    for command in ("start", "restart"):
+        assert parser.parse_args([command]).ui is None
+        assert parser.parse_args([command, "--no-ui"]).ui is False
+        assert parser.parse_args([command, "--ui"]).ui is True
+
+    _execute(_parser().parse_args(["start"]))
+    _, config = FakeController.instance.calls[-1]
+    assert "LOCALCLOUD_CONSOLE" not in config.environment
+    assert config.console is None
+
+    _execute(_parser().parse_args(["start", "--no-ui"]))
+    _, headless = FakeController.instance.calls[-1]
+    assert headless.environment["LOCALCLOUD_CONSOLE"] == "false"
+    assert headless.console is False
+    assert headless.config_hash != config.config_hash
+
+    _execute(_parser().parse_args(["restart", "--ui"]))
+    _, config = FakeController.instance.calls[-1]
+    assert config.environment["LOCALCLOUD_CONSOLE"] == "true"
+    assert config.console is True
+
+
+def test_console_fails_on_a_headless_runtime(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url) or True)
+    monkeypatch.setattr(FakeController, "console", False)
+
+    assert main(["console"]) == 2
+
+    assert opened == []
+    assert "console_disabled" in capsys.readouterr().err
+    assert ("console_enabled", "http://127.0.0.1:49080") in FakeController.instance.calls
 
 
 def test_strict_port_validation_flag_reaches_runtime_config() -> None:

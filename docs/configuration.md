@@ -26,6 +26,8 @@ services:
 server:
   logging:
     verbosity: debug
+  console:
+    enabled: true   # false runs headless, like lc start --no-ui
 ```
 
 Configuration selection order is:

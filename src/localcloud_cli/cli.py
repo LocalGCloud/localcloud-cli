@@ -713,6 +713,13 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
                 "user": config.user,
                 "url": url,
             }
+            if controller.console_enabled(target["url"]) is False:
+                raise HostError(
+                    "console_disabled",
+                    "This LocalCloud runtime runs without the web console; run "
+                    "lc restart --ui to turn it on",
+                    {key: value for key, value in details.items() if key != "url"},
+                )
             try:
                 opened = webbrowser.open(url)
             except Exception as error:
@@ -884,6 +891,7 @@ def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConf
         "container_name": getattr(args, "container_name", None),
         "network_name": getattr(args, "network_name", None),
         "tls": getattr(args, "tls", None),
+        "console": getattr(args, "ui", None),
         "memory": getattr(args, "memory", None),
         "image": getattr(args, "image", None),
         "estargz": getattr(args, "estargz", None),
@@ -1404,6 +1412,17 @@ def _parser() -> argparse.ArgumentParser:
                     "Enable TLS on the LocalCloud runtime (default: disabled). "
                     "Pass --tls to enable or --no-tls to override an enabled "
                     "host.environment.LOCALCLOUD_TLS_ENABLED value"
+                ),
+            )
+            command.add_argument(
+                "--ui",
+                action=argparse.BooleanOptionalAction,
+                default=None,
+                help=(
+                    "Serve the web console (default: on). Pass --no-ui to run "
+                    "headless, for CI that uses only the service APIs; the "
+                    "runtime stays headless on later start and restart until "
+                    "--ui turns the console back on"
                 ),
             )
             command.add_argument(

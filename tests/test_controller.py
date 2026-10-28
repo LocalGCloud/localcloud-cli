@@ -74,6 +74,11 @@ class FakeRuntime:
         self.image_status_images: list[str] = []
         self.ready_timeouts: list[float] = []
         self.planned_ports: dict[str, tuple[tuple[str, int], ...]] | None = None
+        self.health_document: dict[str, Any] | None = {
+            "status": "healthy",
+            "console": {"enabled": True},
+        }
+        self.health_urls: list[str] = []
 
 
 
@@ -306,6 +311,10 @@ class FakeRuntime:
 
     def effective_services(self, _current: RuntimeRecord) -> tuple[str, ...] | None:
         return self.effective
+
+    def health(self, url: str, *, timeout: float = 3.0) -> dict[str, Any] | None:
+        self.health_urls.append(url)
+        return self.health_document
 
     def doctor(self) -> dict[str, Any]:
         return dict(self.doctor_report)
@@ -1480,6 +1489,89 @@ def test_restart_replaces_container_when_services_override_changes(
     assert runtime.removes == [False]
     assert runtime.creates == 1
     assert runtime.restarts == 0
+
+
+_HEADLESS_HEALTH = {"status": "healthy", "console": {"enabled": False}}
+
+
+def test_restart_keeps_a_headless_runtime_headless(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    runtime.record = _record(_config(tmp_path, paths=paths, console=False))
+    runtime.health_document = _HEADLESS_HEALTH
+
+    result = controller.restart(_config(tmp_path, paths=paths))
+
+    assert result["status"] == "restarted"
+    assert "changed_fields" not in result
+    assert result["console"] == "disabled"
+    assert runtime.record.runtime_settings is not None
+    assert runtime.record.runtime_settings["environment"] == {
+        "LOCALCLOUD_CONSOLE": "false"
+    }
+
+
+def test_start_reuses_a_headless_runtime_without_the_flag(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    runtime.record = _record(_config(tmp_path, paths=paths, console=False))
+    runtime.health_document = _HEADLESS_HEALTH
+
+    result = controller.start(_config(tmp_path, paths=paths))
+
+    assert result["status"] == "already_running"
+    assert result["console"] == "disabled"
+    assert runtime.creates == 0
+
+
+def test_restart_with_ui_turns_the_console_back_on(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    runtime.record = _record(_config(tmp_path, paths=paths, console=False))
+
+    result = controller.restart(_config(tmp_path, paths=paths, console=True))
+
+    assert result["status"] == "reconfigured"
+    assert "console" not in result
+    assert runtime.record.runtime_settings is not None
+    assert runtime.record.runtime_settings["environment"] == {
+        "LOCALCLOUD_CONSOLE": "true"
+    }
+    assert runtime.health_urls == []
+
+
+def test_start_without_ui_warns_when_the_image_predates_headless_mode(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    runtime.health_document = {"status": "healthy"}
+
+    result = controller.start(_config(tmp_path, paths=paths, console=False))
+
+    assert result["status"] == "started"
+    assert "predates headless mode" in result["warning"]
+    assert result["console"] == "served (the image predates headless mode)"
+
+
+def test_start_without_ui_fails_when_the_console_is_still_served(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+
+    with pytest.raises(HostError) as error:
+        controller.start(_config(tmp_path, paths=paths, console=False))
+
+    assert error.value.code == "console_not_disabled"
+
+
+def test_status_reports_a_headless_runtime(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    runtime.record = _record(_config(tmp_path, paths=paths, console=False))
+    runtime.health_document = _HEADLESS_HEALTH
+
+    assert controller.status(_config(tmp_path, paths=paths))["console"] == "disabled"
+
+    runtime.health_document = {"status": "healthy"}
+    assert controller.status(_config(tmp_path, paths=paths))["console"] == (
+        "served (the image predates headless mode)"
+    )
 
 
 def test_start_attaches_to_running_runtime_without_replacing_when_local_image_differs(

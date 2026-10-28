@@ -41,6 +41,10 @@ server:
   data_dir: /var/lib/localcloud
   gateway:
     port: 5380
+  # Serve the Console UI from the gateway. false (or LOCALCLOUD_CONSOLE=false) runs headless:
+  # service and admin APIs are unchanged, Console pages and assets return 404 CONSOLE_DISABLED.
+  console:
+    enabled: true
   logging:
     verbosity: info
   persistence: true

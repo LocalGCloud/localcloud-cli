@@ -159,6 +159,7 @@ _COMMON_FIELDS = (
     FieldSpec("container.configured_image", "Image", "muted"),
     FieldSpec("container.image_status", "Image status", "status"),
     FieldSpec("container.url", "URL", "url"),
+    FieldSpec("console", "Console"),
     FieldSpec("services", "Services"),
     FieldSpec("lazy_pulling", "Lazy pulling", "muted"),
     FieldSpec("changed_fields", "Changed", "warning"),

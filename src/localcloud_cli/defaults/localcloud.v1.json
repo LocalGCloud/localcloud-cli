@@ -36,6 +36,9 @@
     "gateway": {
       "port": 5380
     },
+    "console": {
+      "enabled": true
+    },
     "logging": {
       "verbosity": "info"
     },
@@ -662,7 +665,7 @@
           "log_warnings": true
         },
         "config_descriptions": {
-          "mode": "IAM mode \u2014 'open' silently allows requests, 'permissive' allows requests with decision logging, 'strict' enforces local policy, and 'gcp-live' delegates authorization to real GCP IAM.",
+          "mode": "IAM mode — 'open' silently allows requests, 'permissive' allows requests with decision logging, 'strict' enforces local policy, and 'gcp-live' delegates authorization to real GCP IAM.",
           "policy_file": "Optional IAM policy JSON file; strict mode with no file denies every non-management request.",
           "log_warnings": "Log Cloud IAM operation warnings when enabled; suppressed in open mode (boolean)."
         },

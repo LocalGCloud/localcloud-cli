@@ -1136,6 +1136,71 @@ def test_tls_config_value_respected_without_cli_override(tmp_path: Path) -> None
     assert selected.tls_port == 5381
 
 
+def test_console_is_unset_by_default(tmp_path: Path) -> None:
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
+    assert selected.console is None
+    assert "LOCALCLOUD_CONSOLE" not in selected.environment
+
+
+@pytest.mark.parametrize("console", [False, True])
+def test_console_flag_sets_the_environment_over_the_config(
+    tmp_path: Path, console: bool
+) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  environment:\n    LOCALCLOUD_CONSOLE: \"yes\"\n"
+        "server:\n  console:\n    enabled: true\n",
+        encoding="utf-8",
+    )
+    selected = load_config(
+        directory=tmp_path, paths=_paths(tmp_path), console=console
+    )
+    assert selected.environment == {"LOCALCLOUD_CONSOLE": str(console).lower()}
+    assert selected.console is console
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"), [("off", False), ("NO", False), ("0", False), ("On", True)]
+)
+def test_console_environment_takes_the_gateway_values(
+    tmp_path: Path, value: str, expected: bool
+) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        f"host:\n  environment:\n    LOCALCLOUD_CONSOLE: \"{value}\"\n"
+        "server:\n  console:\n    enabled: true\n",
+        encoding="utf-8",
+    )
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
+    assert selected.console is expected
+
+
+def test_console_environment_rejects_values_the_gateway_ignores(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  environment:\n    LOCALCLOUD_CONSOLE: \"disabled\"\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(HostError, match="LOCALCLOUD_CONSOLE must be one of"):
+        load_config(directory=tmp_path, paths=_paths(tmp_path))
+
+
+def test_server_console_enabled_sets_console_without_environment(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "localcloud.yaml").write_text(
+        "server:\n  console:\n    enabled: false\n", encoding="utf-8"
+    )
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
+    assert selected.console is False
+    assert selected.environment == {}
+
+    (tmp_path / "localcloud.yaml").write_text(
+        "server:\n  console:\n    enabled: \"no\"\n", encoding="utf-8"
+    )
+    with pytest.raises(HostError, match="server.console.enabled must be a boolean"):
+        load_config(directory=tmp_path, paths=_paths(tmp_path))
+
+
 def test_top_level_tls_and_environment_port_resolve_effective_bindings(
     tmp_path: Path,
 ) -> None:

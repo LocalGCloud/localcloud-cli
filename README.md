@@ -520,10 +520,11 @@ python my_app.py          # google.auth.default() now returns the runner account
 eval "$(lc env --identity --stop)"
 ```
 
-**In CI.** Skip the registry check for reproducibility, disable log tailing, and fail loudly.
+**In CI.** Skip the registry check for reproducibility, disable log tailing, fail loudly, and
+leave out the web console the tests never open.
 
 ```sh
-lc start --data-volume ci-$GITHUB_RUN_ID --no-pull --tail 0 --verbose
+lc start --data-volume ci-$GITHUB_RUN_ID --no-pull --no-ui --tail 0 --verbose
 # …run tests…
 lc stop  --data-volume ci-$GITHUB_RUN_ID
 ```

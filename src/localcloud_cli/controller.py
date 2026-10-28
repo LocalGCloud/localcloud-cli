@@ -11,6 +11,7 @@ from typing import Any, Callable
 from . import __version__
 from .config import (
     ACTIVE_RUNTIME_SCHEMA_VERSION,
+    CONSOLE_ENVIRONMENT,
     ActiveRuntime,
     HostPaths,
     LEGACY_HOST_FILES,
@@ -24,6 +25,7 @@ from .config import (
     load_config,
     runtime_settings,
     save_active_runtime,
+    with_console_environment,
 )
 from .constants import DEFAULTS_CONFIG_LABEL, DEFAULT_IMAGE
 from .docker_runtime import (
@@ -207,6 +209,7 @@ class Controller:
             else data_volume_lock(self.paths, config.data_volume)
         ):
             current = self._resolve_runtime(config)
+            config = _inherit_console(current, config)
             changed_fields: list[str] = []
             prepared_image: tuple[Any, bool] | None = None
             run_plan: DockerRunPlan | None = None
@@ -375,21 +378,25 @@ class Controller:
                     deadline=deadline,
                 )
             self._record_active(environment, config)
+            console_warning = self._check_console(environment, config)
 
             def payload() -> dict[str, Any]:
-                return self._with_lazy_pulling(
-                    self._payload(
-                        status,
-                        environment,
-                        config,
-                        include_sdk=True,
-                        changed_fields=changed_fields,
-                        logs=(
-                            self._runtime_logs(config, environment)
-                            if status != "already_running"
-                            else None
-                        ),
-                    )
+                return _with_console_warning(
+                    self._with_lazy_pulling(
+                        self._payload(
+                            status,
+                            environment,
+                            config,
+                            include_sdk=True,
+                            changed_fields=changed_fields,
+                            logs=(
+                                self._runtime_logs(config, environment)
+                                if status != "already_running"
+                                else None
+                            ),
+                        )
+                    ),
+                    console_warning,
                 )
 
             if status == "already_running" or not self._tails_logs(observer, tail):
@@ -427,6 +434,7 @@ class Controller:
             else data_volume_lock(self.paths, config.data_volume)
         ):
             current = self._resolve_runtime(config)
+            config = _inherit_console(current, config)
             is_managed = (
                 current is not None
                 and current.ownership.get("container") == "managed"
@@ -586,17 +594,21 @@ class Controller:
                     deadline=time.monotonic() + _START_READINESS_TIMEOUT,
                 )
             self._record_active(environment, config)
+            console_warning = self._check_console(environment, config)
 
             def payload() -> dict[str, Any]:
-                return self._with_lazy_pulling(
-                    self._payload(
-                        status,
-                        environment,
-                        config,
-                        include_sdk=True,
-                        changed_fields=changed_fields,
-                        logs=self._runtime_logs(config, environment),
-                    )
+                return _with_console_warning(
+                    self._with_lazy_pulling(
+                        self._payload(
+                            status,
+                            environment,
+                            config,
+                            include_sdk=True,
+                            changed_fields=changed_fields,
+                            logs=self._runtime_logs(config, environment),
+                        )
+                    ),
+                    console_warning,
                 )
 
             if not self._tails_logs(observer, tail):
@@ -1654,6 +1666,52 @@ class Controller:
         )
 
 
+    def console_enabled(self, url: str) -> bool | None:
+        """Whether the runtime at `url` serves the Console; None when its image
+        predates headless mode (it always serves it) or /health is unreadable."""
+        health = self.runtime.health(url)
+        console = health.get("console") if health is not None else None
+        enabled = console.get("enabled") if isinstance(console, dict) else None
+        return enabled if isinstance(enabled, bool) else None
+
+    def _console_row(self, environment: RuntimeRecord) -> str:
+        """The Console row of a runtime started without the Console."""
+        if environment.state != "running" or environment.url is None:
+            return "disabled"
+        enabled = self.console_enabled(environment.url)
+        if enabled is None:
+            return "served (the image predates headless mode)"
+        return "served" if enabled else "disabled"
+
+    def _check_console(
+        self, environment: RuntimeRecord, config: LocalCloudConfig
+    ) -> str | None:
+        """Confirm a runtime started with the Console off really is headless.
+
+        Returns a warning when the image predates headless mode, and fails when
+        the gateway reports the Console on anyway."""
+        if config.console is not False or environment.url is None:
+            return None
+        enabled = self.console_enabled(environment.url)
+        if enabled is None:
+            return (
+                f"Image {environment.actual_image or config.image} predates "
+                "headless mode, so it still serves the Console; use a newer image "
+                "to run without it."
+            )
+        if enabled:
+            raise HostError(
+                "console_not_disabled",
+                "LocalCloud still serves the Console although it was started "
+                "without it; check the image and server.console.enabled",
+                {
+                    "data_volume": config.data_volume,
+                    "container_id": environment.container_id,
+                    "image": environment.actual_image or config.image,
+                },
+            )
+        return None
+
     @staticmethod
     def _requires_managed_replacement(
         current: RuntimeRecord, config: LocalCloudConfig
@@ -2213,6 +2271,8 @@ class Controller:
                     "X-LocalCloud-User": config.user,
                 },
             }
+        if environment is not None and _inherit_console(environment, config).console is False:
+            result["console"] = self._console_row(environment)
         if changed_fields:
             result["changed_fields"] = changed_fields
         if reset_scope is not None:
@@ -2376,6 +2436,24 @@ def _validate_replacement(
                 "ownership": current.ownership,
             },
         )
+
+
+def _inherit_console(
+    current: RuntimeRecord | None, config: LocalCloudConfig
+) -> LocalCloudConfig:
+    """Keep a runtime started with --no-ui (or --ui) in that mode when nothing
+    in this run's flags or config sets it."""
+    if current is None or config.console is not None or not current.runtime_settings:
+        return config
+    recorded = current.runtime_settings.get("environment")
+    value = recorded.get(CONSOLE_ENVIRONMENT) if isinstance(recorded, dict) else None
+    return with_console_environment(config, value) if isinstance(value, str) else config
+
+
+def _with_console_warning(result: dict[str, Any], warning: str | None) -> dict[str, Any]:
+    if warning:
+        result["warning"] = " ".join(filter(None, (result.get("warning"), warning)))
+    return result
 
 
 def _changed_fields(

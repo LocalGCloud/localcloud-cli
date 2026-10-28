@@ -54,6 +54,13 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
 - Creates project contexts when they do not exist.
 - Waits up to 60 seconds for container health and service readiness.
 - TLS is disabled by default. `--tls` enables it; `--no-tls` overrides an enabled configuration value.
+- `--no-ui` runs headless: the gateway serves no web console, while every service API, the admin
+  API, MCP, `/health`, and `/readiness` work as usual. It sets `LOCALCLOUD_CONSOLE=false` on the
+  container, which overrides `server.console.enabled` in `localcloud.yaml`. A headless runtime
+  stays headless on later `start` and `restart` until `--ui` turns the console back on, and the
+  output shows **Console: disabled**. After starting, the CLI checks `/health`: it warns when the
+  image predates headless mode (that image still serves the console) and fails with
+  `console_not_disabled` when the gateway reports the console on. Available on `start` and `restart`.
 - Docker ports omit the host IP by default (`-p 5380:5380`), using Docker's default
   bind address, normally all host interfaces. `--local-only` binds every published
   port to `127.0.0.1` (`-p 127.0.0.1:5380:5380`), including TLS ports,
@@ -205,6 +212,9 @@ lc console
 lc console --project-id my-project --user alice
 ```
 
+On a runtime started with `--no-ui`, `console` fails with `console_disabled` instead of opening a page
+the gateway does not serve; `lc restart --ui` turns the console back on.
+
 ### `logs`
 
 Prints recent logs from the active LocalCloud container runtime.
@@ -227,6 +237,10 @@ lc restart --pull
 
 # Restart with TLS
 lc restart --tls
+
+# Restart without the web console, or bring it back
+lc restart --no-ui
+lc restart --ui
 
 # Restart with ports accessible only from this machine
 lc restart --local-only

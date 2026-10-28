@@ -11,7 +11,7 @@ import tempfile
 import threading
 import unicodedata
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from importlib import resources
 from pathlib import Path
@@ -98,6 +98,13 @@ RESERVED_HOST_ENVIRONMENT = {
     "LOCALCLOUD_DATA_VOLUME",
 }
 LEGACY_CONFIG_FIELDS = {"instance", "volume_name"}
+# Turns off the Console the gateway serves; set by --ui/--no-ui. Overrides
+# server.console.enabled, and takes the values the gateway accepts.
+CONSOLE_ENVIRONMENT = "LOCALCLOUD_CONSOLE"
+CONSOLE_ENVIRONMENT_VALUES = {
+    **dict.fromkeys(("true", "1", "on", "yes"), True),
+    **dict.fromkeys(("false", "0", "off", "no"), False),
+}
 SKIP_CONFIG_VALIDATION_ENV = "LOCALCLOUD_SKIP_CONFIG_VALIDATION"
 AMBIGUOUS_PLAIN_SCALARS = {
     "yes",
@@ -253,6 +260,11 @@ class LocalCloudConfig:
     # checkout name), or "default" (built in, or a shared config's
     # context.project). Not part of the runtime identity.
     project_source: ProjectSource = "default"
+    # Whether the gateway serves the Console: set by --ui/--no-ui,
+    # host.environment.LOCALCLOUD_CONSOLE or server.console.enabled, and None
+    # when none of them does (the Console is on). The environment and the
+    # config file already carry it, so it is not part of the runtime identity.
+    console: bool | None = None
 
     def __post_init__(self) -> None:
         encoded = json.dumps(
@@ -606,6 +618,7 @@ def load_config(
     container_name: str | None = None,
     network_name: str | None = None,
     tls: bool | None = None,
+    console: bool | None = None,
     memory: str | None = None,
     image: str | None = None,
     estargz: bool | None = None,
@@ -771,6 +784,9 @@ def load_config(
         )
     if tls is not None:
         environment["LOCALCLOUD_TLS_ENABLED"] = "true" if tls else "false"
+    if console is not None:
+        environment[CONSOLE_ENVIRONMENT] = "true" if console else "false"
+    console_enabled = _console_setting(raw, environment)
     mysql_port = _mysql_port(effective_catalog, effective_services, environment)
     service_ports = _service_ports(effective_catalog, effective_services)
     selected_port_range = (
@@ -871,7 +887,44 @@ def load_config(
         mysql_port=mysql_port,
         service_ports=service_ports,
         port_range=selected_port_range,
+        console=console_enabled,
     )
+
+
+def console_environment_value(value: str) -> bool | None:
+    """What a LOCALCLOUD_CONSOLE value means to the gateway; None when it ignores it."""
+    return CONSOLE_ENVIRONMENT_VALUES.get(value.strip().lower())
+
+
+def with_console_environment(config: LocalCloudConfig, value: str) -> LocalCloudConfig:
+    """`config` with LOCALCLOUD_CONSOLE set to `value`."""
+    return replace(
+        config,
+        environment={**config.environment, CONSOLE_ENVIRONMENT: value},
+        console=console_environment_value(value),
+    )
+
+
+def _console_setting(
+    raw: dict[object, object], environment: dict[str, str]
+) -> bool | None:
+    if CONSOLE_ENVIRONMENT in environment:
+        value = console_environment_value(environment[CONSOLE_ENVIRONMENT])
+        if value is None:
+            _invalid_config(
+                f"host.environment.{CONSOLE_ENVIRONMENT} must be one of "
+                + ", ".join(CONSOLE_ENVIRONMENT_VALUES),
+                value=environment[CONSOLE_ENVIRONMENT],
+            )
+        return value
+    server = raw.get("server")
+    section = server.get("console") if isinstance(server, dict) else None
+    if section is None:
+        return None
+    if not isinstance(section, dict):
+        _invalid_config("server.console must be an object", value=section)
+    enabled = section.get("enabled")
+    return None if enabled is None else _boolean("server.console.enabled", enabled)
 
 
 def _validate_config_document(

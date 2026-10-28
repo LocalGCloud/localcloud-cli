@@ -1592,6 +1592,17 @@ class DockerRuntime:
         except Exception:
             return False
 
+    def health(self, url: str, *, timeout: float = 3.0) -> dict[str, Any] | None:
+        """The runtime's /health document, or None when it cannot be read."""
+        try:
+            response = _http_get(f"{_validate_base_url(url)}/health", timeout=timeout)
+            if response.status_code != 200:
+                return None
+            payload = response.json()
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
+
     def effective_services(self, runtime: RuntimeRecord) -> tuple[str, ...] | None:
         """Return the enabled service IDs LocalCloud reports, or None if unavailable.
 
