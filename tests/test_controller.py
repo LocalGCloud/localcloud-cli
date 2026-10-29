@@ -2998,11 +2998,11 @@ def test_status_reports_lazy_pulling_for_the_image_the_container_runs(tmp_path: 
 
     # host.image names the regular build; the running container is not replaced by `status`.
     pinned = _config(
-        tmp_path, paths=paths, yaml="host:\n  image: agentcloud/localcloud:latest\n"
+        tmp_path, paths=paths, yaml="host:\n  image: agentcloud/localcloud:lite\n"
     )
     result = controller.status(pinned)
 
-    assert result["container"]["actual_image"] == "agentcloud/localcloud:latest-estargz"
+    assert result["container"]["actual_image"] == "agentcloud/localcloud:lite-estargz"
     assert result["lazy_pulling"]["enabled"] is True
 
 

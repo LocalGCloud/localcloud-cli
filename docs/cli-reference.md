@@ -74,9 +74,14 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
   container while preserving its persistent data volume. Attached containers keep
   their existing bindings.
 - `--memory` overrides `host.memory` (default: `4g`).
-- `--image` overrides `host.image` and `LOCALCLOUD_IMAGE` (default: `agentcloud/localcloud:latest`).
+- `--image` overrides `host.image` and `LOCALCLOUD_IMAGE` (default: `agentcloud/localcloud:lite`).
+- `--full` runs the selected image's full build: tag `latest` for `lite`, `<version>` for `<version>-lite`.
+  `--lite` goes back to the lite build, which is the default. Lite has BigQuery's lite edition (no BigQuery
+  ML, JavaScript UDFs, or `EXTERNAL_QUERY` on Cloud SQL) and creates metadata-only GKE clusters; every
+  service is still available. A runtime keeps the build it was started with on later `start` and
+  `restart`, unless `host.image` or `LOCALCLOUD_IMAGE` names another. Available on `start` and `restart`.
 - `--estargz` runs the eStargz build of the selected image: the same tag with `-estargz` appended, such as
-  `agentcloud/localcloud:latest-estargz`. Docker pulls it lazily when the Stargz Snapshotter is its storage
+  `agentcloud/localcloud:lite-estargz`. Docker pulls it lazily when the Stargz Snapshotter is its storage
   driver, and downloads it whole otherwise; the **Lazy pulling** row says which (see [doctor](#doctor)). A
   runtime keeps the build it was started with unless `host.image` or `LOCALCLOUD_IMAGE` names another, and
   `--no-estargz` returns to the regular build. The option needs an image named by tag. When neither Docker
@@ -239,6 +244,9 @@ lc restart --pull
 
 # Restart with TLS
 lc restart --tls
+
+# Restart on the full image (BigQuery ML, JavaScript UDFs, real GKE clusters)
+lc restart --full
 
 # Restart without the web console, or bring it back
 lc restart --no-ui

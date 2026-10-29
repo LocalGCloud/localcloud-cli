@@ -895,6 +895,7 @@ def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConf
         "memory": getattr(args, "memory", None),
         "image": getattr(args, "image", None),
         "estargz": getattr(args, "estargz", None),
+        "lite": getattr(args, "lite", None),
         "services": getattr(args, "services", None),
         "skip_validation": getattr(args, "skip_config_validation", False),
         "strict_port_validation": getattr(args, "strict_port_validation", False),
@@ -1441,6 +1442,31 @@ def _parser() -> argparse.ArgumentParser:
                 help=(
                     f"Docker image to run (default: {DEFAULT_IMAGE}). Overrides "
                     "host.image in localcloud.yaml and LOCALCLOUD_IMAGE when set"
+                ),
+            )
+            variant = command.add_mutually_exclusive_group()
+            variant.add_argument(
+                "--lite",
+                dest="lite",
+                action="store_const",
+                const=True,
+                default=None,
+                help=(
+                    "Run the image's lite build (the default image is lite): its "
+                    "tag lite, or <version>-lite. It leaves out BigQuery ML, "
+                    "JavaScript UDFs, Cloud SQL EXTERNAL_QUERY and real GKE "
+                    "clusters. The runtime keeps the build on later start and "
+                    "restart"
+                ),
+            )
+            variant.add_argument(
+                "--full",
+                dest="lite",
+                action="store_const",
+                const=False,
+                help=(
+                    "Run the image's full build: its tag latest, or <version>. "
+                    "The runtime keeps it on later start and restart until --lite"
                 ),
             )
             command.add_argument(

@@ -263,7 +263,7 @@ Update the CLI through its installation channel. Updating it or installing the p
 
 ```sh
 lc status
-lc restart --image agentcloud/localcloud:latest --pull
+lc restart --pull
 ```
 
 Carry your normal `--data-volume` and configuration flags when selecting a custom environment. Restart interrupts connected clients briefly. Update only an environment you intend to change.

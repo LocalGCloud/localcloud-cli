@@ -1338,7 +1338,7 @@ def test_estargz_flag_selects_the_estargz_build(command: str) -> None:
 
     _execute(parser.parse_args([command, "--estargz"]))
     _, config = FakeController.instance.calls[-1]
-    assert config.image == "agentcloud/localcloud:latest-estargz"
+    assert config.image == "agentcloud/localcloud:lite-estargz"
 
     _execute(parser.parse_args([command, "--image", "myrepo/localcloud:dev", "--estargz"]))
     _, config = FakeController.instance.calls[-1]
@@ -1373,15 +1373,31 @@ def test_estargz_uses_the_regular_build_when_the_tag_has_no_estargz_build(
 
     # A published eStargz build is used, without a warning.
     result = _execute(_parser().parse_args([command, "--estargz"]))
-    assert FakeController.instance.calls[-1][1].image == "agentcloud/localcloud:latest-estargz"
+    assert FakeController.instance.calls[-1][1].image == "agentcloud/localcloud:lite-estargz"
     assert "warning" not in result
+
+
+@pytest.mark.parametrize("command", ["start", "restart"])
+def test_lite_and_full_flags_select_the_build(command: str) -> None:
+    parser = _parser()
+    assert parser.parse_args([command]).lite is None
+    assert parser.parse_args([command, "--lite"]).lite is True
+    assert parser.parse_args([command, "--full"]).lite is False
+    with pytest.raises(SystemExit):
+        parser.parse_args([command, "--lite", "--full"])
+
+    _execute(parser.parse_args([command, "--full"]))
+    assert FakeController.instance.calls[-1][1].image == "agentcloud/localcloud:latest"
+
+    _execute(parser.parse_args([command, "--image", "myrepo/localcloud:0.2.0", "--lite"]))
+    assert FakeController.instance.calls[-1][1].image == "myrepo/localcloud:0.2.0-lite"
 
 
 def test_only_the_estargz_flag_asks_whether_the_image_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        FakeController, "missing_images", frozenset({"agentcloud/localcloud:latest-estargz"})
+        FakeController, "missing_images", frozenset({"agentcloud/localcloud:lite-estargz"})
     )
 
     def asked() -> list[Any]:
@@ -1390,12 +1406,12 @@ def test_only_the_estargz_flag_asks_whether_the_image_is_missing(
     # A dry run stays off the registry and plans the build that was asked for.
     _execute(_parser().parse_args(["start", "--estargz", "--dry-run"]))
     assert asked() == []
-    assert FakeController.instance.calls[-1][1].image == "agentcloud/localcloud:latest-estargz"
+    assert FakeController.instance.calls[-1][1].image == "agentcloud/localcloud:lite-estargz"
 
     # An image named in full is not replaced by another.
-    _execute(_parser().parse_args(["start", "--image", "agentcloud/localcloud:latest-estargz"]))
+    _execute(_parser().parse_args(["start", "--image", "agentcloud/localcloud:lite-estargz"]))
     assert asked() == []
-    assert FakeController.instance.calls[-1][1].image == "agentcloud/localcloud:latest-estargz"
+    assert FakeController.instance.calls[-1][1].image == "agentcloud/localcloud:lite-estargz"
 
     _execute(_parser().parse_args(["start", "--no-estargz"]))
     assert asked() == []

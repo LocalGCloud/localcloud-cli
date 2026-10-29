@@ -1,7 +1,12 @@
 """Lightweight shared defaults for CLI startup and configuration."""
 
 DEFAULT_CONFIG_NAME = "localcloud.yaml"
-DEFAULT_IMAGE = "agentcloud/localcloud:latest"
+DEFAULT_IMAGE = "agentcloud/localcloud:lite"
+# Published tags come in two builds: `latest` and `<version>` are full, and
+# `lite` and `<version>-lite` leave out BigQuery's full edition and k3d.
+FULL_TAG = "latest"
+LITE_TAG = "lite"
+LITE_TAG_SUFFIX = "-lite"
 # Every published tag T has an eStargz build of the same image, tagged T-estargz.
 ESTARGZ_TAG_SUFFIX = "-estargz"
 DEFAULT_MEMORY = "4g"

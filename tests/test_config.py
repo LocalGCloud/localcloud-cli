@@ -347,10 +347,10 @@ def test_embedded_docker_runtime_requires_effective_docker_access(
     }
 
 
-def test_default_image_uses_public_latest_channel(tmp_path: Path) -> None:
+def test_default_image_uses_public_lite_channel(tmp_path: Path) -> None:
     selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
 
-    assert DEFAULT_IMAGE == "agentcloud/localcloud:latest"
+    assert DEFAULT_IMAGE == "agentcloud/localcloud:lite"
     assert selected.image == DEFAULT_IMAGE
 
 
@@ -1350,13 +1350,74 @@ def test_estargz_selects_the_estargz_build_of_the_image(
     assert is_estargz_image(config.image) is selected.endswith("-estargz")
 
 
+@pytest.mark.parametrize(
+    ("image", "lite", "selected"),
+    [
+        ("agentcloud/localcloud:lite", False, "agentcloud/localcloud:latest"),
+        ("agentcloud/localcloud:latest", True, "agentcloud/localcloud:lite"),
+        ("agentcloud/localcloud", True, "agentcloud/localcloud:lite"),
+        ("agentcloud/localcloud:0.2.0", True, "agentcloud/localcloud:0.2.0-lite"),
+        ("agentcloud/localcloud:0.2.0-lite", False, "agentcloud/localcloud:0.2.0"),
+        ("agentcloud/localcloud:lite-estargz", False, "agentcloud/localcloud:latest-estargz"),
+        (
+            "agentcloud/localcloud:0.2.0-estargz",
+            True,
+            "agentcloud/localcloud:0.2.0-lite-estargz",
+        ),
+        ("agentcloud/localcloud:lite", True, "agentcloud/localcloud:lite"),
+        ("agentcloud/localcloud:latest", None, "agentcloud/localcloud:latest"),
+    ],
+)
+def test_lite_selects_the_lite_or_full_build_of_the_image(
+    tmp_path: Path, image: str, lite: bool | None, selected: str
+) -> None:
+    config = load_config(
+        directory=tmp_path, paths=_paths(tmp_path), image=image, lite=lite
+    )
+
+    assert config.image == selected
+
+
+def test_lite_and_estargz_combine(tmp_path: Path) -> None:
+    config = load_config(
+        directory=tmp_path, paths=_paths(tmp_path), lite=False, estargz=True
+    )
+
+    assert config.image == "agentcloud/localcloud:latest-estargz"
+
+
+def test_lite_needs_an_image_named_by_tag(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="--lite needs an image named by tag"):
+        load_config(
+            directory=tmp_path,
+            paths=_paths(tmp_path),
+            image="registry.example/localcloud@sha256:" + "a" * 64,
+            lite=True,
+        )
+
+
+def test_a_runtime_started_full_stays_full(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    save_active_runtime(
+        paths,
+        _active(data_volume=DEFAULT_DATA_VOLUME, image="agentcloud/localcloud:latest"),
+    )
+
+    assert load_config(directory=tmp_path, paths=paths).image == (
+        "agentcloud/localcloud:latest"
+    )
+    assert load_config(directory=tmp_path, paths=paths, lite=True).image == (
+        "agentcloud/localcloud:lite"
+    )
+
+
 def test_estargz_applies_to_the_configured_image(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     paths = _paths(tmp_path)
     assert (
         load_config(directory=tmp_path, paths=paths, estargz=True).image
-        == "agentcloud/localcloud:latest-estargz"
+        == "agentcloud/localcloud:lite-estargz"
     )
     monkeypatch.setenv("LOCALCLOUD_IMAGE", "registry.example/localcloud:env")
     assert (

@@ -63,7 +63,7 @@ Use the latest LocalCloud CLI and image together. Connecting MCP or updating the
 Inspect `lc status`. To deliberately upgrade the selected runtime while retaining its named data volume:
 
 ```sh
-lc restart --image agentcloud/localcloud:latest --pull
+lc restart --pull
 ```
 
 Include the same `--data-volume` and configuration file you normally use if you target a custom environment. The restart briefly interrupts clients; reconnect afterward.

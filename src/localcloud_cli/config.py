@@ -29,6 +29,9 @@ from .constants import (
     DEFAULT_TLS_PORT,
     DEFAULT_USER,
     ESTARGZ_TAG_SUFFIX,
+    FULL_TAG,
+    LITE_TAG,
+    LITE_TAG_SUFFIX,
 )
 
 from .errors import ConfigError, HostError
@@ -622,6 +625,7 @@ def load_config(
     memory: str | None = None,
     image: str | None = None,
     estargz: bool | None = None,
+    lite: bool | None = None,
     services: list[str] | str | None = None,
     paths: HostPaths | None = None,
     active_runtime: ActiveRuntime | None | object = _ACTIVE_RUNTIME_UNSET,
@@ -743,6 +747,8 @@ def load_config(
             ):
                 image = active.image
             image = _non_blank_string("host.image", image or DEFAULT_IMAGE)
+    if lite is not None:
+        image = lite_image(image, lite)
     if estargz is not None:
         image = estargz_image(image, estargz)
 
@@ -1471,6 +1477,37 @@ def estargz_image(image: str, enabled: bool) -> str:
     repository, tag = parts
     tag = f"{tag}{ESTARGZ_TAG_SUFFIX}" if enabled else tag.removesuffix(ESTARGZ_TAG_SUFFIX)
     return f"{repository}:{tag}"
+
+
+def is_lite_image(image: str) -> bool:
+    """Whether `image` names a lite build: tag `lite`, or one ending in -lite."""
+    parts = _image_tag(image)
+    if parts is None:
+        return False
+    tag = parts[1].removesuffix(ESTARGZ_TAG_SUFFIX)
+    return tag == LITE_TAG or tag.endswith(LITE_TAG_SUFFIX)
+
+
+def lite_image(image: str, lite: bool) -> str:
+    """`image` as its lite build when `lite`, otherwise as its full build."""
+    if is_lite_image(image) == lite:
+        return image
+    parts = _image_tag(image)
+    if parts is None:
+        raise ConfigError(
+            "invalid_config",
+            f"--{'lite' if lite else 'full'} needs an image named by tag, "
+            "not by digest or image ID",
+            {"image": image},
+        )
+    repository, tag = parts
+    estargz = tag.endswith(ESTARGZ_TAG_SUFFIX)
+    tag = tag.removesuffix(ESTARGZ_TAG_SUFFIX)
+    if lite:
+        tag = LITE_TAG if tag == FULL_TAG else f"{tag}{LITE_TAG_SUFFIX}"
+    else:
+        tag = FULL_TAG if tag == LITE_TAG else tag.removesuffix(LITE_TAG_SUFFIX)
+    return f"{repository}:{tag}{ESTARGZ_TAG_SUFFIX if estargz else ''}"
 
 
 def _environment(value: object) -> dict[str, str]:

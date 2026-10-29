@@ -53,7 +53,7 @@ $ lc doctor
  Tip: Run localcloud guide for AI agent workflows, or lc for the fast alias.
 
 Docker  29.8.1 (/opt/homebrew/bin/docker) · Colima 0.10.1 (VZ, Rosetta on)
-Image   agentcloud/localcloud:latest (ID: 6c619bcf17c5)
+Image   agentcloud/localcloud:lite (ID: 6c619bcf17c5)
 Ports   5380-5406 (in use by localcloud)
 [OK] LocalCloud is ready to start  0.5s
 ```
@@ -188,7 +188,7 @@ Data volume   localcloud-data
 Origin        managed
 Project       local-gcp-project
 User          local-developer
-Image         agentcloud/localcloud:latest
+Image         agentcloud/localcloud:lite
 Image status  Available locally
 URL           http://127.0.0.1:5380
 Ports         5380-5406
@@ -407,6 +407,16 @@ Select an explicit set at start time, or reset to the built-in default:
 ```sh
 lc start --services gcs,pubsub,bigquery,firestore
 lc start --services default
+```
+
+**Lite and full images.** `lc start` runs the lite image (`agentcloud/localcloud:lite`) by default. It has
+every service above, but BigQuery's lite edition (no BigQuery ML, JavaScript UDFs, or `EXTERNAL_QUERY` on
+Cloud SQL; Spanner's still works), and GKE creates metadata-only clusters. `--full` runs the full image
+(`:latest`, or `<version>` instead of `<version>-lite`); the runtime keeps it on later starts and restarts
+until `--lite`.
+
+```sh
+lc start --full
 ```
 
 ## Commands

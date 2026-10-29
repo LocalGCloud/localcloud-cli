@@ -15,7 +15,7 @@ This runbook documents the required end-to-end CLI lifecycle testing procedure f
 - Docker engine (Docker Desktop, Colima, or `dockerd`) running with at least **4 GiB** of memory.
 - Candidate runtime image available locally:
   ```sh
-  docker pull agentcloud/localcloud:latest
+  docker pull agentcloud/localcloud:lite
   ```
 - Canonical host ports `5380-5406` free on loopback interfaces (`5406` is the Cloud SQL MySQL companion's).
 
@@ -33,7 +33,7 @@ localcloud doctor
 **Expected Result:**
 - Status `OK`.
 - Docker daemon detected with path.
-- Image points to the configured image (`agentcloud/localcloud:latest` unless `host.image` or `LOCALCLOUD_IMAGE` says otherwise) with local SHA-256 digest.
+- Image points to the configured image (`agentcloud/localcloud:lite` unless `host.image` or `LOCALCLOUD_IMAGE` says otherwise) with local SHA-256 digest.
 - Ports `5380-5406` reported as `(available)`.
 
 ---
@@ -48,7 +48,7 @@ localcloud status --data-volume test-lifecycle
 **Expected Result:**
 - Status: `Not created`.
 - Data volume: `test-lifecycle`.
-- Configured image: `agentcloud/localcloud:latest`.
+- Configured image: `agentcloud/localcloud:lite`.
 - Services: `unavailable`.
 
 ---
@@ -66,7 +66,7 @@ localcloud start --data-volume test-lifecycle --dry-run
 - Exact planned commands printed:
   - `docker volume create ... test-lifecycle`
   - `docker network create ... localcloud-volume-<hash>`
-  - `docker run -d ... agentcloud/localcloud:latest`
+  - `docker run -d ... agentcloud/localcloud:lite`
 
 ---
 
