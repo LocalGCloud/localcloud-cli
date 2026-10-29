@@ -27,7 +27,7 @@
     "auto_update": false,
     "auto_restart_container": false,
     "check_interval_hours": 24,
-    "image": "agentcloud/localcloud:latest",
+    "image": "",
     "prune_old_image": true,
     "drain_timeout_seconds": 5
   },

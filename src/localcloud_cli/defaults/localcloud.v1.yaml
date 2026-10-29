@@ -33,7 +33,8 @@ updater:
   auto_update: false
   auto_restart_container: false
   check_interval_hours: 24
-  image: agentcloud/localcloud:latest
+  # Empty follows the running image's channel: agentcloud/localcloud:lite on lite, :latest otherwise.
+  image: ""
   prune_old_image: true
   drain_timeout_seconds: 5
 
