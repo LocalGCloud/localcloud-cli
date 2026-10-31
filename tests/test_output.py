@@ -854,14 +854,17 @@ def test_doctor_summary_renders_port_availability_conflict_with_alternative() ->
         "port_availability": {
             "canonical_ports": list(range(5380, 5406)),
             "all_canonical_available": False,
-            "occupied_ports": [{"port": 5380}],
+            "occupied_ports": [{"port": 5380, "owner": "ssh, pid 7"}, {"port": 5381}],
             "localcloud_ports": [],
             "alternative_range": list(range(5508, 5534)),
             "status": "conflict_with_alternative",
         },
     }
     summary = render_summary("doctor", payload)
-    assert "Ports   5380-5405 (conflict; occupied: 5380; fallback 5508-5533 available)" in summary
+    assert (
+        "Ports   5380-5405 (conflict; occupied: 5380 (ssh, pid 7), 5381; "
+        "fallback 5508-5533 available)"
+    ) in summary
 
 
 def test_status_summary_renders_port_mappings_when_running() -> None:

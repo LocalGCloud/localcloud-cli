@@ -175,6 +175,9 @@ class DockerRunPlan:
     # (canonical, host) port of the Cloud SQL MySQL companion. The server
     # publishes it, so it is planned here but is not a `docker run` binding.
     mysql_ports: tuple[int, int] | None = None
+    # The canonical host ports found taken, each {"port": N} with an "owner"
+    # when known; why the plan uses alternative ports.
+    occupied_ports: tuple[Mapping[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -671,10 +674,12 @@ class DockerRuntime:
             **_config_labels(config),
             **_base_labels(config.data_volume, "container"),
         }
-        ports, mysql_host_port = self._port_plan(
+        ports, mysql_host_port, busy = self._port_plan(
             config,
             allowed_ports=self._allowed_host_ports(config, replacing),
         )
+        occupied: list[dict[str, Any]] = [{"port": port} for port in busy]
+        self._add_port_owners(occupied)
         return DockerRunPlan(
             image=config.image,
             name=config.container_name,
@@ -691,6 +696,7 @@ class DockerRuntime:
                 if config.mysql_port is not None and mysql_host_port is not None
                 else None
             ),
+            occupied_ports=tuple(occupied),
         )
 
     def _allowed_host_ports(
@@ -1811,6 +1817,7 @@ class DockerRuntime:
                 )
             elif not _port_is_free(port, socket.SOCK_STREAM, host_ip):
                 occupied.append({"port": port, "status": "in_use"})
+        self._add_port_owners(occupied)
 
         all_canonical_available = not occupied
         has_lc_container = bool(localcloud_ports)
@@ -1846,6 +1853,31 @@ class DockerRuntime:
             "alternative_range": alternative_range,
             "status": status,
         }
+
+    def _add_port_owners(self, occupied: list[dict[str, Any]]) -> None:
+        """Name who holds each busy port: the Docker container that publishes
+        it, otherwise the listening process. Best effort; unknown stays unset."""
+        if not occupied:
+            return
+        containers: dict[int, str] = {}
+        try:
+            for container in self.client.containers.list(all=False):
+                name = _resource_name(container) or "unknown"
+                for bindings in _published_ports(container).values():
+                    for _host_ip, host_port in bindings:
+                        if host_port is not None:
+                            containers.setdefault(host_port, name)
+        except Exception:
+            pass
+        for item in occupied:
+            port = item["port"]
+            owner = (
+                f"container {containers[port]}"
+                if port in containers
+                else _listening_process(port)
+            )
+            if owner:
+                item["owner"] = owner
 
     def _range_diagnostics(self, config: LocalCloudConfig) -> dict[str, Any]:
         """The block a runtime would take from its configured port range."""
@@ -2735,8 +2767,9 @@ class DockerRuntime:
         config: LocalCloudConfig,
         *,
         allowed_ports: set[tuple[int, str]] | None = None,
-    ) -> tuple[RequestedPorts, int | None]:
-        """Runtime-container bindings and the MySQL companion's host port.
+    ) -> tuple[RequestedPorts, int | None, tuple[int, ...]]:
+        """Runtime-container bindings, the MySQL companion's host port, and
+        the canonical ports found taken.
 
         The canonical layout publishes every canonical port. When any of them
         is taken, or `port_range` is set, the runtime publishes only the ports
@@ -2753,11 +2786,16 @@ class DockerRuntime:
         allowed = allowed_ports or set()
         published = _ordinary_tcp_ports(config)
         host_ports: tuple[int, ...] | None = None
-        if config.port_range is None and all(
-            _port_is_free(port, socket.SOCK_STREAM, host_ip) or (port, "tcp") in allowed
-            for port in with_mysql(published)
-        ):
-            host_ports = with_mysql(published)
+        busy: tuple[int, ...] = ()
+        if config.port_range is None:
+            busy = tuple(
+                port
+                for port in with_mysql(published)
+                if not _port_is_free(port, socket.SOCK_STREAM, host_ip)
+                and (port, "tcp") not in allowed
+            )
+            if not busy:
+                host_ports = with_mysql(published)
         if host_ports is None:
             published = _fallback_tcp_ports(config)
             host_ports = _available_tcp_port_block(
@@ -2776,7 +2814,7 @@ class DockerRuntime:
             for container_port, host_port in zip(published, host_ports)
         }
         if not config.transparent_network:
-            return bindings, mysql_host_port
+            return bindings, mysql_host_port, busy
         if not config.tls_enabled:
             raise HostError(
                 "invalid_config",
@@ -2793,14 +2831,23 @@ class DockerRuntime:
                 not _port_is_free(host_port, kind, host_ip)
                 and (host_port, protocol) not in allowed
             ):
+                taken: list[dict[str, Any]] = [{"port": host_port}]
+                if protocol == "tcp":
+                    self._add_port_owners(taken)
+                owner = taken[0].get("owner")
                 raise HostError(
                     "transparent_port_unavailable",
-                    "Transparent networking requires free host ports 53, 80, and 443",
-                    {"port": host_port, "protocol": protocol},
+                    "Transparent networking requires free host ports 53, 80, and 443"
+                    + (f"; {host_port} is in use by {owner}" if owner else ""),
+                    {
+                        "port": host_port,
+                        "protocol": protocol,
+                        **({"owner": owner} if owner else {}),
+                    },
                 )
             key = f"{container_port}/{protocol}"
             bindings[key] = (*bindings.get(key, ()), (host_ip, host_port))
-        return bindings, mysql_host_port
+        return bindings, mysql_host_port, busy
 
     def _volume_for_create(
         self, config: LocalCloudConfig, labels: dict[str, str]
@@ -4254,12 +4301,38 @@ def _port_spec_sort_key(spec: str) -> tuple[int, str]:
 def _port_is_free(
     port: int, kind: int = socket.SOCK_STREAM, host_ip: str = "127.0.0.1"
 ) -> bool:
+    address = host_ip or "0.0.0.0"
+    if _binds(address, port, kind):
+        return True
+    if kind != socket.SOCK_STREAM:
+        return False
+    # A plain bind also fails while connections linger on a port whose
+    # listener is gone, such as a port forwarder's sockets stuck in FIN_WAIT_2,
+    # yet a new listener can take it. SO_REUSEADDR ignores those connections
+    # but, on macOS, not a listener on another address than the one probed,
+    # so loopback is probed too and lsof asked for any listener.
+    return (
+        all(_binds(probed, port, kind, reuse=True) for probed in {address, "127.0.0.1"})
+        and _listening_process(port) is None
+    )
+
+
+def _binds(address: str, port: int, kind: int, *, reuse: bool = False) -> bool:
     with socket.socket(socket.AF_INET, kind) as probe:
+        if reuse:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            probe.bind((host_ip or "0.0.0.0", port))
+            probe.bind((address, port))
             return True
         except OSError:
             return False
+
+
+def _listening_process(port: int) -> str | None:
+    from .host_checks import listening_process
+
+    return listening_process(port)
+
 
 
 def _validate_base_url(url: str) -> str:

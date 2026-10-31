@@ -2169,7 +2169,7 @@ def test_doctor_reports_stale_active_state_warning(tmp_path: Path) -> None:
     assert result["status"] == "ok"
     assert result["active_runtime"]["state"] == "stale"
     assert "Last active container info is stale at" in result["warning"]
-    assert "active-runtime.json" in result["warning"]
+    assert "active-runtime.json: its container no longer exists; the next 'lc start' on default creates one" in result["warning"]
 
 
 def test_doctor_includes_port_availability(tmp_path: Path) -> None:
@@ -2201,7 +2201,7 @@ def test_doctor_port_conflict_warning(tmp_path: Path) -> None:
         return {
             "canonical_ports": list(range(5380, 5406)),
             "all_canonical_available": False,
-            "occupied_ports": [{"port": 5380, "status": "in_use"}],
+            "occupied_ports": [{"port": 5380, "status": "in_use", "owner": "ssh, pid 7"}],
             "localcloud_ports": [],
             "alternative_range": list(range(5508, 5534)),
             "status": "conflict_with_alternative",
@@ -2212,7 +2212,10 @@ def test_doctor_port_conflict_warning(tmp_path: Path) -> None:
     result = controller.doctor()
 
     assert result["port_availability"]["status"] == "conflict_with_alternative"
-    assert "alternative range" in result["warning"]
+    assert (
+        "Canonical LocalCloud ports are unavailable (in use: 5380 (ssh, pid 7)); "
+        "an alternative range 5508-5533 will be used"
+    ) in result["warning"]
     assert "5508" in result["warning"]
 
 

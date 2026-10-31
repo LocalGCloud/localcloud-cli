@@ -40,6 +40,7 @@ from localcloud_cli.docker_runtime import (
 from localcloud_cli.errors import HostError
 
 _real_docker_socket_is_usable = runtime_module._docker_socket_is_usable
+_real_listening_process = runtime_module._listening_process
 
 
 @pytest.fixture(autouse=True)
@@ -49,6 +50,12 @@ def available_docker_socket(monkeypatch: pytest.MonkeyPatch) -> None:
         "_docker_socket_is_usable",
         lambda: True,
     )
+
+
+@pytest.fixture(autouse=True)
+def no_listening_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Keeps port probes and owner lookups from asking this host's lsof.
+    monkeypatch.setattr(runtime_module, "_listening_process", lambda _port: None)
 
 
 class NotFound(Exception):
@@ -771,6 +778,90 @@ def test_port_probe_rejects_occupied_tcp_port() -> None:
 
         assert runtime_module._port_is_free(port) is False
         assert runtime_module._port_is_free(port, host_ip="") is False
+
+
+def test_port_probe_ignores_connections_left_without_a_listener(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Only a plain bind fails: what a forwarder's FIN_WAIT_2 sockets leave.
+    monkeypatch.setattr(
+        runtime_module, "_binds", lambda _address, _port, _kind, *, reuse=False: reuse
+    )
+
+    assert runtime_module._port_is_free(5380, host_ip="") is True
+    monkeypatch.setattr(runtime_module, "_listening_process", lambda _port: "ssh, pid 7")
+    assert runtime_module._port_is_free(5380, host_ip="") is False
+    assert runtime_module._port_is_free(53, socket.SOCK_DGRAM, "") is False
+
+
+def test_listening_process_names_the_process_lsof_reports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import localcloud_cli.host_checks as host_checks
+
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: Any) -> Any:
+        calls.append(command)
+        return SimpleNamespace(stdout="p63006\ncssh\nf18\n")
+
+    monkeypatch.setattr(host_checks.shutil, "which", lambda _name: "/usr/sbin/lsof")
+    monkeypatch.setattr(host_checks.subprocess, "run", run)
+
+    assert _real_listening_process(5380) == "ssh, pid 63006"
+    assert calls == [["/usr/sbin/lsof", "-nP", "-iTCP:5380", "-sTCP:LISTEN", "-Fpc"]]
+
+    monkeypatch.setattr(
+        host_checks.subprocess, "run", lambda *_a, **_k: SimpleNamespace(stdout="")
+    )
+    assert _real_listening_process(5380) is None
+    monkeypatch.setattr(host_checks.shutil, "which", lambda _name: None)
+    assert _real_listening_process(5380) is None
+
+
+def test_port_diagnostics_name_who_holds_each_busy_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = Client()
+    client.containers.add(
+        Resource(
+            "dockhand",
+            ports={"3000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5381"}]},
+        )
+    )
+    runtime = DockerRuntime(client=client)
+    monkeypatch.setattr(
+        runtime_module, "_port_is_free", lambda port, *args, **kwargs: port not in {5380, 5381, 5382}
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "_listening_process",
+        lambda port: "nginx, pid 42" if port == 5380 else None,
+    )
+
+    diagnostics = runtime.port_diagnostics(local_only=False)
+
+    assert diagnostics["occupied_ports"] == [
+        {"port": 5380, "status": "in_use", "owner": "nginx, pid 42"},
+        {"port": 5381, "status": "in_use", "owner": "container dockhand"},
+        {"port": 5382, "status": "in_use"},
+    ]
+
+
+def test_run_plan_off_the_canonical_ports_says_who_holds_them(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    monkeypatch.setattr(
+        runtime_module, "_port_is_free", lambda port, *args, **kwargs: port != 5380
+    )
+    monkeypatch.setattr(runtime_module, "_listening_process", lambda _port: "ssh, pid 7")
+
+    plan = runtime.plan_run(_config(tmp_path), object())
+
+    assert plan.alternative_port_mappings()
+    assert plan.occupied_ports == ({"port": 5380, "owner": "ssh, pid 7"},)
 
 
 @pytest.mark.parametrize("local_only", [False, True])

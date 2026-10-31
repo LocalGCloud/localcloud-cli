@@ -720,7 +720,7 @@ opt-out.
 | `Error [docker_socket_unavailable]` | A service needs the Docker socket but it is missing or blocked | Check the socket path, or set `host.docker_socket: false` to disable Docker-backed services |
 | `Error [health_timeout]` / `runtime_readiness_timeout` | The container started but services were not ready in time | `lc logs --tail 200`; confirm at least 4 GiB is available, or raise it with `--memory 8g` |
 | `Error [services_not_ready]` | The gateway is up, but the services the error names did not answer in time | `lc logs --tail 200` for those services; leave them out with `--services` if you don't need them |
-| `Error [port_mapping_confirmation_required]` | Canonical ports are busy and the shell is non-interactive | Free the ports, or re-run with `--accept-dynamic-ports` |
+| `Error [port_mapping_confirmation_required]` | Canonical ports are busy and the shell is non-interactive; the message names each busy port's container or process when it can tell | Free the ports, or re-run with `--accept-dynamic-ports` |
 | `Error [data_volume_collision]` | More than one compatible container uses the same volume | `lc cleanup --dry-run` to inspect, then `lc cleanup` |
 | `Error [ownership_mismatch]` / `ownership_forbidden` | A Docker resource is not CLI-managed | The CLI never removes resources it does not own — remove it manually, or use a different `--data-volume` |
 | `Error [unknown_project]` | The project does not exist in this runtime | Only `start` creates projects: `lc start --project-id NAME` |

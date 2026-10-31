@@ -38,6 +38,7 @@ from .docker_runtime import (
 )
 from .errors import HostError
 from .java_client import JavaMcpClient, is_retryable_java_error
+from .output import describe_port_owners
 
 _START_READINESS_TIMEOUT = 60.0
 _READINESS_REQUEST_TIMEOUT = 5.0
@@ -1406,11 +1407,14 @@ class Controller:
         if active_status is not None and active_status["state"] != "current":
             warnings.append(
                 f"Last active container info is stale at {self.paths.active_runtime}"
+                + _stale_runtime_hint(active_status)
             )
         if legacy_host_state or legacy_locks:
             warnings.append(
                 "Legacy host state and locks are present; run 'localcloud cleanup' (or 'lc cleanup') to remove them."
             )
+        owners = describe_port_owners(port_diag.get("occupied_ports", ()))
+        in_use = f" (in use: {owners})" if owners else ""
         if port_diag["status"] == "conflict" and port_diag.get("configured_range"):
             start, end = port_diag["configured_range"]
             warnings.append(
@@ -1420,14 +1424,14 @@ class Controller:
         elif port_diag["status"] == "conflict":
             canonical = port_diag["canonical_ports"]
             warnings.append(
-                "Canonical LocalCloud ports are unavailable and no alternative port range was found; "
+                f"Canonical LocalCloud ports are unavailable{in_use} and no alternative port range was found; "
                 f"free ports in the range {min(canonical)}-{max(canonical)} "
                 "or one of the fallback ranges before starting."
             )
         elif port_diag["status"] == "conflict_with_alternative":
             alt = port_diag["alternative_range"]
             warnings.append(
-                f"Canonical LocalCloud ports are unavailable; an alternative range "
+                f"Canonical LocalCloud ports are unavailable{in_use}; an alternative range "
                 f"{alt[0]}-{alt[-1]} will be used when starting."
             )
         warning = " ".join(item for item in warnings if item).strip()
@@ -2380,12 +2384,16 @@ def _confirm_alternative_port_mapping(
             for host_ip, host_port, container_port, protocol
             in mappings
         ],
+        "occupied_ports": list(run_plan.occupied_ports),
         "override": "--accept-dynamic-ports",
     }
     if confirm is None:
+        in_use = describe_port_owners(run_plan.occupied_ports)
         raise HostError(
             "port_mapping_confirmation_required",
-            "Canonical LocalCloud host ports are unavailable; confirm the proposed alternative mapping",
+            "Canonical LocalCloud host ports are unavailable"
+            + (f" (in use: {in_use})" if in_use else "")
+            + "; confirm the proposed alternative mapping",
             details,
         )
     if not confirm(run_plan):
@@ -2448,6 +2456,19 @@ def _inherit_console(
     recorded = current.runtime_settings.get("environment")
     value = recorded.get(CONSOLE_ENVIRONMENT) if isinstance(recorded, dict) else None
     return with_console_environment(config, value) if isinstance(value, str) else config
+
+
+def _stale_runtime_hint(active_status: dict[str, Any]) -> str:
+    """What a stale active-runtime record means, and that `lc start` fixes it."""
+    if active_status["state"] != "stale":
+        return "."
+    volume = active_status["data_volume"]
+    if active_status.get("resolved_container_id") is None:
+        return (
+            f": its container no longer exists; the next 'lc start' on {volume} "
+            "creates one and updates the record."
+        )
+    return f": another container now uses {volume}; the next 'lc start' records it."
 
 
 def _with_console_warning(result: dict[str, Any], warning: str | None) -> dict[str, Any]:

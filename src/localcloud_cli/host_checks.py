@@ -877,3 +877,30 @@ def localcloud_volumes() -> list[str]:
         )
     except Exception:
         return []
+
+
+def listening_process(port: int) -> str | None:
+    """The process listening on TCP `port`, as "name, pid N"; None when lsof
+    is missing or cannot tell (another user's process, for example)."""
+    lsof = shutil.which("lsof")
+    if lsof is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [lsof, "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fpc"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    pid = name = None
+    for line in completed.stdout.splitlines():
+        if line.startswith("p") and pid is None:
+            pid = line[1:]
+        elif line.startswith("c") and name is None:
+            name = line[1:]
+    if pid is None:
+        return None
+    return f"{name or 'process'}, pid {pid}"

@@ -24,6 +24,7 @@ from .errors import HostError
 from .output import (
     LifecycleReporter,
     PanelContext,
+    describe_port_owners,
     fix_outcome_lines,
     parse_fields,
     render_error,
@@ -94,17 +95,22 @@ class _ExecutionObserver:
             input_is_interactive = bool(self.input_stream.isatty())
         except (AttributeError, OSError):
             input_is_interactive = False
+        in_use = describe_port_owners(run_plan.occupied_ports)
+        unavailable = "Canonical LocalCloud host ports are unavailable" + (
+            f" (in use: {in_use})" if in_use else ""
+        )
         if not self.reporter.capabilities.interactive or not input_is_interactive:
             raise HostError(
                 "port_mapping_confirmation_required",
-                "Canonical LocalCloud host ports are unavailable; rerun interactively or pass --accept-dynamic-ports",
+                f"{unavailable}; rerun interactively or pass --accept-dynamic-ports",
                 {
                     "mappings": _port_mapping_details(mappings),
+                    "occupied_ports": list(run_plan.occupied_ports),
                     "override": "--accept-dynamic-ports",
                 },
             )
         lines = [
-            "Canonical LocalCloud host ports are unavailable.",
+            f"{unavailable}.",
             "Proposed host-to-container mappings:",
             *(
                 f"  {host_ip + ':' if host_ip else ''}{host_port} -> {container_port}/{protocol}"

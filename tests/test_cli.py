@@ -1495,13 +1495,15 @@ def test_port_mapping_confirmation_prompts_with_exact_mapping() -> None:
         alternative_port_mappings=lambda: (
             ("127.0.0.1", 5508, 5380, "tcp"),
             ("127.0.0.1", 5509, 5381, "tcp"),
-        )
+        ),
+        occupied_ports=({"port": 5380, "owner": "ssh, pid 7"}, {"port": 5381}),
     )
 
     assert observer.confirm_port_mapping(plan) is True
     reporter.close()
 
     rendered = output.getvalue()
+    assert "unavailable (in use: 5380 (ssh, pid 7), 5381)." in rendered
     assert "127.0.0.1:5508 -> 5380/tcp" in rendered
     assert "Continue with these mappings? [y/N] " in rendered
     assert "\x1b[?25h" in rendered
@@ -1522,13 +1524,18 @@ def test_port_mapping_confirmation_fails_closed_without_tty() -> None:
     plan = SimpleNamespace(
         alternative_port_mappings=lambda: (
             ("127.0.0.1", 5508, 5380, "tcp"),
-        )
+        ),
+        occupied_ports=({"port": 5380, "owner": "container web"},),
     )
 
     with pytest.raises(HostError) as caught:
         observer.confirm_port_mapping(plan)
 
     assert caught.value.code == "port_mapping_confirmation_required"
+    assert "(in use: 5380 (container web))" in caught.value.message
+    assert caught.value.details["occupied_ports"] == [
+        {"port": 5380, "owner": "container web"}
+    ]
     assert caught.value.details["override"] == "--accept-dynamic-ports"
 
 

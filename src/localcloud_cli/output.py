@@ -572,25 +572,23 @@ def _format_port_availability(diag: Mapping[str, Any]) -> str:
     if status == "conflict_with_alternative":
         alt = diag.get("alternative_range", ())
         alt_str = _format_port_numbers(alt)
-        occupied = diag.get("occupied_ports", ())
-        occ_nums = [
-            p.get("port")
-            for p in occupied
-            if isinstance(p, Mapping) and "port" in p
-        ]
-        occ_str = f" occupied: {', '.join(map(str, occ_nums))};" if occ_nums else ""
+        occupied = describe_port_owners(diag.get("occupied_ports", ()))
+        occ_str = f" occupied: {occupied};" if occupied else ""
         return f"{canon_str} (conflict;{occ_str} fallback {alt_str} available)"
     if status == "conflict":
-        occupied = diag.get("occupied_ports", ())
-        occ_nums = [
-            p.get("port")
-            for p in occupied
-            if isinstance(p, Mapping) and "port" in p
-        ]
-        occ_str = f" ({', '.join(map(str, occ_nums))} in use)" if occ_nums else ""
+        occupied = describe_port_owners(diag.get("occupied_ports", ()))
+        occ_str = f" ({occupied} in use)" if occupied else ""
         return f"{canon_str} (conflict{occ_str}; no fallback range available)"
     return canon_str
 
+
+def describe_port_owners(occupied: Sequence[Mapping[str, Any]]) -> str:
+    """Busy ports and who holds them, such as "5380 (ssh, pid 63006), 5381"."""
+    return ", ".join(
+        f"{item['port']} ({item['owner']})" if item.get("owner") else str(item["port"])
+        for item in occupied
+        if isinstance(item, Mapping) and "port" in item
+    )
 
 def _format_port_mappings(mappings: Sequence[Mapping[str, Any]]) -> str:
     if not mappings:
