@@ -3,7 +3,11 @@ from __future__ import annotations
 import io
 import os
 import tarfile
+import uuid
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import pytest
@@ -16,6 +20,53 @@ from localcloud_cli.docker_runtime import (
     DockerRuntime,
     RuntimeRecord,
 )
+
+# Host ports for throwaway runtimes, away from the canonical 5380-5406 and the
+# fallback ranges, so a LocalCloud the developer runs is left alone.
+THROWAWAY_PORT_RANGE = "5960-5999"
+
+
+@contextmanager
+def throwaway_runtime(
+    tmp_path: Path, yaml: str, *, images: tuple[str, ...]
+) -> Iterator[tuple[Controller, DockerRuntime, Callable[..., LocalCloudConfig], HostPaths]]:
+    """A controller on its own LOCALCLOUD home, data volume and host ports.
+
+    Yields a function that loads the config for that volume. Every container,
+    network and volume made for it is removed afterwards. `images` must be
+    local: nothing is pulled."""
+    try:
+        runtime = DockerRuntime()
+        runtime.client.ping()
+        for image in images:
+            runtime.client.images.get(image)
+    except Exception as error:
+        pytest.fail(f"docker_prerequisite_unavailable: {error}")
+    paths = HostPaths(tmp_path / "home", tmp_path / "home" / "locks")
+    volume = f"lc-test-{uuid.uuid4().hex[:8]}"
+    (tmp_path / "localcloud.yaml").write_text(yaml, encoding="utf-8")
+
+    def config(**kwargs: Any) -> LocalCloudConfig:
+        return load_config(
+            directory=tmp_path,
+            paths=paths,
+            data_volume=volume,
+            port_range=THROWAWAY_PORT_RANGE,
+            **kwargs,
+        )
+
+    try:
+        yield Controller(runtime=runtime, paths=paths), runtime, config, paths
+    finally:
+        client = runtime.client
+        selector = {"label": f"{VOLUME_NAME_LABEL}={volume}"}
+        for container in client.containers.list(all=True, filters=selector):
+            container.remove(force=True, v=True)
+        for network in client.networks.list(filters=selector):
+            network.remove()
+        for item in client.volumes.list(filters={"name": volume}):
+            if item.name == volume:
+                item.remove(force=True)
 
 
 def controller_for(

@@ -487,7 +487,7 @@ class McpAdapter:
                 message, timeout=_REPLY_WAIT, reconnect_wait=0.0
             )
             if "result" in response:
-                return response
+                return _compatible_initialize(response)
         self._degraded = True
         requested = params.get("protocolVersion")
         return {
@@ -731,6 +731,37 @@ def _starting() -> HostError:
         "LocalCloud is still starting. The first start can take a minute, and "
         "longer while its image downloads.",
     )
+
+
+def _compatible_initialize(response: dict[str, Any]) -> dict[str, Any]:
+    """The runtime's initialize reply without capabilities an MCP client rejects.
+
+    A client validates the whole reply and refuses the server over one bad
+    entry: LocalCloud images up to 0.1.8 declare tasks.requests.tools.call as
+    true, not an object, and Claude Code then does not connect at all."""
+    from mcp.types import ServerCapabilities
+    from pydantic import ValidationError
+
+    result = response["result"]
+    capabilities = result.get("capabilities") if isinstance(result, dict) else None
+    if not isinstance(capabilities, dict):
+        return response
+    rejected = []
+    for name, value in capabilities.items():
+        try:
+            ServerCapabilities.model_validate({name: value})
+        except ValidationError:
+            rejected.append(name)
+    if not rejected:
+        return response
+    print(
+        "[localcloud mcp] left out MCP capabilities the runtime declared "
+        f"incorrectly: {', '.join(rejected)}; run lc restart --pull for a fixed image",
+        file=sys.stderr,
+        flush=True,
+    )
+    kept = {name: value for name, value in capabilities.items() if name not in rejected}
+    return {**response, "result": {**result, "capabilities": kept}}
 
 
 def _recovery(error: HostError, *, auto_start: bool) -> str:

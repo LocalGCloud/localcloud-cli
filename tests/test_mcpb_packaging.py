@@ -98,7 +98,8 @@ def test_mcp_handshake_check_accepts_a_bridge_that_answers_without_docker(tmp_pa
         'assert sys.argv[1:] == ["mcp", "--no-start"], sys.argv\n'
         'assert not os.path.exists(os.environ["DOCKER_HOST"].removeprefix("unix://"))\n'
         'assert os.environ["LOCALCLOUD_TELEMETRY"] == "false"\n'
-        'TOOLS = [{"name": "localcloud_runtime_status"}]\n' + ANSWERING_BRIDGE,
+        'TOOLS = [{"name": "localcloud_runtime_status", "inputSchema": {"type": "object"}}]\n'
+        + ANSWERING_BRIDGE,
     )
     result = _check_handshake(bridge, "5")
     assert result.returncode == 0, result.stderr
@@ -108,11 +109,16 @@ def test_mcp_handshake_check_accepts_a_bridge_that_answers_without_docker(tmp_pa
 @pytest.mark.parametrize("body,expected", [
     ('print("No module named \'mcp.server.stdio\'", file=sys.stderr)\nsys.exit(1)\n',
      "exited with code 1 before answering initialize\nNo module named 'mcp.server.stdio'"),
-    ('TOOLS = [{"name": "other"}]\n' + ANSWERING_BRIDGE,
+    ('TOOLS = [{"name": "other", "inputSchema": {"type": "object"}}]\n' + ANSWERING_BRIDGE,
      "did not list localcloud_runtime_status in tools/list: ['other']"),
+    ('TOOLS = [{"name": "localcloud_runtime_status"}]\n' + ANSWERING_BRIDGE,
+     "answered tools/list outside the MCP schema"),
+    ('TOOLS = []\n' + ANSWERING_BRIDGE.replace(
+        '"capabilities": {}', '"capabilities": {"tasks": {"requests": {"tools": {"call": True}}}}'),
+     "answered initialize outside the MCP schema"),
     ('print("not JSON-RPC", flush=True)\ntime.sleep(60)\n',
      "wrote a line that is not JSON-RPC to stdout: 'not JSON-RPC'"),
-], ids=["exits", "no-status-tool", "stdout-noise"])
+], ids=["exits", "no-status-tool", "tool-without-schema", "bad-capability", "stdout-noise"])
 def test_mcp_handshake_check_rejects_a_broken_bridge(tmp_path, body, expected):
     result = _check_handshake(_bridge(tmp_path / "bridge", body), "5")
     assert result.returncode == 1

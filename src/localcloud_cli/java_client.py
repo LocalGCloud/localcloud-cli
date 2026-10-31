@@ -64,10 +64,16 @@ def get_shared_http_client() -> httpx.Client:
 
     It ignores HTTP_PROXY, HTTPS_PROXY and ALL_PROXY: a developer's proxy cannot reach their
     loopback LocalCloud, and must never see its requests.
+
+    It keeps no idle connections. An idle `lc mcp` never reuses a pooled one,
+    so after the runtime restarts each would stay half-closed (CLOSE_WAIT) for
+    as long as the client runs, and the port forwarder's end with it.
     """
     global _SHARED_CLIENT
     if _SHARED_CLIENT is None or _SHARED_CLIENT.is_closed:
-        _SHARED_CLIENT = httpx.Client(trust_env=False)
+        _SHARED_CLIENT = httpx.Client(
+            trust_env=False, limits=httpx.Limits(max_keepalive_connections=0)
+        )
     return _SHARED_CLIENT
 
 

@@ -73,6 +73,17 @@ In `LocalGCloud/localcloud-cli`:
 2. Regenerate `THIRD_PARTY_NOTICES` when locked dependencies changed.
 3. Ensure your local branch is `main` and up to date with `origin/main`.
 4. Complete the [Container Lifecycle Test Runbook](docs/lifecycle-testing.md) on an isolated data volume to qualify the current runtime image and CLI operations.
+5. Run the Docker-marked contract tests against the runtime image this release defaults to.
+   They need the image locally (they never pull), and they use their own throwaway volume and host
+   ports 5960-5999:
+
+   ```sh
+   uv run --frozen --extra test python -m pytest -q -m docker \
+     tests/integration/test_mcp_contract.py tests/integration/test_image_channel_lifecycle.py
+   ```
+
+   `test_mcp_contract.py` checks the gateway's MCP replies against the MCP schema, which clients
+   such as Claude Code enforce. Set `LOCALCLOUD_IMAGE` to check another image.
 
 Note: You do not need to manually edit `__version__` in `src/localcloud_cli/__init__.py`. Running `./scripts/release.sh --release VERSION` will automatically update the version in `src/localcloud_cli/__init__.py`, commit the change (`chore(release): bump version to VERSION`), and push it to `origin/main` before running tests and tagging.
 

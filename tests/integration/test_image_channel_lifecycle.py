@@ -1,72 +1,34 @@
 """Lite/full and --no-ui across start and restart, against the published images.
 
-Runs on a throwaway data volume, an isolated LOCALCLOUD home and host ports
-5960-5999, so a LocalCloud the developer already runs is left alone. Needs
-agentcloud/localcloud:lite and :latest locally; it never pulls."""
+Needs agentcloud/localcloud:lite and :latest locally; it never pulls."""
 
 from __future__ import annotations
 
-import uuid
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
-from localcloud_cli.config import HostPaths, LocalCloudConfig, load_config
-from localcloud_cli.controller import Controller
-from localcloud_cli.docker_runtime import VOLUME_NAME_LABEL, DockerRuntime
+from integration._support import throwaway_runtime
+from localcloud_cli.config import LocalCloudConfig
+from localcloud_cli.docker_runtime import DockerRuntime
 
 pytestmark = pytest.mark.docker
 
 _LITE = "agentcloud/localcloud:lite"
 _FULL = "agentcloud/localcloud:latest"
-_PORT_RANGE = "5960-5999"
 
 
 @pytest.fixture
 def lifecycle(tmp_path: Path) -> Any:
-    try:
-        runtime = DockerRuntime()
-        runtime.client.ping()
-        for image in (_LITE, _FULL):
-            runtime.client.images.get(image)
-    except Exception as error:
-        pytest.fail(f"docker_prerequisite_unavailable: {error}")
-    paths = HostPaths(tmp_path / "home", tmp_path / "home" / "locks")
-    volume = f"lc-test-channel-{uuid.uuid4().hex[:8]}"
     # server.console.enabled: true must not undo --no-ui (S1).
-    (tmp_path / "localcloud.yaml").write_text(
-        "server:\n  console:\n    enabled: true\n"
-        "services:\n  enabled:\n    - gcs\n",
-        encoding="utf-8",
-    )
-    controller = Controller(runtime=runtime, paths=paths)
-
-    def config(**kwargs: Any) -> LocalCloudConfig:
-        return load_config(
-            directory=tmp_path,
-            paths=paths,
-            data_volume=volume,
-            port_range=_PORT_RANGE,
-            **kwargs,
-        )
-
-    try:
-        yield controller, runtime, config, paths
-    finally:
-        client = runtime.client
-        for container in client.containers.list(
-            all=True, filters={"label": f"{VOLUME_NAME_LABEL}={volume}"}
-        ):
-            container.remove(force=True, v=True)
-        for network in client.networks.list(
-            filters={"label": f"{VOLUME_NAME_LABEL}={volume}"}
-        ):
-            network.remove()
-        for item in client.volumes.list(filters={"name": volume}):
-            if item.name == volume:
-                item.remove(force=True)
+    with throwaway_runtime(
+        tmp_path,
+        "server:\n  console:\n    enabled: true\nservices:\n  enabled:\n    - gcs\n",
+        images=(_LITE, _FULL),
+    ) as resources:
+        yield resources
 
 
 def _running(runtime: DockerRuntime, config: LocalCloudConfig) -> tuple[str, bool]:

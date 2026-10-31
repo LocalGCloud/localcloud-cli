@@ -11,6 +11,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+import mcp.types as mcp_types
+from pydantic import ValidationError
+
 
 STATUS_TOOL = "localcloud_runtime_status"
 
@@ -103,8 +106,16 @@ def check_mcp_handshake(command: Path, timeout: float) -> float:
                     raise failure(f"exited with code {code} before answering {method}")
                 output.extend(chunk)
 
+        def conforming(model: type[Any], method: str, value: Any) -> Any:
+            # MCP clients such as Claude Code drop a server over one malformed reply.
+            try:
+                model.model_validate(value)
+            except ValidationError as error:
+                raise failure(f"answered {method} outside the MCP schema: {error}") from None
+            return value
+
         try:
-            result(
+            initialized = result(
                 {
                     "jsonrpc": "2.0",
                     "id": 1,
@@ -116,8 +127,13 @@ def check_mcp_handshake(command: Path, timeout: float) -> float:
                     },
                 }
             )
+            conforming(mcp_types.InitializeResult, "initialize", initialized)
             send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-            listed = result({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+            listed = conforming(
+                mcp_types.ListToolsResult,
+                "tools/list",
+                result({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+            )
             tools = listed.get("tools") if isinstance(listed, dict) else None
             names = [
                 tool.get("name")

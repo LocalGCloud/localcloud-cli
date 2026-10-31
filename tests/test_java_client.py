@@ -562,3 +562,45 @@ def test_localcloud_calls_never_go_through_an_environment_proxy(monkeypatch: pyt
     assert session["state"] == "ACTIVE"
     assert [hit["target"] for hit in served] == ["/identity/sessions/wib-0123456789abcdef01234567"]
     assert proxied == [], "the proxy saw a LocalCloud call"
+
+
+def test_shared_client_closes_each_connection_after_its_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An idle `lc mcp` must not hold connections the runtime has since closed."""
+    import http.server
+    import threading
+
+    closed = threading.Event()
+
+    class KeepAlive(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers["Content-Length"]))
+            body = b'{"jsonrpc":"2.0","id":1,"result":{}}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def finish(self) -> None:
+            super().finish()
+            closed.set()
+
+        def log_message(self, *_args: Any) -> None:
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), KeepAlive)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setattr(java_client_module, "_SHARED_CLIENT", None)
+    try:
+        client = JavaMcpClient(f"http://127.0.0.1:{server.server_address[1]}", PROJECT, USER)
+        assert client.forward({"jsonrpc": "2.0", "id": 1, "method": "ping"}) is not None
+        # A pooled keep-alive connection would stay open until the next request.
+        assert closed.wait(2.0), "the client kept its connection open after the reply"
+    finally:
+        java_client_module.get_shared_http_client().close()
+        server.shutdown()
+        server.server_close()

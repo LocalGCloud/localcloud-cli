@@ -11,6 +11,7 @@ import time
 from typing import Any
 
 import anyio
+import mcp.types as mcp_types
 import pytest
 
 import localcloud_cli.mcp_stdio as mcp_module
@@ -680,6 +681,73 @@ def test_ping_is_answered_by_the_bridge() -> None:
 
     assert adapter.handle(_request(4, "ping")) == {"jsonrpc": "2.0", "id": 4, "result": {}}
     assert FakeJava.calls == []
+
+
+def test_initialize_leaves_out_capabilities_a_client_would_reject(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # What LocalCloud images up to 0.1.8 answer; Claude Code refused it whole.
+    FakeJava.responses = {
+        "initialize": {
+            "jsonrpc": "2.0",
+            "result": {
+                "protocolVersion": "2025-11-25",
+                "serverInfo": {"name": "localcloud", "version": "1.0.0"},
+                "capabilities": {
+                    "tools": {"listChanged": False},
+                    "tasks": {"requests": {"tools": {"call": True}}},
+                },
+            },
+        },
+    }
+    adapter = McpAdapter(CONFIG, controller=RunningController())
+
+    response = adapter.handle(_request(1, "initialize", protocolVersion="2025-11-25"))
+
+    assert response is not None
+    result = mcp_types.InitializeResult.model_validate(response["result"])
+    assert result.capabilities.tools is not None
+    assert "tasks" not in response["result"]["capabilities"]
+    assert "left out MCP capabilities the runtime declared incorrectly: tasks" in (
+        capsys.readouterr().err
+    )
+
+
+def test_initialize_passes_valid_capabilities_through_unchanged() -> None:
+    capabilities = {
+        "tools": {"listChanged": False},
+        "tasks": {"list": {}, "cancel": {}, "requests": {"tools": {"call": {}}}},
+    }
+    FakeJava.responses = {
+        "initialize": {
+            "jsonrpc": "2.0",
+            "result": {
+                "protocolVersion": "2025-11-25",
+                "serverInfo": {"name": "localcloud", "version": "1.0.0"},
+                "capabilities": capabilities,
+            },
+        },
+    }
+    adapter = McpAdapter(CONFIG, controller=RunningController())
+
+    response = adapter.handle(_request(1, "initialize", protocolVersion="2025-11-25"))
+
+    assert response is not None and response["result"]["capabilities"] == capabilities
+
+
+def test_bridge_answers_without_a_runtime_follow_the_mcp_schema() -> None:
+    adapter, _ = _degraded_adapter(
+        HostError("docker_unavailable", "Docker is not reachable")
+    )
+
+    initialized = adapter.handle(_request(1, "initialize", protocolVersion="2025-11-25"))
+    tools = adapter.handle(_request(2, "tools/list"))
+    status = adapter.handle(_request(3, "tools/call", name=STATUS_TOOL, arguments={}))
+
+    assert initialized is not None and tools is not None and status is not None
+    mcp_types.InitializeResult.model_validate(initialized["result"])
+    mcp_types.ListToolsResult.model_validate(tools["result"])
+    mcp_types.CallToolResult.model_validate(status["result"])
 
 
 # Runtime unavailable -------------------------------------------------------
