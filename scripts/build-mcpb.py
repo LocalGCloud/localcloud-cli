@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from urllib.request import urlopen
@@ -102,7 +103,11 @@ def main() -> None:
         for name in ("LICENSE", "THIRD_PARTY_NOTICES"):
             shutil.copy2(bundle / "bin" / "darwin-arm64" / name, bundle / name)
         subprocess.run(["npx", "--yes", "@anthropic-ai/mcpb@2.1.2", "pack", str(bundle), str(output)], check=True)
-    print(json.dumps({"path": str(output), "sha256": hashlib.sha256(output.read_bytes()).hexdigest()}))
+    digest = hashlib.sha256(output.read_bytes()).hexdigest()
+    subprocess.run([sys.executable, str(ROOT / "scripts/check-mcpb.py"), str(output),
+                    "--version", version, "--sha256", digest], check=True)
+    (output.parent / "MCPB_SHA256SUMS").write_text(f"{digest}  {output.name}\n")
+    print(json.dumps({"path": str(output), "sha256": digest}))
 
 
 if __name__ == "__main__":

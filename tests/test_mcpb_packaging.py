@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import zipfile
 
 import pytest
 
@@ -15,6 +18,10 @@ spec = importlib.util.spec_from_file_location("build_mcpb", SCRIPT)
 assert spec and spec.loader
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+check_spec = importlib.util.spec_from_file_location("check_mcpb", SCRIPT.with_name("check-mcpb.py"))
+assert check_spec and check_spec.loader
+check = importlib.util.module_from_spec(check_spec)
+check_spec.loader.exec_module(check)
 ANSWERING_BRIDGE = """
 for line in sys.stdin:
     message = json.loads(line)
@@ -90,6 +97,107 @@ def test_bundle_ships_one_cli_per_supported_platform():
     selected = [word.removeprefix("platform=") for word in module.LAUNCHER.split()
                 if word.startswith("platform=")]
     assert selected == list(module.PLATFORMS)
+
+
+def _bundle(tmp_path, *, extra=None, missing=None, manifest=None, mode=0o100755):
+    files = {
+        "manifest.json": json.dumps(manifest if manifest is not None else {
+            "manifest_version": "0.3", "name": "localcloud-mcp", "version": "0.1.12",
+            "server": {"type": "binary", "entry_point": "launcher.sh",
+                       "mcp_config": {"command": "${__dirname}/launcher.sh", "args": []}},
+        }),
+        "launcher.sh": module.LAUNCHER,
+        "icon.png": "icon", "README.md": "readme", "LICENSE": "license", "THIRD_PARTY_NOTICES": "notices",
+    }
+    for platform in check.PLATFORMS:
+        for name in ("localcloud", "localcloud-runtime/localcloud", "LICENSE", "THIRD_PARTY_NOTICES"):
+            files[f"bin/{platform}/{name}"] = "fixture"
+    files.pop(missing, None)
+    if extra:
+        files.update(extra)
+    archive = tmp_path / "fixture.mcpb"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for name, content in files.items():
+            info = zipfile.ZipInfo(name)
+            info.external_attr = mode << 16
+            bundle.writestr(info, content)
+    return archive, hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+def test_check_bundle_extracts_verified_bytes_and_validates_the_extracted_manifest(tmp_path, monkeypatch):
+    archive, digest = _bundle(tmp_path)
+    validated = []
+
+    def validate(argv, *, check):
+        assert check is True
+        assert argv[:4] == ["npx", "--yes", "@anthropic-ai/mcpb@2.1.2", "validate"]
+        manifest = Path(argv[4])
+        assert manifest.is_file()
+        assert (manifest.parent / "bin/linux-amd64/localcloud-runtime/localcloud").is_file()
+        validated.append(json.loads(manifest.read_text())["version"])
+
+    monkeypatch.setattr(check.subprocess, "run", validate)
+    result = check.check_bundle(archive, "0.1.12", digest)
+    assert result["sha256"] == digest
+    assert result["bytes"] == archive.stat().st_size
+    assert validated == ["0.1.12"]
+
+
+@pytest.mark.parametrize("options,error", [
+    ({"extra": {"../outside": "bad"}}, "unsafe MCPB member"),
+    ({"extra": {"/outside": "bad"}}, "unsafe MCPB member"),
+    ({"extra": {"bin/linux-amd64/localcloud-runtime/_internal/secret.go": "private"}}, "unexpected source"),
+    ({"extra": {"bin/linux-amd64/localcloud-runtime/_internal/.env": "secret"}}, "unexpected source"),
+    ({"extra": {"bin/linux-amd64/localcloud-runtime/_internal/key.pem": "-----BEGIN RSA PRIVATE KEY-----"}}, "private key"),
+    ({"missing": "bin/linux-arm64/localcloud"}, "incomplete MCPB"),
+    ({"mode": 0o100644}, "not executable"),
+    ({"mode": 0o120755}, "unsafe MCPB member"),
+    ({"manifest": {"version": "0.1.13"}}, "version mismatch"),
+    ({"manifest": []}, "version mismatch"),
+    ({"manifest": {"version": "0.1.12", "server": {"entry_point": "missing"}}}, "does not launch"),
+])
+def test_check_bundle_rejects_bad_payloads_before_extraction(tmp_path, monkeypatch, options, error):
+    archive, digest = _bundle(tmp_path, **options)
+    monkeypatch.setattr(check.zipfile.ZipFile, "extractall", lambda *a: pytest.fail("extracted unsafe payload"))
+    with pytest.raises(ValueError, match=error):
+        check.check_bundle(archive, "0.1.12", digest)
+    assert not (tmp_path.parent / "outside").exists()
+
+
+def test_check_bundle_rejects_wrong_hash_invalid_zip_and_duplicate_members(tmp_path):
+    archive, digest = _bundle(tmp_path)
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        check.check_bundle(archive, "0.1.12", "0" * 64)
+    with zipfile.ZipFile(archive, "a") as bundle, pytest.warns(UserWarning, match="Duplicate"):
+        bundle.writestr("manifest.json", "{}")
+    with pytest.raises(ValueError, match="duplicate"):
+        check.check_bundle(archive, "0.1.12", hashlib.sha256(archive.read_bytes()).hexdigest())
+    archive.write_bytes(b"not a zip")
+    with pytest.raises(zipfile.BadZipFile):
+        check.check_bundle(archive, "0.1.12", hashlib.sha256(archive.read_bytes()).hexdigest())
+
+
+def test_check_bundle_propagates_official_manifest_validation_failure(tmp_path, monkeypatch):
+    archive, digest = _bundle(tmp_path)
+
+    def reject(argv, **kwargs):
+        raise subprocess.CalledProcessError(1, argv)
+
+    monkeypatch.setattr(check.subprocess, "run", reject)
+    with pytest.raises(subprocess.CalledProcessError):
+        check.check_bundle(archive, "0.1.12", digest)
+
+
+def test_check_bundle_detects_corrupt_member_bytes_even_with_a_matching_archive_hash(tmp_path):
+    archive, _ = _bundle(tmp_path)
+    with zipfile.ZipFile(archive) as bundle:
+        member = bundle.getinfo("README.md")
+        offset = member.header_offset + 30 + len(member.filename.encode()) + len(member.extra)
+    content = bytearray(archive.read_bytes())
+    content[offset] ^= 1
+    archive.write_bytes(content)
+    with pytest.raises(zipfile.BadZipFile, match="CRC"):
+        check.check_bundle(archive, "0.1.12", hashlib.sha256(content).hexdigest())
 
 
 def test_mcp_handshake_check_accepts_a_bridge_that_answers_without_docker(tmp_path):

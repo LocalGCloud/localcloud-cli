@@ -287,16 +287,34 @@ every CLI release.
 | `server.json` (`version`, the `.mcpb` URL in `identifier`, and `fileSha256`) | The published `.mcpb` bundle on the official MCP Registry | A new `.mcpb` has been built and uploaded. Never before |
 
 CI builds `localcloud-plugin.zip` for every release but does not build the
-`.mcpb`. Build it by hand against a published release, then update `server.json`
-from the result:
+`.mcpb`. Build it by hand against a published release. The builder checks the
+native archive checksums, validates and extracts the final MCPB, runs the pinned
+MCPB manifest validator, and writes `MCPB_SHA256SUMS` only after those checks pass:
 
 ```sh
 python3 scripts/build-mcpb.py "$VERSION" --output dist/mcp   # prints path and sha256
 ```
 
-Upload that file to the `v${VERSION}` release, set `server.json` `version`,
-`identifier` (`.../download/v${VERSION}/localcloud-mcp-${VERSION}.mcpb`) and
-`fileSha256` from the printed digest, then publish to the registry. `server.json`
+Upload the bundle and `MCPB_SHA256SUMS` to the `v${VERSION}` release. Download
+both back from the public release, compare the downloaded checksum file with
+the local one, then validate the downloaded bytes before updating the registry:
+
+```sh
+# Run from this checkout after building dist/mcp.
+scratch=$(mktemp -d)
+base="https://github.com/LocalGCloud/localcloud-cli/releases/download/v${VERSION}"
+curl -fLSs "$base/MCPB_SHA256SUMS" -o "$scratch/MCPB_SHA256SUMS"
+cmp dist/mcp/MCPB_SHA256SUMS "$scratch/MCPB_SHA256SUMS"
+expected_sha256=$(cut -d ' ' -f1 dist/mcp/MCPB_SHA256SUMS)
+curl -fLSs "$base/localcloud-mcp-${VERSION}.mcpb" -o "$scratch/localcloud-mcp-${VERSION}.mcpb"
+python3 scripts/check-mcpb.py "$scratch/localcloud-mcp-${VERSION}.mcpb" \
+  --version "$VERSION" --sha256 "$expected_sha256"
+```
+
+Set `server.json` `version`, `identifier`
+(`.../download/v${VERSION}/localcloud-mcp-${VERSION}.mcpb`) and `fileSha256`
+from that verified digest, then publish to the registry. Read the exact version
+and `latest` back from the registry and verify their URL and hash. `server.json`
 must always name an `.mcpb` that exists with that exact checksum, so it can lag the
 CLI version. Its `minimumCliVersion` and `minimumRuntimeVersion` are compatibility
 floors, not the latest versions.
