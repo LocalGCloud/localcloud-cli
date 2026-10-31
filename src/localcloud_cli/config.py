@@ -125,6 +125,8 @@ DOCKER_ACCESS_ENV = "LOCALCLOUD_DOCKER_ACCESS"
 DOCKER_DEPENDENCY = "docker"
 DockerAccessMode = Literal["auto", "true", "false"]
 ProjectSource = Literal["flag", "config", "git", "default"]
+ConsoleSource = Literal["flag", "environment", "runtime", "config", "default"]
+ImageSource = Literal["flag", "config", "environment", "runtime", "default"]
 
 
 
@@ -263,11 +265,20 @@ class LocalCloudConfig:
     # checkout name), or "default" (built in, or a shared config's
     # context.project). Not part of the runtime identity.
     project_source: ProjectSource = "default"
+    # Where `image` came from: "flag" (--image, --lite/--full, --estargz),
+    # "config" (host.image), "environment" (LOCALCLOUD_IMAGE), "runtime" (the
+    # image this data volume last ran, from the active-runtime record), or
+    # "default" (DEFAULT_IMAGE). Not part of the runtime identity.
+    image_source: ImageSource = "default"
     # Whether the gateway serves the Console: set by --ui/--no-ui,
     # host.environment.LOCALCLOUD_CONSOLE or server.console.enabled, and None
     # when none of them does (the Console is on). The environment and the
     # config file already carry it, so it is not part of the runtime identity.
     console: bool | None = None
+    # Which of those set `console`; "runtime" when it was kept from the
+    # container's own LOCALCLOUD_CONSOLE. A mode a runtime was started in
+    # outranks server.console.enabled, but not a flag or host.environment.
+    console_source: ConsoleSource = "default"
 
     def __post_init__(self) -> None:
         encoded = json.dumps(
@@ -732,25 +743,34 @@ def load_config(
             "host.data must be 'persistent' or 'ephemeral'", value=data
         )
 
+    image_source: ImageSource
     if image is not None:
         image = _non_blank_string("host.image", image)
+        image_source = "flag"
     else:
         configured_image = host.get("image")
         if configured_image is not None:
             image = _non_blank_string("host.image", configured_image)
+            image_source = "config"
+        elif environment_image := os.environ.get("LOCALCLOUD_IMAGE"):
+            image = _non_blank_string("host.image", environment_image)
+            image_source = "environment"
+        elif (
+            environment_image is None
+            and active is not None
+            and active.data_volume == selected_data_volume
+        ):
+            image = _non_blank_string("host.image", active.image)
+            image_source = "runtime"
         else:
-            image = os.environ.get("LOCALCLOUD_IMAGE")
-            if (
-                image is None
-                and active is not None
-                and active.data_volume == selected_data_volume
-            ):
-                image = active.image
-            image = _non_blank_string("host.image", image or DEFAULT_IMAGE)
+            image = DEFAULT_IMAGE
+            image_source = "default"
     if lite is not None:
         image = lite_image(image, lite)
+        image_source = "flag" if image_source == "default" else image_source
     if estargz is not None:
         image = estargz_image(image, estargz)
+        image_source = "flag" if image_source == "default" else image_source
 
     memory = _memory_limit(
         "--memory" if memory is not None else "host.memory",
@@ -792,7 +812,9 @@ def load_config(
         environment["LOCALCLOUD_TLS_ENABLED"] = "true" if tls else "false"
     if console is not None:
         environment[CONSOLE_ENVIRONMENT] = "true" if console else "false"
-    console_enabled = _console_setting(raw, environment)
+    console_enabled, console_source = _console_setting(raw, environment, diagnostics)
+    if console is not None:
+        console_source = "flag"
     mysql_port = _mysql_port(effective_catalog, effective_services, environment)
     service_ports = _service_ports(effective_catalog, effective_services)
     selected_port_range = (
@@ -893,7 +915,9 @@ def load_config(
         mysql_port=mysql_port,
         service_ports=service_ports,
         port_range=selected_port_range,
+        image_source=image_source,
         console=console_enabled,
+        console_source=console_source,
     )
 
 
@@ -903,34 +927,43 @@ def console_environment_value(value: str) -> bool | None:
 
 
 def with_console_environment(config: LocalCloudConfig, value: str) -> LocalCloudConfig:
-    """`config` with LOCALCLOUD_CONSOLE set to `value`."""
+    """`config` with the runtime's LOCALCLOUD_CONSOLE `value` kept."""
     return replace(
         config,
         environment={**config.environment, CONSOLE_ENVIRONMENT: value},
         console=console_environment_value(value),
+        console_source="runtime",
     )
 
 
 def _console_setting(
-    raw: dict[object, object], environment: dict[str, str]
-) -> bool | None:
+    raw: dict[object, object],
+    environment: dict[str, str],
+    diagnostics: list[dict[str, Any]],
+) -> tuple[bool | None, ConsoleSource]:
     if CONSOLE_ENVIRONMENT in environment:
         value = console_environment_value(environment[CONSOLE_ENVIRONMENT])
-        if value is None:
-            _invalid_config(
-                f"host.environment.{CONSOLE_ENVIRONMENT} must be one of "
+        if value is not None:
+            return value, "environment"
+        # The gateway ignores a value it does not know, and so does the CLI.
+        diagnostics.append(
+            HostError(
+                "console_environment_ignored",
+                f"host.environment.{CONSOLE_ENVIRONMENT} is ignored: use one of "
                 + ", ".join(CONSOLE_ENVIRONMENT_VALUES),
-                value=environment[CONSOLE_ENVIRONMENT],
-            )
-        return value
+                {"value": environment[CONSOLE_ENVIRONMENT]},
+            ).to_dict()
+        )
     server = raw.get("server")
     section = server.get("console") if isinstance(server, dict) else None
     if section is None:
-        return None
+        return None, "default"
     if not isinstance(section, dict):
         _invalid_config("server.console must be an object", value=section)
     enabled = section.get("enabled")
-    return None if enabled is None else _boolean("server.console.enabled", enabled)
+    if enabled is None:
+        return None, "default"
+    return _boolean("server.console.enabled", enabled), "config"
 
 
 def _validate_config_document(
@@ -1457,10 +1490,20 @@ def _image_tag(image: str) -> tuple[str, str] | None:
     return repository, tag
 
 
+def _pinned_tag(image: str) -> str | None:
+    """The tag an image is named by, also when it is pinned (`name:tag@sha256:…`);
+    None for a bare digest or an image ID."""
+    name, at, _digest = image.partition("@")
+    if image.startswith("sha256:") or (at and ":" not in name.rpartition("/")[2]):
+        return None
+    parts = _image_tag(name)
+    return parts[1] if parts is not None else None
+
+
 def is_estargz_image(image: str) -> bool:
     """Whether `image` names an eStargz build: a tag ending in -estargz."""
-    parts = _image_tag(image)
-    return parts is not None and parts[1].endswith(ESTARGZ_TAG_SUFFIX)
+    tag = _pinned_tag(image)
+    return tag is not None and tag.endswith(ESTARGZ_TAG_SUFFIX)
 
 
 def estargz_image(image: str, enabled: bool) -> str:
@@ -1471,7 +1514,8 @@ def estargz_image(image: str, enabled: bool) -> str:
     if parts is None:
         raise ConfigError(
             "invalid_config",
-            "--estargz needs an image named by tag, not by digest or image ID",
+            "--estargz cannot switch an image pinned by digest or named by "
+            "image ID; name the build you want instead",
             {"image": image},
         )
     repository, tag = parts
@@ -1481,10 +1525,10 @@ def estargz_image(image: str, enabled: bool) -> str:
 
 def is_lite_image(image: str) -> bool:
     """Whether `image` names a lite build: tag `lite`, or one ending in -lite."""
-    parts = _image_tag(image)
-    if parts is None:
+    tag = _pinned_tag(image)
+    if tag is None:
         return False
-    tag = parts[1].removesuffix(ESTARGZ_TAG_SUFFIX)
+    tag = tag.removesuffix(ESTARGZ_TAG_SUFFIX)
     return tag == LITE_TAG or tag.endswith(LITE_TAG_SUFFIX)
 
 
@@ -1496,8 +1540,9 @@ def lite_image(image: str, lite: bool) -> str:
     if parts is None:
         raise ConfigError(
             "invalid_config",
-            f"--{'lite' if lite else 'full'} needs an image named by tag, "
-            "not by digest or image ID",
+            f"--{'lite' if lite else 'full'} cannot switch an image pinned by "
+            f"digest or named by image ID; name the {'lite' if lite else 'full'} "
+            "build instead",
             {"image": image},
         )
     repository, tag = parts

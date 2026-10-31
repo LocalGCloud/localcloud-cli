@@ -16,7 +16,7 @@ import pytest
 import localcloud_cli.mcp_stdio as mcp_module
 from localcloud_cli.config import LocalCloudConfig
 from localcloud_cli.errors import HostError
-from localcloud_cli.mcp_stdio import STATUS_TOOL, McpAdapter
+from localcloud_cli.mcp_stdio import STATUS_TOOL, McpAdapter, _recovery
 
 DATA_VOLUME = "team-data"
 PROJECT = "agent-project-1"
@@ -354,6 +354,16 @@ def test_connection_timeout_names_endpoint_and_deadline(
         f"http://127.0.0.1:49080/mcp within {duration}."
     )
     assert caught.value.details["timeout_seconds"] == connect_timeout
+
+
+def test_services_still_warming_tell_the_agent_to_wait() -> None:
+    recovery = _recovery(
+        HostError("services_not_ready", "LocalCloud started, but bigquery was not ready"),
+        auto_start=True,
+    )
+
+    assert recovery.startswith(f"Call {STATUS_TOOL} to wait for it.")
+    assert "lc doctor" not in recovery
 
 
 # Forwarding to a ready runtime ----------------------------------------------

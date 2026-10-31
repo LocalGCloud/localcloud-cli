@@ -52,17 +52,21 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
 
 - Reuses an existing running container attached to the same volume.
 - Creates project contexts when they do not exist.
-- Waits up to 60 seconds for the gateway to report healthy (`/health`) and then for every enabled
-  service to answer (`/readiness`); BigQuery, for one, needs a few seconds after the gateway is up.
-  A service still not ready at the deadline fails the command with `services_not_ready`, naming it.
+- Waits up to 60 seconds for the gateway to report healthy (`/health`), then gives every enabled
+  service at least 60 more seconds to answer (`/readiness`); BigQuery, for one, needs a few seconds
+  after the gateway is up. A service still not ready at the deadline fails the command with
+  `services_not_ready`, naming it, or saying why `/readiness` gave no answer.
 - TLS is disabled by default. `--tls` enables it; `--no-tls` overrides an enabled configuration value.
 - `--no-ui` runs headless: the gateway serves no web console, while every service API, the admin
   API, MCP, `/health`, and `/readiness` work as usual. It sets `LOCALCLOUD_CONSOLE=false` on the
   container, which overrides `server.console.enabled` in `localcloud.yaml`. A headless runtime
-  stays headless on later `start` and `restart` until `--ui` turns the console back on, and the
+  stays headless on later `start` and `restart`, whatever `server.console.enabled` says, until
+  `--ui` turns the console back on (or `host.environment.LOCALCLOUD_CONSOLE` sets it), and the
   output shows **Console: disabled**. After starting, the CLI checks `/health`: it warns when the
   image predates headless mode (that image still serves the console) and fails with
-  `console_not_disabled` when the gateway reports the console on. Available on `start` and `restart`.
+  `console_not_disabled` when the gateway reports the console on. A container `lc` did not create
+  keeps the console setting it was started with: `--ui` or `--no-ui` that asks for the other one
+  fails with `console_mode_unmanaged`. Available on `start` and `restart`.
 - Docker ports omit the host IP by default (`-p 5380:5380`), using Docker's default
   bind address, normally all host interfaces. `--local-only` binds every published
   port to `127.0.0.1` (`-p 127.0.0.1:5380:5380`), including TLS ports,
@@ -79,12 +83,15 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
   `--lite` goes back to the lite build, which is the default. Lite has BigQuery's lite edition (no BigQuery
   ML, JavaScript UDFs, or `EXTERNAL_QUERY` on Cloud SQL) and creates metadata-only GKE clusters; every
   service is still available. A runtime keeps the build it was started with on later `start` and
-  `restart`, unless `host.image` or `LOCALCLOUD_IMAGE` names another. Available on `start` and `restart`.
+  `restart`, unless `host.image` or `LOCALCLOUD_IMAGE` names another; without its record in
+  `active-runtime.json`, the CLI keeps the image the container runs. An image pinned by digest
+  (`name:tag@sha256:…`) keeps its build: `--lite` or `--full` fails when it would have to switch it.
+  Available on `start` and `restart`.
 - `--estargz` runs the eStargz build of the selected image: the same tag with `-estargz` appended, such as
   `agentcloud/localcloud:lite-estargz`. Docker pulls it lazily when the Stargz Snapshotter is its storage
   driver, and downloads it whole otherwise; the **Lazy pulling** row says which (see [doctor](#doctor)). A
   runtime keeps the build it was started with unless `host.image` or `LOCALCLOUD_IMAGE` names another, and
-  `--no-estargz` returns to the regular build. The option needs an image named by tag. When neither Docker
+  `--no-estargz` returns to the regular build. The option cannot switch an image pinned by digest. When neither Docker
   nor the registry has an eStargz build for that tag, the CLI warns and runs the regular build.
 - `--services` overrides `services.enabled` with a comma-separated list of service IDs, or `default` to use the built-in set.
 - `--tail [SECONDS]` sets how long `start` and `restart` stream the container log after the runtime is ready. The default is 5 seconds; `--tail 0` skips it, and `--tail` with no value streams until you press Ctrl-C. (`lc logs --tail LINES` is a different option: it counts lines.)
@@ -233,7 +240,7 @@ lc logs --tail 500
 
 ### `restart`
 
-Stops the running container and starts with the image (preserving persistent volume state and reapplying volatile seed data). Unlike `start`, `restart` does not check the remote registry by default (`--no-pull`), using the currently available local image (e.g. `latest`).
+Stops the running container and starts with the image (preserving persistent volume state and reapplying volatile seed data). Unlike `start`, `restart` does not check the remote registry by default (`--no-pull`), using the currently available local image (e.g. `lite`).
 
 ```sh
 # Restart container using the currently available image (default: --no-pull)

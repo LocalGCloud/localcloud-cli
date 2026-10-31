@@ -62,6 +62,9 @@ _IMAGE_PORT_CAPABILITIES = frozenset(
     | {f"{_DNS_PORT}/udp"}
 )
 _DEFAULT_READINESS_TIMEOUT = 120.0
+# Once /health answers, enabled services get at least this long to report
+# ready (/readiness): BigQuery, for one, warms up after the gateway is up.
+_SERVICE_READINESS_TIMEOUT = 60.0
 # Docker sends SIGKILL after this. LocalCloud's shutdown stops its Dataproc and
 # MySQL companions and then Postgres; 20s was not always enough (exit 137).
 STOP_TIMEOUT_SECONDS = 30
@@ -2077,9 +2080,13 @@ class DockerRuntime:
         cursor: LogCursor | None = None,
     ) -> dict[str, Any]:
         """Wait until the gateway is healthy (/health) and every enabled service
-        can be called (/readiness), and return the /health document."""
+        can be called (/readiness), and return the /health document.
+
+        `deadline` bounds the /health wait; the services then get until
+        `deadline` or _SERVICE_READINESS_TIMEOUT after /health, whichever is later."""
         normalized = _validate_base_url(url)
-        timeout = max(0.0, deadline - time.monotonic())
+        started = time.monotonic()
+        timeout = max(0.0, deadline - started)
         last_error = "not attempted"
         health: dict[str, Any] | None = None
         not_ready: list[dict[str, Any]] = []
@@ -2148,6 +2155,11 @@ class DockerRuntime:
                         payload = response.json()
                         if payload.get("status") in {"healthy", "ok", "ready"}:
                             health = payload
+                            deadline = max(
+                                deadline,
+                                time.monotonic() + _SERVICE_READINESS_TIMEOUT,
+                            )
+                            last_error = "readiness not checked before the deadline"
                             if observer is not None and hasattr(observer, "debug"):
                                 observer.debug(
                                     f"Runtime health succeeded at {normalized}/health"
@@ -2177,7 +2189,11 @@ class DockerRuntime:
                     not_ready = _services_not_ready(response)
                     last_error = f"readiness HTTP {response.status_code}"
             except Exception as error:
-                last_error = str(error)
+                last_error = (
+                    str(error)
+                    if health is None
+                    else f"readiness request failed: {error}"
+                )
             _emit_logs()
             remaining = deadline - time.monotonic()
             if remaining > 0:
@@ -2187,11 +2203,15 @@ class DockerRuntime:
             names = ", ".join(str(item["id"]) for item in not_ready)
             raise HostError(
                 "services_not_ready",
-                "LocalCloud started, but some services were not ready in time"
-                + (f": {names}" if names else ""),
+                (
+                    f"LocalCloud started, but some services were not ready in time: {names}"
+                    if names
+                    else "LocalCloud started, but its services did not report "
+                    f"readiness in time ({last_error})"
+                ),
                 {
                     "url": normalized,
-                    "timeout_seconds": timeout,
+                    "timeout_seconds": round(max(0.0, deadline - started), 1),
                     "services": not_ready,
                     "last_error": last_error,
                     "logs": logs,

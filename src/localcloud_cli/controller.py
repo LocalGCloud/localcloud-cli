@@ -6,7 +6,7 @@ import shutil
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from . import __version__
 from .config import (
@@ -183,7 +183,6 @@ class Controller:
         return (shlex.join(["docker", "stop", "-t", str(timeout), target]),)
 
     def start(
-
         self,
         config: LocalCloudConfig,
         *,
@@ -209,8 +208,7 @@ class Controller:
             if dry_run
             else data_volume_lock(self.paths, config.data_volume)
         ):
-            current = self._resolve_runtime(config)
-            config = _inherit_console(current, config)
+            current, config = self._resolve_keeping_runtime_settings(config)
             changed_fields: list[str] = []
             prepared_image: tuple[Any, bool] | None = None
             run_plan: DockerRunPlan | None = None
@@ -355,12 +353,9 @@ class Controller:
             elif action in {"start", "wait"}:
                 if observer is not None and hasattr(observer, "starting"):
                     observer.starting(config)
-                self._remaining_readiness(
-                    deadline,
-                    config,
-                    current,
-                    "docker_health",
-                )
+                # The budget covers the start itself, not a registry check
+                # for --pull that found no newer image.
+                deadline = time.monotonic() + _START_READINESS_TIMEOUT
                 environment = self.runtime.start(
                     config,
                     current,
@@ -376,10 +371,14 @@ class Controller:
                 self._ensure_project(
                     environment,
                     config,
-                    deadline=deadline,
+                    # Services get their own readiness budget, which can run
+                    # past the start's.
+                    deadline=max(
+                        deadline, time.monotonic() + _READINESS_REQUEST_TIMEOUT
+                    ),
                 )
-            self._record_active(environment, config)
             console_warning = self._check_console(environment, config)
+            self._record_active(environment, config)
 
             def payload() -> dict[str, Any]:
                 return _with_console_warning(
@@ -434,8 +433,7 @@ class Controller:
             if dry_run
             else data_volume_lock(self.paths, config.data_volume)
         ):
-            current = self._resolve_runtime(config)
-            config = _inherit_console(current, config)
+            current, config = self._resolve_keeping_runtime_settings(config)
             is_managed = (
                 current is not None
                 and current.ownership.get("container") == "managed"
@@ -594,8 +592,8 @@ class Controller:
                     config,
                     deadline=time.monotonic() + _START_READINESS_TIMEOUT,
                 )
-            self._record_active(environment, config)
             console_warning = self._check_console(environment, config)
+            self._record_active(environment, config)
 
             def payload() -> dict[str, Any]:
                 return _with_console_warning(
@@ -635,7 +633,7 @@ class Controller:
             if dry_run
             else data_volume_lock(self.paths, config.data_volume)
         ):
-            current = self._resolve_runtime(config)
+            current, config = self._resolve_keeping_runtime_settings(config)
             if all_projects:
                 ownership = self.runtime.recreation_ownership(config)
                 if any(value != "managed" for value in ownership.values()):
@@ -1669,45 +1667,100 @@ class Controller:
             observer=observer,
         )
 
-
     def console_enabled(self, url: str) -> bool | None:
         """Whether the runtime at `url` serves the Console; None when its image
         predates headless mode (it always serves it) or /health is unreadable."""
+        state = self._console_state(url)
+        return {"on": True, "off": False}.get(state)
+
+    def _console_state(
+        self, url: str
+    ) -> Literal["on", "off", "predates", "unreadable"]:
+        """What /health at `url` says about the Console: "predates" when the
+        image reports nothing (it always serves it)."""
         health = self.runtime.health(url)
-        console = health.get("console") if health is not None else None
+        if health is None:
+            return "unreadable"
+        console = health.get("console")
         enabled = console.get("enabled") if isinstance(console, dict) else None
-        return enabled if isinstance(enabled, bool) else None
+        if not isinstance(enabled, bool):
+            return "predates"
+        return "on" if enabled else "off"
 
     def _console_row(self, environment: RuntimeRecord) -> str:
         """The Console row of a runtime started without the Console."""
         if environment.state != "running" or environment.url is None:
             return "disabled"
-        enabled = self.console_enabled(environment.url)
-        if enabled is None:
-            return "served (the image predates headless mode)"
-        return "served" if enabled else "disabled"
+        return {
+            "on": "served",
+            "off": "disabled",
+            "predates": "served (the image predates headless mode)",
+            "unreadable": "unknown (/health did not answer)",
+        }[self._console_state(environment.url)]
+
+    def _resolve_keeping_runtime_settings(
+        self, config: LocalCloudConfig
+    ) -> tuple[RuntimeRecord | None, LocalCloudConfig]:
+        """The runtime on the data volume, and `config` with the image and
+        Console mode it runs kept (see _keep_runtime_settings)."""
+        current = self._resolve_runtime(config)
+        kept = _keep_runtime_settings(current, config)
+        if kept.image != config.image:
+            # The record's configured image ID belongs to the image asked for.
+            current = self._resolve_runtime(kept)
+        return current, kept
 
     def _check_console(
         self, environment: RuntimeRecord, config: LocalCloudConfig
     ) -> str | None:
-        """Confirm a runtime started with the Console off really is headless.
+        """Confirm the runtime serves the Console as asked.
 
-        Returns a warning when the image predates headless mode, and fails when
-        the gateway reports the Console on anyway."""
-        if config.console is not False or environment.url is None:
+        Returns a warning when the image predates headless mode or /health does
+        not say. Fails when a runtime started with the Console off serves it
+        anyway, and when --ui/--no-ui asks for a mode that a container lc did
+        not create (and so cannot reconfigure) does not run in."""
+        if environment.url is None:
             return None
-        enabled = self.console_enabled(environment.url)
-        if enabled is None:
+        managed = environment.ownership.get("container") == "managed"
+        if managed and config.console is not False:
+            return None
+        if not managed and config.console_source != "flag":
+            return None
+        state = self._console_state(environment.url)
+        image = environment.actual_image or config.image
+        if state == "unreadable":
             return (
-                f"Image {environment.actual_image or config.image} predates "
-                "headless mode, so it still serves the Console; use a newer image "
-                "to run without it."
+                "Could not confirm the Console setting: "
+                f"{environment.url}/health did not answer."
             )
-        if enabled:
+        if state == "predates":
+            if config.console is not False:
+                return None
+            return (
+                f"Image {image} predates headless mode, so it still serves the "
+                "Console; use a newer image to run without it."
+            )
+        if not managed and (state == "on") != config.console:
+            flag = "--ui" if config.console else "--no-ui"
+            raise HostError(
+                "console_mode_unmanaged",
+                f"{flag} cannot change this LocalCloud container: lc did not "
+                "create it, so it keeps the Console setting it was started "
+                f"with ({'off' if state == 'off' else 'on'}). Recreate it with "
+                f"LOCALCLOUD_CONSOLE={'true' if config.console else 'false'}, "
+                f"or remove it and run lc start {flag}.",
+                {
+                    "data_volume": config.data_volume,
+                    "container_id": environment.container_id,
+                    "ownership": environment.ownership,
+                    "image": image,
+                },
+            )
+        if state == "on" and config.console is False:
             raise HostError(
                 "console_not_disabled",
                 "LocalCloud still serves the Console although it was started "
-                "without it; check the image and server.console.enabled",
+                "without it (LOCALCLOUD_CONSOLE=false); check the image",
                 {
                     "data_volume": config.data_volume,
                     "container_id": environment.container_id,
@@ -2446,12 +2499,39 @@ def _validate_replacement(
         )
 
 
+def _keep_runtime_settings(
+    current: RuntimeRecord | None, config: LocalCloudConfig
+) -> LocalCloudConfig:
+    """`config` with the image and Console mode of the container `current`
+    kept where nothing in this run chose them."""
+    return _inherit_console(current, _keep_runtime_image(current, config))
+
+
+def _keep_runtime_image(
+    current: RuntimeRecord | None, config: LocalCloudConfig
+) -> LocalCloudConfig:
+    """Keep the image a managed container runs when this run's image is only
+    the built-in default: a lost active-runtime record must not turn a full
+    runtime into a lite one."""
+    if current is None or config.image_source != "default" or not current.runtime_settings:
+        return config
+    image = current.runtime_settings.get("image")
+    if not isinstance(image, str) or not image or image == config.image:
+        return config
+    return replace(config, image=image, image_source="runtime")
+
+
 def _inherit_console(
     current: RuntimeRecord | None, config: LocalCloudConfig
 ) -> LocalCloudConfig:
-    """Keep a runtime started with --no-ui (or --ui) in that mode when nothing
-    in this run's flags or config sets it."""
-    if current is None or config.console is not None or not current.runtime_settings:
+    """Keep a runtime started with --no-ui (or --ui) in that mode unless this
+    run's flags or host.environment set it; server.console.enabled does not
+    override it."""
+    if (
+        current is None
+        or config.console_source in {"flag", "environment"}
+        or not current.runtime_settings
+    ):
         return config
     recorded = current.runtime_settings.get("environment")
     value = recorded.get(CONSOLE_ENVIRONMENT) if isinstance(recorded, dict) else None

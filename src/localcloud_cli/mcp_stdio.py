@@ -747,7 +747,12 @@ def _recovery(error: HostError, *, auto_start: bool) -> str:
             "This LocalCloud MCP server runs with --no-start. Ask the user to run "
             f"`lc start` in the project, {retry}."
         )
-    if error.code in {"runtime_starting", "mcp_connection_timeout", "runtime_readiness_timeout"}:
+    if error.code in {
+        "runtime_starting",
+        "mcp_connection_timeout",
+        "runtime_readiness_timeout",
+        "services_not_ready",
+    }:
         return (
             f"Call {STATUS_TOOL} to wait for it. If it stays unavailable, ask the "
             "user to check `lc status` and `lc logs`."

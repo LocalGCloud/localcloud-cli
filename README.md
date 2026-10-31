@@ -53,7 +53,7 @@ $ lc doctor
  Tip: Run localcloud guide for AI agent workflows, or lc for the fast alias.
 
 Docker  29.8.1 (/opt/homebrew/bin/docker) · Colima 0.10.1 (VZ, Rosetta on)
-Image   agentcloud/localcloud:lite (ID: 6c619bcf17c5)
+Image   agentcloud/localcloud:lite (ID: 66d2113a69fb)
 Ports   5380-5406 (in use by localcloud)
 [OK] LocalCloud is ready to start  0.5s
 ```
@@ -719,7 +719,7 @@ opt-out.
 | BigQuery or another service stops soon after `start` on Apple Silicon | The Docker VM runs on QEMU | `lc doctor`, then `lc doctor --fix` to switch to VZ with Rosetta |
 | `Error [docker_socket_unavailable]` | A service needs the Docker socket but it is missing or blocked | Check the socket path, or set `host.docker_socket: false` to disable Docker-backed services |
 | `Error [health_timeout]` / `runtime_readiness_timeout` | The container started but services were not ready in time | `lc logs --tail 200`; confirm at least 4 GiB is available, or raise it with `--memory 8g` |
-| `Error [services_not_ready]` | The gateway is up, but the services the error names did not answer in time | `lc logs --tail 200` for those services; leave them out with `--services` if you don't need them |
+| `Error [services_not_ready]` | The gateway is up, but the services the error names did not answer in time, or `/readiness` gave no answer (the error says why) | `lc logs --tail 200` for those services; leave them out with `--services` if you don't need them |
 | `Error [port_mapping_confirmation_required]` | Canonical ports are busy and the shell is non-interactive; the message names each busy port's container or process when it can tell | Free the ports, or re-run with `--accept-dynamic-ports` |
 | `Error [data_volume_collision]` | More than one compatible container uses the same volume | `lc cleanup --dry-run` to inspect, then `lc cleanup` |
 | `Error [ownership_mismatch]` / `ownership_forbidden` | A Docker resource is not CLI-managed | The CLI never removes resources it does not own — remove it manually, or use a different `--data-volume` |

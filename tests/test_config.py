@@ -1173,15 +1173,48 @@ def test_console_environment_takes_the_gateway_values(
     assert selected.console is expected
 
 
-def test_console_environment_rejects_values_the_gateway_ignores(
+def test_console_environment_ignores_values_the_gateway_ignores(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "localcloud.yaml").write_text(
         "host:\n  environment:\n    LOCALCLOUD_CONSOLE: \"disabled\"\n",
         encoding="utf-8",
     )
-    with pytest.raises(HostError, match="LOCALCLOUD_CONSOLE must be one of"):
-        load_config(directory=tmp_path, paths=_paths(tmp_path))
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
+    assert selected.console is None
+    assert [item["code"] for item in selected.diagnostics] == [
+        "console_environment_ignored"
+    ]
+
+    # Like the gateway, fall back to server.console.enabled.
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  environment:\n    LOCALCLOUD_CONSOLE: \"\"\n"
+        "server:\n  console:\n    enabled: false\n",
+        encoding="utf-8",
+    )
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path))
+    assert (selected.console, selected.console_source) == (False, "config")
+
+
+@pytest.mark.parametrize(
+    ("yaml", "console", "expected"),
+    [
+        ("", None, (None, "default")),
+        ("server:\n  console:\n    enabled: true\n", None, (True, "config")),
+        (
+            "host:\n  environment:\n    LOCALCLOUD_CONSOLE: \"off\"\n",
+            None,
+            (False, "environment"),
+        ),
+        ("server:\n  console:\n    enabled: true\n", False, (False, "flag")),
+    ],
+)
+def test_console_records_what_set_it(
+    tmp_path: Path, yaml: str, console: bool | None, expected: tuple[object, str]
+) -> None:
+    (tmp_path / "localcloud.yaml").write_text(yaml, encoding="utf-8")
+    selected = load_config(directory=tmp_path, paths=_paths(tmp_path), console=console)
+    assert (selected.console, selected.console_source) == expected
 
 
 def test_server_console_enabled_sets_console_without_environment(
@@ -1386,14 +1419,67 @@ def test_lite_and_estargz_combine(tmp_path: Path) -> None:
     assert config.image == "agentcloud/localcloud:latest-estargz"
 
 
-def test_lite_needs_an_image_named_by_tag(tmp_path: Path) -> None:
-    with pytest.raises(ConfigError, match="--lite needs an image named by tag"):
+_DIGEST = "@sha256:" + "a" * 64
+
+
+@pytest.mark.parametrize(
+    ("image", "lite"),
+    [
+        (f"registry.example/localcloud:0.2.0-lite{_DIGEST}", True),
+        (f"registry.example/localcloud:lite{_DIGEST}", True),
+        (f"registry.example/localcloud:0.2.0{_DIGEST}", False),
+        (f"localhost:5000/localcloud:lite-estargz{_DIGEST}", True),
+    ],
+)
+def test_lite_keeps_a_pinned_image_that_already_is_that_build(
+    tmp_path: Path, image: str, lite: bool
+) -> None:
+    config = load_config(
+        directory=tmp_path, paths=_paths(tmp_path), image=image, lite=lite
+    )
+
+    assert config.image == image
+
+
+@pytest.mark.parametrize(
+    ("image", "lite"),
+    [
+        (f"registry.example/localcloud:lite{_DIGEST}", False),
+        (f"registry.example/localcloud:latest{_DIGEST}", True),
+        (f"registry.example/localcloud{_DIGEST}", True),
+        (f"localhost:5000/localcloud{_DIGEST}", True),
+        ("sha256:" + "a" * 64, True),
+    ],
+)
+def test_lite_refuses_to_switch_a_pinned_image(
+    tmp_path: Path, image: str, lite: bool
+) -> None:
+    flag = "--lite" if lite else "--full"
+    with pytest.raises(ConfigError, match=f"{flag} cannot switch an image pinned"):
         load_config(
-            directory=tmp_path,
-            paths=_paths(tmp_path),
-            image="registry.example/localcloud@sha256:" + "a" * 64,
-            lite=True,
+            directory=tmp_path, paths=_paths(tmp_path), image=image, lite=lite
         )
+
+
+def test_image_records_where_it_came_from(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    assert load_config(directory=tmp_path, paths=paths).image_source == "default"
+    assert load_config(directory=tmp_path, paths=paths, lite=False).image_source == (
+        "flag"
+    )
+    save_active_runtime(
+        paths,
+        _active(data_volume=DEFAULT_DATA_VOLUME, image="agentcloud/localcloud:latest"),
+    )
+    assert load_config(directory=tmp_path, paths=paths).image_source == "runtime"
+    monkeypatch.setenv("LOCALCLOUD_IMAGE", "registry.example/localcloud:env")
+    assert load_config(directory=tmp_path, paths=paths).image_source == "environment"
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  image: yamlrepo/localcloud:yaml\n", encoding="utf-8"
+    )
+    assert load_config(directory=tmp_path, paths=paths).image_source == "config"
 
 
 def test_a_runtime_started_full_stays_full(tmp_path: Path) -> None:

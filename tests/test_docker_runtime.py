@@ -2528,6 +2528,48 @@ def test_wait_ready_names_the_services_that_never_became_ready(
     ]
 
 
+def test_wait_ready_gives_services_their_own_budget_after_health(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = _fake_clock(monkeypatch)
+
+    def get(url: str, **_kwargs: Any) -> _Response:
+        if url.endswith("/health"):
+            return _HEALTHY if now[0] >= 8.0 else _Response(503, {})
+        return _Response(200, {"ready": True}) if now[0] >= 50.0 else _BIGQUERY_WARMING
+
+    monkeypatch.setattr(runtime_module.httpx, "get", get)
+
+    assert DockerRuntime.wait_ready("http://127.0.0.1:5380", deadline=10.0) == {
+        "status": "healthy"
+    }
+    assert 50.0 <= now[0] < 68.0
+
+
+def test_wait_ready_says_why_readiness_never_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_clock(monkeypatch)
+
+    def get(url: str, **_kwargs: Any) -> _Response:
+        if url.endswith("/health"):
+            return _HEALTHY
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(runtime_module.httpx, "get", get)
+
+    with pytest.raises(HostError) as caught:
+        DockerRuntime.wait_ready("http://127.0.0.1:5380", deadline=10.0)
+
+    assert caught.value.code == "services_not_ready"
+    assert caught.value.message == (
+        "LocalCloud started, but its services did not report readiness in time "
+        "(readiness request failed: timed out)"
+    )
+    assert caught.value.details["last_error"] == "readiness request failed: timed out"
+    assert caught.value.details["services"] == []
+
+
 @pytest.mark.parametrize(
     "url",
     [

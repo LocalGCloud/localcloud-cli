@@ -1573,6 +1573,151 @@ def test_status_reports_a_headless_runtime(tmp_path: Path) -> None:
         "served (the image predates headless mode)"
     )
 
+    runtime.health_document = None
+    assert controller.status(_config(tmp_path, paths=paths))["console"] == (
+        "unknown (/health did not answer)"
+    )
+
+
+def test_server_console_enabled_does_not_undo_no_ui_on_restart(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    yaml = "server:\n  console:\n    enabled: true\n"
+    runtime.record = _record(_config(tmp_path, paths=paths, yaml=yaml, console=False))
+    runtime.health_document = _HEADLESS_HEALTH
+
+    result = controller.restart(_config(tmp_path, paths=paths))
+
+    assert result["status"] == "restarted"
+    assert result["console"] == "disabled"
+    assert runtime.record.runtime_settings is not None
+    assert runtime.record.runtime_settings["environment"] == {
+        "LOCALCLOUD_CONSOLE": "false"
+    }
+
+
+def test_server_console_enabled_still_sets_a_runtime_no_flag_chose(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    runtime.record = _record(_config(tmp_path, paths=paths))
+    runtime.health_document = _HEADLESS_HEALTH
+    yaml = "server:\n  console:\n    enabled: false\n"
+
+    result = controller.restart(_config(tmp_path, paths=paths, yaml=yaml))
+
+    assert result["console"] == "disabled"
+    assert runtime.record.runtime_settings is not None
+    assert runtime.record.runtime_settings["environment"] == {}
+
+
+_ATTACHED = {"container": "attached", "network": "attached", "data_volume": "attached"}
+
+
+@pytest.mark.parametrize(
+    ("console", "health"),
+    [(False, {"status": "healthy", "console": {"enabled": True}}), (True, _HEADLESS_HEALTH)],
+)
+def test_ui_flag_on_a_container_lc_did_not_create_explains_it_cannot_change_it(
+    tmp_path: Path, console: bool, health: dict[str, Any]
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    runtime.record = _record(
+        _config(tmp_path, paths=paths), origin="attached", ownership=_ATTACHED
+    )
+    runtime.health_document = health
+
+    with pytest.raises(HostError) as error:
+        controller.start(_config(tmp_path, paths=paths, console=console))
+
+    assert error.value.code == "console_mode_unmanaged"
+    assert ("--ui" if console else "--no-ui") in error.value.message
+    assert "lc did not create it" in error.value.message
+    assert load_active_runtime(paths) is None
+
+
+def test_container_lc_did_not_create_starts_without_a_ui_flag(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    runtime.record = _record(
+        _config(tmp_path, paths=paths), origin="attached", ownership=_ATTACHED
+    )
+    runtime.health_document = _HEADLESS_HEALTH
+
+    result = controller.start(_config(tmp_path, paths=paths))
+
+    assert result["status"] == "already_running"
+    assert "warning" not in result
+
+
+@pytest.mark.parametrize("command", ["start", "restart"])
+def test_a_lost_record_does_not_turn_a_full_runtime_lite(
+    tmp_path: Path, command: str
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    full = _config(tmp_path, paths=paths, lite=False)
+    runtime.record = _record(full)
+    assert load_active_runtime(paths) is None
+
+    result = getattr(controller, command)(_config(tmp_path, paths=paths))
+
+    assert result["status"] != "reconfigured"
+    assert "changed_fields" not in result
+    assert runtime.record.configured_image == "agentcloud/localcloud:latest"
+    active = load_active_runtime(paths)
+    assert active is not None and active.image == "agentcloud/localcloud:latest"
+
+
+def test_lite_flag_still_replaces_a_full_runtime(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    runtime.record = _record(_config(tmp_path, paths=paths, lite=False))
+
+    result = controller.restart(_config(tmp_path, paths=paths, lite=True))
+
+    assert result["status"] == "reconfigured"
+    assert runtime.record.configured_image == "agentcloud/localcloud:lite"
+
+
+def test_start_records_the_image_and_a_plain_restart_reuses_it(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+
+    controller.start(_config(tmp_path, paths=paths, lite=False))
+    active = load_active_runtime(paths)
+    assert active is not None and active.image == "agentcloud/localcloud:latest"
+
+    plain = _config(tmp_path, paths=paths)
+    assert (plain.image, plain.image_source) == ("agentcloud/localcloud:latest", "runtime")
+    result = controller.restart(plain)
+
+    assert result["status"] == "restarted"
+    assert "changed_fields" not in result
+    assert runtime.record.configured_image == "agentcloud/localcloud:latest"
+
+
+def test_start_of_a_stopped_runtime_does_not_count_the_registry_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config, state="exited")
+    clock = FakeClock()
+    monkeypatch.setattr(controller_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(controller_module.time, "sleep", clock.sleep)
+
+    def no_newer_image(*_args: Any, **_kwargs: Any) -> tuple[Any, bool]:
+        clock.sleep(95.0)
+        return None, False
+
+    runtime.preflight_create = no_newer_image  # type: ignore[method-assign]
+
+    result = controller.start(config, pull=True)
+
+    assert result["status"] == "started"
+    assert runtime.readiness_deadlines == [155.0]
+
 
 def test_start_attaches_to_running_runtime_without_replacing_when_local_image_differs(
     tmp_path: Path,
