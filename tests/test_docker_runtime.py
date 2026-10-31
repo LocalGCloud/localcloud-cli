@@ -2749,52 +2749,6 @@ def test_image_status_reports_local_and_missing(
     assert runtime.image_status("absent:latest") == "not available locally"
 
 
-def test_image_missing_needs_both_docker_and_the_registry_to_lack_it(
-    ready_runtime: tuple[DockerRuntime, Client],
-) -> None:
-    runtime, client = ready_runtime
-    client.images.add("present:latest", Image("sha256:present"))
-    client.images.registry_data["published:latest"] = SimpleNamespace(id="sha256:published")
-
-    assert runtime.image_missing("absent:latest") is True
-    assert runtime.image_missing("present:latest") is False
-    assert runtime.image_missing("published:latest") is False
-
-
-def test_image_missing_is_false_when_it_cannot_be_told(
-    ready_runtime: tuple[DockerRuntime, Client],
-) -> None:
-    runtime, client = ready_runtime
-
-    class RegistryUnreachable(Exception):
-        status_code = 500
-
-    def unreachable(_name: str) -> None:
-        raise RegistryUnreachable("dial tcp: no route to host")
-
-    client.images.get_registry_data = unreachable  # type: ignore[assignment]
-    assert runtime.image_missing("absent:latest") is False
-
-    client.images.get = unreachable  # type: ignore[assignment]
-    assert runtime.image_missing("absent:latest") is False
-
-
-def test_image_missing_when_the_registry_has_no_such_repository(
-    ready_runtime: tuple[DockerRuntime, Client],
-) -> None:
-    runtime, client = ready_runtime
-
-    class Denied(Exception):
-        status_code = 403
-
-    def denied(_name: str) -> None:
-        raise Denied("denied: requested access to the resource is denied")
-
-    client.images.get_registry_data = denied  # type: ignore[assignment]
-
-    assert runtime.image_missing("localcloud:dev-estargz") is True
-
-
 def test_image_details_reports_local_and_remote(
     ready_runtime: tuple[DockerRuntime, Client],
 ) -> None:

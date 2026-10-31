@@ -1959,26 +1959,6 @@ class DockerRuntime:
             removed.append({"kind": kind, "name": name})
         return {"removed": removed, "failures": failures}
 
-    def image_missing(self, image_name: str) -> bool:
-        """Whether Docker holds no copy of the image and its registry does not publish it.
-
-        False when either cannot be told, such as with an unreachable registry.
-        """
-        try:
-            self.client.images.get(image_name)
-            return False
-        except Exception as error:
-            if not _is_not_found(error):
-                return False
-        get_registry_data = getattr(self.client.images, "get_registry_data", None)
-        if not callable(get_registry_data):
-            return False
-        try:
-            get_registry_data(image_name)
-        except Exception as error:
-            return _is_not_found(error) or _is_access_denied(error)
-        return False
-
     def image_status(self, image_name: str) -> str:
         if image_name in self._resolved_image_details:
             return "available locally"
@@ -4409,14 +4389,6 @@ def _is_not_found(error: Exception) -> bool:
         "NotFound",
         "ImageNotFound",
     }
-
-
-def _is_access_denied(error: Exception) -> bool:
-    # A registry's answer for a repository that does not exist, or needs a login.
-    status_code = getattr(error, "status_code", None)
-    if status_code is None:
-        status_code = getattr(getattr(error, "response", None), "status_code", None)
-    return status_code in {401, 403}
 
 
 def _is_name_conflict(error: Exception) -> bool:

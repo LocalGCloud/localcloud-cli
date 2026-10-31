@@ -614,7 +614,6 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
 
     if args.command in _RUNTIME_COMMANDS:
         config = _command_config(controller, args)
-        config, estargz_warning = _estargz_or_regular(controller, args, config)
         if args.command in {"start", "restart"} and getattr(args, "debug", False):
             config = replace(
                 config,
@@ -634,23 +633,20 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
                     if getattr(args, "pull_explicit", False) and args.pull
                     else False
                 )
-            return _with_warning(
-                controller.start(
-                    config,
-                    pull=pull,
-                    ensure_project=args.project_id is not None,
-                    observer=observer,
-                    tail=args.tail,
-                    dry_run=args.dry_run,
-                    confirm_port_mapping=(
-                        (lambda _plan: True)
-                        if args.accept_dynamic_ports
-                        else observer.confirm_port_mapping
-                        if observer is not None
-                        else None
-                    ),
+            return controller.start(
+                config,
+                pull=pull,
+                ensure_project=args.project_id is not None,
+                observer=observer,
+                tail=args.tail,
+                dry_run=args.dry_run,
+                confirm_port_mapping=(
+                    (lambda _plan: True)
+                    if args.accept_dynamic_ports
+                    else observer.confirm_port_mapping
+                    if observer is not None
+                    else None
                 ),
-                estargz_warning,
             )
         if args.command == "restart":
             pull = args.pull
@@ -660,23 +656,20 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
                     if getattr(args, "pull_explicit", False) and args.pull
                     else False
                 )
-            return _with_warning(
-                controller.restart(
-                    config,
-                    pull=pull,
-                    ensure_project=args.project_id is not None,
-                    observer=observer,
-                    tail=args.tail,
-                    dry_run=args.dry_run,
-                    confirm_port_mapping=(
-                        (lambda _plan: True)
-                        if args.accept_dynamic_ports
-                        else observer.confirm_port_mapping
-                        if observer is not None
-                        else None
-                    ),
+            return controller.restart(
+                config,
+                pull=pull,
+                ensure_project=args.project_id is not None,
+                observer=observer,
+                tail=args.tail,
+                dry_run=args.dry_run,
+                confirm_port_mapping=(
+                    (lambda _plan: True)
+                    if args.accept_dynamic_ports
+                    else observer.confirm_port_mapping
+                    if observer is not None
+                    else None
                 ),
-                estargz_warning,
             )
         if args.command == "reset":
             return controller.reset(
@@ -900,7 +893,6 @@ def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConf
         "console": getattr(args, "ui", None),
         "memory": getattr(args, "memory", None),
         "image": getattr(args, "image", None),
-        "estargz": getattr(args, "estargz", None),
         "lite": getattr(args, "lite", None),
         "services": getattr(args, "services", None),
         "skip_validation": getattr(args, "skip_config_validation", False),
@@ -940,30 +932,6 @@ def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConf
         **overrides,
         **snapshot,
     )
-
-
-def _estargz_or_regular(
-    controller: Any, args: argparse.Namespace, config: LocalCloudConfig
-) -> tuple[LocalCloudConfig, str | None]:
-    """With --estargz on a tag that has no eStargz build: the regular build, and a warning."""
-    if not getattr(args, "estargz", None) or getattr(args, "dry_run", False):
-        # A dry run stays off the registry, so it cannot tell.
-        return config, None
-    if not controller.image_missing(config.image):
-        return config, None
-    regular = _command_config(
-        controller, argparse.Namespace(**{**vars(args), "estargz": False})
-    )
-    return regular, (
-        f"The eStargz image {config.image} is missing; using the regular image "
-        f"{regular.image}."
-    )
-
-
-def _with_warning(result: Any, warning: str | None) -> Any:
-    if warning and isinstance(result, dict):
-        result["warning"] = " ".join(filter(None, (warning, result.get("warning"))))
-    return result
 
 
 _MCP_INSTALL_VERBS = {
@@ -1473,18 +1441,6 @@ def _parser() -> argparse.ArgumentParser:
                 help=(
                     "Run the image's full build: its tag latest, or <version>. "
                     "The runtime keeps it on later start and restart until --lite"
-                ),
-            )
-            command.add_argument(
-                "--estargz",
-                action=argparse.BooleanOptionalAction,
-                default=None,
-                help=(
-                    "Run the image's eStargz build, its tag with -estargz appended, "
-                    "which Docker pulls lazily when the Stargz Snapshotter is its "
-                    "storage driver (see 'lc doctor'). A tag without an eStargz "
-                    "build runs the regular build, with a warning. --no-estargz "
-                    "returns to the regular build (default: the image as selected)"
                 ),
             )
             command.add_argument(

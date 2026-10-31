@@ -20,7 +20,6 @@ from .config import (
     clear_active_runtime,
     clear_legacy_host_state,
     data_volume_lock,
-    is_estargz_image,
     load_active_runtime,
     load_config,
     runtime_settings,
@@ -80,10 +79,6 @@ class Controller:
         self._remembered_resolution: (
             tuple[LocalCloudConfig, RuntimeRecord | None] | None
         ) = None
-
-    def image_missing(self, image: str) -> bool:
-        """Whether neither Docker nor the image's registry has `image`."""
-        return self.runtime.image_missing(image)
 
     def remembered_config(self, config: LocalCloudConfig) -> str | None:
         current = self.runtime.resolve(
@@ -382,19 +377,17 @@ class Controller:
 
             def payload() -> dict[str, Any]:
                 return _with_console_warning(
-                    self._with_lazy_pulling(
-                        self._payload(
-                            status,
-                            environment,
-                            config,
-                            include_sdk=True,
-                            changed_fields=changed_fields,
-                            logs=(
-                                self._runtime_logs(config, environment)
-                                if status != "already_running"
-                                else None
-                            ),
-                        )
+                    self._payload(
+                        status,
+                        environment,
+                        config,
+                        include_sdk=True,
+                        changed_fields=changed_fields,
+                        logs=(
+                            self._runtime_logs(config, environment)
+                            if status != "already_running"
+                            else None
+                        ),
                     ),
                     console_warning,
                 )
@@ -597,15 +590,13 @@ class Controller:
 
             def payload() -> dict[str, Any]:
                 return _with_console_warning(
-                    self._with_lazy_pulling(
-                        self._payload(
-                            status,
-                            environment,
-                            config,
-                            include_sdk=True,
-                            changed_fields=changed_fields,
-                            logs=self._runtime_logs(config, environment),
-                        )
+                    self._payload(
+                        status,
+                        environment,
+                        config,
+                        include_sdk=True,
+                        changed_fields=changed_fields,
+                        logs=self._runtime_logs(config, environment),
                     ),
                     console_warning,
                 )
@@ -907,7 +898,7 @@ class Controller:
             )
         )
         result["container"]["image_details"] = image_details
-        return self._with_lazy_pulling(result)
+        return result
 
     def logs(self, config: LocalCloudConfig, tail: int = 200) -> dict[str, Any]:
         current = self._resolve_runtime(
@@ -1340,23 +1331,8 @@ class Controller:
         # The runtime already holds the Docker connection; never open another.
         return inspect(getattr(self.runtime, "client", None), connect=False)
 
-    def _with_lazy_pulling(self, result: dict[str, Any]) -> dict[str, Any]:
-        """For an eStargz image, add whether this engine pulls it lazily, when Docker says."""
-        from .host_checks import lazy_pulling, storage_driver
-
-        container = result.get("container") or {}
-        image = container.get("actual_image") or container.get("configured_image")
-        if not isinstance(image, str) or not is_estargz_image(image):
-            return result
-        report = lazy_pulling(
-            storage_driver(getattr(self.runtime, "client", None)), estargz=True
-        )
-        if report is not None:
-            result["lazy_pulling"] = report
-        return result
-
     def doctor(self, setup: tuple[Any, list[Any]] | None = None) -> dict[str, Any]:
-        from .host_checks import host_version, lazy_pulling
+        from .host_checks import host_version
 
         result = self.runtime.doctor()
         host, findings = setup if setup is not None else self.setup_report()
@@ -1383,10 +1359,6 @@ class Controller:
         # The image `start` would use (host.image, LOCALCLOUD_IMAGE, or the
         # active runtime's), not only the built-in default.
         image = local_config.image if local_config is not None else DEFAULT_IMAGE
-        # With the host, so the report carries the steps for its Docker app.
-        lazy = lazy_pulling(host.storage_driver, host, estargz=is_estargz_image(image))
-        if lazy is not None:
-            result["lazy_pulling"] = lazy
         image_details = self.runtime.image_details(image)
         result["default_image"] = f"{image} {image_details['formatted']}"
         result["image_details"] = image_details

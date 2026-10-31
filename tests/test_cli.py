@@ -25,7 +25,6 @@ from localcloud_cli.errors import HostError
 
 class FakeController:
     instance: "FakeController"
-    missing_images: frozenset[str] = frozenset()
     console: bool | None = None
 
     def __init__(self) -> None:
@@ -38,10 +37,6 @@ class FakeController:
         self.port_confirmation_calls: list[tuple[str, bool]] = []
         self.remembered: str | None = None
         self.remembered_by_volume: dict[str, str | None] = {}
-
-    def image_missing(self, image: str) -> bool:
-        self.calls.append(("image_missing", image))
-        return image in self.missing_images
 
     def remembered_config(self, config: Any) -> str | None:
         self.calls.append(("remembered_config", config))
@@ -1332,52 +1327,6 @@ def test_invalid_memory_fails_before_the_runtime_is_touched(command: str) -> Non
 
 
 @pytest.mark.parametrize("command", ["start", "restart"])
-def test_estargz_flag_selects_the_estargz_build(command: str) -> None:
-    parser = _parser()
-    assert parser.parse_args([command]).estargz is None
-
-    _execute(parser.parse_args([command, "--estargz"]))
-    _, config = FakeController.instance.calls[-1]
-    assert config.image == "agentcloud/localcloud:lite-estargz"
-
-    _execute(parser.parse_args([command, "--image", "myrepo/localcloud:dev", "--estargz"]))
-    _, config = FakeController.instance.calls[-1]
-    assert config.image == "myrepo/localcloud:dev-estargz"
-
-    _execute(
-        parser.parse_args([command, "--image", "myrepo/localcloud:dev-estargz", "--no-estargz"])
-    )
-    _, config = FakeController.instance.calls[-1]
-    assert config.image == "myrepo/localcloud:dev"
-
-
-@pytest.mark.parametrize("command", ["start", "restart"])
-def test_estargz_uses_the_regular_build_when_the_tag_has_no_estargz_build(
-    monkeypatch: pytest.MonkeyPatch, command: str
-) -> None:
-    monkeypatch.setattr(
-        FakeController, "missing_images", frozenset({"myrepo/localcloud:dev-estargz"})
-    )
-
-    result = _execute(
-        _parser().parse_args([command, "--image", "myrepo/localcloud:dev", "--estargz"])
-    )
-
-    call, config = FakeController.instance.calls[-1]
-    assert call == command
-    assert config.image == "myrepo/localcloud:dev"
-    assert result["warning"] == (
-        "The eStargz image myrepo/localcloud:dev-estargz is missing; using the regular "
-        "image myrepo/localcloud:dev."
-    )
-
-    # A published eStargz build is used, without a warning.
-    result = _execute(_parser().parse_args([command, "--estargz"]))
-    assert FakeController.instance.calls[-1][1].image == "agentcloud/localcloud:lite-estargz"
-    assert "warning" not in result
-
-
-@pytest.mark.parametrize("command", ["start", "restart"])
 def test_lite_and_full_flags_select_the_build(command: str) -> None:
     parser = _parser()
     assert parser.parse_args([command]).lite is None
@@ -1393,32 +1342,8 @@ def test_lite_and_full_flags_select_the_build(command: str) -> None:
     assert FakeController.instance.calls[-1][1].image == "myrepo/localcloud:0.2.0-lite"
 
 
-def test_only_the_estargz_flag_asks_whether_the_image_is_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        FakeController, "missing_images", frozenset({"agentcloud/localcloud:lite-estargz"})
-    )
-
-    def asked() -> list[Any]:
-        return [call for call in FakeController.instance.calls if call[0] == "image_missing"]
-
-    # A dry run stays off the registry and plans the build that was asked for.
-    _execute(_parser().parse_args(["start", "--estargz", "--dry-run"]))
-    assert asked() == []
-    assert FakeController.instance.calls[-1][1].image == "agentcloud/localcloud:lite-estargz"
-
-    # An image named in full is not replaced by another.
-    _execute(_parser().parse_args(["start", "--image", "agentcloud/localcloud:lite-estargz"]))
-    assert asked() == []
-    assert FakeController.instance.calls[-1][1].image == "agentcloud/localcloud:lite-estargz"
-
-    _execute(_parser().parse_args(["start", "--no-estargz"]))
-    assert asked() == []
-
-
-@pytest.mark.parametrize("command", ["status", "stop", "reset", "doctor"])
-def test_estargz_flag_belongs_to_start_and_restart(command: str) -> None:
+@pytest.mark.parametrize("command", ["start", "restart", "status", "doctor"])
+def test_there_is_no_estargz_flag(command: str) -> None:
     with pytest.raises(SystemExit):
         _parser().parse_args([command, "--estargz"])
 

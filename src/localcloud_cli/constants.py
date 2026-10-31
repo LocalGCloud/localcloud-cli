@@ -7,8 +7,6 @@ DEFAULT_IMAGE = "agentcloud/localcloud:lite"
 FULL_TAG = "latest"
 LITE_TAG = "lite"
 LITE_TAG_SUFFIX = "-lite"
-# Every published tag T has an eStargz build of the same image, tagged T-estargz.
-ESTARGZ_TAG_SUFFIX = "-estargz"
 DEFAULT_MEMORY = "4g"
 DEFAULT_TLS_PORT = 5381
 DEFAULTS_CONFIG_LABEL = "<defaults>"

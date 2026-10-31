@@ -87,12 +87,6 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
   `active-runtime.json`, the CLI keeps the image the container runs. An image pinned by digest
   (`name:tag@sha256:…`) keeps its build: `--lite` or `--full` fails when it would have to switch it.
   Available on `start` and `restart`.
-- `--estargz` runs the eStargz build of the selected image: the same tag with `-estargz` appended, such as
-  `agentcloud/localcloud:lite-estargz`. Docker pulls it lazily when the Stargz Snapshotter is its storage
-  driver, and downloads it whole otherwise; the **Lazy pulling** row says which (see [doctor](#doctor)). A
-  runtime keeps the build it was started with unless `host.image` or `LOCALCLOUD_IMAGE` names another, and
-  `--no-estargz` returns to the regular build. The option cannot switch an image pinned by digest. When neither Docker
-  nor the registry has an eStargz build for that tag, the CLI warns and runs the regular build.
 - `--services` overrides `services.enabled` with a comma-separated list of service IDs, or `default` to use the built-in set.
 - `--tail [SECONDS]` sets how long `start` and `restart` stream the container log after the runtime is ready. The default is 5 seconds; `--tail 0` skips it, and `--tail` with no value streams until you press Ctrl-C. (`lc logs --tail LINES` is a different option: it counts lines.)
 - `--skip-config-validation` (or `LOCALCLOUD_SKIP_CONFIG_VALIDATION=1`) skips the CLI's own checks of `localcloud.yaml` when they disagree with what a newer image accepts. The file is still passed through unchanged; see [Configuration](configuration.md#removed-flat-keys). Available on `start`, `restart`, and `reset`.
@@ -350,34 +344,6 @@ and its exit code. Switching a VM restarts it, so running containers stop. A fix
 (switching the VM type, until each app is verified to keep its data) says so, lists the LocalCloud volumes,
 and runs only after you type `delete`. `--fix` needs an interactive terminal and does not run with
 `--verbose`. The CLI never runs `sudo` or installer scripts.
-
-**Lazy pulling** says whether Docker pulls LocalCloud's image lazily. Every LocalCloud tag also has an
-[eStargz](https://github.com/containerd/stargz-snapshotter/blob/main/docs/estargz.md) build, which
-`lc start --estargz` runs. When the
-[Stargz Snapshotter](https://github.com/containerd/stargz-snapshotter) is Docker's storage driver (`stargz` in
-`docker info`), Docker starts that build after fetching only the files it reads, so the download is smaller and
-LocalCloud starts sooner. The row reads `on` when the snapshotter is the storage driver and `start` would use
-the eStargz build, and `available` when the snapshotter is there and `start` would use the regular build. With
-any other storage driver it reads `off` and Docker downloads the whole image first; LocalCloud works the same
-either way, so this is never a **Setup** finding and has no `--fix`. `lc doctor` prints the steps for the
-Docker app it found:
-
-| Docker host | Steps |
-| :--- | :--- |
-| Colima | In the VM (`colima ssh`), install the Stargz Snapshotter and register it with containerd, following its [install guide](https://github.com/containerd/stargz-snapshotter/blob/main/docs/INSTALL.md). Then `colima stop`, `colima start --edit`, and under `docker:` set `features: {containerd-snapshotter: true}` and `storage-driver: stargz` |
-| Docker Engine (Linux, or a remote engine) | On the engine's host, install the Stargz Snapshotter the same way, set `"features": {"containerd-snapshotter": true}` and `"storage-driver": "stargz"` in `/etc/docker/daemon.json`, and restart containerd and Docker |
-| Docker Desktop, Rancher Desktop | They manage their own VM, and LocalCloud has no steps for adding the snapshotter to it |
-
-Install the snapshotter before selecting the storage driver. After the change Docker hides the containers
-created under the previous storage driver, so run `lc start --estargz`: it creates a new container on the
-same data volume. Named volumes, including LocalCloud's data volume, are kept, and so are images already in Docker's
-containerd image store. An engine that was on the classic `overlay2` driver pulls its images again. The Colima
-steps were run on Colima 0.10.1 with Docker 29.2.1 and Stargz Snapshotter 0.19.0.
-
-`start`, `restart` and `status` show the row, without the steps, only for a runtime on the eStargz build:
-`on`, or `off` when the Stargz Snapshotter is not Docker's storage driver and Docker downloaded the whole
-image. With `--verbose` it is `lazy_pulling`: `enabled`, `storage_driver`, `summary`, and in `doctor` also
-`steps`. The row is left out when Docker does not report a storage driver.
 
 `lc doctor` works without Docker: it exits with `docker_unavailable`, whose `details.reason` is
 `not_installed`, `not_running`, `unreachable` or `permission_denied`, and prints the matching finding.

@@ -28,7 +28,6 @@ from .constants import (
     DEFAULT_PROJECT,
     DEFAULT_TLS_PORT,
     DEFAULT_USER,
-    ESTARGZ_TAG_SUFFIX,
     FULL_TAG,
     LITE_TAG,
     LITE_TAG_SUFFIX,
@@ -265,10 +264,10 @@ class LocalCloudConfig:
     # checkout name), or "default" (built in, or a shared config's
     # context.project). Not part of the runtime identity.
     project_source: ProjectSource = "default"
-    # Where `image` came from: "flag" (--image, --lite/--full, --estargz),
-    # "config" (host.image), "environment" (LOCALCLOUD_IMAGE), "runtime" (the
-    # image this data volume last ran, from the active-runtime record), or
-    # "default" (DEFAULT_IMAGE). Not part of the runtime identity.
+    # Where `image` came from: "flag" (--image, --lite/--full), "config"
+    # (host.image), "environment" (LOCALCLOUD_IMAGE), "runtime" (the image this
+    # data volume last ran, from the active-runtime record), or "default"
+    # (DEFAULT_IMAGE). Not part of the runtime identity.
     image_source: ImageSource = "default"
     # Whether the gateway serves the Console: set by --ui/--no-ui,
     # host.environment.LOCALCLOUD_CONSOLE or server.console.enabled, and None
@@ -635,7 +634,6 @@ def load_config(
     console: bool | None = None,
     memory: str | None = None,
     image: str | None = None,
-    estargz: bool | None = None,
     lite: bool | None = None,
     services: list[str] | str | None = None,
     paths: HostPaths | None = None,
@@ -767,9 +765,6 @@ def load_config(
             image_source = "default"
     if lite is not None:
         image = lite_image(image, lite)
-        image_source = "flag" if image_source == "default" else image_source
-    if estargz is not None:
-        image = estargz_image(image, estargz)
         image_source = "flag" if image_source == "default" else image_source
 
     memory = _memory_limit(
@@ -1500,35 +1495,11 @@ def _pinned_tag(image: str) -> str | None:
     return parts[1] if parts is not None else None
 
 
-def is_estargz_image(image: str) -> bool:
-    """Whether `image` names an eStargz build: a tag ending in -estargz."""
-    tag = _pinned_tag(image)
-    return tag is not None and tag.endswith(ESTARGZ_TAG_SUFFIX)
-
-
-def estargz_image(image: str, enabled: bool) -> str:
-    """`image` as its eStargz build when `enabled`, otherwise as its regular build."""
-    if is_estargz_image(image) == enabled:
-        return image
-    parts = _image_tag(image)
-    if parts is None:
-        raise ConfigError(
-            "invalid_config",
-            "--estargz cannot switch an image pinned by digest or named by "
-            "image ID; name the build you want instead",
-            {"image": image},
-        )
-    repository, tag = parts
-    tag = f"{tag}{ESTARGZ_TAG_SUFFIX}" if enabled else tag.removesuffix(ESTARGZ_TAG_SUFFIX)
-    return f"{repository}:{tag}"
-
-
 def is_lite_image(image: str) -> bool:
     """Whether `image` names a lite build: tag `lite`, or one ending in -lite."""
     tag = _pinned_tag(image)
     if tag is None:
         return False
-    tag = tag.removesuffix(ESTARGZ_TAG_SUFFIX)
     return tag == LITE_TAG or tag.endswith(LITE_TAG_SUFFIX)
 
 
@@ -1546,13 +1517,11 @@ def lite_image(image: str, lite: bool) -> str:
             {"image": image},
         )
     repository, tag = parts
-    estargz = tag.endswith(ESTARGZ_TAG_SUFFIX)
-    tag = tag.removesuffix(ESTARGZ_TAG_SUFFIX)
     if lite:
         tag = LITE_TAG if tag == FULL_TAG else f"{tag}{LITE_TAG_SUFFIX}"
     else:
         tag = FULL_TAG if tag == LITE_TAG else tag.removesuffix(LITE_TAG_SUFFIX)
-    return f"{repository}:{tag}{ESTARGZ_TAG_SUFFIX if estargz else ''}"
+    return f"{repository}:{tag}"
 
 
 def _environment(value: object) -> dict[str, str]:
