@@ -12,6 +12,11 @@ relay profile is exercised the same way. Nothing outside the run's data volume i
     LOCALCLOUD_RUN_IDENTITY_E2E=1 LOCALCLOUD_IMAGE=localcloud:<tag> \\
         uv run --frozen --extra test python -m pytest -m docker \\
         tests/integration/test_identity_session_acceptance.py
+
+The run's localcloud.yaml is bind-mounted into LocalCloud, so pytest's temporary directory must
+be one the Docker VM shares. Colima shares only $HOME by default; there, add
+`--basetemp ~/.cache/lc-identity-e2e` (a bind mount from elsewhere arrives empty, and LocalCloud
+runs with defaults).
 """
 
 from __future__ import annotations
@@ -104,10 +109,14 @@ def _sha256(path: Path) -> str:
 
 
 def _verified(gateway: str, token: str, audience: str, issuer: str) -> dict[str, Any]:
-    """google-auth's generic verifier with LocalCloud's certificates and an explicit issuer check."""
+    """google-auth's generic verifier with LocalCloud's certificates and an explicit issuer check.
+
+    The token is minted on the Docker VM's clock, which can run a second ahead of the host's;
+    without leeway google-auth rejects such a token as used too early.
+    """
     claims = id_token.verify_token(
         token, google.auth.transport.requests.Request(), audience=audience,
-        certs_url=f"{gateway}/oauth2/v1/certs",
+        certs_url=f"{gateway}/oauth2/v1/certs", clock_skew_in_seconds=5,
     )
     assert claims["iss"] == issuer, claims
     return claims
@@ -328,22 +337,23 @@ def test_lc_env_identity_serves_an_unchanged_adc_application_and_stops_cleanly(t
                 httpx.get(f"http://127.0.0.1:{port}/computeMetadata/v1/project/project-id",
                           headers={"Metadata-Flavor": "Google"}, timeout=5, trust_env=False).raise_for_status()
 
-            # The MCP setup tool's relay profile, started by hand as its next steps say, then /env.
+            # The MCP setup tool's relay profile, started by hand exactly as published, then /env.
+            # A gateway in a container names the relay's image and network, and a gateway origin
+            # reachable on that network.
             setup = _mcp_setup(gateway, project)
             relay_profile, profile = setup["relay"], setup["profile"]
             assert set(setup) >= {"capability", "relay", "profile", "next_steps"}
             inspect = localcloud[0].attrs
-            network = next(iter(inspect["NetworkSettings"]["Networks"]))
+            assert relay_profile.get("network") in inspect["NetworkSettings"]["Networks"], relay_profile
+            assert client.images.get(relay_profile.get("image") or "").id == inspect["Image"], relay_profile
             relay_environment = {
                 **relay_profile["environment"],
-                "LOCALCLOUD_RELAY_GATEWAY": relay_profile["environment"].get(
-                    "LOCALCLOUD_RELAY_GATEWAY", f"http://{localcloud[0].name}:5380"),
                 relay_profile["capabilityEnv"]: setup["capability"],
             }
             mcp_relay = client.containers.run(
-                relay_profile.get("image") or inspect["Image"], command=relay_profile["command"][1:],
+                relay_profile["image"], command=relay_profile["command"][1:],
                 entrypoint=[relay_profile["command"][0]], detach=True, name=f"lc-identity-e2e-mcp-{run}",
-                environment=relay_environment, network=relay_profile.get("network") or network,
+                environment=relay_environment, network=relay_profile["network"],
                 ports={f"{relay_profile['metadataPort']}/tcp": ("127.0.0.1", None)},
                 labels={VOLUME_LABEL: volume, "com.localcloud.test-run": run}, healthcheck={"test": ["NONE"]},
             )
@@ -384,6 +394,9 @@ def test_lc_env_identity_serves_an_unchanged_adc_application_and_stops_cleanly(t
             for label in (f"{VOLUME_LABEL}={volume}", f"com.localcloud.test-run={run}"):
                 for container in client.containers.list(all=True, filters={"label": label}):
                     container.remove(force=True, v=True)
+            # `lc stop` leaves the runtime network when a step failed before it.
+            for leftover_network in client.networks.list(filters={"label": f"{VOLUME_LABEL}={volume}"}):
+                leftover_network.remove()
             for leftover in client.volumes.list(filters={"name": volume}):
                 if leftover.name == volume:
                     leftover.remove(force=True)
@@ -394,5 +407,6 @@ def test_lc_env_identity_serves_an_unchanged_adc_application_and_stops_cleanly(t
         assert remaining.containers.list(all=True, filters={"label": f"{VOLUME_LABEL}={volume}"}) == []
         assert remaining.containers.list(all=True, filters={"label": f"com.localcloud.test-run={run}"}) == []
         assert [v.name for v in remaining.volumes.list(filters={"name": volume}) if v.name == volume] == []
+        assert remaining.networks.list(filters={"label": f"{VOLUME_LABEL}={volume}"}) == []
     finally:
         remaining.close()
