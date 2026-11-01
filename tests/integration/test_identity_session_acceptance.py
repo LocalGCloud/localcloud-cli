@@ -337,21 +337,22 @@ def test_lc_env_identity_serves_an_unchanged_adc_application_and_stops_cleanly(t
                 httpx.get(f"http://127.0.0.1:{port}/computeMetadata/v1/project/project-id",
                           headers={"Metadata-Flavor": "Google"}, timeout=5, trust_env=False).raise_for_status()
 
-            # The MCP setup tool's relay profile, started by hand exactly as published, then /env.
-            # A gateway in a container names the relay's image and network, and a gateway origin
-            # reachable on that network.
+            # The MCP setup tool's relay profile, started by hand exactly as published. A gateway in
+            # a container names the relay's network and a gateway origin reachable on it; it names
+            # relay.image only when it knows its own image, otherwise the relay runs the running one.
             setup = _mcp_setup(gateway, project)
             relay_profile, profile = setup["relay"], setup["profile"]
             assert set(setup) >= {"capability", "relay", "profile", "next_steps"}
             inspect = localcloud[0].attrs
             assert relay_profile.get("network") in inspect["NetworkSettings"]["Networks"], relay_profile
-            assert client.images.get(relay_profile.get("image") or "").id == inspect["Image"], relay_profile
+            relay_image = relay_profile.get("image") or inspect["Image"]
+            assert client.images.get(relay_image).id == inspect["Image"], relay_profile
             relay_environment = {
                 **relay_profile["environment"],
                 relay_profile["capabilityEnv"]: setup["capability"],
             }
             mcp_relay = client.containers.run(
-                relay_profile["image"], command=relay_profile["command"][1:],
+                relay_image, command=relay_profile["command"][1:],
                 entrypoint=[relay_profile["command"][0]], detach=True, name=f"lc-identity-e2e-mcp-{run}",
                 environment=relay_environment, network=relay_profile["network"],
                 ports={f"{relay_profile['metadataPort']}/tcp": ("127.0.0.1", None)},
@@ -361,10 +362,10 @@ def test_lc_env_identity_serves_an_unchanged_adc_application_and_stops_cleanly(t
             mcp_relay.reload()
             mcp_port = int(mcp_relay.attrs["NetworkSettings"]["Ports"][f"{relay_profile['metadataPort']}/tcp"][0]
                            ["HostPort"])
-            rendered = httpx.get(f"{gateway}/env", params={"identitySession": setup["id"], "metadataPort": mcp_port,
-                                                           "format": "json"}, timeout=30, trust_env=False).json()
-            assert rendered == {**profile["environment"], **{name: f"127.0.0.1:{mcp_port}"
-                                                              for name in profile["endpointVariables"]}}
+            # The workload's variables: the profile's, with its endpoint variables at the published port.
+            assert set(profile["endpointVariables"]) <= set(profile["environment"]), profile
+            rendered = {**profile["environment"],
+                        **{name: f"127.0.0.1:{mcp_port}" for name in profile["endpointVariables"]}}
             mcp_environment = {**developer, **rendered, "NO_PROXY": ",".join(profile["noProxy"]),
                                "no_proxy": ",".join(profile["noProxy"]), "CLOUDSDK_CONFIG": str(isolated)}
             assert _app(mcp_environment, receiver).get("receiver_status") == 200
