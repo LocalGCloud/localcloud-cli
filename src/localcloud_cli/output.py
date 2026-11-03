@@ -588,6 +588,7 @@ def describe_port_owners(occupied: Sequence[Mapping[str, Any]]) -> str:
         if isinstance(item, Mapping) and "port" in item
     )
 
+
 def _format_port_mappings(mappings: Sequence[Mapping[str, Any]]) -> str:
     if not mappings:
         return ""

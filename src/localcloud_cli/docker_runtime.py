@@ -1067,6 +1067,11 @@ class DockerRuntime:
             )
             return ready
         except Exception as error:
+            if isinstance(error, HostError) and error.code == "services_not_ready":
+                # The gateway is up and the runtime holds data: a service that
+                # is slow to warm up must not delete the container (or a volume
+                # this call created). The caller reports the error.
+                raise
             if container is None and run_attempted and not _is_name_conflict(error):
                 # `containers.run()` creates the container before starting it,
                 # so a failed start leaves it behind without returning it. Not
@@ -2035,13 +2040,17 @@ class DockerRuntime:
                     ]
                 },
             )
-            others = self.client.containers.list()
+            companions = [
+                companion
+                for companion in companions
+                if _container_state(companion) in {"created", "dead"}
+            ]
+            # Only a companion that never ran needs the other containers.
+            others = self.client.containers.list() if companions else []
         except Exception:
             return []
         warnings: list[str] = []
         for companion in companions:
-            if _container_state(companion) not in {"created", "dead"}:
-                continue
             name = _resource_name(companion) or _resource_identity(companion)
             for bindings in _published_ports(companion).values():
                 for host_ip, host_port in bindings:
@@ -4502,7 +4511,6 @@ def _listening_process(port: int) -> str | None:
     from .host_checks import listening_process
 
     return listening_process(port)
-
 
 
 def _validate_base_url(url: str) -> str:

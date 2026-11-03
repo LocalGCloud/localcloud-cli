@@ -1946,7 +1946,9 @@ class Controller:
         restore = getattr(self.runtime, "restore_previous_runtime", None)
         new_image_id = getattr(new_image, "id", None)
         if (
-            not callable(restore)
+            # The new image started and is running; only its services lag.
+            error.code == "services_not_ready"
+            or not callable(restore)
             or not preserve_volume
             or self._requires_managed_replacement(previous, config)
             or not previous.image_id
