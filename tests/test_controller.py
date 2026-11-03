@@ -84,6 +84,8 @@ class FakeRuntime:
         self.restore_error: Exception | None = None
         self.companion_warning_list: list[str] = []
         self.orphan_removals: list[list[dict[str, Any]]] = []
+        self.service_failures_list: list[dict[str, Any]] = []
+        self.service_failure_urls: list[str] = []
 
 
 
@@ -220,6 +222,9 @@ class FakeRuntime:
         self.readiness_deadlines.append(readiness_deadline)
         self.prepared_images.append(prepared_image)
         if self.create_error is not None:
+            if self.create_error.code == "services_not_ready":
+                # Like DockerRuntime.create: the container runs, its services lag.
+                self.record = _record(config, container_id=f"container-{self.creates}")
             raise self.create_error
         self.record = replace(
             _record(config, container_id=f"container-{self.creates}"),
@@ -318,6 +323,12 @@ class FakeRuntime:
 
     def effective_services(self, _current: RuntimeRecord) -> tuple[str, ...] | None:
         return self.effective
+
+    def service_failures(
+        self, url: str, *, timeout: float = 3.0
+    ) -> list[dict[str, Any]]:
+        self.service_failure_urls.append(url)
+        return list(self.service_failures_list)
 
     def health(self, url: str, *, timeout: float = 3.0) -> dict[str, Any] | None:
         self.health_urls.append(url)
@@ -3760,3 +3771,81 @@ def test_relay_readiness_probe_never_goes_through_an_environment_proxy(
     assert session["state"] == "ACTIVE"
     assert [hit["target"] for hit in served] == ["/computeMetadata/v1/project/project-id"]
     assert proxied == [], "the proxy saw the relay probe"
+
+
+_BIGQUERY_FAILED = {
+    "id": "bigquery",
+    "display_name": "BigQuery",
+    "phase": "running",
+    "failure_code": "unsupported_vm",
+    "failure_reason": "the emulator needs a VZ virtual machine.",
+    "remediation_hint": "Run lc doctor.",
+}
+
+
+def test_start_warns_about_a_service_that_failed_for_good(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    runtime.service_failures_list = [_BIGQUERY_FAILED]
+    config = _config(tmp_path, paths=paths)
+
+    result = controller.start(config)
+
+    # The gateway and the other services serve: the start succeeds and says
+    # what is missing, with the runtime's reason and remedy.
+    assert result["status"] == "started"
+    assert result["warning"] == (
+        "BigQuery is not available (the emulator needs a VZ virtual machine). "
+        "Run lc doctor."
+    )
+    assert runtime.service_failure_urls == [runtime.record.url]
+    assert controller.status(config)["warning"] == result["warning"]
+    assert (paths.home / "active-runtime.json").exists()
+
+
+def test_service_failure_warning_falls_back_to_the_code_without_a_reason(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    runtime.service_failures_list = [{"id": "spanner", "failure_code": "boot_failed"}]
+
+    result = controller.restart(_config(tmp_path, paths=paths))
+
+    assert result["warning"] == "spanner is not available (boot_failed)."
+
+
+def test_start_records_a_runtime_whose_services_were_not_ready_in_time(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    runtime.create_error = HostError(
+        "services_not_ready",
+        "LocalCloud started, but some services were not ready in time: bigquery",
+    )
+
+    with pytest.raises(HostError) as raised:
+        controller.start(_config(tmp_path, paths=paths))
+
+    assert raised.value.code == "services_not_ready"
+    # The container runs: status, logs and stop must find it.
+    assert (paths.home / "active-runtime.json").exists()
+    assert controller.status(_config(tmp_path, paths=paths))["status"] == "running"
+
+
+def test_restart_keeps_a_new_image_whose_services_lag(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config, image_id="sha256:old")
+    runtime.create_error = HostError(
+        "services_not_ready",
+        "LocalCloud started, but some services were not ready in time: bigquery",
+    )
+
+    with pytest.raises(HostError) as raised:
+        controller.restart(config)
+
+    assert raised.value.code == "services_not_ready"
+    # The new image started; only its services lag: no rollback.
+    assert runtime.restore_calls == []
+    assert "rolled_back_to_image" not in raised.value.details
+    assert runtime.record is not None and runtime.record.state == "running"
+    assert (paths.home / "active-runtime.json").exists()

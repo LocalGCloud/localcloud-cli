@@ -6,7 +6,7 @@ import shutil
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Mapping
 
 from . import __version__
 from .config import (
@@ -328,43 +328,47 @@ class Controller:
                 return plan.render()
             _confirm_alternative_port_mapping(run_plan, confirm_port_mapping, config)
 
-            if action == "create":
-                deadline = time.monotonic() + _START_READINESS_TIMEOUT
-                environment = self.runtime.create(
-                    config,
-                    readiness_deadline=deadline,
-                    observer=observer,
-                    prepared_image=prepared_image,
-                    run_plan=run_plan,
-                )
-                self._emit_runtime_logs(observer, config, environment)
-            elif action == "replace":
-                environment = self._replace(
-                    current,
-                    config,
-                    pull=effective_pull,
-                    readiness_timeout=_START_READINESS_TIMEOUT,
-                    observer=observer,
-                    prepared_image=prepared_image,
-                    run_plan=run_plan,
-                )
-                deadline = time.monotonic() + _START_READINESS_TIMEOUT
-            elif action in {"start", "wait"}:
-                if observer is not None and hasattr(observer, "starting"):
-                    observer.starting(config)
-                # The budget covers the start itself, not a registry check
-                # for --pull that found no newer image.
-                deadline = time.monotonic() + _START_READINESS_TIMEOUT
-                environment = self.runtime.start(
-                    config,
-                    current,
-                    readiness_deadline=deadline,
-                    observer=observer,
-                )
-                self._emit_runtime_logs(observer, config, environment)
-            else:
-                assert current is not None
-                environment = current
+            try:
+                if action == "create":
+                    deadline = time.monotonic() + _START_READINESS_TIMEOUT
+                    environment = self.runtime.create(
+                        config,
+                        readiness_deadline=deadline,
+                        observer=observer,
+                        prepared_image=prepared_image,
+                        run_plan=run_plan,
+                    )
+                    self._emit_runtime_logs(observer, config, environment)
+                elif action == "replace":
+                    environment = self._replace(
+                        current,
+                        config,
+                        pull=effective_pull,
+                        readiness_timeout=_START_READINESS_TIMEOUT,
+                        observer=observer,
+                        prepared_image=prepared_image,
+                        run_plan=run_plan,
+                    )
+                    deadline = time.monotonic() + _START_READINESS_TIMEOUT
+                elif action in {"start", "wait"}:
+                    if observer is not None and hasattr(observer, "starting"):
+                        observer.starting(config)
+                    # The budget covers the start itself, not a registry check
+                    # for --pull that found no newer image.
+                    deadline = time.monotonic() + _START_READINESS_TIMEOUT
+                    environment = self.runtime.start(
+                        config,
+                        current,
+                        readiness_deadline=deadline,
+                        observer=observer,
+                    )
+                    self._emit_runtime_logs(observer, config, environment)
+                else:
+                    assert current is not None
+                    environment = current
+            except HostError as error:
+                self._record_runtime_whose_services_lag(error, config)
+                raise
 
             if ensure_project:
                 self._ensure_project(
@@ -378,6 +382,7 @@ class Controller:
                 )
             console_check, console_state = self._check_console(environment, config)
             console_warning = self._join_warnings(
+                self._service_warning(environment),
                 console_check,
                 _console_inheritance_warning(requested, config),
                 self._companion_warning(config),
@@ -567,27 +572,31 @@ class Controller:
                 if observer is not None and hasattr(observer, "starting"):
                     observer.starting(config)
 
-            if action == "create":
-                environment = self.runtime.create(
-                    config,
-                    observer=observer,
-                    prepared_image=prepared_image,
-                    run_plan=run_plan,
-                )
-            elif action == "replace":
-                environment = self._replace(
-                    current,
-                    config,
-                    pull=effective_pull,
-                    observer=observer,
-                    prepared_image=prepared_image,
-                    run_plan=run_plan,
-                )
-            else:
-                assert current is not None
-                environment = self.runtime.restart(
-                    config, current, observer=observer
-                )
+            try:
+                if action == "create":
+                    environment = self.runtime.create(
+                        config,
+                        observer=observer,
+                        prepared_image=prepared_image,
+                        run_plan=run_plan,
+                    )
+                elif action == "replace":
+                    environment = self._replace(
+                        current,
+                        config,
+                        pull=effective_pull,
+                        observer=observer,
+                        prepared_image=prepared_image,
+                        run_plan=run_plan,
+                    )
+                else:
+                    assert current is not None
+                    environment = self.runtime.restart(
+                        config, current, observer=observer
+                    )
+            except HostError as error:
+                self._record_runtime_whose_services_lag(error, config)
+                raise
             if action != "replace":
                 self._emit_runtime_logs(observer, config, environment)
             if ensure_project:
@@ -598,6 +607,7 @@ class Controller:
                 )
             console_check, console_state = self._check_console(environment, config)
             console_warning = self._join_warnings(
+                self._service_warning(environment),
                 console_check,
                 _console_inheritance_warning(requested, config),
                 self._companion_warning(config),
@@ -919,6 +929,7 @@ class Controller:
             result = _with_console_warning(
                 result,
                 self._join_warnings(
+                    self._service_warning(current),
                     _console_inheritance_warning(
                         config, _inherit_console(current, config)
                     ),
@@ -1717,6 +1728,36 @@ class Controller:
             # The record's configured image ID belongs to the image asked for.
             current = self._resolve_runtime(kept)
         return current, kept
+
+    def _service_warning(self, environment: RuntimeRecord) -> str | None:
+        """Name the services that failed for good, with the runtime's reason
+        and remedy. The runtime itself runs and serves the others, so this is
+        a warning, not a failure."""
+        failures = getattr(self.runtime, "service_failures", None)
+        if environment.url is None or not callable(failures):
+            return None
+        try:
+            failed = failures(environment.url)
+        except Exception:
+            return None
+        return self._join_warnings(
+            *(_service_failure_warning(service) for service in failed)
+        )
+
+    def _record_runtime_whose_services_lag(
+        self, error: HostError, config: LocalCloudConfig
+    ) -> None:
+        """A runtime whose services were not ready in time is up and serving
+        the gateway: record it before the error is raised, so status, logs
+        and stop find it."""
+        if error.code != "services_not_ready":
+            return
+        try:
+            current = self._resolve_runtime(config)
+        except Exception:
+            return
+        if current is not None and current.state == "running":
+            self._record_active(current, config)
 
     def _companion_warning(self, config: LocalCloudConfig) -> str | None:
         """Warn when the runtime's Cloud SQL MySQL companion cannot start."""
@@ -2655,6 +2696,19 @@ def _stale_runtime_hint(active_status: dict[str, Any]) -> str:
 
 def _short_image_id(image_id: str) -> str:
     return image_id.removeprefix("sha256:")[:12]
+
+
+def _service_failure_warning(service: Mapping[str, Any]) -> str:
+    """One sentence on a service /readiness reports as failed for good."""
+    name = service.get("display_name") or service.get("id")
+    reason = (
+        service.get("failure_reason")
+        or service.get("failure_code")
+        or "it reported a failure"
+    )
+    text = f"{name} is not available ({str(reason).rstrip('.')})."
+    hint = service.get("remediation_hint")
+    return f"{text} {hint}" if hint else text
 
 
 def _with_console_warning(result: dict[str, Any], warning: str | None) -> dict[str, Any]:

@@ -3991,3 +3991,120 @@ def test_identity_relay_failed_run_never_removes_another_sessions_relay(
     assert caught.value.code == "identity_relay_failed"
     assert others[0].removed == []
     assert client.containers.get(name) is others[0]
+
+
+_BIGQUERY_FAILED = _Response(
+    503,
+    {
+        "ready": False,
+        "services": [
+            {"id": "gcs", "enabled": True, "ready": True, "phase": "running"},
+            {
+                "id": "bigquery",
+                "display_name": "BigQuery",
+                "enabled": True,
+                "ready": False,
+                "phase": "failed",
+                "failure_code": "unsupported_vm",
+                "failure_reason": "the emulator needs a VZ virtual machine",
+                "remediation_hint": "Run lc doctor.",
+            },
+        ],
+    },
+)
+_BIGQUERY_FAILED_SPANNER_WARMING = _Response(
+    503,
+    {
+        "ready": False,
+        "services": [
+            *_BIGQUERY_FAILED.json()["services"],
+            {"id": "spanner", "enabled": True, "ready": False, "phase": "running"},
+        ],
+    },
+)
+
+
+def test_wait_ready_stops_waiting_once_every_lagging_service_has_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = _fake_clock(monkeypatch)
+    requested: list[str] = []
+
+    def get(url: str, **_kwargs: Any) -> _Response:
+        requested.append(url.rsplit("/", 1)[1])
+        return _HEALTHY if url.endswith("/health") else _BIGQUERY_FAILED
+
+    monkeypatch.setattr(runtime_module.httpx, "get", get)
+
+    # A failure code is final: waiting the 60 s service budget cannot help.
+    assert DockerRuntime.wait_ready("http://127.0.0.1:5380", deadline=30.0) == {
+        "status": "healthy"
+    }
+    assert requested == ["health", "readiness"]
+    assert now[0] < 1.0
+
+
+def test_wait_ready_keeps_waiting_for_a_warming_service_beside_a_failed_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = _fake_clock(monkeypatch)
+
+    def get(url: str, **_kwargs: Any) -> _Response:
+        if url.endswith("/health"):
+            return _HEALTHY
+        return _BIGQUERY_FAILED if now[0] >= 20.0 else _BIGQUERY_FAILED_SPANNER_WARMING
+
+    monkeypatch.setattr(runtime_module.httpx, "get", get)
+
+    assert DockerRuntime.wait_ready("http://127.0.0.1:5380", deadline=30.0) == {
+        "status": "healthy"
+    }
+    assert 20.0 <= now[0] < 22.0
+
+
+def test_wait_ready_times_out_naming_the_warming_service_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_clock(monkeypatch)
+    monkeypatch.setattr(
+        runtime_module.httpx,
+        "get",
+        lambda url, **_kwargs: _HEALTHY
+        if url.endswith("/health")
+        else _BIGQUERY_FAILED_SPANNER_WARMING,
+    )
+
+    with pytest.raises(HostError) as caught:
+        DockerRuntime.wait_ready("http://127.0.0.1:5380", deadline=10.0)
+
+    assert caught.value.code == "services_not_ready"
+    assert caught.value.message.endswith(": bigquery, spanner")
+    assert caught.value.details["services"][0]["failure_code"] == "unsupported_vm"
+    assert caught.value.details["services"][0]["remediation_hint"] == "Run lc doctor."
+
+
+def test_service_failures_reports_the_services_with_a_failure_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DockerRuntime(client=Client())
+    responses = [_BIGQUERY_FAILED_SPANNER_WARMING, _Response(200, {"ready": True}), _Response(404, {})]
+    monkeypatch.setattr(runtime_module.httpx, "get", lambda url, **_k: responses.pop(0))
+
+    assert runtime.service_failures("http://127.0.0.1:5380") == [
+        {
+            "id": "bigquery",
+            "display_name": "BigQuery",
+            "phase": "failed",
+            "failure_code": "unsupported_vm",
+            "failure_reason": "the emulator needs a VZ virtual machine",
+            "remediation_hint": "Run lc doctor.",
+        }
+    ]
+    assert runtime.service_failures("http://127.0.0.1:5380") == []
+    assert runtime.service_failures("http://127.0.0.1:5380") == []
+
+    def refused(url: str, **_k: Any) -> _Response:
+        raise ConnectionError("refused")
+
+    monkeypatch.setattr(runtime_module.httpx, "get", refused)
+    assert runtime.service_failures("http://127.0.0.1:5380") == []

@@ -1607,6 +1607,20 @@ class DockerRuntime:
         except Exception:
             return False
 
+    def service_failures(
+        self, url: str, *, timeout: float = 3.0
+    ) -> list[dict[str, Any]]:
+        """The enabled services /readiness at `url` reports as failed for good
+        (not ready, with a failure code); [] when there are none, the image has
+        no /readiness, or it cannot be read."""
+        try:
+            response = _http_get(
+                f"{_validate_base_url(url)}/readiness", timeout=timeout
+            )
+        except Exception:
+            return []
+        return _services_failed(_services_not_ready(response))
+
     def health(self, url: str, *, timeout: float = 3.0) -> dict[str, Any] | None:
         """The runtime's /health document, or None when it cannot be read."""
         try:
@@ -2328,6 +2342,17 @@ class DockerRuntime:
                             )
                         return health
                     not_ready = _services_not_ready(response)
+                    if not_ready and len(_services_failed(not_ready)) == len(not_ready):
+                        # Every service still not ready has failed for good:
+                        # nothing is left to wait for. The runtime itself is
+                        # up; the caller reports the failures (service_failures).
+                        _emit_logs(force=True)
+                        if observer is not None and hasattr(observer, "debug"):
+                            names = ", ".join(str(item["id"]) for item in not_ready)
+                            observer.debug(
+                                f"Runtime readiness stopped waiting: {names} failed"
+                            )
+                        return health
                     last_error = f"readiness HTTP {response.status_code}"
             except Exception as error:
                 last_error = (
@@ -4257,7 +4282,14 @@ def _services_not_ready(response: Any) -> list[dict[str, Any]]:
     return [
         {
             key: service[key]
-            for key in ("id", "phase", "failure_code", "failure_reason")
+            for key in (
+                "id",
+                "display_name",
+                "phase",
+                "failure_code",
+                "failure_reason",
+                "remediation_hint",
+            )
             if service.get(key) is not None
         }
         for service in services
@@ -4266,6 +4298,12 @@ def _services_not_ready(response: Any) -> list[dict[str, Any]]:
         and service.get("enabled", True)
         and not service.get("ready")
     ]
+
+
+def _services_failed(not_ready: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The services among `not_ready` that failed for good: the runtime gave
+    them a failure code, so waiting longer cannot make them ready."""
+    return [service for service in not_ready if service.get("failure_code")]
 
 
 def _resolve_readiness_deadline(deadline: float | None) -> float:
