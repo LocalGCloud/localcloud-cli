@@ -3777,9 +3777,9 @@ _BIGQUERY_FAILED = {
     "id": "bigquery",
     "display_name": "BigQuery",
     "phase": "running",
-    "failure_code": "unsupported_vm",
-    "failure_reason": "the emulator needs a VZ virtual machine.",
-    "remediation_hint": "Run lc doctor.",
+    "failure_code": "engine_port_unpublished",
+    "failure_reason": "port 5388 could not be bound.",
+    "remediation_hint": "Free port 5388, then restart.",
 }
 
 
@@ -3794,8 +3794,8 @@ def test_start_warns_about_a_service_that_failed_for_good(tmp_path: Path) -> Non
     # what is missing, with the runtime's reason and remedy.
     assert result["status"] == "started"
     assert result["warning"] == (
-        "BigQuery is not available (the emulator needs a VZ virtual machine). "
-        "Run lc doctor."
+        "BigQuery is not available (port 5388 could not be bound). "
+        "Free port 5388, then restart."
     )
     assert runtime.service_failure_urls == [runtime.record.url]
     assert controller.status(config)["warning"] == result["warning"]

@@ -2342,7 +2342,7 @@ class DockerRuntime:
                             )
                         return health
                     not_ready = _services_not_ready(response)
-                    if not_ready and len(_services_failed(not_ready)) == len(not_ready):
+                    if _waiting_cannot_help(not_ready):
                         # Every service still not ready has failed for good:
                         # nothing is left to wait for. The runtime itself is
                         # up; the caller reports the failures (service_failures).
@@ -4301,9 +4301,24 @@ def _services_not_ready(response: Any) -> list[dict[str, Any]]:
 
 
 def _services_failed(not_ready: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The services among `not_ready` that failed for good: the runtime gave
-    them a failure code, so waiting longer cannot make them ready."""
+    """The services among `not_ready` the runtime gave a failure code."""
     return [service for service in not_ready if service.get("failure_code")]
+
+
+# An engine that does not answer yet. Images before 0.1.10 report it from an
+# engine's first second, while a newer gateway says "initializing" for two
+# minutes before it reports this code, so it is not a verdict the wait can
+# stop on. Every other code is the gateway's diagnosis of a failed service.
+_UNSETTLED_FAILURE_CODES = frozenset({"connection_refused"})
+
+
+def _waiting_cannot_help(not_ready: list[dict[str, Any]]) -> bool:
+    """Whether every service still not ready has failed for good."""
+    return bool(not_ready) and all(
+        service.get("failure_code")
+        and service["failure_code"] not in _UNSETTLED_FAILURE_CODES
+        for service in not_ready
+    )
 
 
 def _resolve_readiness_deadline(deadline: float | None) -> float:

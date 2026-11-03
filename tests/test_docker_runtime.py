@@ -4005,9 +4005,9 @@ _BIGQUERY_FAILED = _Response(
                 "enabled": True,
                 "ready": False,
                 "phase": "failed",
-                "failure_code": "unsupported_vm",
-                "failure_reason": "the emulator needs a VZ virtual machine",
-                "remediation_hint": "Run lc doctor.",
+                "failure_code": "engine_port_unpublished",
+                "failure_reason": "port 5388 could not be bound",
+                "remediation_hint": "Free port 5388, then restart.",
             },
         ],
     },
@@ -4079,8 +4079,8 @@ def test_wait_ready_times_out_naming_the_warming_service_too(
 
     assert caught.value.code == "services_not_ready"
     assert caught.value.message.endswith(": bigquery, spanner")
-    assert caught.value.details["services"][0]["failure_code"] == "unsupported_vm"
-    assert caught.value.details["services"][0]["remediation_hint"] == "Run lc doctor."
+    assert caught.value.details["services"][0]["failure_code"] == "engine_port_unpublished"
+    assert caught.value.details["services"][0]["remediation_hint"] == "Free port 5388, then restart."
 
 
 def test_service_failures_reports_the_services_with_a_failure_code(
@@ -4095,9 +4095,9 @@ def test_service_failures_reports_the_services_with_a_failure_code(
             "id": "bigquery",
             "display_name": "BigQuery",
             "phase": "failed",
-            "failure_code": "unsupported_vm",
-            "failure_reason": "the emulator needs a VZ virtual machine",
-            "remediation_hint": "Run lc doctor.",
+            "failure_code": "engine_port_unpublished",
+            "failure_reason": "port 5388 could not be bound",
+            "remediation_hint": "Free port 5388, then restart.",
         }
     ]
     assert runtime.service_failures("http://127.0.0.1:5380") == []
@@ -4108,3 +4108,46 @@ def test_service_failures_reports_the_services_with_a_failure_code(
 
     monkeypatch.setattr(runtime_module.httpx, "get", refused)
     assert runtime.service_failures("http://127.0.0.1:5380") == []
+
+
+def test_wait_ready_keeps_waiting_on_an_engine_that_does_not_answer_yet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Images before 0.1.10 report connection_refused from an engine's first
+    # second; a newer gateway says "initializing" for two minutes before it
+    # reports the code. Neither is a verdict the wait can stop on.
+    now = _fake_clock(monkeypatch)
+    booting = _Response(
+        503,
+        {
+            "ready": False,
+            "services": [
+                {
+                    "id": "bigquery",
+                    "enabled": True,
+                    "ready": False,
+                    "phase": "running",
+                    "failure_code": "connection_refused",
+                    "failure_reason": "connection_refused",
+                }
+            ],
+        },
+    )
+
+    def get(url: str, **_kwargs: Any) -> _Response:
+        if url.endswith("/health"):
+            return _HEALTHY
+        return _Response(200, {"ready": True}) if now[0] >= 8.0 else booting
+
+    monkeypatch.setattr(runtime_module.httpx, "get", get)
+
+    assert DockerRuntime.wait_ready("http://127.0.0.1:5380", deadline=30.0) == {
+        "status": "healthy"
+    }
+    assert 8.0 <= now[0] < 10.0
+
+    monkeypatch.setattr(runtime_module.httpx, "get", lambda url, **_k: _HEALTHY if url.endswith("/health") else booting)
+    with pytest.raises(HostError) as caught:
+        DockerRuntime.wait_ready("http://127.0.0.1:5380", deadline=now[0] + 5.0)
+    assert caught.value.code == "services_not_ready"
+    assert caught.value.details["services"][0]["failure_code"] == "connection_refused"
