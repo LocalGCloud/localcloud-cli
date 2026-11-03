@@ -46,6 +46,9 @@ _IDENTITY_RELAY_TIMEOUT = 45.0
 _IDENTITY_POLL_INTERVAL = 0.25
 # Ending the session of a failed `lc env --identity` is best effort.
 _IDENTITY_CLEANUP_TIMEOUT = 10.0
+# What /health says about the Console: "predates" when the image reports
+# nothing (it always serves it), "unreadable" when /health did not answer.
+_ConsoleState = Literal["on", "off", "predates", "unreadable"]
 
 
 @dataclass(frozen=True)
@@ -203,6 +206,7 @@ class Controller:
             if dry_run
             else data_volume_lock(self.paths, config.data_volume)
         ):
+            requested = config
             current, config = self._resolve_keeping_runtime_settings(config)
             changed_fields: list[str] = []
             prepared_image: tuple[Any, bool] | None = None
@@ -372,8 +376,10 @@ class Controller:
                         deadline, time.monotonic() + _READINESS_REQUEST_TIMEOUT
                     ),
                 )
+            console_check, console_state = self._check_console(environment, config)
             console_warning = self._join_warnings(
-                self._check_console(environment, config),
+                console_check,
+                _console_inheritance_warning(requested, config),
                 self._companion_warning(config),
             )
             self._record_active(environment, config)
@@ -391,6 +397,7 @@ class Controller:
                             if status != "already_running"
                             else None
                         ),
+                        console_state=console_state,
                     ),
                     console_warning,
                 )
@@ -429,6 +436,7 @@ class Controller:
             if dry_run
             else data_volume_lock(self.paths, config.data_volume)
         ):
+            requested = config
             current, config = self._resolve_keeping_runtime_settings(config)
             is_managed = (
                 current is not None
@@ -588,8 +596,10 @@ class Controller:
                     config,
                     deadline=time.monotonic() + _START_READINESS_TIMEOUT,
                 )
+            console_check, console_state = self._check_console(environment, config)
             console_warning = self._join_warnings(
-                self._check_console(environment, config),
+                console_check,
+                _console_inheritance_warning(requested, config),
                 self._companion_warning(config),
             )
             self._record_active(environment, config)
@@ -603,6 +613,7 @@ class Controller:
                         include_sdk=True,
                         changed_fields=changed_fields,
                         logs=self._runtime_logs(config, environment),
+                        console_state=console_state,
                     ),
                     console_warning,
                 )
@@ -905,7 +916,15 @@ class Controller:
         )
         result["container"]["image_details"] = image_details
         if current is not None and current.state == "running":
-            result = _with_console_warning(result, self._companion_warning(config))
+            result = _with_console_warning(
+                result,
+                self._join_warnings(
+                    _console_inheritance_warning(
+                        config, _inherit_console(current, config)
+                    ),
+                    self._companion_warning(config),
+                ),
+            )
         return result
 
     def logs(self, config: LocalCloudConfig, tail: int = 200) -> dict[str, Any]:
@@ -1659,9 +1678,7 @@ class Controller:
         state = self._console_state(url)
         return {"on": True, "off": False}.get(state)
 
-    def _console_state(
-        self, url: str
-    ) -> Literal["on", "off", "predates", "unreadable"]:
+    def _console_state(self, url: str) -> _ConsoleState:
         """What /health at `url` says about the Console: "predates" when the
         image reports nothing (it always serves it)."""
         health = self.runtime.health(url)
@@ -1673,16 +1690,21 @@ class Controller:
             return "predates"
         return "on" if enabled else "off"
 
-    def _console_row(self, environment: RuntimeRecord) -> str:
-        """The Console row of a runtime started without the Console."""
+    def _console_row(
+        self, environment: RuntimeRecord, state: _ConsoleState | None = None
+    ) -> str:
+        """The Console row of a runtime started without the Console. `state`
+        is what /health said when the caller already read it."""
         if environment.state != "running" or environment.url is None:
             return "disabled"
+        if state is None:
+            state = self._console_state(environment.url)
         return {
             "on": "served",
             "off": "disabled",
             "predates": "served (the image predates headless mode)",
             "unreadable": "unknown (/health did not answer)",
-        }[self._console_state(environment.url)]
+        }[state]
 
     def _resolve_keeping_runtime_settings(
         self, config: LocalCloudConfig
@@ -1712,34 +1734,36 @@ class Controller:
 
     def _check_console(
         self, environment: RuntimeRecord, config: LocalCloudConfig
-    ) -> str | None:
+    ) -> tuple[str | None, _ConsoleState | None]:
         """Confirm the runtime serves the Console as asked.
 
         Returns a warning when the image predates headless mode or /health does
-        not say. Fails when a runtime started with the Console off serves it
-        anyway, and when --ui/--no-ui asks for a mode that a container lc did
-        not create (and so cannot reconfigure) does not run in."""
+        not say, with the Console state /health reported (None when it was not
+        consulted) so the caller does not read it again. Fails when a runtime
+        started with the Console off serves it anyway, and when --ui/--no-ui
+        asks for a mode that a container lc did not create (and so cannot
+        reconfigure) does not run in."""
         if environment.url is None:
-            return None
+            return None, None
         managed = environment.ownership.get("container") == "managed"
         if managed and config.console is not False:
-            return None
+            return None, None
         if not managed and config.console_source != "flag":
-            return None
+            return None, None
         state = self._console_state(environment.url)
         image = environment.actual_image or config.image
         if state == "unreadable":
             return (
                 "Could not confirm the Console setting: "
                 f"{environment.url}/health did not answer."
-            )
+            ), state
         if state == "predates":
             if config.console is not False:
-                return None
+                return None, state
             return (
                 f"Image {image} predates headless mode, so it still serves the "
                 "Console; use a newer image to run without it."
-            )
+            ), state
         if not managed and (state == "on") != config.console:
             flag = "--ui" if config.console else "--no-ui"
             raise HostError(
@@ -1767,7 +1791,7 @@ class Controller:
                     "image": environment.actual_image or config.image,
                 },
             )
-        return None
+        return None, state
 
     @staticmethod
     def _requires_managed_replacement(
@@ -1960,6 +1984,10 @@ class Controller:
         except Exception as restore_error:  # noqa: BLE001
             error.details["rollback_error"] = str(restore_error)
             return
+        # The runtime that was removed is back, so the details must not say
+        # that no runtime exists.
+        error.details["previous_runtime_removed"] = False
+        error.details["previous_runtime_restored"] = True
         error.details["rolled_back_to_image"] = restored.image_id or previous.image_id
         error.message = (
             f"{error.message}. The previous runtime was restored on its "
@@ -2251,6 +2279,7 @@ class Controller:
         reset_scope: str | None = None,
         logs: str | None = None,
         image_status: str | None = None,
+        console_state: _ConsoleState | None = None,
     ) -> dict[str, Any]:
         if environment is None:
             data_volume = config.data_volume
@@ -2377,7 +2406,7 @@ class Controller:
                 },
             }
         if environment is not None and _inherit_console(environment, config).console is False:
-            result["console"] = self._console_row(environment)
+            result["console"] = self._console_row(environment, console_state)
         if changed_fields:
             result["changed_fields"] = changed_fields
         if reset_scope is not None:
@@ -2574,7 +2603,7 @@ def _inherit_console(
 ) -> LocalCloudConfig:
     """Keep a runtime started with --no-ui (or --ui) in that mode unless this
     run's flags or host.environment set it; server.console.enabled does not
-    override it."""
+    override it (see _console_inheritance_warning)."""
     if (
         current is None
         or config.console_source in {"flag", "environment"}
@@ -2584,6 +2613,31 @@ def _inherit_console(
     recorded = current.runtime_settings.get("environment")
     value = recorded.get(CONSOLE_ENVIRONMENT) if isinstance(recorded, dict) else None
     return with_console_environment(config, value) if isinstance(value, str) else config
+
+
+def _console_inheritance_warning(
+    requested: LocalCloudConfig, kept: LocalCloudConfig
+) -> str | None:
+    """Say so when localcloud.yaml asks for a Console mode the runtime does not
+    run in because an earlier --ui/--no-ui chose the other one: the CLI cannot
+    tell a later config edit from a config that always said so, so the runtime
+    keeps its mode and the user is told how to change it."""
+    if (
+        requested.console_source != "config"
+        or kept.console_source != "runtime"
+        or requested.console is None
+        or kept.console is None
+        or requested.console == kept.console
+    ):
+        return None
+    flag = "--ui" if requested.console else "--no-ui"
+    return (
+        f"localcloud.yaml sets server.console.enabled: "
+        f"{'true' if requested.console else 'false'}, but this runtime keeps the "
+        f"Console {'off' if kept.console is False else 'on'} as it was started "
+        f"({'--no-ui' if kept.console is False else '--ui'}); run lc restart "
+        f"{flag} to apply the configuration."
+    )
 
 
 def _stale_runtime_hint(active_status: dict[str, Any]) -> str:

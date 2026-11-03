@@ -62,7 +62,9 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
   container, which overrides `server.console.enabled` in `localcloud.yaml`. A headless runtime
   stays headless on later `start` and `restart`, whatever `server.console.enabled` says, until
   `--ui` turns the console back on (or `host.environment.LOCALCLOUD_CONSOLE` sets it), and the
-  output shows **Console: disabled**. After starting, the CLI checks `/health`: it warns when the
+  output shows **Console: disabled**. When `server.console.enabled` asks for the other mode,
+  `start`, `restart` and `status` warn that the runtime keeps the mode it was started with and
+  name the flag that applies the configuration. After starting, the CLI checks `/health`: it warns when the
   image predates headless mode (that image still serves the console) and fails with
   `console_not_disabled` when the gateway reports the console on. A container `lc` did not create
   keeps the console setting it was started with: `--ui` or `--no-ui` that asks for the other one

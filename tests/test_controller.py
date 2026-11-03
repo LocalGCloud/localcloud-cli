@@ -1543,6 +1543,8 @@ def test_restart_keeps_a_headless_runtime_headless(tmp_path: Path) -> None:
     assert runtime.record.runtime_settings["environment"] == {
         "LOCALCLOUD_CONSOLE": "false"
     }
+    # The Console check and the Console row share one /health request.
+    assert len(runtime.health_urls) == 1
 
 
 def test_start_reuses_a_headless_runtime_without_the_flag(tmp_path: Path) -> None:
@@ -1630,6 +1632,43 @@ def test_server_console_enabled_does_not_undo_no_ui_on_restart(
     assert runtime.record.runtime_settings["environment"] == {
         "LOCALCLOUD_CONSOLE": "false"
     }
+    # The config asks for the Console, the runtime keeps it off: say so.
+    assert result["warning"] == (
+        "localcloud.yaml sets server.console.enabled: true, but this runtime "
+        "keeps the Console off as it was started (--no-ui); run lc restart --ui "
+        "to apply the configuration."
+    )
+    assert controller.status(_config(tmp_path, paths=paths))["warning"] == result["warning"]
+
+
+def test_server_console_disabled_warns_when_ui_keeps_the_console_on(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    yaml = "server:\n  console:\n    enabled: false\n"
+    runtime.record = _record(_config(tmp_path, paths=paths, yaml=yaml, console=True))
+
+    result = controller.start(_config(tmp_path, paths=paths))
+
+    assert result["status"] == "already_running"
+    assert "console" not in result
+    assert result["warning"] == (
+        "localcloud.yaml sets server.console.enabled: false, but this runtime "
+        "keeps the Console on as it was started (--ui); run lc restart --no-ui "
+        "to apply the configuration."
+    )
+
+
+def test_a_runtime_without_a_recorded_console_mode_gets_no_inheritance_warning(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    runtime.record = _record(_config(tmp_path, paths=paths))
+    yaml = "server:\n  console:\n    enabled: true\n"
+
+    result = controller.status(_config(tmp_path, paths=paths, yaml=yaml))
+
+    assert "warning" not in result
 
 
 def test_server_console_enabled_still_sets_a_runtime_no_flag_chose(
@@ -2514,7 +2553,9 @@ def test_restart_restores_the_previous_runtime_when_the_new_image_fails(
     error = raised.value
     assert [record.image_id for record in runtime.restore_calls] == ["sha256:old"]
     assert error.code == "environment_create_failed"
-    assert error.details["previous_runtime_removed"] is True
+    # The restored runtime exists again: the details must not contradict it.
+    assert error.details["previous_runtime_removed"] is False
+    assert error.details["previous_runtime_restored"] is True
     assert error.details["rolled_back_to_image"] == "sha256:old"
     assert "previous runtime was restored" in error.message
     assert runtime.record is not None and runtime.record.state == "running"
