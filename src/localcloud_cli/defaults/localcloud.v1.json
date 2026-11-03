@@ -35,7 +35,7 @@
       "port": 5380
     },
     "control_token": {
-      "disabled": false
+      "value": ""
     },
     "console": {
       "enabled": true
@@ -108,9 +108,7 @@
                   "stderr": "/var/log/localcloud/fake-gcs-server-stderr.log"
                 },
                 "format": "text",
-                "retentionProfile": "external-process",
-                "integrationEvidence": "docker/gcs-start.sh",
-                "integrationTest": "RuntimeLogCollectorTest"
+                "retentionProfile": "external-process"
               }
             ]
           }
@@ -153,9 +151,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -232,9 +228,7 @@
                   "stderr": "/var/log/localcloud/bigtable-emulator-stderr.log"
                 },
                 "format": "text",
-                "retentionProfile": "external-process",
-                "integrationEvidence": "docker/bigtable-connect.sh",
-                "integrationTest": "RuntimeLogCollectorTest"
+                "retentionProfile": "external-process"
               }
             ]
           }
@@ -277,9 +271,7 @@
                   "stderr": "/var/log/localcloud/spanner-emulator-stderr.log"
                 },
                 "format": "text",
-                "retentionProfile": "external-process",
-                "integrationEvidence": "docker/conf/supervisord.conf",
-                "integrationTest": "RuntimeLogCollectorTest"
+                "retentionProfile": "external-process"
               }
             ]
           }
@@ -336,9 +328,7 @@
                   "stderr": "/var/log/localcloud/bigquery-emulator-stderr.log"
                 },
                 "format": "json",
-                "retentionProfile": "external-process",
-                "integrationEvidence": "localcloud-server/src/main/java/com/localcloud/emulators/bigquery/NativeProcessDataPlane.java",
-                "integrationTest": "BigQueryPlatformTest"
+                "retentionProfile": "external-process"
               }
             ]
           }
@@ -372,9 +362,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -409,9 +397,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -454,9 +440,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -497,9 +481,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -534,9 +516,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -577,9 +557,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -625,9 +603,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -672,9 +648,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -709,9 +683,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -746,9 +718,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -783,9 +753,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -848,9 +816,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -885,9 +851,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -928,9 +892,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -968,9 +930,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -1008,9 +968,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -1063,9 +1021,7 @@
                   "stderr": "/var/log/localcloud/valkey-stderr.log"
                 },
                 "format": "text",
-                "retentionProfile": "external-process",
-                "integrationEvidence": "docker/valkey-start.sh",
-                "integrationTest": "RuntimeLogCollectorTest"
+                "retentionProfile": "external-process"
               }
             ]
           }
@@ -1108,9 +1064,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -1151,9 +1105,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -1196,9 +1148,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -1255,9 +1205,7 @@
                   "raw": "/var/log/localcloud/localcloud-server.log"
                 },
                 "format": "json",
-                "retentionProfile": "java-facade",
-                "integrationEvidence": "localcloud-internal-sink",
-                "integrationTest": "LoggingPlatformTest#realHttpAndGrpcRequestsEmitUnderTheServiceOwnerWithoutQuerySecrets"
+                "retentionProfile": "java-facade"
               }
             ]
           }
@@ -1294,9 +1242,7 @@
                 "stderr": "/var/log/localcloud/postgresql-stderr.log"
               },
               "format": "text",
-              "retentionProfile": "infrastructure",
-              "integrationEvidence": "docker/postgres-start.sh",
-              "integrationTest": "RuntimeLogCollectorTest"
+              "retentionProfile": "infrastructure"
             }
           ]
         }
@@ -1315,9 +1261,7 @@
                 "activity": "/var/log/localcloud/supervisord.log"
               },
               "format": "text",
-              "retentionProfile": "infrastructure",
-              "integrationEvidence": "docker/conf/supervisord.conf",
-              "integrationTest": "RuntimeLogCollectorTest"
+              "retentionProfile": "infrastructure"
             }
           ]
         }
@@ -1342,9 +1286,7 @@
                 "stderr": "/var/log/localcloud/dnsmasq.err.log"
               },
               "format": "text",
-              "retentionProfile": "infrastructure",
-              "integrationEvidence": "docker/conf/network/dnsmasq.conf",
-              "integrationTest": "RuntimeLogCollectorTest"
+              "retentionProfile": "infrastructure"
             }
           ]
         }

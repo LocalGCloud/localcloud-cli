@@ -78,7 +78,7 @@ differ.
 
 | Setting | Default | What it does |
 | :--- | :--- | :--- |
-| `server.control_token` | see the packaged defaults | Token that protects the control plane (admin API, MCP, admin SQL, identity minting). `value`, or `LOCALCLOUD_CONTROL_TOKEN`, sets your own token of at least 32 printable characters. |
+| `server.control_token` | off | Token that protects the control plane (admin API, MCP, admin SQL, identity minting). Off by default on a local gateway. `enabled: true` (or `LOCALCLOUD_CONTROL_TOKEN_ENABLED=true`) turns it on with the token the gateway keeps in its data directory; `value` (or `LOCALCLOUD_CONTROL_TOKEN`) turns it on with your own token of at least 32 printable characters. Remote access (`mcp.allow_remote` or `server.allowed_hosts`) turns it on unless `enabled: false` is set. When it is on, clients send it in the `X-LocalCloud-Control-Token` header. |
 | `server.allowed_origins`, `server.allowed_hosts` | `[]` | Browser origins and host names the gateway serves beyond loopback, IP literals, and its own names, for example a LAN device's dev app at `http://192.168.1.20:3000`. Requests without browser headers (SDKs, gcloud, Terraform, the CLI) are not affected. Also `LOCALCLOUD_ALLOWED_ORIGINS` and `LOCALCLOUD_ALLOWED_HOSTS`, comma-separated. |
 | `server.auto_seed` | `true` | Seeds sample data when the container starts. |
 | `server.auto_provision_projects` | `true` | Creates a project the first time a request names it. |
