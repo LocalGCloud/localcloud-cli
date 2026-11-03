@@ -236,6 +236,18 @@ lc logs --tail 500
 
 Stops the running container and starts with the image (preserving persistent volume state and reapplying volatile seed data). Unlike `start`, `restart` does not check the remote registry by default (`--no-pull`), using the currently available local image (e.g. `lite`).
 
+`restart` recreates a managed runtime, so it picks up an image tag that has moved since the
+runtime was created. If that image cannot start on the existing data (for example a newer engine
+refuses a schema migration), `restart` fails and then recreates the runtime on the image it was
+running, so the runtime is not left missing. The error says so (`rolled_back_to_image`). Nothing
+is restored when the settings changed too, or when the old image is gone; the error then carries
+`rollback_error`.
+
+`start`, `restart` and `status` warn when the Cloud SQL MySQL companion could not start because
+its host port is held by another container or process. The server starts the companion on demand
+and only logs a warning when it cannot, so the warning is the CLI's signal that MySQL instances
+are unreachable.
+
 ```sh
 # Restart container using the currently available image (default: --no-pull)
 lc restart
@@ -356,6 +368,10 @@ a terminal. `lc start` in a terminal also offers to install or start Docker when
 ### `cleanup`
 
 Finds and removes malformed Docker resources, stale runtime state, and legacy lock files.
+It also removes managed child containers (the Cloud SQL MySQL companion, Dataproc clusters)
+whose data volume no longer exists, such as one left behind by a throwaway `--data-volume`
+run. Such a container is not claimed by any runtime, so `stop`, `restart` and `reset` never
+touch it, and it can hold the companion's host port (`5406` by default).
 
 ```sh
 # Remove cleanup candidates (default)

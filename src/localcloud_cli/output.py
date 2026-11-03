@@ -190,10 +190,12 @@ _DOCTOR_EXTRA_FIELDS = (
     FieldSpec("image_details", "Image details", "muted"),
     FieldSpec("volume_collisions", "Volume collisions", "warning"),
     FieldSpec("invalid_ownership", "Invalid ownership", "warning"),
+    FieldSpec("orphaned_children", "Orphaned containers", "warning"),
 )
 _CLEANUP_FIELDS = (
     FieldSpec("dry_run", "Dry run", "muted"),
     FieldSpec("docker_resources", "Docker resources", "warning"),
+    FieldSpec("orphaned_children", "Orphaned containers", "warning"),
     FieldSpec("active_runtime_stale", "Active runtime stale", "warning"),
     FieldSpec("legacy_host_state", "Legacy host state", "warning"),
     FieldSpec("legacy_locks", "Legacy locks", "warning"),

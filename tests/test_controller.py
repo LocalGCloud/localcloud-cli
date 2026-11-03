@@ -79,6 +79,11 @@ class FakeRuntime:
             "console": {"enabled": True},
         }
         self.health_urls: list[str] = []
+        self.create_error: HostError | None = None
+        self.restore_calls: list[RuntimeRecord] = []
+        self.restore_error: Exception | None = None
+        self.companion_warning_list: list[str] = []
+        self.orphan_removals: list[list[dict[str, Any]]] = []
 
 
 
@@ -214,6 +219,8 @@ class FakeRuntime:
         self.create_pulls.append(pull)
         self.readiness_deadlines.append(readiness_deadline)
         self.prepared_images.append(prepared_image)
+        if self.create_error is not None:
+            raise self.create_error
         self.record = replace(
             _record(config, container_id=f"container-{self.creates}"),
             volume_created=self.creates == 1,
@@ -355,6 +362,34 @@ class FakeRuntime:
             "removed": [{"kind": e["kind"], "name": e["name"]} for e in invalid],
             "failures": [],
         }
+
+    def remove_orphaned_children(
+        self, orphaned: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        self.orphan_removals.append(orphaned)
+        return {
+            "removed": [{"kind": e["kind"], "name": e["name"]} for e in orphaned],
+            "failures": [],
+        }
+
+    def companion_warnings(self, _config: LocalCloudConfig) -> list[str]:
+        return list(self.companion_warning_list)
+
+    def restore_previous_runtime(
+        self,
+        config: LocalCloudConfig,
+        previous: RuntimeRecord,
+        *,
+        observer: Any | None = None,
+    ) -> RuntimeRecord:
+        self.restore_calls.append(previous)
+        if self.restore_error is not None:
+            raise self.restore_error
+        self.record = replace(
+            _record(config, container_id="container-restored"),
+            image_id=previous.image_id,
+        )
+        return self.record
 
 
 class FakeJavaClient:
@@ -2461,6 +2496,101 @@ def test_cleanup_defaults_to_removing_state(tmp_path: Path) -> None:
     assert not (paths.locks / ("a" * 64 + ".lock")).exists()
     # active-runtime.lock is not a hash lock and must survive.
     assert (paths.locks / "active-runtime.lock").exists()
+
+
+def test_restart_restores_the_previous_runtime_when_the_new_image_fails(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config, image_id="sha256:old")
+    runtime.create_error = HostError(
+        "environment_create_failed", "Managed LocalCloud runtime could not be created"
+    )
+
+    with pytest.raises(HostError) as raised:
+        controller.restart(config)
+
+    error = raised.value
+    assert [record.image_id for record in runtime.restore_calls] == ["sha256:old"]
+    assert error.code == "environment_create_failed"
+    assert error.details["previous_runtime_removed"] is True
+    assert error.details["rolled_back_to_image"] == "sha256:old"
+    assert "previous runtime was restored" in error.message
+    assert runtime.record is not None and runtime.record.state == "running"
+
+
+def test_failed_restore_is_reported_with_the_original_failure(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config, image_id="sha256:old")
+    runtime.create_error = HostError("environment_create_failed", "new image failed")
+    runtime.restore_error = RuntimeError("old image refused the schema")
+
+    with pytest.raises(HostError) as raised:
+        controller.restart(config)
+
+    assert raised.value.message == "new image failed"
+    assert raised.value.details["rollback_error"] == "old image refused the schema"
+    assert "rolled_back_to_image" not in raised.value.details
+
+
+def test_restart_does_not_restore_when_the_configuration_changed(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = replace(
+        _record(config, image_id="sha256:old"), config_hash="previous-config"
+    )
+    runtime.create_error = HostError("environment_create_failed", "new settings failed")
+
+    with pytest.raises(HostError) as raised:
+        controller.restart(config)
+
+    assert runtime.restore_calls == []
+    assert raised.value.message == "new settings failed"
+
+
+def test_start_restart_and_status_warn_when_the_mysql_companion_cannot_start(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+    runtime.companion_warning_list = ["The Cloud SQL MySQL companion could not start"]
+
+    assert "companion could not start" in controller.restart(config)["warning"]
+    assert "companion could not start" in controller.status(config)["warning"]
+    runtime.companion_warning_list = []
+    assert "warning" not in controller.status(config)
+
+
+def test_cleanup_removes_orphaned_children_and_dry_run_only_lists_them(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+    orphan = {
+        "kind": "container",
+        "name": "localcloud-mysql-gone",
+        "service": "cloudsql-mysql",
+        "data_volume": "gone",
+        "state": "running",
+    }
+    runtime.doctor_report = {"status": "ok", "orphaned_children": [orphan]}
+
+    dry = controller.cleanup(dry_run=True)
+    assert dry["orphaned_children"] == [orphan]
+    assert runtime.orphan_removals == []
+
+    done = controller.cleanup()
+    assert done["orphaned_children"] == [
+        {"kind": "container", "name": "localcloud-mysql-gone"}
+    ]
+    assert runtime.orphan_removals == [[orphan]]
 
 
 def test_cleanup_with_nothing_to_clean(tmp_path: Path) -> None:

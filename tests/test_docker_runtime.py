@@ -2708,6 +2708,150 @@ def test_cleanup_resources_removes_invalid_ownership(
     assert "broken-network" not in client.networks.values
 
 
+_MYSQL_COMPANION_LABELS = {
+    "com.localcloud.managed": "true",
+    "localcloud.managed": "true",
+    "com.localcloud.service": "cloudsql-mysql",
+}
+
+
+def test_doctor_reports_managed_children_whose_data_volume_is_gone(
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    client.volumes.add(Resource("localcloud-data"))
+    orphan = client.containers.add(
+        Resource(
+            "localcloud-mysql-gone",
+            {**_MYSQL_COMPANION_LABELS, VOLUME_NAME_LABEL: "gone"},
+        )
+    )
+    client.containers.add(
+        Resource(
+            "localcloud-mysql-localcloud-data",
+            {**_MYSQL_COMPANION_LABELS, VOLUME_NAME_LABEL: "localcloud-data"},
+        )
+    )
+
+    report = runtime.doctor()
+
+    assert [entry["name"] for entry in report["orphaned_children"]] == [orphan.name]
+    assert report["orphaned_children"][0]["data_volume"] == "gone"
+    assert report["orphaned_children"][0]["service"] == "cloudsql-mysql"
+    assert "cleanup" in report["warning"]
+
+
+def test_remove_orphaned_children_stops_then_removes_them(
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    orphan = client.containers.add(
+        Resource(
+            "localcloud-mysql-gone",
+            {**_MYSQL_COMPANION_LABELS, VOLUME_NAME_LABEL: "gone"},
+        )
+    )
+
+    result = runtime.remove_orphaned_children(runtime.doctor()["orphaned_children"])
+
+    assert result == {
+        "removed": [{"kind": "container", "name": "localcloud-mysql-gone"}],
+        "failures": [],
+    }
+    assert orphan.stopped == 1
+    assert orphan.removed == [{"force": True, "v": True}]
+
+
+def test_remove_orphaned_children_spares_one_whose_volume_returned(
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    orphan = client.containers.add(
+        Resource(
+            "localcloud-mysql-gone",
+            {**_MYSQL_COMPANION_LABELS, VOLUME_NAME_LABEL: "gone"},
+        )
+    )
+    entries = runtime.doctor()["orphaned_children"]
+    client.volumes.add(Resource("gone"))
+
+    result = runtime.remove_orphaned_children(entries)
+
+    assert result["removed"] == []
+    assert "changed since inspection" in result["failures"][0]["cause"]
+    assert orphan.removed == []
+    assert orphan.stopped == 0
+
+
+def _created_companion(client: Client, volume: str, host_port: int) -> Resource:
+    companion = client.containers.add(
+        Resource(
+            f"localcloud-mysql-{volume}",
+            {**_MYSQL_COMPANION_LABELS, VOLUME_NAME_LABEL: volume},
+            state="created",
+        )
+    )
+    companion.attrs["HostConfig"] = {
+        "PortBindings": {"3306/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(host_port)}]}
+    }
+    return companion
+
+
+def test_companion_warning_names_the_container_holding_its_port(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    _created_companion(client, config.data_volume, 5406)
+    client.containers.add(
+        Resource(
+            "other-mysql",
+            ports={"3306/tcp": [{"HostIp": "127.0.0.1", "HostPort": "5406"}]},
+        )
+    )
+
+    warnings = runtime.companion_warnings(config)
+
+    assert len(warnings) == 1
+    assert "5406" in warnings[0]
+    assert "container 'other-mysql'" in warnings[0]
+
+
+def test_companion_warning_is_silent_for_a_running_or_unblocked_companion(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    companion = _created_companion(client, config.data_volume, 5406)
+
+    # Never started, but nothing holds the port now: it starts on next use.
+    assert runtime.companion_warnings(config) == []
+
+    companion.start()
+    assert runtime.companion_warnings(config) == []
+
+
+def test_restore_previous_runtime_recreates_it_on_the_previous_image(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    runtime.create(config)
+    previous = runtime.resolve(config)
+    assert previous is not None
+    client.images.add("previous", Image("sha256:previous"))
+    previous = replace(previous, image_id="sha256:previous")
+    runtime.remove(config, previous, remove_volume=False)
+
+    restored = runtime.restore_previous_runtime(config, previous)
+
+    assert client.containers.run_calls[-1]["image"] == "sha256:previous"
+    assert restored.state == "running"
+
+
 @pytest.mark.parametrize(
     "replacement_labels",
     [{}, {MANAGED_LABEL: "true", RESOURCE_ROLE_LABEL: "network"}],

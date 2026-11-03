@@ -1643,6 +1643,8 @@ class DockerRuntime:
         legacy: list[dict[str, str]] = []
         invalid_ownership: list[dict[str, Any]] = []
         volume_users: dict[str, list[dict[str, str]]] = {}
+        seen_containers: list[Any] = []
+        volume_names: set[str] = set()
         for kind, collection in (
             ("container", self.client.containers),
             ("network", self.client.networks),
@@ -1662,6 +1664,10 @@ class DockerRuntime:
                 ) from error
             for resource in resources:
                 labels = _resource_labels(resource)
+                if kind == "container":
+                    seen_containers.append(resource)
+                elif kind == "volume":
+                    volume_names.add(_resource_name(resource) or "")
                 if any(label in labels for label in _LEGACY_LABELS):
                     legacy.append(
                         {"kind": kind, "name": _resource_name(resource) or "unknown"}
@@ -1685,6 +1691,11 @@ class DockerRuntime:
                             "error": malformed,
                         }
                     )
+        orphaned = [
+            entry
+            for container in seen_containers
+            if (entry := _orphaned_child_entry(container, volume_names)) is not None
+        ]
         collisions = [
             {"data_volume": volume, "containers": users}
             for volume, users in sorted(volume_users.items())
@@ -1706,6 +1717,7 @@ class DockerRuntime:
             "legacy_resources": legacy,
             "volume_collisions": collisions,
             "invalid_ownership": invalid_ownership,
+            "orphaned_children": orphaned,
         }
         warnings: list[str] = []
         if legacy:
@@ -1719,6 +1731,11 @@ class DockerRuntime:
         if invalid_ownership:
             warnings.append(
                 "Malformed LocalCloud ownership metadata was found; affected resources will not be mutated."
+            )
+        if orphaned:
+            warnings.append(
+                "Managed child containers were found whose data volume no longer "
+                "exists; 'localcloud cleanup' removes them."
             )
         if warnings:
             result["warning"] = " ".join(warnings)
@@ -1958,6 +1975,140 @@ class DockerRuntime:
                 continue
             removed.append({"kind": kind, "name": name})
         return {"removed": removed, "failures": failures}
+
+    def remove_orphaned_children(
+        self, orphaned: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Remove managed children whose data volume is gone.
+
+        Each entry only names a container: it is inspected again, so one that
+        was replaced, or whose volume exists again, since `doctor()` flagged
+        it is left alone."""
+        removed: list[dict[str, str]] = []
+        failures: list[dict[str, Any]] = []
+        for entry in orphaned:
+            name = entry.get("name")
+            if not name:
+                continue
+            child = self._get_optional(self.client.containers, name, "container")
+            if child is None:
+                continue
+            volume = self._get_optional(
+                self.client.volumes, str(entry.get("data_volume") or ""), "volume"
+            )
+            if volume is not None or _orphaned_child_entry(child, set()) is None:
+                failures.append(
+                    {
+                        "kind": "container",
+                        "name": name,
+                        "cause": "changed since inspection: it is no longer an "
+                        "orphaned managed child",
+                    }
+                )
+                continue
+            try:
+                if _container_state(child) == "running":
+                    child.stop(timeout=STOP_TIMEOUT_SECONDS)
+                child.remove(force=True, v=True)
+            except Exception as error:  # noqa: BLE001
+                failures.append(
+                    {"kind": "container", "name": name, "cause": str(error)}
+                )
+                continue
+            removed.append({"kind": "container", "name": name})
+        return {"removed": removed, "failures": failures}
+
+    def companion_warnings(self, config: LocalCloudConfig) -> list[str]:
+        """Why the runtime's Cloud SQL MySQL companion cannot start, if it cannot.
+
+        The server starts the companion on demand, so a start that found its
+        host port free can still lose it later: the server then leaves the
+        container created and only logs a warning. A companion that never ran
+        is reported when its port is held by something else."""
+        try:
+            companions = self.client.containers.list(
+                all=True,
+                filters={
+                    "label": [
+                        f"{VOLUME_NAME_LABEL}={config.data_volume}",
+                        f"{_CHILD_SERVICE_LABEL}={_MYSQL_COMPANION_SERVICE}",
+                    ]
+                },
+            )
+            others = self.client.containers.list()
+        except Exception:
+            return []
+        warnings: list[str] = []
+        for companion in companions:
+            if _container_state(companion) not in {"created", "dead"}:
+                continue
+            name = _resource_name(companion) or _resource_identity(companion)
+            for bindings in _published_ports(companion).values():
+                for host_ip, host_port in bindings:
+                    if host_port is None:
+                        continue
+                    holder = next(
+                        (
+                            _resource_name(other) or _resource_identity(other)
+                            for other in others
+                            if _resource_identity(other) != _resource_identity(companion)
+                            and any(
+                                port == host_port
+                                for published in _published_ports(other).values()
+                                for _ip, port in published
+                            )
+                        ),
+                        None,
+                    )
+                    if holder is None and _port_is_free(
+                        host_port, socket.SOCK_STREAM, host_ip
+                    ):
+                        continue
+                    held = (
+                        f"container '{holder}'"
+                        if holder
+                        else "another process"
+                    )
+                    warnings.append(
+                        f"The Cloud SQL MySQL companion '{name}' could not start: "
+                        f"host port {host_port} is in use by {held}. Free the "
+                        "port (or set LOCALCLOUD_MYSQL_PORT), then create or "
+                        "use a MySQL instance again."
+                    )
+        return warnings
+
+    def restore_previous_runtime(
+        self,
+        config: LocalCloudConfig,
+        previous: RuntimeRecord,
+        *,
+        observer: Any | None = None,
+    ) -> RuntimeRecord:
+        """Recreate a removed runtime on the image it was running."""
+        image_id = previous.image_id
+        if not image_id:
+            raise HostError(
+                "previous_image_unknown",
+                "The previous runtime's image is not known",
+                {"data_volume": config.data_volume},
+            )
+        try:
+            image = self.client.images.get(image_id)
+        except Exception as error:
+            raise HostError(
+                "previous_image_missing",
+                "The previous runtime's image is no longer available locally",
+                {"image_id": image_id, "cause": str(error)},
+            ) from error
+        # The plan names the configured tag, which is what failed: run the image
+        # by its ID instead.
+        run_plan = replace(self.plan_run(config, image), image=image_id)
+        return self.create(
+            config,
+            observer=observer,
+            prepared_image=(image, False),
+            run_plan=run_plan,
+        )
 
     def image_status(self, image_name: str) -> str:
         if image_name in self._resolved_image_details:
@@ -3915,6 +4066,25 @@ def _resource_name(resource: Any) -> str | None:
 
 def _resource_identity(resource: Any) -> str:
     return str(getattr(resource, "id", None) or getattr(resource, "name", "unknown"))
+
+
+def _orphaned_child_entry(
+    container: Any, volume_names: set[str]
+) -> dict[str, Any] | None:
+    """A managed child whose labelled data volume is not in `volume_names`."""
+    labels = _resource_labels(container)
+    if labels.get(_CHILD_MANAGED_LABEL) != "true":
+        return None
+    data_volume = labels.get(VOLUME_NAME_LABEL)
+    if not data_volume or data_volume in volume_names:
+        return None
+    return {
+        "kind": "container",
+        "name": _resource_name(container),
+        "service": labels.get(_CHILD_SERVICE_LABEL),
+        "data_volume": data_volume,
+        "state": _container_state(container),
+    }
 
 
 def _container_state(container: Any) -> str:

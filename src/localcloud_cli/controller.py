@@ -372,7 +372,10 @@ class Controller:
                         deadline, time.monotonic() + _READINESS_REQUEST_TIMEOUT
                     ),
                 )
-            console_warning = self._check_console(environment, config)
+            console_warning = self._join_warnings(
+                self._check_console(environment, config),
+                self._companion_warning(config),
+            )
             self._record_active(environment, config)
 
             def payload() -> dict[str, Any]:
@@ -585,7 +588,10 @@ class Controller:
                     config,
                     deadline=time.monotonic() + _START_READINESS_TIMEOUT,
                 )
-            console_warning = self._check_console(environment, config)
+            console_warning = self._join_warnings(
+                self._check_console(environment, config),
+                self._companion_warning(config),
+            )
             self._record_active(environment, config)
 
             def payload() -> dict[str, Any]:
@@ -898,6 +904,8 @@ class Controller:
             )
         )
         result["container"]["image_details"] = image_details
+        if current is not None and current.state == "running":
+            result = _with_console_warning(result, self._companion_warning(config))
         return result
 
     def logs(self, config: LocalCloudConfig, tail: int = 200) -> dict[str, Any]:
@@ -1471,6 +1479,7 @@ class Controller:
         is_dry_run = not confirm if confirm is not None else dry_run
         docker_report = self.runtime.doctor()
         invalid_ownership = docker_report.get("invalid_ownership", [])
+        orphaned_children = docker_report.get("orphaned_children", [])
         active_status, active_diagnostics = self._active_runtime_info()
         active_stale = bool(active_diagnostics) or (
             active_status is not None and active_status["state"] != "current"
@@ -1480,6 +1489,7 @@ class Controller:
             "status": "ok",
             "dry_run": is_dry_run,
             "docker_resources": invalid_ownership,
+            "orphaned_children": orphaned_children,
             "active_runtime_stale": active_stale,
             "legacy_host_state": legacy_host_state,
             "legacy_locks": legacy_locks,
@@ -1490,6 +1500,10 @@ class Controller:
         docker_cleanup = self.runtime.cleanup_resources(invalid_ownership)
         result["docker_resources"] = docker_cleanup["removed"]
         result["failures"].extend(docker_cleanup["failures"])
+        if orphaned_children:
+            orphan_cleanup = self.runtime.remove_orphaned_children(orphaned_children)
+            result["orphaned_children"] = orphan_cleanup["removed"]
+            result["failures"].extend(orphan_cleanup["failures"])
         if active_stale:
             stale_volume = (
                 active_status.get("data_volume")
@@ -1681,6 +1695,20 @@ class Controller:
             # The record's configured image ID belongs to the image asked for.
             current = self._resolve_runtime(kept)
         return current, kept
+
+    def _companion_warning(self, config: LocalCloudConfig) -> str | None:
+        """Warn when the runtime's Cloud SQL MySQL companion cannot start."""
+        fn = getattr(self.runtime, "companion_warnings", None)
+        if not callable(fn):
+            return None
+        try:
+            return self._join_warnings(*fn(config))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _join_warnings(*warnings: str | None) -> str | None:
+        return " ".join(filter(None, warnings)) or None
 
     def _check_console(
         self, environment: RuntimeRecord, config: LocalCloudConfig
@@ -1887,9 +1915,55 @@ class Controller:
             if isinstance(error, HostError):
                 error.details["previous_runtime_removed"] = True
                 error.details["data_volume_removed"] = not preserve_volume
+                self._restore_previous_runtime(
+                    error,
+                    current,
+                    config,
+                    new_image=prepared_image[0],
+                    preserve_volume=preserve_volume,
+                    observer=observer,
+                )
             raise
         self._emit_runtime_logs(observer, config, environment)
         return environment
+
+    def _restore_previous_runtime(
+        self,
+        error: HostError,
+        previous: RuntimeRecord,
+        config: LocalCloudConfig,
+        *,
+        new_image: Any,
+        preserve_volume: bool,
+        observer: Any | None,
+    ) -> None:
+        """Bring the runtime back on its old image when only the image changed.
+
+        A moved image tag can make a restart replace the runtime with an engine
+        that refuses the existing data. The data volume is kept, so the old
+        image still runs it. Any other change (settings, ports) has no previous
+        configuration to restore, and the failure is reported as it was."""
+        restore = getattr(self.runtime, "restore_previous_runtime", None)
+        new_image_id = getattr(new_image, "id", None)
+        if (
+            not callable(restore)
+            or not preserve_volume
+            or self._requires_managed_replacement(previous, config)
+            or not previous.image_id
+            or previous.image_id == new_image_id
+        ):
+            return
+        try:
+            restored = restore(config, previous, observer=observer)
+        except Exception as restore_error:  # noqa: BLE001
+            error.details["rollback_error"] = str(restore_error)
+            return
+        error.details["rolled_back_to_image"] = restored.image_id or previous.image_id
+        error.message = (
+            f"{error.message}. The previous runtime was restored on its "
+            f"previous image ({_short_image_id(previous.image_id)}); the "
+            "image the restart selected could not start."
+        )
 
     @staticmethod
     def _project_exists(
@@ -2521,6 +2595,10 @@ def _stale_runtime_hint(active_status: dict[str, Any]) -> str:
             "creates one and updates the record."
         )
     return f": another container now uses {volume}; the next 'lc start' records it."
+
+
+def _short_image_id(image_id: str) -> str:
+    return image_id.removeprefix("sha256:")[:12]
 
 
 def _with_console_warning(result: dict[str, Any], warning: str | None) -> dict[str, Any]:
