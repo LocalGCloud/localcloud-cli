@@ -94,7 +94,7 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
   `active-runtime.json`, the CLI keeps the image the container runs. An image pinned by digest
   (`name:tag@sha256:…`) keeps its build: `--lite` or `--full` fails when it would have to switch it.
   Available on `start` and `restart`.
-- `--services` overrides `services.enabled` with a comma-separated list of service IDs, or `default` to use the built-in set.
+- `--services` overrides `services.enabled` with a comma-separated list of service IDs, or `default` to use the built-in set. It also overrides service choices saved on the data volume for that start, without clearing them ([details](configuration.md#which-services-run-and-where-each-choice-comes-from)).
 - `--tail [SECONDS]` sets how long `start` and `restart` stream the container log after the runtime is ready. The default is 5 seconds; `--tail 0` skips it, and `--tail` with no value streams until you press Ctrl-C. (`lc logs --tail LINES` is a different option: it counts lines.)
 - `--skip-config-validation` (or `LOCALCLOUD_SKIP_CONFIG_VALIDATION=1`) skips the CLI's own checks of `localcloud.yaml` when they disagree with what a newer image accepts. The file is still passed through unchanged; see [Configuration](configuration.md#removed-flat-keys). Available on `start`, `restart`, and `reset`.
 - `--pull` is enabled by default: checks for a newer image on Docker Hub and pulls only if an update is available. `--no-pull` uses the locally available image only (pulling only if absent locally).

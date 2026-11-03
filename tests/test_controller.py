@@ -80,6 +80,7 @@ class FakeRuntime:
         }
         self.health_urls: list[str] = []
         self.create_error: HostError | None = None
+        self.service_state_list: list[dict[str, Any]] | None = None
         self.restore_calls: list[RuntimeRecord] = []
         self.restore_error: Exception | None = None
         self.companion_warning_list: list[str] = []
@@ -385,6 +386,9 @@ class FakeRuntime:
 
     def companion_warnings(self, _config: LocalCloudConfig) -> list[str]:
         return list(self.companion_warning_list)
+
+    def service_states(self, _runtime: RuntimeRecord) -> list[dict[str, Any]] | None:
+        return self.service_state_list
 
     def restore_previous_runtime(
         self,
@@ -1531,6 +1535,7 @@ def test_restart_replaces_container_when_services_override_changes(
         "docker_socket",
         "effective_services",
         "services",
+        "services_source",
     ]
     assert runtime.removes == [False]
     assert runtime.creates == 1
@@ -2643,6 +2648,59 @@ def test_cleanup_removes_orphaned_children_and_dry_run_only_lists_them(
         {"kind": "container", "name": "localcloud-mysql-gone"}
     ]
     assert runtime.orphan_removals == [[orphan]]
+
+
+def test_start_says_where_each_service_comes_from_and_what_it_overrode(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, services=["gcs"])
+    runtime.record = _record(config)
+    runtime.service_state_list = [
+        {"id": "gcs", "enabled": True, "source": "profile-env"},
+        {
+            "id": "bigquery",
+            "enabled": False,
+            "source": "profile-env",
+            "overridden_saved_enabled": True,
+        },
+    ]
+
+    result = controller.status(config)
+
+    assert result["services"] == ["gcs"]
+    assert result["service_sources"] == "--services: gcs"
+    assert result["saved_settings"] == (
+        "not applied, bigquery (enabled) overridden by --services; "
+        "a start without that choice restores them"
+    )
+
+
+def test_restart_warns_about_a_service_enabled_without_published_ports(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, services=["gcs"])
+    runtime.record = _record(config)
+    runtime.service_state_list = [
+        {"id": "gcs", "enabled": True, "source": "profile-env"},
+        {"id": "bigquery", "enabled": True, "source": "persisted"},
+    ]
+
+    result = controller.restart(config)
+
+    assert "Enabled but not published by this runtime: bigquery" in result["warning"]
+
+
+def test_status_without_service_states_has_no_source_rows(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+
+    result = controller.status(config)
+
+    assert "service_sources" not in result
+    assert "saved_settings" not in result
 
 
 def test_cleanup_with_nothing_to_clean(tmp_path: Path) -> None:
@@ -3849,3 +3907,48 @@ def test_restart_keeps_a_new_image_whose_services_lag(tmp_path: Path) -> None:
     assert "rolled_back_to_image" not in raised.value.details
     assert runtime.record is not None and runtime.record.state == "running"
     assert (paths.home / "active-runtime.json").exists()
+
+
+def test_start_reports_unpublished_services_instead_of_failing_on_their_endpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, services=["gcs"])
+    runtime.record = _record(config)
+    runtime.service_state_list = [
+        {"id": "gcs", "enabled": True, "source": "profile-env"},
+        {"id": "bigquery", "enabled": True, "source": "persisted"},
+    ]
+
+    def refuse(*_args: Any, **_kwargs: Any) -> Any:
+        raise HostError(
+            "stale_endpoint",
+            "LocalCloud returned an endpoint on a port this runtime does not publish",
+            {"canonical_port": "5388"},
+        )
+
+    monkeypatch.setattr("localcloud_cli.endpoints.environment_config", refuse)
+
+    result = controller.restart(config)
+
+    assert result["sdk_env"] == {}
+    assert "Enabled but not published by this runtime: bigquery" in result["warning"]
+    assert "SDK environment is not exported" in result["warning"]
+
+
+def test_a_stale_endpoint_with_nothing_unpublished_still_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    runtime.record = _record(config)
+
+    def refuse(*_args: Any, **_kwargs: Any) -> Any:
+        raise HostError("stale_endpoint", "unpublished", {"canonical_port": "5388"})
+
+    monkeypatch.setattr("localcloud_cli.endpoints.environment_config", refuse)
+
+    with pytest.raises(HostError) as raised:
+        controller.restart(config)
+
+    assert raised.value.code == "stale_endpoint"

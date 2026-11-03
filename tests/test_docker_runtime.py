@@ -14,7 +14,7 @@ import pytest
 import identity_fixtures
 
 import localcloud_cli.docker_runtime as runtime_module
-from localcloud_cli.config import HostPaths, load_config
+from localcloud_cli.config import HostPaths, load_config, runtime_settings
 from localcloud_cli.constants import DEFAULT_IMAGE
 from localcloud_cli.docker_runtime import (
     CONFIG_SCHEMA_CAPABILITY,
@@ -714,11 +714,14 @@ def test_selected_config_is_mounted_read_only_and_forwards_resolved_services(
     # project/user are request-scoped, not container-scoped, so they are never
     # frozen into the container even though the mounted file carries them.
     assert "LOCALCLOUD_PROJECT" not in run["environment"]
-    # services.enabled IS container-scoped (it picks which emulators the
-    # process starts), so the resolved list is forwarded like every other
-    # host.*-tier setting (memory, image, tls) and participates in the
-    # config hash that decides whether a change requires recreation.
-    assert run["environment"]["LOCALCLOUD_SERVICES"] == "gcs"
+    # services.enabled picks which emulators the process starts, so it is part
+    # of the config hash that decides whether a change requires recreation.
+    # It stays in the mounted file and is not forwarded as LOCALCLOUD_SERVICES:
+    # the runtime ranks that variable above the service choices saved on the
+    # data volume, and the file below them. Only --services is forwarded.
+    assert "LOCALCLOUD_SERVICES" not in run["environment"]
+    assert config.services == ("gcs",)
+    assert config.services_source == "config"
     assert SERVICES_LABEL not in run["labels"]
     assert "super-secret" not in run["labels"][CONFIG_LABEL]
     assert "Local Buckets" not in run["labels"][CONFIG_LABEL]
@@ -731,6 +734,40 @@ def test_selected_config_is_mounted_read_only_and_forwards_resolved_services(
         encoding="utf-8",
     )
     assert _config(tmp_path).config_hash == original_hash
+
+
+def test_services_flag_is_forwarded_and_beats_the_config_file(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config_path = tmp_path / "localcloud.yaml"
+    config_path.write_text(
+        "version: 1\nservices:\n  enabled: [gcs, pubsub]\n", encoding="utf-8"
+    )
+    config = _config(tmp_path, services=["gcs"])
+
+    runtime.create(config)
+    run = client.containers.run_calls[0]
+
+    assert config.services_source == "flag"
+    assert run["environment"]["LOCALCLOUD_SERVICES"] == "gcs"
+
+
+def test_a_services_flag_changes_the_runtime_identity_but_other_sources_do_not(
+    tmp_path: Path,
+) -> None:
+    default = _config(tmp_path)
+    flagged = _config(tmp_path, services=["gcs"])
+    (tmp_path / "localcloud.yaml").write_text(
+        "version: 1\nservices:\n  enabled: [gcs]\n", encoding="utf-8"
+    )
+    configured = _config(tmp_path)
+
+    assert "services_source" not in runtime_settings(default)
+    assert "services_source" not in runtime_settings(configured)
+    assert runtime_settings(flagged)["services_source"] == "flag"
+    assert flagged.config_hash != configured.config_hash
 
 
 def test_seed_files_are_never_mounted(

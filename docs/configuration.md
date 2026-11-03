@@ -49,6 +49,44 @@ read-only at `/etc/localcloud/cli-seed.yaml`; that sentinel suppresses the
 packaged default seed worker, and the CLI applies the user YAML through the
 LocalCloud seed API after readiness.
 
+### Which services run, and where each choice comes from
+
+A service is enabled by the highest of these layers that speaks about it. Later layers
+override earlier ones:
+
+| Rank | Layer | Set by |
+| :--- | :--- | :--- |
+| 1 (lowest) | The image's default services | The release |
+| 2 | `services.enabled` in `localcloud.yaml` | You, in the config file |
+| 3 | A choice saved on the data volume | The Console or the API, when you enable or disable a service |
+| 4 | `LOCALCLOUD_ENABLE_<ID>` variables (one service each) | You, in `host.environment` |
+| 5 (highest) | `--services` (sent to the runtime as `LOCALCLOUD_SERVICES`) | The command line |
+
+So `lc start --services gcs` runs exactly `gcs`, whatever was saved earlier. Saved choices are
+**left in place, not cleared**: a later start without `--services` restores them, on top of the
+config file and the defaults. A change made in the Console while the runtime runs is saved and
+replaces the launch-time choice for that session.
+
+Saved choices live on the **data volume**, not in `localcloud.yaml`. The config file is your input;
+the saved state is something the runtime writes when you toggle a service, and it follows the
+volume (so it survives recreating the container). A new `--data-volume`, or `host.data: ephemeral`,
+starts without any.
+
+`start`, `restart` and `status` print the result:
+
+```text
+Services         gcs
+Service sources  --services: gcs
+Saved settings   not applied, bigquery (enabled) overridden by --services; a start without that choice restores them
+```
+
+`Service sources` names the layer behind each enabled service: `--services`, a
+`LOCALCLOUD_ENABLE_*` variable, `saved setting (data volume …)`, `services.enabled (file)` or
+`image default`. `Saved settings` appears only when a launch-time choice is overriding something
+saved. If a saved choice enables a service that the runtime did not publish ports for (it was
+started with a smaller `services.enabled` list), the command warns instead of failing and the
+service's SDK environment is not exported; pass `--services` to pick the set.
+
 ### Removed flat keys
 
 | Removed flat key | Replacement |

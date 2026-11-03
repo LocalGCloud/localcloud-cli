@@ -36,6 +36,7 @@ from .docker_runtime import (
     RuntimeRecord,
 )
 from .errors import HostError
+from .service_sources import describe_service_sources, unpublished_services
 from .java_client import JavaMcpClient, is_retryable_java_error
 from .output import describe_port_owners
 
@@ -1759,6 +1760,17 @@ class Controller:
         if current is not None and current.state == "running":
             self._record_active(current, config)
 
+    def _service_states(self, environment: RuntimeRecord) -> list[dict[str, Any]] | None:
+        """Each service's state and source as the runtime reports them, or None
+        when it cannot say (for example a runtime double without the call)."""
+        fn = getattr(self.runtime, "service_states", None)
+        if not callable(fn):
+            return None
+        try:
+            return fn(environment)
+        except Exception:
+            return None
+
     def _companion_warning(self, config: LocalCloudConfig) -> str | None:
         """Warn when the runtime's Cloud SQL MySQL companion cannot start."""
         fn = getattr(self.runtime, "companion_warnings", None)
@@ -2322,6 +2334,7 @@ class Controller:
         image_status: str | None = None,
         console_state: _ConsoleState | None = None,
     ) -> dict[str, Any]:
+        states: list[dict[str, Any]] | None = None
         if environment is None:
             data_volume = config.data_volume
             origin = None
@@ -2364,7 +2377,12 @@ class Controller:
             ownership = dict(environment.ownership)
             url = environment.url
             endpoint_map = environment.endpoint_map
-            effective_services = self.runtime.effective_services(environment)
+            states = self._service_states(environment)
+            effective_services = (
+                tuple(sorted(state["id"] for state in states if state["enabled"]))
+                if states is not None
+                else self.runtime.effective_services(environment)
+            )
             services = (
                 "unavailable" if effective_services is None else effective_services
             )
@@ -2392,16 +2410,35 @@ class Controller:
             drift = dict(environment.drift)
             recorded_config_path = environment.config_path
 
+        unpublished = (
+            unpublished_services(
+                states,
+                config.effective_services,
+                data_volume=data_volume,
+                config_path=recorded_config_path,
+            )
+            if environment is not None and states and config.services is not None
+            else None
+        )
         sdk_env: Any = {}
         if include_sdk and url:
             from .endpoints import environment_config
 
-            sdk_env = environment_config(
-                {"url": url, "endpoint_map": endpoint_map},
-                config.project,
-                config.user,
-                output_format="json",
-            )
+            try:
+                sdk_env = environment_config(
+                    {"url": url, "endpoint_map": endpoint_map},
+                    config.project,
+                    config.user,
+                    output_format="json",
+                )
+            except HostError as error:
+                # A service enabled beyond the published set has an endpoint
+                # the host cannot reach; the runtime is up, so say that
+                # instead of failing the command with an endpoint error.
+                if error.code != "stale_endpoint" or unpublished is None:
+                    raise
+                sdk_env = {}
+                unpublished += " Its SDK environment is not exported."
             if not isinstance(sdk_env, dict):
                 raise HostError(
                     "invalid_environment",
@@ -2424,6 +2461,18 @@ class Controller:
             "drift": drift,
             "sdk_env": sdk_env,
         }
+        if environment is not None and states:
+            result.update(
+                describe_service_sources(
+                    states,
+                    data_volume=data_volume,
+                    config_path=recorded_config_path,
+                )
+            )
+            if unpublished:
+                result["warning"] = " ".join(
+                    filter(None, (result.get("warning"), unpublished))
+                )
         if config.diagnostics:
             result["diagnostics"] = list(config.diagnostics)
         if include_sdk:

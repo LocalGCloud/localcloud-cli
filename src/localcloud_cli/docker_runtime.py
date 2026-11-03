@@ -1632,13 +1632,10 @@ class DockerRuntime:
             return None
         return payload if isinstance(payload, dict) else None
 
-    def effective_services(self, runtime: RuntimeRecord) -> tuple[str, ...] | None:
-        """Return the enabled service IDs LocalCloud reports, or None if unavailable.
+    def service_states(self, runtime: RuntimeRecord) -> list[dict[str, Any]] | None:
+        """Each service's enabled state and where the runtime says it comes from.
 
-        Queried live from the running server rather than predicted from the
-        public YAML, so results reflect catalog/tier/availability resolution
-        the CLI does not own.
-        """
+        Queried live from the running server; None when it cannot be read."""
         if runtime.state != "running" or not runtime.url:
             return None
         try:
@@ -1651,13 +1648,33 @@ class DockerRuntime:
         services = payload.get("services") if isinstance(payload, dict) else None
         if not isinstance(services, list):
             return None
-        return tuple(
-            sorted(
-                str(entry["id"])
-                for entry in services
-                if isinstance(entry, dict) and entry.get("enabled") and entry.get("id")
-            )
-        )
+        states: list[dict[str, Any]] = []
+        for entry in services:
+            if not isinstance(entry, dict) or not entry.get("id"):
+                continue
+            state: dict[str, Any] = {
+                "id": str(entry["id"]),
+                "enabled": bool(entry.get("enabled")),
+                "source": str(entry.get("enabled_source") or "") or None,
+            }
+            if "overridden_saved_enabled" in entry:
+                state["overridden_saved_enabled"] = bool(
+                    entry["overridden_saved_enabled"]
+                )
+            states.append(state)
+        return states
+
+    def effective_services(self, runtime: RuntimeRecord) -> tuple[str, ...] | None:
+        """Return the enabled service IDs LocalCloud reports, or None if unavailable.
+
+        Queried live from the running server rather than predicted from the
+        public YAML, so results reflect catalog/tier/availability resolution
+        the CLI does not own.
+        """
+        states = self.service_states(runtime)
+        if states is None:
+            return None
+        return tuple(sorted(state["id"] for state in states if state["enabled"]))
 
     def doctor(self) -> dict[str, Any]:
         legacy: list[dict[str, str]] = []
@@ -3775,7 +3792,11 @@ def _container_environment(
 ) -> dict[str, str]:
     environment = dict(config.environment)
     environment.pop("LOCALCLOUD_CONFIG", None)
-    if config.services is not None:
+    # Only --services is a launch-time choice: the runtime ranks this variable
+    # above the service choices saved on the data volume. A services.enabled
+    # list stays in the mounted config file, which the runtime ranks below
+    # them, so a choice saved in the Console is restored on the next start.
+    if config.services is not None and config.services_source == "flag":
         environment["LOCALCLOUD_SERVICES"] = ",".join(config.services)
     else:
         environment.pop("LOCALCLOUD_SERVICES", None)

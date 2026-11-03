@@ -161,6 +161,8 @@ _COMMON_FIELDS = (
     FieldSpec("container.url", "URL", "url"),
     FieldSpec("console", "Console"),
     FieldSpec("services", "Services"),
+    FieldSpec("service_sources", "Service sources", "muted"),
+    FieldSpec("saved_settings", "Saved settings", "warning"),
     FieldSpec("changed_fields", "Changed", "warning"),
     FieldSpec("reset_scope", "Reset scope", "warning"),
     FieldSpec("warning", "Warning", "warning"),

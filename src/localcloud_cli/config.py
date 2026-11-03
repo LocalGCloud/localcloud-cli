@@ -125,6 +125,7 @@ DOCKER_DEPENDENCY = "docker"
 DockerAccessMode = Literal["auto", "true", "false"]
 ProjectSource = Literal["flag", "config", "git", "default"]
 ConsoleSource = Literal["flag", "environment", "runtime", "config", "default"]
+ServicesSource = Literal["flag", "config", "default"]
 ImageSource = Literal["flag", "config", "environment", "runtime", "default"]
 
 
@@ -278,6 +279,12 @@ class LocalCloudConfig:
     # container's own LOCALCLOUD_CONSOLE. A mode a runtime was started in
     # outranks server.console.enabled, but not a flag or host.environment.
     console_source: ConsoleSource = "default"
+    # Where `services` came from: "flag" (--services), "config"
+    # (services.enabled) or "default" (the image's own set). Only a flag is
+    # handed to the runtime as LOCALCLOUD_SERVICES, because the runtime ranks
+    # that variable above the service choices saved on the data volume and
+    # the config file below them.
+    services_source: ServicesSource = "default"
 
     def __post_init__(self) -> None:
         encoded = json.dumps(
@@ -309,6 +316,11 @@ def runtime_settings(config: LocalCloudConfig) -> dict[str, Any]:
         "container_name": config.container_name,
         "network_name": config.network_name,
     }
+    if config.services_source == "flag":
+        # Only a flag is handed to the runtime as LOCALCLOUD_SERVICES, which
+        # changes what the container does with the same list; other sources
+        # keep the identity they always had.
+        settings["services_source"] = "flag"
     if config.tls_enabled:
         settings["tls_enabled"] = True
         settings["tls_port"] = config.tls_port
@@ -725,6 +737,13 @@ def load_config(
         if "enabled" in services_section
         else None
     )
+    services_source: ServicesSource = (
+        "flag"
+        if services is not None
+        else "config"
+        if "enabled" in services_section
+        else "default"
+    )
     effective_catalog = _effective_service_catalog(services_section)
     effective_services = (
         selected_services
@@ -913,6 +932,7 @@ def load_config(
         image_source=image_source,
         console=console_enabled,
         console_source=console_source,
+        services_source=services_source,
     )
 
 
