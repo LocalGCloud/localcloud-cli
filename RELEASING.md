@@ -72,8 +72,20 @@ In `LocalGCloud/localcloud-cli`:
 1. Update `uv.lock` if package metadata or dependencies changed.
 2. Regenerate `THIRD_PARTY_NOTICES` when locked dependencies changed.
 3. Ensure your local branch is `main` and up to date with `origin/main`.
-4. Complete the [Container Lifecycle Test Runbook](docs/lifecycle-testing.md) on an isolated data volume to qualify the current runtime image and CLI operations.
-5. Run the Docker-marked contract tests against the runtime image this release defaults to.
+4. Sync the packaged configuration defaults from the LocalCloud image this release ships with, and
+   commit the result. The script reads the image's `/opt/localcloud/localcloud.defaults.yaml` from a
+   container it creates but never starts, and fails if the document is not a valid `localcloud.yaml`
+   base or a comment needs review before it is published:
+
+   ```sh
+   uv run python scripts/sync-gateway-defaults.py --image agentcloud/localcloud:VERSION
+   uv run python scripts/sync-gateway-defaults.py --image agentcloud/localcloud:VERSION --check
+   ```
+
+   Update [Gateway settings](docs/configuration.md#gateway-settings) for any setting the diff adds,
+   changes, or retires.
+5. Complete the [Container Lifecycle Test Runbook](docs/lifecycle-testing.md) on an isolated data volume to qualify the current runtime image and CLI operations.
+6. Run the Docker-marked contract tests against the runtime image this release defaults to.
    They need the image locally (they never pull), and they use their own throwaway volume and host
    ports 5960-5999:
 

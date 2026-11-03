@@ -27,27 +27,40 @@
     "auto_update": false,
     "auto_restart_container": false,
     "check_interval_hours": 24,
-    "image": "",
-    "prune_old_image": true,
-    "drain_timeout_seconds": 5
+    "image": ""
   },
   "server": {
     "data_dir": "/var/lib/localcloud",
     "gateway": {
       "port": 5380
     },
+    "control_token": {
+      "disabled": false
+    },
     "console": {
       "enabled": true
     },
-    "logging": {
-      "verbosity": "info"
-    },
     "persistence": true,
     "auto_seed": true,
+    "auto_provision_projects": true,
+    "allowed_origins": [],
+    "allowed_hosts": [],
+    "query_max_rows": 10000,
+    "query_max_bytes": 8388608,
+    "query_history_keep_rows": 0,
+    "migration_run_keep_rows": 0,
+    "operation_retention_hours": 0,
+    "identity": {
+      "enabled": true,
+      "issuer_url": "auto",
+      "id_token_lifetime_seconds": 3600,
+      "access_token_lifetime_seconds": 3600,
+      "clock_skew_seconds": 60,
+      "gateway_metadata": "auto",
+      "relay_image": ""
+    },
     "gcp_credentials": {
-      "source": "none",
-      "adc_path": "/credentials/adc/application_default_credentials.json",
-      "sa_key_path": "/credentials/sa-key.json"
+      "source": "none"
     },
     "postgres": {
       "host": "localhost",
@@ -55,12 +68,7 @@
       "database": "localcloud",
       "user": "localcloud",
       "password": "localcloud"
-    },
-    "api_key": "",
-    "license_server_url": "none",
-    "feedback_project_url": "https://github.com/orgs/LocalGCloud/projects/2",
-    "feedback_github_repository": "LocalGCloud/LocalGCloud.github.io",
-    "feedback_github_token": ""
+    }
   },
   "services": {
     "enabled": "default",
@@ -76,16 +84,10 @@
         "envValuePrefix": "http://",
         "type": "external",
         "gatewayObservable": true,
-        "usage": {
-          "request_count": "all"
-        },
         "defaultEnabled": true,
         "minTier": "community",
         "gcloudApiName": "storage",
         "terraformEnvVar": "GOOGLE_STORAGE_CUSTOM_ENDPOINT",
-        "healthCheck": {
-          "type": "tcp"
-        },
         "observability": {
           "logs": {
             "resourceType": "localcloud_service",
@@ -129,6 +131,14 @@
         "minTier": "community",
         "gcloudApiName": "pubsub",
         "terraformEnvVar": "GOOGLE_PUBSUB_CUSTOM_ENDPOINT",
+        "config": {
+          "enforce_subscription_retention": false,
+          "subscription_retention_days": 7
+        },
+        "config_descriptions": {
+          "enforce_subscription_retention": "Expire subscription messages by age, as Pub/Sub does. Off (the default), no message expires: unacknowledged messages, and the acknowledged ones a subscription retains, stay until they are acknowledged, purged or their subscription is deleted, whatever message_retention_duration the subscription names, and the resource still reports the retention it was given. Retained messages are held in memory and loaded at startup, so a backlog that is never consumed grows both: purge it, or turn this on. Set true to test retention: a message then expires past its subscription's message_retention_duration, or past subscription_retention_days when it names none. Applies from the next start.",
+          "subscription_retention_days": "Days a subscription keeps its messages when it sets no message_retention_duration, while enforce_subscription_retention is on. The default is Google's 7 days; 0 keeps them until they are acknowledged or purged. A subscription's message_retention_duration, when set, always wins. Applies to every subscription that sets none, from the next start."
+        },
         "observability": {
           "logs": {
             "resourceType": "localcloud_service",
@@ -156,44 +166,33 @@
         "availability": "available",
         "resettableData": true,
         "plaintextPort": 5384,
-        "protocol": "grpc",
+        "protocol": "grpc+rest",
         "envVar": "FIRESTORE_EMULATOR_HOST",
         "envValuePrefix": "",
-        "type": "external",
-        "gatewayObservable": false,
-        "usage": {
-          "request_count": "none"
-        },
+        "type": "facade",
+        "gatewayObservable": true,
         "defaultEnabled": false,
+        "config": {
+          "compatibilityProfile": "java",
+          "rulesFile": ""
+        },
         "minTier": "community",
         "gcloudApiName": "firestore",
         "terraformEnvVar": "GOOGLE_FIRESTORE_CUSTOM_ENDPOINT",
-        "healthCheck": {
-          "type": "http"
-        },
         "observability": {
           "logs": {
             "resourceType": "localcloud_service",
             "sources": [
               {
-                "id": "emulator-process",
-                "component": "firestore-emulator",
-                "strategy": "collector",
+                "id": "facade-runtime",
+                "component": "firestore",
+                "strategy": "direct",
                 "fallback": "raw-only",
-                "kind": "supervisor",
-                "program": "firestore-emulator",
-                "streams": [
-                  "stdout",
-                  "stderr"
-                ],
+                "kind": "internal",
                 "paths": {
-                  "stdout": "/var/log/localcloud/firestore-emulator-stdout.log",
-                  "stderr": "/var/log/localcloud/firestore-emulator-stderr.log"
+                  "raw": "/var/log/localcloud/localcloud-server.log"
                 },
-                "format": "text",
-                "retentionProfile": "external-process",
-                "integrationEvidence": "docker/conf/supervisord.conf",
-                "integrationTest": "RuntimeLogCollectorTest"
+                "format": "json"
               }
             ]
           }
@@ -209,16 +208,10 @@
         "envValuePrefix": "",
         "type": "external",
         "gatewayObservable": true,
-        "usage": {
-          "request_count": "gateway"
-        },
         "defaultEnabled": true,
         "minTier": "pro",
         "gcloudApiName": "bigtableadmin",
         "terraformEnvVar": "GOOGLE_BIGTABLE_CUSTOM_ENDPOINT",
-        "healthCheck": {
-          "type": "tcp"
-        },
         "observability": {
           "logs": {
             "resourceType": "localcloud_service",
@@ -257,13 +250,9 @@
         "envValuePrefix": "",
         "type": "external",
         "gatewayObservable": false,
-        "usage": {
-          "request_count": "gateway"
-        },
         "defaultEnabled": true,
         "minTier": "pro",
         "gcloudApiName": "spanner",
-        "gcloudPort": 5387,
         "terraformEnvVar": "GOOGLE_SPANNER_CUSTOM_ENDPOINT",
         "additionalPorts": {
           "rest": 5387
@@ -295,11 +284,6 @@
             ]
           }
         },
-        "healthCheck": {
-          "type": "http",
-          "port": 5387,
-          "path": "/v1/projects/{projectId}/instances"
-        },
         "config": {
           "backup_enabled": false,
           "backup_interval_seconds": 60,
@@ -322,18 +306,11 @@
         "envValuePrefix": "http://",
         "type": "external",
         "gatewayObservable": false,
-        "usage": {
-          "request_count": "all"
-        },
         "defaultEnabled": true,
         "minTier": "community",
         "gcloudApiName": "bigquery",
         "terraformEnvVar": "GOOGLE_BIGQUERY_CUSTOM_ENDPOINT",
         "grpcPort": 5389,
-        "healthCheck": {
-          "type": "http",
-          "path": "/bigquery/v2/projects/{projectId}/datasets"
-        },
         "config": {
           "memory_limit": "512MB",
           "threads": 2,
@@ -380,6 +357,7 @@
         "gatewayObservable": true,
         "defaultEnabled": true,
         "minTier": "community",
+        "gcloudApiName": "sheets",
         "observability": {
           "logs": {
             "resourceType": "localcloud_service",
@@ -454,6 +432,14 @@
         "minTier": "community",
         "gcloudApiName": "cloudtasks",
         "terraformEnvVar": "GOOGLE_CLOUD_TASKS_CUSTOM_ENDPOINT",
+        "config": {
+          "task_name_reuse_window_seconds": 0,
+          "activity_retention_days": 0
+        },
+        "config_descriptions": {
+          "activity_retention_days": "Days of completed task attempts the Local activity view keeps; 0 keeps them until cleared. Set 7 to test the window the activity view once showed.",
+          "task_name_reuse_window_seconds": "Seconds a task ID stays unavailable after its task is deleted, completes, exhausts its retries or is purged; creating that ID again answers ALREADY_EXISTS. 0 turns the window off, so an ID is reusable at once. Google releases an ID after up to 24 hours (86400). Valid range is 0 to 777600 (9 days)."
+        },
         "observability": {
           "logs": {
             "resourceType": "localcloud_service",
@@ -491,6 +477,12 @@
         "minTier": "community",
         "gcloudApiName": "cloudscheduler",
         "terraformEnvVar": "GOOGLE_CLOUD_SCHEDULER_CUSTOM_ENDPOINT",
+        "config": {
+          "executions_keep_per_job": 0
+        },
+        "config_descriptions": {
+          "executions_keep_per_job": "Executions each job keeps in its history; 0 keeps every execution. A positive number keeps that many of the newest and deletes the older ones, with the runs they name, when a run completes. The history view shows at most the newest 100 either way."
+        },
         "observability": {
           "logs": {
             "resourceType": "localcloud_service",
@@ -524,9 +516,6 @@
         "envValuePrefix": "",
         "type": "facade",
         "gatewayObservable": true,
-        "usage": {
-          "request_count": "control_plane"
-        },
         "defaultEnabled": true,
         "minTier": "community",
         "gcloudApiName": "cloudfunctions",
@@ -564,13 +553,16 @@
         "envValuePrefix": "",
         "type": "facade",
         "gatewayObservable": true,
-        "usage": {
-          "request_count": "control_plane"
-        },
         "defaultEnabled": true,
         "minTier": "community",
         "gcloudApiName": "alloydb",
         "terraformEnvVar": "GOOGLE_ALLOYDB_CUSTOM_ENDPOINT",
+        "config": {
+          "operation_retention_hours": 0
+        },
+        "config_descriptions": {
+          "operation_retention_hours": "Hours an AlloyDB operation stays answerable; 0 keeps it until the count bound of 1000 operations removes it. Set 24 to test the window the operations once had."
+        },
         "observability": {
           "logs": {
             "resourceType": "localcloud_service",
@@ -607,9 +599,6 @@
         "envValuePrefix": "",
         "type": "facade",
         "gatewayObservable": true,
-        "usage": {
-          "request_count": "control_plane"
-        },
         "defaultEnabled": true,
         "minTier": "community",
         "gcloudApiName": "dataproc",
@@ -665,9 +654,9 @@
           "log_warnings": true
         },
         "config_descriptions": {
-          "mode": "IAM mode — 'open' silently allows requests, 'permissive' allows requests with decision logging, 'strict' enforces local policy, and 'gcp-live' delegates authorization to real GCP IAM.",
-          "policy_file": "Optional IAM policy JSON file; strict mode with no file denies every non-management request.",
-          "log_warnings": "Log Cloud IAM operation warnings when enabled; suppressed in open mode (boolean)."
+          "mode": "IAM mode — 'open' silently allows requests, 'permissive' allows requests with decision logging, 'strict' enforces local policy and needs an identity (X-LocalCloud-User or a LocalCloud token) on every route except the admin plane and the Cloud Storage, Firestore and Cloud Functions trigger routes, which enforce their own access; Cloud KMS and Cloud Tasks check each call against their own IAM policies, so the policy file does not bind them. 'gcp-live' is meant to delegate authorization to real GCP IAM, but this build does not call Google, so gcp-live refuses every bearer token it cannot verify and fails closed. In 'strict', a LocalCloud-signed token decides the caller alone; without one, the X-LocalCloud-User header (when the request carries no credential) or the developer token names the caller, and that identity is self-asserted, since any client can write it, until a signed developer credential exists. In 'gcp-live', LocalCloud credentials are refused and the IAM policy, token minting and session routes fail closed.",
+          "policy_file": "Optional IAM policy JSON file. In strict mode with no file, or a file with no bindings, every identified caller is admitted and anonymous requests are refused; a file with bindings admits only the identities and paths it lists; a file that cannot be read or parsed refuses every identified caller until it loads.",
+          "log_warnings": "Log Cloud IAM operation warnings when enabled, each kind once per IAM settings change and later calls at DEBUG; suppressed in open mode (boolean)."
         },
         "observability": {
           "logs": {
@@ -818,11 +807,11 @@
         "gcloudApiName": "logging",
         "terraformEnvVar": "GOOGLE_LOGGING_CUSTOM_ENDPOINT",
         "config": {
-          "application_retention_days": 7,
+          "application_retention_days": 0,
           "application_max_size_mb": 512,
-          "runtime_retention_days": 3,
+          "runtime_retention_days": 0,
           "runtime_max_size_mb": 128,
-          "raw_retention_hours": 24,
+          "raw_retention_hours": 0,
           "raw_max_size_mb": 128,
           "total_max_size_mb": 768,
           "warning_watermark_percent": 80,
@@ -832,11 +821,11 @@
           "cleanup_interval_minutes": 60
         },
         "config_descriptions": {
-          "application_retention_days": "Retain application logs for this many days.",
-          "application_max_size_mb": "Protected application-log storage budget in MiB.",
-          "runtime_retention_days": "Retain LocalCloud runtime logs for this many days.",
-          "runtime_max_size_mb": "LocalCloud runtime-log storage budget in MiB.",
-          "raw_retention_hours": "Retain container-local raw fallback logs for this many hours.",
+          "application_retention_days": "Retain application logs for this many days; 0 keeps them until application_max_size_mb trims them. Cloud Logging's _Default bucket keeps 30 days: set 30 to test that retention.",
+          "application_max_size_mb": "Application-log storage budget in MiB. Past it the oldest entries are removed from memory and from PostgreSQL; 0 sets no budget and keeps every entry.",
+          "runtime_retention_days": "Retain LocalCloud runtime logs for this many days; 0 keeps them until runtime_max_size_mb trims them.",
+          "runtime_max_size_mb": "LocalCloud runtime-log storage budget in MiB. Past it the oldest runtime entries are removed; 0 sets no budget.",
+          "raw_retention_hours": "Reserved and not enforced yet: container-local raw fallback logs are kept until the logging budgets trim them. 0 is the only value that matches current behaviour.",
           "raw_max_size_mb": "Container-local raw fallback-log storage budget in MiB.",
           "total_max_size_mb": "Hard combined budget for application, runtime, and raw logs in MiB.",
           "warning_watermark_percent": "Usage percentage that reports warning pressure.",
@@ -918,9 +907,6 @@
         "envValuePrefix": "",
         "type": "facade",
         "gatewayObservable": true,
-        "usage": {
-          "request_count": "control_plane"
-        },
         "defaultEnabled": false,
         "minTier": "pro",
         "gcloudApiName": "container",
@@ -964,9 +950,6 @@
         "envValuePrefix": "http://",
         "type": "facade",
         "gatewayObservable": true,
-        "usage": {
-          "request_count": "control_plane"
-        },
         "defaultEnabled": false,
         "minTier": "pro",
         "gcloudApiName": "compute",
@@ -1007,9 +990,6 @@
         "envValuePrefix": "",
         "type": "facade",
         "gatewayObservable": true,
-        "usage": {
-          "request_count": "control_plane"
-        },
         "defaultEnabled": false,
         "minTier": "pro",
         "gcloudApiName": "run",
@@ -1048,9 +1028,6 @@
         "envValuePrefix": "",
         "type": "external",
         "gatewayObservable": false,
-        "usage": {
-          "request_count": "control_plane"
-        },
         "defaultEnabled": true,
         "minTier": "community",
         "terraformEnvVar": "GOOGLE_REDIS_CUSTOM_ENDPOINT",
@@ -1109,6 +1086,14 @@
         "minTier": "community",
         "gcloudApiName": "workflows",
         "terraformEnvVar": "GOOGLE_WORKFLOWS_CUSTOM_ENDPOINT",
+        "config": {
+          "executions_keep_per_workflow": 0,
+          "operations_keep": 0
+        },
+        "config_descriptions": {
+          "executions_keep_per_workflow": "Finished executions each workflow keeps, with their step history; 0 keeps every execution. A positive number keeps that many of the newest and deletes the rest when an execution starts and at startup.",
+          "operations_keep": "Workflow operations the service keeps across projects; 0 keeps every operation. A positive number keeps that many of the newest and deletes the rest."
+        },
         "observability": {
           "logs": {
             "resourceType": "localcloud_service",
@@ -1146,6 +1131,12 @@
         "minTier": "pro",
         "gcloudApiName": "aiplatform",
         "terraformEnvVar": "GOOGLE_VERTEX_AI_CUSTOM_ENDPOINT",
+        "config": {
+          "request_log_keep_per_project": 0
+        },
+        "config_descriptions": {
+          "request_log_keep_per_project": "Recorded Vertex AI requests each project keeps in the database; 0 keeps every request. A positive number keeps that many of the newest and prunes the rest."
+        },
         "observability": {
           "logs": {
             "resourceType": "localcloud_service",
@@ -1224,12 +1215,9 @@
         "envValuePrefix": "http://",
         "type": "facade",
         "gatewayObservable": true,
-        "usage": {
-          "request_count": "control_plane"
-        },
         "defaultEnabled": true,
         "minTier": "community",
-        "gcloudApiName": "sql",
+        "gcloudApiName": "sqladmin",
         "terraformEnvVar": "GOOGLE_SQL_CUSTOM_ENDPOINT",
         "additionalPorts": {
           "postgres": 5391,
@@ -1241,7 +1229,8 @@
           "mysql_image": "agentcloud/mysql:8.4",
           "mysql_max_connections": 50,
           "mysql_innodb_buffer_pool_size": "64M",
-          "mysql_table_open_cache": 200
+          "mysql_table_open_cache": 200,
+          "operation_retention_hours": 0
         },
         "config_descriptions": {
           "mysql_enabled": "Enable MySQL engine support in Cloud SQL (boolean). When false, only PostgreSQL instances can be created.",
@@ -1249,7 +1238,8 @@
           "mysql_image": "Container image for the Cloud SQL MySQL data plane.",
           "mysql_max_connections": "Maximum client connections to the shared Cloud SQL MySQL server (positive integer).",
           "mysql_innodb_buffer_pool_size": "InnoDB buffer pool size for the shared Cloud SQL MySQL server (positive size with unit, e.g. 64M, 256M).",
-          "mysql_table_open_cache": "Table cache size for the shared Cloud SQL MySQL server (positive integer)."
+          "mysql_table_open_cache": "Table cache size for the shared Cloud SQL MySQL server (positive integer).",
+          "operation_retention_hours": "Hours a Cloud SQL operation stays in the operations list; 0 keeps it until the count bound of 1000 operations removes it. A removed operation can still be read by its ID. Set 24 to test the window the operations once had."
         },
         "observability": {
           "logs": {

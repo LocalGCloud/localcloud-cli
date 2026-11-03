@@ -24,8 +24,6 @@ services:
     - firestore
     - pubsub
 server:
-  logging:
-    verbosity: debug
   console:
     enabled: true   # false runs headless, like lc start --no-ui
 ```
@@ -64,6 +62,69 @@ LocalCloud seed API after readiness.
 Changing the config path or presence recreates the managed runtime. Editing server or catalog values at the same path is picked up on explicit restart without putting those values or secrets into Docker labels. Protect config files containing credentials with normal host-file permissions.
 
 If the CLI's host or context checks disagree with what a newer LocalCloud image accepts, pass `--skip-config-validation` or set `LOCALCLOUD_SKIP_CONFIG_VALIDATION=1` on `start`, `restart`, or `reset`. This bypasses CLI closed-set field/version checks and removed-flat-schema detection. The file is still passed through unchanged, so LocalCloud remains the final authority. Bypassed checks appear in result `diagnostics`. YAML syntax and Docker-driving value checks such as `host.memory` and `host.data` are never bypassed.
+
+## Gateway Settings
+
+The CLI checks the `version`, `context`, `host`, `tls`, `mcp`, and `services` keys itself. It passes
+`server`, `updater`, `infrastructure`, `observability`, and the settings of `services.catalog` entries
+through unchanged, and LocalCloud validates them when it starts. LocalCloud refuses a key it does not know and names it, so a
+misspelled key fails `start` instead of being silently ignored. `--skip-config-validation` does not
+change that.
+
+The CLI packages the defaults of the LocalCloud image it was released with as
+[`src/localcloud_cli/defaults/localcloud.v1.yaml`](../src/localcloud_cli/defaults/localcloud.v1.yaml).
+The comments there describe each setting; the image you run reads its own copy, which wins if they
+differ.
+
+| Setting | Default | What it does |
+| :--- | :--- | :--- |
+| `server.control_token` | see the packaged defaults | Token that protects the control plane (admin API, MCP, admin SQL, identity minting). `value`, or `LOCALCLOUD_CONTROL_TOKEN`, sets your own token of at least 32 printable characters. |
+| `server.allowed_origins`, `server.allowed_hosts` | `[]` | Browser origins and host names the gateway serves beyond loopback, IP literals, and its own names, for example a LAN device's dev app at `http://192.168.1.20:3000`. Requests without browser headers (SDKs, gcloud, Terraform, the CLI) are not affected. Also `LOCALCLOUD_ALLOWED_ORIGINS` and `LOCALCLOUD_ALLOWED_HOSTS`, comma-separated. |
+| `server.auto_seed` | `true` | Seeds sample data when the container starts. |
+| `server.auto_provision_projects` | `true` | Creates a project the first time a request names it. |
+| `server.query_max_rows`, `server.query_max_bytes` | `10000`, `8388608` | Largest admin SQL result; a larger one is cut and marked truncated. |
+| `server.query_history_keep_rows`, `server.migration_run_keep_rows` | `0` | Admin query history and migration runs kept; `0` keeps all of them. |
+| `server.operation_retention_hours` | `0` | Hours a finished long-running operation (KMS, Workflows, Cloud Run, Dataproc) stays readable; `0` keeps it. |
+| `server.identity` | enabled | Local workload identity: issuer, token lifetimes, clock skew, gateway metadata, and the relay image. |
+
+### Retention
+
+LocalCloud keeps data until you delete it unless you set a limit. Each service's limits are under
+`services.catalog.<id>.config`, and `0` means keep:
+
+| Service | Settings (default) |
+| :--- | :--- |
+| `alloydb`, `cloudsql` | `operation_retention_hours` (`0`) |
+| `cloudscheduler` | `executions_keep_per_job` (`0`) |
+| `cloudtasks` | `activity_retention_days` (`0`), `task_name_reuse_window_seconds` (`0`; Google uses up to `86400`) |
+| `logging` | `application_retention_days`, `runtime_retention_days`, `raw_retention_hours` (all `0`: entries stay until the `*_max_size_mb` budgets trim them) |
+| `pubsub` | `enforce_subscription_retention` (`false`: no message expires), `subscription_retention_days` (`7`, used when enforcement is on) |
+| `vertexai` | `request_log_keep_per_project` (`0`) |
+| `workflows` | `executions_keep_per_workflow` (`0`), `operations_keep` (`0`) |
+
+To test Pub/Sub message expiry as Google applies it:
+
+```yaml
+services:
+  catalog:
+    pubsub:
+      config:
+        enforce_subscription_retention: true
+```
+
+### Retired keys
+
+LocalCloud refuses these keys, and its error says the key is retired. Remove them from
+`localcloud.yaml`:
+
+- `server.api_key`, `server.license_server_url`
+- `server.feedback_project_url`, `server.feedback_github_repository`, `server.feedback_github_token`
+- `server.gcp_credentials.adc_path`, `server.gcp_credentials.sa_key_path`
+- `server.identity.default_service_account`, `server.identity.lifetime_extension_accounts`
+- `updater.prune_old_image`, `updater.drain_timeout_seconds`
+- `gcloudPort`, `healthCheck`, and `usage` in a `services.catalog` entry
+
+`server.logging` is retired too, but LocalCloud only logs a warning and ignores it.
 
 ## Available Services
 

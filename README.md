@@ -694,6 +694,11 @@ member set to `null` is deleted. The CLI resolves it in this order:
 An explicit, environment, or remembered path that is missing or unreadable **fails** rather than silently
 falling back. CLI flags override the corresponding `host` values.
 
+`server` and `services.catalog` settings, such as `server.allowed_origins` for a LAN dev app or
+per-service retention limits (everything is kept by default), pass through to LocalCloud, which refuses
+any key it does not know. See [Gateway settings](docs/configuration.md#gateway-settings), which also lists
+retired keys to remove from older files.
+
 `host.docker_socket: auto` (the default) mounts the host Docker socket only when an enabled service needs
 it — Compute Engine, Cloud Run, GKE, or Dataproc. Set `true` to always mount it, or `false` as a hard
 opt-out.

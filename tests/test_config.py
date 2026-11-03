@@ -943,8 +943,7 @@ def test_namespaced_schema_preserves_host_model_and_context_precedence(
         "services:\n"
         "  enabled: [PUBSUB, gcs, pubsub]\n"
         "server:\n"
-        "  logging:\n"
-        "    verbosity: debug\n"
+        "  auto_seed: false\n"
         "infrastructure: {}\n",
         encoding="utf-8",
     )
