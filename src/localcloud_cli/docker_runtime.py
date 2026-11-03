@@ -9,6 +9,7 @@ import shutil
 import socket
 import shlex
 import stat
+import sys
 import time
 import warnings
 from dataclasses import dataclass, field, replace
@@ -4483,17 +4484,41 @@ def _port_is_free(
     address = host_ip or "0.0.0.0"
     if _binds(address, port, kind):
         return True
-    if kind != socket.SOCK_STREAM:
+    if kind != socket.SOCK_STREAM or sys.platform == "win32":
+        # Windows lets a SO_REUSEADDR bind succeed over a live listener, so a
+        # failed plain bind is the only trustworthy answer there.
         return False
     # A plain bind also fails while connections linger on a port whose
     # listener is gone, such as a port forwarder's sockets stuck in FIN_WAIT_2,
     # yet a new listener can take it. SO_REUSEADDR ignores those connections
     # but, on macOS, not a listener on another address than the one probed,
-    # so loopback is probed too and lsof asked for any listener.
-    return (
-        all(_binds(probed, port, kind, reuse=True) for probed in {address, "127.0.0.1"})
-        and _listening_process(port) is None
-    )
+    # so loopback is probed too and the host asked for any listener.
+    return all(
+        _binds(probed, port, kind, reuse=True) for probed in {address, "127.0.0.1"}
+    ) and not _has_listener(port, address)
+
+
+def _has_listener(port: int, address: str) -> bool:
+    """Whether something listens on TCP `port`: from the host's listener
+    listing when it has one, else by connecting to the port (an accepted
+    connection is a listener; a refused one is nobody)."""
+    listeners = _listening_ports()
+    if listeners is not None:
+        return port in listeners
+    probed = {"127.0.0.1"}
+    if address not in {"", "0.0.0.0"}:
+        probed.add(address)
+    return any(_accepts_connection(candidate, port) for candidate in probed)
+
+
+def _accepts_connection(address: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.5)
+        try:
+            probe.connect((address, port))
+            return True
+        except OSError:
+            return False
 
 
 def _binds(address: str, port: int, kind: int, *, reuse: bool = False) -> bool:
@@ -4507,10 +4532,16 @@ def _binds(address: str, port: int, kind: int, *, reuse: bool = False) -> bool:
             return False
 
 
-def _listening_process(port: int) -> str | None:
-    from .host_checks import listening_process
+def _listening_ports() -> dict[int, str] | None:
+    """The host's TCP listeners by port; None when the host cannot list them."""
+    from .host_checks import listening_tcp_ports
 
-    return listening_process(port)
+    return listening_tcp_ports()
+
+
+def _listening_process(port: int) -> str | None:
+    listeners = _listening_ports()
+    return listeners.get(port) if listeners else None
 
 
 def _validate_base_url(url: str) -> str:

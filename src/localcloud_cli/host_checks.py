@@ -21,6 +21,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -779,28 +780,64 @@ def localcloud_volumes() -> list[str]:
         return []
 
 
+# A plan probes dozens of ports and lsof walks every process on each call, so
+# one listing serves every probe made within this many seconds.
+_LISTENERS_SNAPSHOT_TTL = 2.0
+_listeners_snapshot: tuple[float, dict[int, str] | None] | None = None
+
+
+def listening_tcp_ports() -> dict[int, str] | None:
+    """Who listens on each TCP port, as {port: "name, pid N"}; None when lsof
+    is missing or failed (then nothing is known about the host's listeners).
+    A listing is reused for a short while, since a port plan asks about many
+    ports at once."""
+    global _listeners_snapshot
+    now = time.monotonic()
+    if (
+        _listeners_snapshot is not None
+        and now - _listeners_snapshot[0] < _LISTENERS_SNAPSHOT_TTL
+    ):
+        return _listeners_snapshot[1]
+    listeners = _list_tcp_listeners()
+    _listeners_snapshot = (now, listeners)
+    return listeners
+
+
 def listening_process(port: int) -> str | None:
     """The process listening on TCP `port`, as "name, pid N"; None when lsof
     is missing or cannot tell (another user's process, for example)."""
+    listeners = listening_tcp_ports()
+    return listeners.get(port) if listeners else None
+
+
+def _list_tcp_listeners() -> dict[int, str] | None:
     lsof = shutil.which("lsof")
     if lsof is None:
         return None
     try:
         completed = subprocess.run(
-            [lsof, "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fpc"],
+            [lsof, "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"],
             capture_output=True,
             text=True,
-            timeout=2.0,
+            timeout=5.0,
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
+    # -F prints one field per line: a process as p<pid> then c<name>, and
+    # each of its listening sockets as n<address>:<port> (*:5380, [::1]:5380).
+    listeners: dict[int, str] = {}
     pid = name = None
     for line in completed.stdout.splitlines():
-        if line.startswith("p") and pid is None:
-            pid = line[1:]
-        elif line.startswith("c") and name is None:
+        if line.startswith("p"):
+            pid, name = line[1:], None
+        elif line.startswith("c"):
             name = line[1:]
-    if pid is None:
-        return None
-    return f"{name or 'process'}, pid {pid}"
+        elif line.startswith("n") and pid is not None:
+            _address, _, port_text = line[1:].rpartition(":")
+            try:
+                port = int(port_text)
+            except ValueError:
+                continue
+            listeners.setdefault(port, f"{name or 'process'}, pid {pid}")
+    return listeners

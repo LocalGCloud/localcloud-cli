@@ -40,7 +40,6 @@ from localcloud_cli.docker_runtime import (
 from localcloud_cli.errors import HostError
 
 _real_docker_socket_is_usable = runtime_module._docker_socket_is_usable
-_real_listening_process = runtime_module._listening_process
 
 
 @pytest.fixture(autouse=True)
@@ -55,7 +54,7 @@ def available_docker_socket(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def no_listening_process(monkeypatch: pytest.MonkeyPatch) -> None:
     # Keeps port probes and owner lookups from asking this host's lsof.
-    monkeypatch.setattr(runtime_module, "_listening_process", lambda _port: None)
+    monkeypatch.setattr(runtime_module, "_listening_ports", lambda: {})
 
 
 class NotFound(Exception):
@@ -789,12 +788,48 @@ def test_port_probe_ignores_connections_left_without_a_listener(
     )
 
     assert runtime_module._port_is_free(5380, host_ip="") is True
-    monkeypatch.setattr(runtime_module, "_listening_process", lambda _port: "ssh, pid 7")
+    monkeypatch.setattr(runtime_module, "_listening_ports", lambda: {5380: "ssh, pid 7"})
     assert runtime_module._port_is_free(5380, host_ip="") is False
     assert runtime_module._port_is_free(53, socket.SOCK_DGRAM, "") is False
 
 
-def test_listening_process_names_the_process_lsof_reports(
+def test_port_probe_asks_the_port_itself_when_the_host_cannot_list_listeners(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No lsof (Linux minimal images, for one): a listener is whoever answers a
+    # connection, so the probe needs neither lsof nor root.
+    monkeypatch.setattr(
+        runtime_module, "_binds", lambda _address, _port, _kind, *, reuse=False: reuse
+    )
+    monkeypatch.setattr(runtime_module, "_listening_ports", lambda: None)
+    connected: list[tuple[str, int]] = []
+
+    def accepts(address: str, port: int) -> bool:
+        connected.append((address, port))
+        return address == "10.0.0.5"
+
+    monkeypatch.setattr(runtime_module, "_accepts_connection", accepts)
+
+    assert runtime_module._port_is_free(5380, host_ip="") is True
+    assert connected == [("127.0.0.1", 5380)]
+    assert runtime_module._port_is_free(5380, host_ip="10.0.0.5") is False
+
+
+def test_port_probe_trusts_only_a_plain_bind_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        runtime_module, "_binds", lambda _address, _port, _kind, *, reuse=False: reuse
+    )
+    monkeypatch.setattr(runtime_module.sys, "platform", "win32")
+    monkeypatch.setattr(
+        runtime_module, "_listening_ports", lambda: pytest.fail("lsof asked")
+    )
+
+    assert runtime_module._port_is_free(5380, host_ip="") is False
+
+
+def test_listening_processes_come_from_one_lsof_listing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import localcloud_cli.host_checks as host_checks
@@ -803,20 +838,30 @@ def test_listening_process_names_the_process_lsof_reports(
 
     def run(command: list[str], **_kwargs: Any) -> Any:
         calls.append(command)
-        return SimpleNamespace(stdout="p63006\ncssh\nf18\n")
+        return SimpleNamespace(
+            stdout="p63006\ncssh\nf18\nn*:5380\nf19\nn[::1]:5380\np7\ncnginx\nf4\nn127.0.0.1:8080\n"
+        )
 
     monkeypatch.setattr(host_checks.shutil, "which", lambda _name: "/usr/sbin/lsof")
     monkeypatch.setattr(host_checks.subprocess, "run", run)
+    monkeypatch.setattr(host_checks, "_listeners_snapshot", None)
 
-    assert _real_listening_process(5380) == "ssh, pid 63006"
-    assert calls == [["/usr/sbin/lsof", "-nP", "-iTCP:5380", "-sTCP:LISTEN", "-Fpc"]]
+    assert host_checks.listening_process(5380) == "ssh, pid 63006"
+    assert host_checks.listening_process(8080) == "nginx, pid 7"
+    assert host_checks.listening_process(5381) is None
+    # A plan asks about many ports: lsof, which walks every process, ran once.
+    assert calls == [["/usr/sbin/lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"]]
 
+    monkeypatch.setattr(host_checks, "_listeners_snapshot", None)
     monkeypatch.setattr(
         host_checks.subprocess, "run", lambda *_a, **_k: SimpleNamespace(stdout="")
     )
-    assert _real_listening_process(5380) is None
+    assert host_checks.listening_process(5380) is None
+    assert host_checks.listening_tcp_ports() == {}
+    monkeypatch.setattr(host_checks, "_listeners_snapshot", None)
     monkeypatch.setattr(host_checks.shutil, "which", lambda _name: None)
-    assert _real_listening_process(5380) is None
+    assert host_checks.listening_process(5380) is None
+    assert host_checks.listening_tcp_ports() is None
 
 
 def test_port_diagnostics_name_who_holds_each_busy_port(
