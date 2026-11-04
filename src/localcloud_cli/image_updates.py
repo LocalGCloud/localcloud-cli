@@ -322,6 +322,7 @@ def registry_answer(
     fresh: bool = False,
     now: float | None = None,
     transport: httpx.BaseTransport | None = None,
+    notify: Callable[[str], None] | None = None,
 ) -> dict[str, Listed] | None:
     """The registry's newest tags for `arch`: a cached answer under 6 hours old
     unless `fresh` asks for a new one, otherwise a lookup. None when the
@@ -333,6 +334,8 @@ def registry_answer(
             return cached
     if store.offline(now):
         return None
+    if notify is not None:
+        notify("Checking Docker Hub for a newer LocalCloud image…")
     try:
         answer = registry_newest(arch, transport=transport)
     except RegistryUnavailable:
@@ -390,6 +393,7 @@ def discover(
     fresh: bool = False,
     now: float | None = None,
     transport: httpx.BaseTransport | None = None,
+    notify: Callable[[str], None] | None = None,
 ) -> Candidate | None:
     """The newest image on `current`'s channel, if it is newer than `current`.
 
@@ -400,7 +404,7 @@ def discover(
         platform.machine()
     )
     answer = (
-        registry_answer(store, arch, fresh=fresh, now=now, transport=transport)
+        registry_answer(store, arch, fresh=fresh, now=now, transport=transport, notify=notify)
         if registry and arch is not None
         else None
     )
@@ -438,6 +442,7 @@ def consider(
     store: UpdateStore | None = None,
     now: float | None = None,
     transport: httpx.BaseTransport | None = None,
+    notify: Callable[[str], None] | None = None,
 ) -> tuple[LocalCloudConfig, dict[str, Any] | None]:
     """Before start or restart: `config`, switched to a newer image when the
     user consents, and the `image_update` result field (None: nothing to say).
@@ -445,7 +450,8 @@ def consider(
     `pull_explicit` is an explicit --pull (it adopts the newest image without
     asking), `no_pull` an explicit --no-pull (local images only), and `ask`
     prompts the user; None means this run cannot prompt, so a newer image is
-    only reported. Never raises: a failed lookup means nothing to offer.
+    only reported. `notify` hears about a registry request before it is made.
+    Never raises: a failed lookup means nothing to offer.
     """
     if dry_run or not enabled(config.environment):
         return config, None
@@ -464,6 +470,7 @@ def consider(
             fresh=pull_explicit,
             now=now,
             transport=transport,
+            notify=notify,
         )
     except Exception:  # The offer is a convenience; it never fails a command.
         return config, None

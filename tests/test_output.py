@@ -1145,3 +1145,27 @@ def test_closing_line_keeps_the_label_and_time_apart_when_narrow() -> None:
     )
 
     assert reporter._status_line("[OK]", "LocalCloud is ready", "success", 0.0) == "[OK]  0.0s"
+
+
+def test_resume_restarts_the_animation_a_prompt_paused() -> None:
+    stream = TtyBuffer()
+    reporter = LifecycleReporter(stream=stream, environ={"TERM": "xterm-256color"}, fps=50)
+    reporter.start("Starting…")
+    answer = reporter.prompt(["Question context"], "Continue? ", input_stream=io.StringIO("y\n"))
+    assert answer == "y"
+    assert reporter._thread is None
+    reporter.resume()
+    assert reporter._thread is not None and reporter._thread.is_alive()
+    reporter.resume()  # Already running: nothing changes.
+    reporter.close()
+    assert reporter._thread is None or not reporter._thread.is_alive()
+
+
+def test_resume_is_a_no_op_without_a_cursor_or_before_start() -> None:
+    plain = LifecycleReporter(stream=io.StringIO())
+    plain.start("Starting…")
+    plain.resume()
+    assert plain._thread is None
+    unstarted = LifecycleReporter(stream=TtyBuffer(), environ={"TERM": "xterm-256color"})
+    unstarted.resume()
+    assert unstarted._thread is None

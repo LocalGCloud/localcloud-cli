@@ -623,6 +623,9 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
                     "LOCALCLOUD_STARTUP_METRICS": "true",
                 },
             )
+        image_update: dict[str, Any] | None = None
+        if args.command in {"start", "restart"}:
+            config, image_update = _offer_newer_image(controller, args, config, observer)
         if observer is not None:
             observer.config(args.command, config, args)
         if args.command == "start":
@@ -633,7 +636,7 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
                     if getattr(args, "pull_explicit", False) and args.pull
                     else False
                 )
-            return controller.start(
+            return _with_image_update(controller.start(
                 config,
                 pull=pull,
                 ensure_project=args.project_id is not None,
@@ -647,7 +650,7 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
                     if observer is not None
                     else None
                 ),
-            )
+            ), image_update)
         if args.command == "restart":
             pull = args.pull
             if args.dry_run:
@@ -656,7 +659,7 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
                     if getattr(args, "pull_explicit", False) and args.pull
                     else False
                 )
-            return controller.restart(
+            return _with_image_update(controller.restart(
                 config,
                 pull=pull,
                 ensure_project=args.project_id is not None,
@@ -670,7 +673,7 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
                     if observer is not None
                     else None
                 ),
-            )
+            ), image_update)
         if args.command == "reset":
             return controller.reset(
                 config,
@@ -748,6 +751,50 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
         "Unsupported LocalCloud command",
         {"command": args.command},
     )
+
+
+def _offer_newer_image(
+    controller: Any,
+    args: argparse.Namespace,
+    config: LocalCloudConfig,
+    observer: _ExecutionObserver | None,
+) -> tuple[LocalCloudConfig, dict[str, Any] | None]:
+    """Before start or restart: offer a newer version of the runtime's pinned
+    image. Only an explicit --pull or a yes at the prompt switches it."""
+    from . import image_updates
+
+    engine = getattr(controller, "runtime", None)
+    if engine is None:
+        return config, None
+    explicit = bool(getattr(args, "pull_explicit", False))
+
+    def prompt(lines: list[str], question: str) -> str:
+        assert observer is not None
+        answer = observer.reporter.prompt(lines, question, input_stream=observer.input_stream)
+        observer.reporter.resume()
+        return answer
+
+    # --accept-dynamic-ports says nobody is there to answer.
+    can_ask = observer is not None and observer.can_prompt() and not args.accept_dynamic_ports
+    return image_updates.consider(
+        config,
+        engine,
+        pull_explicit=explicit and args.pull,
+        no_pull=explicit and not args.pull,
+        dry_run=args.dry_run,
+        ask=prompt if can_ask else None,
+        notify=(
+            observer.reporter.update
+            if observer is not None and observer.reporter.enabled
+            else None
+        ),
+    )
+
+
+def _with_image_update(result: Any, image_update: dict[str, Any] | None) -> Any:
+    if image_update is not None and isinstance(result, dict):
+        result["image_update"] = image_update
+    return result
 
 
 def _run_mcp_bridge(
@@ -1361,9 +1408,16 @@ def _parser() -> argparse.ArgumentParser:
                 action=_SmartPullAction,
                 default=(name == "start"),
                 help=(
-                    "Check for a newer image on the registry and pull if available before running (default: --pull)"
+                    "Check for a newer image on the registry and pull if available before running "
+                    "(default: --pull). Given explicitly, it also moves a runtime pinned to a version "
+                    "tag (such as 0.1.8-lite) to the newest version on its channel, without asking; "
+                    "--no-pull looks for newer versions among local images only"
                     if name == "start"
-                    else "Check for a newer image on the registry and pull if available before restarting (default: --no-pull)"
+                    else "Check for a newer image on the registry and pull if available before "
+                    "restarting (default: --no-pull). Given explicitly, it also moves a runtime "
+                    "pinned to a version tag (such as 0.1.8-lite) to the newest version on its "
+                    "channel, without asking; --no-pull looks for newer versions among local "
+                    "images only"
                 ),
             )
             command.add_argument(

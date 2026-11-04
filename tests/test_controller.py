@@ -3980,3 +3980,75 @@ def test_a_selection_run_reports_an_endpoint_outside_the_published_set(
     assert result["sdk_env"] == {}
     assert "endpoint on port 5406 that this runtime does not publish" in result["warning"]
     assert "SDK environment is not exported" in result["warning"]
+
+
+# --- Newer image offer ------------------------------------------------------
+
+_PINNED = "agentcloud/localcloud:0.1.8-lite"
+_OFFERED = "agentcloud/localcloud:0.1.11-lite"
+
+
+def _upgraded(config: LocalCloudConfig) -> LocalCloudConfig:
+    return replace(config, image=_OFFERED, image_source="upgrade")
+
+
+@pytest.mark.parametrize("command", ["start", "restart"])
+def test_an_accepted_upgrade_replaces_the_runtime_and_is_kept(
+    tmp_path: Path, command: str
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    controller.start(_config(tmp_path, paths=paths, image=_PINNED))
+    plain = _config(tmp_path, paths=paths)
+    assert (plain.image, plain.image_source) == (_PINNED, "runtime")
+
+    result = getattr(controller, command)(_upgraded(plain))
+
+    assert result["status"] in {"reconfigured", "started", "restarted"}
+    assert runtime.record is not None and runtime.record.configured_image == _OFFERED
+    # The record keeps the new image, so later plain runs stay on it.
+    later = _config(tmp_path, paths=paths)
+    assert (later.image, later.image_source) == (_OFFERED, "runtime")
+    assert controller.restart(later).get("changed_fields") is None
+
+
+def test_an_upgrade_is_not_undone_by_the_running_container_image(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, image=_PINNED)
+    runtime.record = _record(config)
+
+    current, kept = controller._resolve_keeping_runtime_settings(_upgraded(config))
+
+    assert current is not None
+    assert (kept.image, kept.image_source) == (_OFFERED, "upgrade")
+
+
+def test_restart_restores_the_previous_runtime_when_the_upgrade_fails(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, image=_PINNED)
+    runtime.record = _record(config, image_id="sha256:old")
+    runtime.create_error = HostError(
+        "environment_create_failed", "the new image refused to start"
+    )
+
+    with pytest.raises(HostError) as raised:
+        controller.restart(_upgraded(config))
+
+    assert [record.image_id for record in runtime.restore_calls] == ["sha256:old"]
+    assert raised.value.details["previous_runtime_restored"] is True
+    # The failed upgrade is not recorded, so the next run offers it again.
+    active = load_active_runtime(paths)
+    assert active is None or active.image != _OFFERED
+
+
+def test_a_failed_upgrade_with_other_changes_is_not_restored(tmp_path: Path) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, image=_PINNED)
+    runtime.record = _record(config, image_id="sha256:old")
+    runtime.create_error = HostError("environment_create_failed", "new settings failed")
+
+    with pytest.raises(HostError):
+        controller.restart(replace(_upgraded(config), memory="8g"))
+
+    assert runtime.restore_calls == []

@@ -1659,6 +1659,23 @@ class LifecycleReporter:
             self.stream.flush()
         return input_stream.readline().strip()
 
+    def resume(self) -> None:
+        """Restart the animation a prompt paused, below the prompt's lines."""
+        if (
+            not self.enabled
+            or self._finished
+            or self._started is None
+            or not self.capabilities.cursor
+            or self._thread is not None
+        ):
+            return
+        self._stop.clear()
+        self._cursor_hidden = True
+        self.stream.write("\x1b[?25l")
+        self.stream.flush()
+        self._thread = threading.Thread(target=self._animate, name="localcloud-output", daemon=True)
+        self._thread.start()
+
     def settle(self) -> None:
         """Stop the animation and clear its frame, so the command's output can
         be printed before the closing line."""

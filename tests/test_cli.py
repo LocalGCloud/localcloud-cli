@@ -2744,3 +2744,197 @@ def test_status_marks_an_unhealthy_container_without_failing_the_command(
         f"{label} LocalCloud container is {status}"
     )
     assert "Status" not in captured.out
+
+
+# --- Newer image offer ------------------------------------------------------
+
+
+class _Engine:
+    def __init__(self, tags: set[str]) -> None:
+        self.tags = tags
+
+    def local_image_tags(self, repository: str) -> set[str]:
+        return set(self.tags)
+
+    def engine_architecture(self) -> str | None:
+        return "aarch64"
+
+
+def _pin_runtime_image(
+    monkeypatch: pytest.MonkeyPatch, image: str = "agentcloud/localcloud:0.1.8-lite"
+) -> None:
+    """Record a runtime that last ran `image`, as `lc start` leaves it."""
+    from localcloud_cli.config import HostPaths
+    from localcloud_cli.state import (
+        ACTIVE_RUNTIME_SCHEMA_VERSION,
+        ActiveRuntime,
+        save_active_runtime,
+    )
+
+    save_active_runtime(
+        HostPaths.from_environment(),
+        ActiveRuntime(
+            schema_version=ACTIVE_RUNTIME_SCHEMA_VERSION,
+            data_volume="localcloud-data",
+            image=image,
+            container_id="abc123",
+        ),
+    )
+    # The running container remembers its (built-in) config, so the record applies.
+    monkeypatch.setattr(
+        FakeController, "remembered_config", lambda _self, _config: DEFAULTS_CONFIG_LABEL
+    )
+
+
+@pytest.fixture
+def offer_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    from dataclasses import replace
+
+    from localcloud_cli import image_updates
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(FakeController, "runtime", _Engine(set()), raising=False)
+
+    def consider(config: Any, engine: Any, **kwargs: Any) -> tuple[Any, Any]:
+        calls.append({"config": config, "engine": engine, **kwargs})
+        offered = replace(config, image="agentcloud/localcloud:0.1.11-lite", image_source="upgrade")
+        return offered, {"action": "accepted", "summary": "switched"}
+
+    monkeypatch.setattr(image_updates, "consider", consider)
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("argv", "pull_explicit", "no_pull", "dry_run"),
+    [
+        (["start"], False, False, False),
+        (["start", "--pull"], True, False, False),
+        (["start", "--no-pull"], False, True, False),
+        (["restart"], False, False, False),
+        (["restart", "--pull"], True, False, False),
+        (["restart", "--no-pull"], False, True, False),
+        (["restart", "--dry-run"], False, False, True),
+    ],
+)
+def test_start_and_restart_consider_a_newer_image(
+    offer_calls: list[dict[str, Any]],
+    argv: list[str],
+    pull_explicit: bool,
+    no_pull: bool,
+    dry_run: bool,
+) -> None:
+    result = _execute(_parser().parse_args(argv))
+
+    [call] = offer_calls
+    assert (call["pull_explicit"], call["no_pull"], call["dry_run"]) == (
+        pull_explicit,
+        no_pull,
+        dry_run,
+    )
+    assert call["engine"] is FakeController.instance.runtime
+    assert call["ask"] is None  # No observer, no prompt.
+    command, selected = FakeController.instance.calls[-1]
+    assert command == argv[0]
+    assert selected.image == "agentcloud/localcloud:0.1.11-lite"
+    if not dry_run:
+        assert result["image_update"] == {"action": "accepted", "summary": "switched"}
+
+
+@pytest.mark.parametrize("command", ["stop", "status", "reset"])
+def test_other_commands_never_consider_a_newer_image(
+    offer_calls: list[dict[str, Any]], command: str
+) -> None:
+    _execute(_parser().parse_args([command]))
+    assert offer_calls == []
+
+
+def _interactive_observer(answer: str) -> tuple[Any, io.StringIO]:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    class TtyBuffer(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    output = TtyBuffer()
+    reporter = LifecycleReporter(stream=output, environ={"TERM": "xterm-256color"}, fps=1)
+    reporter.start("Starting…")
+    return _ExecutionObserver(reporter, input_stream=TtyBuffer(answer)), output
+
+
+@pytest.mark.parametrize(
+    ("answer", "image", "action"),
+    [
+        ("y\n", "agentcloud/localcloud:0.1.10-lite", "accepted"),
+        ("n\n", "agentcloud/localcloud:0.1.8-lite", "declined"),
+    ],
+)
+def test_restart_asks_in_a_terminal(
+    monkeypatch: pytest.MonkeyPatch, answer: str, image: str, action: str
+) -> None:
+    monkeypatch.delenv("LOCALCLOUD_IMAGE_UPDATE_CHECK")
+    monkeypatch.setattr(
+        FakeController, "runtime", _Engine({"0.1.8-lite", "0.1.10-lite"}), raising=False
+    )
+    _pin_runtime_image(monkeypatch)
+    observer, output = _interactive_observer(answer)
+
+    # --no-pull keeps the lookup local, so the test needs no registry.
+    result = _execute(_parser().parse_args(["restart", "--no-pull"]), observer)
+    observer.reporter.close()
+
+    assert FakeController.instance.calls[-1][1].image == image
+    assert result["image_update"]["action"] == action
+    rendered = output.getvalue()
+    assert "A newer LocalCloud image is available for this runtime." in rendered
+    assert "Use 0.1.10-lite now? [y/N] " in rendered
+
+
+def test_accept_dynamic_ports_never_asks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LOCALCLOUD_IMAGE_UPDATE_CHECK")
+    monkeypatch.setattr(
+        FakeController, "runtime", _Engine({"0.1.8-lite", "0.1.10-lite"}), raising=False
+    )
+    _pin_runtime_image(monkeypatch)
+    observer, output = _interactive_observer("y\n")
+
+    result = _execute(
+        _parser().parse_args(["start", "--no-pull", "--accept-dynamic-ports"]), observer
+    )
+    observer.reporter.close()
+
+    assert FakeController.instance.calls[-1][1].image == "agentcloud/localcloud:0.1.8-lite"
+    assert result["image_update"]["action"] == "reported"
+    assert "[y/N]" not in output.getvalue()
+
+
+def test_explicit_pull_switches_a_pinned_runtime_without_asking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import respx
+
+    from localcloud_cli import image_updates
+
+    monkeypatch.delenv("LOCALCLOUD_IMAGE_UPDATE_CHECK")
+    monkeypatch.setattr(FakeController, "runtime", _Engine({"0.1.8-lite"}), raising=False)
+    _pin_runtime_image(monkeypatch)
+    observer, output = _interactive_observer("n\n")
+    page = {
+        "next": None,
+        "results": [
+            {"name": "0.1.11-lite", "images": [{"architecture": "arm64", "size": 10}]},
+        ],
+    }
+    with respx.mock() as hub:
+        hub.get(image_updates.REGISTRY_TAGS_URL).respond(json=page)
+        result = _execute(_parser().parse_args(["restart", "--pull"]), observer)
+    observer.reporter.close()
+
+    selected = FakeController.instance.calls[-1][1]
+    assert (selected.image, selected.image_source) == (
+        "agentcloud/localcloud:0.1.11-lite",
+        "upgrade",
+    )
+    assert FakeController.instance.pull_calls[-1] == ("restart", True)
+    assert result["image_update"]["action"] == "adopted"
+    assert "[y/N]" not in output.getvalue()

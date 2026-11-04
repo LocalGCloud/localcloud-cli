@@ -2019,7 +2019,9 @@ class Controller:
         A moved image tag can make a restart replace the runtime with an engine
         that refuses the existing data. The data volume is kept, so the old
         image still runs it. Any other change (settings, ports) has no previous
-        configuration to restore, and the failure is reported as it was."""
+        configuration to restore, and the failure is reported as it was. An
+        accepted newer version (image source "upgrade") changes only the image
+        too, so it is compared with the previous image put back."""
         restore = getattr(self.runtime, "restore_previous_runtime", None)
         new_image_id = getattr(new_image, "id", None)
         if (
@@ -2027,7 +2029,9 @@ class Controller:
             error.code == "services_not_ready"
             or not callable(restore)
             or not preserve_volume
-            or self._requires_managed_replacement(previous, config)
+            or self._requires_managed_replacement(
+                previous, _with_previous_image(previous, config)
+            )
             or not previous.image_id
             or previous.image_id == new_image_id
         ):
@@ -2687,6 +2691,19 @@ def _keep_runtime_settings(
     """`config` with the image and Console mode of the container `current`
     kept where nothing in this run chose them."""
     return _inherit_console(current, _keep_runtime_image(current, config))
+
+
+def _with_previous_image(
+    previous: RuntimeRecord, config: LocalCloudConfig
+) -> LocalCloudConfig:
+    """`config` on the image `previous` ran, when this run switched to a newer
+    version of it; otherwise `config` unchanged."""
+    if config.image_source != "upgrade" or not previous.runtime_settings:
+        return config
+    image = previous.runtime_settings.get("image")
+    if not isinstance(image, str) or not image or image == config.image:
+        return config
+    return replace(config, image=image)
 
 
 def _keep_runtime_image(
