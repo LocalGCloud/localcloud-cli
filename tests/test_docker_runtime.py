@@ -4188,3 +4188,68 @@ def test_wait_ready_keeps_waiting_on_an_engine_that_does_not_answer_yet(
         DockerRuntime.wait_ready("http://127.0.0.1:5380", deadline=now[0] + 5.0)
     assert caught.value.code == "services_not_ready"
     assert caught.value.details["services"][0]["failure_code"] == "connection_refused"
+
+
+def test_local_image_tags_lists_the_repository_tags() -> None:
+    from types import SimpleNamespace
+
+    class Images:
+        def __init__(self) -> None:
+            self.names: list[str] = []
+
+        def list(self, name: str) -> list[object]:
+            self.names.append(name)
+            return [
+                SimpleNamespace(tags=["agentcloud/localcloud:0.1.11-lite", "agentcloud/localcloud:lite"]),
+                SimpleNamespace(tags=["docker.io/agentcloud/localcloud:0.1.8-lite"]),
+                SimpleNamespace(tags=["agentcloud/localcloud-dev:0.1.12-lite"]),
+                SimpleNamespace(tags=[]),
+                SimpleNamespace(),
+            ]
+
+    images = Images()
+    runtime = DockerRuntime(client=SimpleNamespace(images=images))
+
+    assert runtime.local_image_tags("agentcloud/localcloud") == {"0.1.11-lite", "lite", "0.1.8-lite"}
+    assert runtime.local_image_tags("docker.io/agentcloud/localcloud") == {
+        "0.1.11-lite",
+        "lite",
+        "0.1.8-lite",
+    }
+    assert images.names == ["agentcloud/localcloud", "docker.io/agentcloud/localcloud"]
+
+
+def test_local_image_tags_is_empty_when_docker_cannot_list() -> None:
+    from types import SimpleNamespace
+
+    def broken(**_kwargs: object) -> list[object]:
+        raise RuntimeError("daemon gone")
+
+    runtime = DockerRuntime(client=SimpleNamespace(images=SimpleNamespace(list=broken)))
+    assert runtime.local_image_tags("agentcloud/localcloud") == set()
+
+
+@pytest.mark.parametrize(
+    ("info", "architecture"),
+    [
+        ({"Architecture": "aarch64"}, "aarch64"),
+        ({"Architecture": "x86_64"}, "x86_64"),
+        ({"Architecture": ""}, None),
+        ({}, None),
+    ],
+)
+def test_engine_architecture_reads_docker_info(info, architecture) -> None:
+    from types import SimpleNamespace
+
+    runtime = DockerRuntime(client=SimpleNamespace(info=lambda: info))
+    assert runtime.engine_architecture() == architecture
+
+
+def test_engine_architecture_is_none_when_docker_cannot_say() -> None:
+    from types import SimpleNamespace
+
+    def broken() -> dict[str, str]:
+        raise RuntimeError("daemon gone")
+
+    runtime = DockerRuntime(client=SimpleNamespace(info=broken))
+    assert runtime.engine_architecture() is None

@@ -2151,6 +2151,31 @@ class DockerRuntime:
             run_plan=run_plan,
         )
 
+    def local_image_tags(self, repository: str) -> set[str]:
+        """The tags of `repository` in the engine's image store; empty when
+        Docker cannot list them."""
+        wanted = _normalize_image_reference(repository).rpartition(":")[0]
+        try:
+            images = self.client.images.list(name=repository)
+        except Exception:
+            return set()
+        tags: set[str] = set()
+        for image in images or ():
+            for reference in getattr(image, "tags", None) or ():
+                name, _, tag = _normalize_image_reference(str(reference)).rpartition(":")
+                if name == wanted:
+                    tags.add(tag)
+        return tags
+
+    def engine_architecture(self) -> str | None:
+        """The machine architecture the Docker engine reports (`aarch64`,
+        `x86_64`); None when Docker cannot say."""
+        try:
+            architecture = self.client.info().get("Architecture")
+        except Exception:
+            return None
+        return architecture if isinstance(architecture, str) and architecture else None
+
     def image_status(self, image_name: str) -> str:
         if image_name in self._resolved_image_details:
             return "available locally"
