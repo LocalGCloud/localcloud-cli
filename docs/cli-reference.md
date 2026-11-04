@@ -98,6 +98,13 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
 - `--tail [SECONDS]` sets how long `start` and `restart` stream the container log after the runtime is ready. The default is 5 seconds; `--tail 0` skips it, and `--tail` with no value streams until you press Ctrl-C. (`lc logs --tail LINES` is a different option: it counts lines.)
 - `--skip-config-validation` (or `LOCALCLOUD_SKIP_CONFIG_VALIDATION=1`) skips the CLI's own checks of `localcloud.yaml` when they disagree with what a newer image accepts. The file is still passed through unchanged; see [Configuration](configuration.md#removed-flat-keys). Available on `start`, `restart`, and `reset`.
 - `--pull` is enabled by default: checks for a newer image on Docker Hub and pulls only if an update is available. `--no-pull` uses the locally available image only (pulling only if absent locally).
+- A runtime pinned to a version tag (such as `agentcloud/localcloud:0.1.8-lite`) is checked for a
+  newer version on its channel, lite or full. In a terminal, `start` and `restart` ask before
+  switching; elsewhere the result carries an `Image update` line. Passing `--pull` explicitly switches
+  without asking, and `--no-pull` looks only at local images. Switching migrates the data volume
+  forward. The check reads Docker Hub at most once every 6 hours, and
+  `LOCALCLOUD_IMAGE_UPDATE_CHECK=false` turns it off.
+  See [Which image runs](configuration.md#which-image-runs-and-where-the-choice-comes-from).
 - New runtimes prefer the canonical host ports. If that complete set is unavailable,
   the CLI proposes one contiguous mapping from `5508-5539`, then `5821-5840`,
   then `5322-5342`, and asks before creating the container. It never scans the
@@ -241,14 +248,15 @@ lc logs --tail 500
 
 ### `restart`
 
-Stops the running container and starts with the image (preserving persistent volume state and reapplying volatile seed data). Unlike `start`, `restart` does not check the remote registry by default (`--no-pull`), using the currently available local image (e.g. `lite`).
+Stops the running container and starts with the image (preserving persistent volume state and reapplying volatile seed data). Unlike `start`, `restart` does not check the remote registry for a newer image under the same tag by default (`--no-pull`), using the currently available local image (e.g. `lite`). A runtime pinned to a version tag still gets the [newer-version offer](configuration.md#which-image-runs-and-where-the-choice-comes-from), which reads Docker Hub's tag list at most once every 6 hours; pass `--no-pull` explicitly to keep `restart` off the network.
 
 `restart` recreates a managed runtime, so it picks up an image tag that has moved since the
 runtime was created. If that image cannot start on the existing data (for example a newer engine
 refuses a schema migration), `restart` fails and then recreates the runtime on the image it was
 running, so the runtime is not left missing. The error says so (`rolled_back_to_image`). Nothing
 is restored when the settings changed too, or when the old image is gone; the error then carries
-`rollback_error`.
+`rollback_error`. The same rollback applies when you accept a newer version of a pinned image and it
+fails to start. The previous image may then refuse a data volume the new one already migrated.
 
 `start`, `restart` and `status` warn when the Cloud SQL MySQL companion could not start because
 its host port is held by another container or process. The server starts the companion on demand
@@ -259,7 +267,8 @@ are unreachable.
 # Restart container using the currently available image (default: --no-pull)
 lc restart
 
-# Check for a newer image on the remote registry before restarting
+# Check for a newer image on the remote registry before restarting. A runtime pinned
+# to a version tag (0.1.8-lite) moves to the newest version on its channel, without asking.
 lc restart --pull
 
 # Restart with TLS

@@ -87,6 +87,43 @@ saved. If a saved choice enables a service that the runtime did not publish port
 started with a smaller `services.enabled` list), the command warns instead of failing and the
 service's SDK environment is not exported; pass `--services` to pick the set.
 
+### Which image runs, and where the choice comes from
+
+The first of these that names an image wins:
+
+| Rank | Source | Set by |
+| :--- | :--- | :--- |
+| 1 (highest) | `--image`, `--lite`, `--full` | The command line, for this run |
+| 2 | `host.image` in `localcloud.yaml` | You, in the config file |
+| 3 | `LOCALCLOUD_IMAGE` | You, in the host environment |
+| 4 | The image this data volume last ran (`active-runtime.json`) | The CLI, after each `start` or `restart` |
+| 5 (lowest) | `agentcloud/localcloud:lite` | The release |
+
+A runtime therefore stays on the image it was started with. That includes a version tag such as
+`agentcloud/localcloud:0.1.8-lite`, which never moves by itself. Floating tags (`lite`, `latest`)
+are refreshed by `--pull` when the registry has a newer image under the same tag.
+
+**Newer versions of a pinned image.** Before `lc start` and `lc restart`, the CLI looks for a
+newer `X.Y.Z` version on the runtime's channel: `-lite` tags move only to newer `-lite` tags,
+full only to full. It asks Docker Hub first, which takes at most 3 seconds, and keeps the
+answer for 6 hours. If Docker Hub cannot be reached, it searches the images already on the
+Docker engine and stops asking Docker Hub for 10 minutes. Only images published for the
+engine's architecture are offered. What happens next depends on where the image came from:
+
+| Image source | What happens |
+| :--- | :--- |
+| The data volume's last run (rank 4), interactive terminal | `lc` asks whether to switch. Yes recreates the runtime on the newer image (pulled only if it is not already local) and records it, so later runs stay on it. No keeps the current image, and the same version is not offered again for that data volume. |
+| The data volume's last run, with an explicit `--pull` | `lc` switches to the newest version without asking. |
+| The data volume's last run, with no terminal (scripts, `--verbose`, `--accept-dynamic-ports`) | Nothing changes. An `Image update` line names the newer tag and the command that switches to it. |
+| `host.image` or `LOCALCLOUD_IMAGE` (ranks 2 and 3) | Nothing changes. The `Image update` line names the setting to edit, because the CLI cannot change it. |
+| `--image`, `--lite`, `--full`, a floating tag, a digest pin or another repository | Nothing is checked. |
+
+Switching recreates the runtime, and the new image migrates the data volume forward. Going back to
+the older image may then be impossible. If the new image fails to start, `start` or `restart` recreates the
+runtime on the previous image ([rollback](cli-reference.md#restart)). `--no-pull` skips Docker Hub
+and only considers local images. `--dry-run` never checks. Set `LOCALCLOUD_IMAGE_UPDATE_CHECK=false`,
+in the host environment or in `host.environment`, to turn the check off.
+
 ### Removed flat keys
 
 | Removed flat key | Replacement |
