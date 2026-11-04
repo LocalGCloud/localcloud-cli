@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import tempfile
 import time
@@ -18,7 +19,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import httpx
 
@@ -350,3 +351,59 @@ def _listed_for(entry: object, arch: str) -> Listed | None:
             size = image.get("size")
             return Listed(tag, size if isinstance(size, int) and size > 0 else None)
     return None
+
+
+# --- Discovery ----------------------------------------------------------------
+
+
+class Engine(Protocol):
+    """What discovery needs from Docker (DockerRuntime provides it)."""
+
+    def local_image_tags(self, repository: str) -> set[str]: ...
+
+    def engine_architecture(self) -> str | None: ...
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """A newer image to offer: where it was found, whether the engine already
+    holds it (then accepting it pulls nothing), and its download size."""
+
+    ref: ImageRef
+    source: Literal["registry", "local"]
+    local: bool
+    size: int | None = None
+
+
+def discover(
+    current: ImageRef,
+    engine: Engine,
+    store: UpdateStore,
+    *,
+    registry: bool = True,
+    fresh: bool = False,
+    now: float | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> Candidate | None:
+    """The newest image on `current`'s channel, if it is newer than `current`.
+
+    The registry is asked first (unless `registry` is False, for --no-pull);
+    the engine's image store is searched only when the registry gave no
+    answer, so an offline user who loaded a newer image still finds it."""
+    arch = hub_architecture(engine.engine_architecture()) or hub_architecture(
+        platform.machine()
+    )
+    answer = (
+        registry_answer(store, arch, fresh=fresh, now=now, transport=transport)
+        if registry and arch is not None
+        else None
+    )
+    if answer is not None:
+        listed = answer.get(current.channel)
+        ref = newest(current, [listed.tag]) if listed is not None else None
+        if ref is None:
+            return None
+        local = ref.tag in engine.local_image_tags(current.repository)
+        return Candidate(ref, "registry", local, listed.size if listed else None)
+    ref = newest(current, engine.local_image_tags(current.repository))
+    return Candidate(ref, "local", True) if ref is not None else None

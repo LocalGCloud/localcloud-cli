@@ -403,3 +403,119 @@ def test_cached_answer_survives_the_backoff(hub, tmp_path) -> None:
         "lite": Listed("0.1.11-lite")
     }
     assert not route.called
+
+
+# --- Discovery --------------------------------------------------------------
+
+
+class FakeEngine:
+    def __init__(self, tags=(), arch: str | None = "aarch64") -> None:
+        self.tags = set(tags)
+        self.arch = arch
+        self.listed: list[str] = []
+
+    def local_image_tags(self, repository: str) -> set[str]:
+        self.listed.append(repository)
+        return set(self.tags)
+
+    def engine_architecture(self) -> str | None:
+        return self.arch
+
+
+def _current(tag: str = "0.1.8-lite") -> ImageRef:
+    ref = parse_ref(f"agentcloud/localcloud:{tag}")
+    assert ref is not None
+    return ref
+
+
+def test_discover_offers_the_registry_newest_and_says_it_needs_a_pull(hub, tmp_path) -> None:
+    hub.get(image_updates.REGISTRY_TAGS_URL).respond(
+        json=_page(_tag("0.1.11-lite", "arm64", size=373), _tag("0.1.11", "arm64"))
+    )
+    engine = FakeEngine(tags={"0.1.8-lite", "0.1.9-lite"})
+    candidate = image_updates.discover(_current(), engine, _store(tmp_path), now=NOW)
+    assert candidate == image_updates.Candidate(
+        ref_from_tag("0.1.11-lite"), "registry", local=False, size=373
+    )
+
+
+def test_discover_marks_a_registry_newest_already_local(hub, tmp_path) -> None:
+    hub.get(image_updates.REGISTRY_TAGS_URL).respond(json=_page(_tag("0.1.11-lite", "arm64")))
+    engine = FakeEngine(tags={"0.1.8-lite", "0.1.11-lite"})
+    candidate = image_updates.discover(_current(), engine, _store(tmp_path), now=NOW)
+    assert candidate is not None
+    assert (candidate.source, candidate.local) == ("registry", True)
+
+
+def test_discover_does_not_search_locally_when_the_registry_answered(hub, tmp_path) -> None:
+    # The registry is the authority: a newer local tag it does not list (a
+    # local build, or a tag without this engine's architecture) is not offered.
+    hub.get(image_updates.REGISTRY_TAGS_URL).respond(json=_page(_tag("0.1.8-lite", "arm64")))
+    engine = FakeEngine(tags={"0.1.12-lite"})
+    assert image_updates.discover(_current(), engine, _store(tmp_path), now=NOW) is None
+    assert engine.listed == []
+
+
+def test_discover_skips_a_registry_tag_without_the_engine_architecture(hub, tmp_path) -> None:
+    hub.get(image_updates.REGISTRY_TAGS_URL).respond(
+        json=_page(_tag("0.1.11-lite", "arm64"), _tag("0.1.9-lite", "amd64", "arm64"))
+    )
+    engine = FakeEngine(arch="x86_64")
+    candidate = image_updates.discover(_current(), engine, _store(tmp_path), now=NOW)
+    assert candidate is not None and candidate.ref.tag == "0.1.9-lite"
+
+
+def test_discover_falls_back_to_local_images_when_offline(hub, tmp_path) -> None:
+    hub.get(image_updates.REGISTRY_TAGS_URL).mock(side_effect=httpx.ConnectError("offline"))
+    engine = FakeEngine(tags={"0.1.8-lite", "0.1.10-lite", "0.1.12", "lite"})
+    store = _store(tmp_path)
+    candidate = image_updates.discover(_current(), engine, store, now=NOW)
+    assert candidate == image_updates.Candidate(ref_from_tag("0.1.10-lite"), "local", local=True)
+    assert store.offline(NOW + 1)
+
+
+def test_discover_with_registry_off_never_calls_it(hub, tmp_path) -> None:
+    route = hub.get(image_updates.REGISTRY_TAGS_URL).respond(json=_page())
+    engine = FakeEngine(tags={"0.1.10-lite"})
+    candidate = image_updates.discover(
+        _current(), engine, _store(tmp_path), registry=False, now=NOW
+    )
+    assert candidate is not None and candidate.source == "local"
+    assert not route.called
+
+
+def test_discover_without_a_known_architecture_searches_locally(
+    hub, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(image_updates.platform, "machine", lambda: "riscv64")
+    route = hub.get(image_updates.REGISTRY_TAGS_URL).respond(json=_page())
+    engine = FakeEngine(tags={"0.1.10-lite"}, arch=None)
+    candidate = image_updates.discover(_current(), engine, _store(tmp_path), now=NOW)
+    assert candidate is not None and candidate.source == "local"
+    assert not route.called
+
+
+def test_discover_uses_the_host_architecture_when_docker_cannot_say(
+    hub, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(image_updates.platform, "machine", lambda: "x86_64")
+    hub.get(image_updates.REGISTRY_TAGS_URL).respond(
+        json=_page(_tag("0.1.11-lite", "arm64"), _tag("0.1.9-lite", "amd64"))
+    )
+    candidate = image_updates.discover(_current(), FakeEngine(arch=None), _store(tmp_path), now=NOW)
+    assert candidate is not None and candidate.ref.tag == "0.1.9-lite"
+
+
+def test_discover_nothing_newer(hub, tmp_path) -> None:
+    hub.get(image_updates.REGISTRY_TAGS_URL).respond(json=_page(_tag("0.1.11-lite", "arm64")))
+    assert (
+        image_updates.discover(_current("0.1.11-lite"), FakeEngine(), _store(tmp_path), now=NOW)
+        is None
+    )
+    # A current tag newer than anything the registry lists is not downgraded.
+    assert (
+        image_updates.discover(_current("0.1.12-lite"), FakeEngine(), _store(tmp_path), now=NOW)
+        is None
+    )
+    # A channel the registry has no tag for offers nothing.
+    assert image_updates.discover(_current("0.1.8"), FakeEngine(), _store(tmp_path), now=NOW) is None
