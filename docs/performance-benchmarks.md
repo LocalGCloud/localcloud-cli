@@ -13,7 +13,7 @@ This document records the empirical performance characteristics, throughput limi
 > - **Microsecond-Class Database Operations:** Cloud SQL (PostgreSQL) processes point INSERTs in **`2 ms`** (**`656 inserts/sec`**) and point SELECTs in **`2 ms`** (**`416 queries/sec`**). Single-statement multi-row batch inserts achieve **`>39,000 rows/sec`**.
 > - **High-Speed Object Storage:** GCS object retrieval completes in **`2 ms`** (**`527 reads/sec`**), and writes in **`5 ms`** (**`209 writes/sec`**).
 > - **High-Throughput Messaging:** Pub/Sub processes single messages in **`3 ms`** and delivers batch ingestion at **`>10,000 messages/sec`**.
-> - **Zero-To-Ready in 5 Seconds:** Cold start provisions PostgreSQL migrations and 22+ Google Cloud emulators in **`5.3 s`**; warm start reconciles in **`333 ms`**.
+> - **Zero-To-Ready in 5 Seconds:** Cold start provisions PostgreSQL migrations and 22+ Google Cloud emulators in **`~5 s`**; warm start reconciles in **`~333 ms`**.
 
 | Capability Tier | Key Operation | Typical Latency ($p_{50}$) | $p_{95}$ Latency | Throughput | Readiness Verdict |
 | :--- | :--- | :---: | :---: | :---: | :---: |
@@ -27,7 +27,7 @@ This document records the empirical performance characteristics, throughput limi
 | **Pub/Sub** | Publish (Single Message) | **`3 ms`** | `7 ms` | **`319 ops/s`** | 🟢 **Production Grade** |
 | **BigQuery** | Table Create | **`51 ms`** | `51 ms` | **`20 ops/s`** | 🟢 **Local Interactive** |
 | **BigQuery** | Streaming `insertAll` (10 rows) | **`68 ms`** | `78 ms` | **`15 batches/s`** | 🟢 **Local Interactive** |
-| **Container Lifecycle** | Cold Boot (22 Services + DB) | **`5.3 s`** | `5.3 s` | — | 🟢 **Fast Cold Start** |
+| **Container Lifecycle** | Cold Boot (22 Services + DB) | **`~5 s`** | `~5 s` | — | 🟢 **Fast Cold Start** |
 
 ---
 
@@ -68,9 +68,9 @@ CLI commands represent developer and script interactions. Because these are CLI 
 | `localcloud env` | **~301 ms** | Resolves active endpoints and outputs shell environment exports (`eval $(localcloud env)`). |
 | `localcloud reset` | **~380 ms** | Clears project-scoped data inside running container while preserving the volume. |
 | `localcloud start` (warm) | **~333 ms** | Fast reconciliation when the LocalCloud container is already running. |
-| `localcloud stop` | **~3.8 s** | Gracefully stops supervisord child processes, emulators, and the Docker container. |
-| `localcloud start` (cold) | **~5.3 s** | Creates container, initializes volume, applies 75 Postgres migrations, and starts all 22 emulators. |
-| `localcloud restart` | **~8.8 s** | Performs a full container stop, recreate, cold boot, and readiness verification cycle. |
+| `localcloud stop` | **~4 s** | Gracefully stops supervisord child processes, emulators, and the Docker container. |
+| `localcloud start` (cold) | **~5 s** | Creates container, initializes volume, applies 75 Postgres migrations, and starts all 22 emulators. |
+| `localcloud restart` | **~9 s** | Performs a full container stop, recreate, cold boot, and readiness verification cycle. |
 
 ---
 
@@ -169,7 +169,7 @@ Evaluates reverse-proxy routing, concurrency handling, and AI agent integration 
 ## 5. Architectural Implications
 
 ### A. Sub-Millisecond AI Coding Agent Loops
-Traditional cloud sandboxes or emulation bridges incur 100–500 ms of network or process spinning latency per tool call. In contrast, LocalCloud's native stdio MCP bridge executes tool calls in **`1 ms`** ($0.65\text{ ms}$). An agent taking 50 intermediate inspection and planning steps spends only **`~33 ms`** in total tool overhead, avoiding agent loop timeouts and context delays.
+Traditional cloud sandboxes or emulation bridges incur 100–500 ms of network or process spinning latency per tool call. In contrast, LocalCloud's native stdio MCP bridge executes tool calls in **`1 ms`** ($< 1\text{ ms}$). An agent taking 50 intermediate inspection and planning steps spends only **`~33 ms`** in total tool overhead, avoiding agent loop timeouts and context delays.
 
 ### B. Ultra-Fast Local Test Suites
 Unit and integration test suites (`pytest`, `go test`, `jest`, `vitest`) frequently set up and tear down cloud state:

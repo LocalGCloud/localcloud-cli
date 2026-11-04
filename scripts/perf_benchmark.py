@@ -1125,6 +1125,33 @@ class PerformanceRunner:
         print(f"[+] Saved JSON results to: {output_path}")
 
     def export_markdown(self, output_path: Path):
+        cli_lines = [
+            "### LocalCloud CLI Commands",
+            "",
+            "| Command | Approximate Duration | Category |",
+            "|:--------|:--------------------:|:---------|",
+        ]
+        service_lines = [
+            "### Service & Gateway Operations",
+            "",
+            "| Operation / Benchmark | Category | Operations | Typical p50 | p95 Latency | Throughput |",
+            "|:----------------------|:---------|:----------:|:-----------:|:-----------:|:----------:|",
+        ]
+
+        for m in self.results:
+            if m.category == "CLI / Lifecycle":
+                dur_str = f"~{int(round(m.mean_ms / 1000))} s" if m.mean_ms >= 1000 else f"~{int(round(m.mean_ms))} ms"
+                cli_lines.append(f"| `{m.name}` | **{dur_str}** | {m.category} |")
+            else:
+                p50_val = max(1, int(round(m.median_ms)))
+                p95_val = max(1, int(round(m.p95_ms)))
+                p50_str = f"{p50_val} ms" if m.median_ms >= 1.0 else "< 1 ms"
+                p95_str = f"{p95_val} ms" if m.p95_ms >= 1.0 else "< 1 ms"
+                tp_str = f"{int(round(m.ops_per_sec))} ops/s" if m.ops_per_sec > 0 else "-"
+                service_lines.append(
+                    f"| {m.name} | {m.category} | {m.operations} | **{p50_str}** | {p95_str} | {tp_str} |"
+                )
+
         lines = [
             "# LocalCloud Performance & Load Benchmark Report",
             "",
@@ -1134,17 +1161,10 @@ class PerformanceRunner:
             f"- **Data Volume**: `{self.data_volume}`",
             f"- **Project Context**: `{self.project_id}`",
             "",
-            "## Summary Table",
+            *cli_lines,
             "",
-            "| Operation / Benchmark | Category | Operations | p50 Latency (ms) | p95 Latency (ms) | Throughput (ops/sec) |",
-            "|:----------------------|:---------|:----------:|:----------------:|:----------------:|:--------------------:|",
+            *service_lines,
         ]
-
-        for m in self.results:
-            tp_str = f"{m.ops_per_sec:.1f}" if m.ops_per_sec > 0 else "-"
-            lines.append(
-                f"| {m.name} | {m.category} | {m.operations} | {m.median_ms:.2f} ms | {m.p95_ms:.2f} ms | {tp_str} |"
-            )
 
         output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"[+] Saved Markdown report to: {output_path}")

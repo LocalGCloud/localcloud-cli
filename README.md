@@ -785,6 +785,7 @@ and `--debug` prints the exact `docker run` the CLI would use.
 | [MCP reproducible workflows](docs/mcp-workflows.md) | Step-by-step agent test scenarios for Storage, Pub/Sub, BigQuery |
 | [MCP listings and submissions](docs/mcp-distribution-log.md) | Marketplace, directory, awesome-list, and announcement links; status and follow-up |
 | [Lifecycle testing](docs/lifecycle-testing.md) | End-to-end container lifecycle test runbook and verification |
+| [Performance benchmarks](docs/performance-benchmarks.md) | Empirical latency and load benchmarks for container lifecycle, MCP bridge, and emulated GCP services |
 | [local.cloud/docs](https://local.cloud/docs) | Product documentation, service compatibility, and the console |
 
 
