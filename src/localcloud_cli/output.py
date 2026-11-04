@@ -232,9 +232,21 @@ _EXTRA_COMMON = (
     FieldSpec("logs", "Logs", "muted"),
 )
 
+# start and restart also say when a newer version of the runtime's image
+# exists, or that they switched to it (image_updates.py), beside the image.
+_LIFECYCLE_FIELDS = tuple(
+    row
+    for field in _COMMON_FIELDS
+    for row in (
+        (field, FieldSpec("image_update.summary", "Image update", "warning"))
+        if field.path == "container.image_status"
+        else (field,)
+    )
+)
+
 DEFAULT_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
-    "start": _COMMON_FIELDS,
-    "restart": _COMMON_FIELDS,
+    "start": _LIFECYCLE_FIELDS,
+    "restart": _LIFECYCLE_FIELDS,
     "reset": _COMMON_FIELDS,
     "stop": (
         *tuple(

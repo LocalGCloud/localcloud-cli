@@ -8,6 +8,7 @@ import pytest  # pyright: ignore[reportMissingImports]
 
 from localcloud_cli.errors import HostError
 from localcloud_cli.output import (
+    DEFAULT_FIELDS,
     ColorMode,
     LifecycleReporter,
     PanelContext,
@@ -1169,3 +1170,34 @@ def test_resume_is_a_no_op_without_a_cursor_or_before_start() -> None:
     unstarted = LifecycleReporter(stream=TtyBuffer(), environ={"TERM": "xterm-256color"})
     unstarted.resume()
     assert unstarted._thread is None
+
+
+@pytest.mark.parametrize("command", ["start", "restart"])
+def test_lifecycle_summary_shows_the_image_update_beside_the_image(command: str) -> None:
+    payload = {
+        **PAYLOAD,
+        "container": {
+            **PAYLOAD.get("container", {}),
+            "configured_image": "agentcloud/localcloud:0.1.8-lite",
+            "image_status": "available locally",
+        },
+        "image_update": {
+            "action": "reported",
+            "summary": "0.1.11-lite is available (this runtime runs 0.1.8-lite); "
+            "switch with: lc restart --image agentcloud/localcloud:0.1.11-lite",
+        },
+    }
+    lines = render_summary(command, payload).splitlines()
+    labels = [line.split("  ")[0] for line in lines]
+    assert labels.index("Image update") == labels.index("Image status") + 1
+    row = lines[labels.index("Image update")]
+    assert row.startswith("Image update  0.1.11-lite is available (this runtime runs 0.1.8-lite)")
+
+
+def test_image_update_row_is_absent_without_an_offer() -> None:
+    assert "Image update" not in render_summary("start", PAYLOAD)
+
+
+@pytest.mark.parametrize("command", ["stop", "status", "reset"])
+def test_other_commands_keep_their_rows(command: str) -> None:
+    assert all(field.path != "image_update.summary" for field in DEFAULT_FIELDS[command])
