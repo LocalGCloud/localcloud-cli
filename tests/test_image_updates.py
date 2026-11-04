@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from localcloud_cli import image_updates
@@ -101,3 +103,99 @@ def test_newest_keeps_the_repository_spelling() -> None:
 def test_image_ref_names_its_channel() -> None:
     assert ImageRef(image_updates.REPOSITORY, (0, 1, 8), True).channel == "lite"
     assert ImageRef(image_updates.REPOSITORY, (0, 1, 8), False).channel == "full"
+
+
+# --- Remembered answers -----------------------------------------------------
+
+NOW = 1_800_000_000.0
+
+
+def _store(tmp_path) -> image_updates.UpdateStore:
+    return image_updates.UpdateStore(tmp_path / "home" / image_updates.STATE_FILE)
+
+
+def test_store_round_trips_a_registry_answer(tmp_path) -> None:
+    store = _store(tmp_path)
+    assert store.cached_newest("arm64", NOW) is None
+    store.remember_registry("arm64", {"lite": "0.1.11-lite", "full": "0.1.11"}, NOW)
+    assert store.cached_newest("arm64", NOW + 60) == {"lite": "0.1.11-lite", "full": "0.1.11"}
+    saved = json.loads(store.path.read_text())
+    assert saved["schema_version"] == image_updates.STATE_SCHEMA_VERSION
+
+
+def test_registry_answer_expires_and_is_per_architecture(tmp_path) -> None:
+    store = _store(tmp_path)
+    store.remember_registry("arm64", {"lite": "0.1.11-lite"}, NOW)
+    assert store.cached_newest("amd64", NOW) is None
+    assert store.cached_newest("arm64", NOW + image_updates.CACHE_SECONDS) is None
+    # A clock that moved backwards does not keep an answer forever.
+    assert store.cached_newest("arm64", NOW - 1) is None
+
+
+def test_offline_backoff_lasts_its_window_and_a_success_clears_it(tmp_path) -> None:
+    store = _store(tmp_path)
+    assert not store.offline(NOW)
+    store.remember_offline(NOW)
+    assert store.offline(NOW + image_updates.OFFLINE_BACKOFF_SECONDS - 1)
+    assert not store.offline(NOW + image_updates.OFFLINE_BACKOFF_SECONDS)
+    store.remember_registry("arm64", {}, NOW + 1)
+    assert not store.offline(NOW + 2)
+
+
+def test_declines_are_per_data_volume_and_channel(tmp_path) -> None:
+    store = _store(tmp_path)
+    store.remember_declined("localcloud-data", "lite", "0.1.11-lite")
+    store.remember_declined("other-data", "full", "0.1.11")
+    assert store.declined("localcloud-data", "lite") == "0.1.11-lite"
+    assert store.declined("localcloud-data", "full") is None
+    assert store.declined("other-data", "full") == "0.1.11"
+    store.remember_declined("localcloud-data", "lite", "0.1.12-lite")
+    assert store.declined("localcloud-data", "lite") == "0.1.12-lite"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{not json",
+        "[]",
+        json.dumps({"schema_version": 99, "offline_until": "2999-01-01T00:00:00+00:00"}),
+        json.dumps(
+            {
+                "schema_version": 1,
+                "registry": {"checked_at": 5, "arch": "arm64", "newest": []},
+                "offline_until": "yesterday",
+                "declined": {"localcloud-data": ["0.1.11-lite"]},
+            }
+        ),
+    ],
+)
+def test_unreadable_state_reads_as_empty(tmp_path, content: str) -> None:
+    store = _store(tmp_path)
+    store.path.parent.mkdir(parents=True)
+    store.path.write_text(content)
+    assert store.cached_newest("arm64", NOW) is None
+    assert not store.offline(NOW)
+    assert store.declined("localcloud-data", "lite") is None
+    # Writing over it works and leaves a valid file.
+    store.remember_declined("localcloud-data", "lite", "0.1.11-lite")
+    assert store.declined("localcloud-data", "lite") == "0.1.11-lite"
+
+
+def test_unwritable_home_never_fails(tmp_path) -> None:
+    blocker = tmp_path / "home"
+    blocker.write_text("a file where the directory should be")
+    store = image_updates.UpdateStore(blocker / image_updates.STATE_FILE)
+    store.remember_offline(NOW)
+    store.remember_registry("arm64", {"lite": "0.1.11-lite"}, NOW)
+    store.remember_declined("localcloud-data", "lite", "0.1.11-lite")
+    assert not store.offline(NOW)
+    assert store.declined("localcloud-data", "lite") is None
+
+
+def test_writes_leave_no_temporary_files(tmp_path) -> None:
+    store = _store(tmp_path)
+    store.remember_offline(NOW)
+    store.remember_declined("localcloud-data", "lite", "0.1.11-lite")
+    assert sorted(path.name for path in store.path.parent.iterdir()) == [
+        image_updates.STATE_FILE
+    ]
