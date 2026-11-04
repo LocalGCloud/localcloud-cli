@@ -266,7 +266,7 @@ lc status
 lc restart --pull
 ```
 
-Carry your normal `--data-volume` and configuration flags when selecting a custom environment. Restart interrupts connected clients briefly. Update only an environment you intend to change.
+A runtime pinned to a version tag moves to the newest version on its lite or full channel, and the new image migrates the data volume forward. Carry your normal `--data-volume` and configuration flags when selecting a custom environment. Restart interrupts connected clients briefly. Update only an environment you intend to change.
 
 For direct registration, remove it with `claude mcp remove --scope user localcloud` or `codex mcp remove localcloud`. For Claude Desktop or Cursor, remove only the `localcloud` entry from the client's MCP settings and restart. Removing an integration does not delete Docker data.
 

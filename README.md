@@ -32,7 +32,7 @@ libraries it already uses, just pointed at loopback.
 
 ```console
 $ lc doctor
-╭── LocalCloud v0.1.12 ───────────────────────────────────────────────────────────────────────╮
+╭── LocalCloud v0.1.14 ───────────────────────────────────────────────────────────────────────╮
 │                            │ Top commands                                                   │
 │ Checking LocalCloud setup  │  localcloud (or lc)    status | start | stop | restart         │
 │                            │  eval $(lc env)        Exports env vars that redirect cloud se…│
@@ -150,7 +150,7 @@ Windows users can run the container directly — see the
 
 ```console
 $ lc --version
-localcloud 0.1.12 (commit 6e45b85cad86, released 2026-10-13)
+localcloud 0.1.14 (commit c2bed60e4464, released 2026-11-03)
 ```
 
 Release builds embed their exact source commit and release date, so a binary can always be traced back.
@@ -195,6 +195,8 @@ Services      alloydb, bigquery, bigtable, cloudbilling, cloudfunctions, cloudia
 
 `start` checks the registry for a newer image by default (`--no-pull` to skip), publishes the canonical
 ports on all host interfaces, waits for service readiness, and tails logs for five seconds.
+A service that reports a permanent failure doesn't fail the start. The command succeeds and warns
+that the service is not available, giving the runtime's reason.
 Use `lc start --local-only` to bind published ports to `127.0.0.1` instead.
 Pass `--local-only` on subsequent `start`, `restart`, and `reset` commands to keep that binding.
 Running `start` again on a live runtime is safe.
@@ -403,6 +405,11 @@ lc start --services gcs,pubsub,bigquery,firestore
 lc start --services default
 ```
 
+Services you enable or disable in the Console are saved on the data volume and come back on the next
+start. `--services` outranks them for that start without clearing them, and `start` prints a
+`Service sources` line naming where each enabled service came from. See
+[Which services run](docs/configuration.md#which-services-run-and-where-each-choice-comes-from).
+
 **Lite and full images.** `lc start` runs the lite image (`agentcloud/localcloud:lite`) by default. It has
 every service above, but BigQuery's lite edition (no BigQuery ML, JavaScript UDFs, or `EXTERNAL_QUERY` on
 Cloud SQL; Spanner's still works), and GKE creates metadata-only clusters. `--full` runs the full image
@@ -413,6 +420,25 @@ until `--lite`.
 lc start --full
 ```
 
+**Staying current.** A runtime keeps the image it was started with. A floating tag like `lite` is
+refreshed by `--pull`. A version tag like `agentcloud/localcloud:0.1.8-lite` never moves by itself,
+so `start` and `restart` look for a newer version on the same channel (lite or full) and, in a terminal,
+ask before switching:
+
+```console
+A newer LocalCloud image is available for this runtime.
+  Current  agentcloud/localcloud:0.1.8-lite   (the image data volume 'localcloud-data' last ran)
+  Offered  agentcloud/localcloud:0.1.11-lite  (Docker Hub; will be pulled, 373.1 MB)
+The runtime is recreated on the new image and its data volume is migrated forward, so going back may not be possible.
+Use 0.1.11-lite now? [y/N]
+```
+
+The check reads Docker Hub's tag list at most once every 6 hours. When Docker Hub can't be reached,
+it offers newer images already on your machine instead. A "no" is remembered for that data volume
+until a newer version appears. Scripts and `--verbose` runs never switch: they get an `Image update`
+line instead. An explicit `--pull` switches without asking. Set `LOCALCLOUD_IMAGE_UPDATE_CHECK=false`
+to turn the check off. See [Which image runs](docs/configuration.md#which-image-runs-and-where-the-choice-comes-from).
+
 ## Commands
 
 `lc` and `localcloud` are interchangeable in every example.
@@ -421,12 +447,12 @@ lc start --full
 | :--- | :--- |
 | `lc update` | Update the CLI through its script installer or Homebrew |
 | `lc doctor` | Inspect Docker access, VM engine, and host setup; `--fix` interactively resolves issues |
-| `lc start` | Start the runtime; supports `--services`, `--local-only`, and auto-creating projects |
+| `lc start` | Start the runtime; supports `--services`, `--local-only`, `--tls`, `--no-ui`, and creating the project named by `--project-id` |
 | `lc status` | Show runtime health, ownership, endpoints, and Docker details |
 | `lc env` | Generate SDK, Terraform, or Docker Compose configuration; `--identity` starts a local identity session |
 | `lc console` | Open the web console for the selected project and user |
 | `lc logs` | Print recent runtime logs |
-| `lc restart` | Recreate container with local image (default: `--no-pull`; `--pull` to check registry) |
+| `lc restart` | Recreate the container with the local image (default: `--no-pull`); `--pull` checks the registry and moves a pinned version to the newest |
 | `lc reset` | Reset the selected project (`--all-projects` prints manual recreate steps) |
 | `lc stop` | Stop the runtime without deleting persistent data |
 | `lc cleanup` | Remove malformed Docker resources, stale runtime state, and legacy files |
@@ -524,8 +550,8 @@ python my_app.py          # google.auth.default() now returns the runner account
 eval "$(lc env --identity --stop)"
 ```
 
-**In CI.** Skip the registry check for reproducibility, disable log tailing, fail loudly, and
-leave out the web console the tests never open.
+**In CI.** Skip the registry check for reproducibility (`--no-pull` also keeps the newer-version check
+off the network), disable log tailing, fail loudly, and leave out the web console the tests never open.
 
 ```sh
 lc start --data-volume ci-$GITHUB_RUN_ID --no-pull --no-ui --tail 0 --verbose
@@ -540,12 +566,19 @@ lc start --dry-run          # every planned Docker and LocalCloud mutation, in o
 lc restart --dry-run
 ```
 
-**Restart with local image vs pull.** By default, `lc restart` recreates the container using the currently available local Docker image without checking the remote registry. Use `--pull` to check for and fetch newer remote images.
+**Restart with local image vs pull.** By default, `lc restart` recreates the container using the
+currently available local Docker image, without pulling. A runtime pinned to a version tag still gets the
+newer-version offer, which reads Docker Hub's tag list at most every 6 hours. Pass `--no-pull` to stay off
+the network entirely. Use `--pull` to fetch a newer image.
 
 ```sh
 lc restart                  # fast restart with current local image (e.g. after building locally)
-lc restart --pull           # check registry, pull newest image if available, then recreate
+lc restart --no-pull        # same, and never contacts Docker Hub
+lc restart --pull           # pull a newer image (a pinned version moves to the newest on its channel)
 ```
+
+If the new image cannot start on the existing data, `restart` recreates the runtime on the image it was
+running and says so in the error (`rolled_back_to_image`).
 
 **Reset one project without losing the others.**
 
@@ -699,6 +732,10 @@ per-service retention limits (everything is kept by default), pass through to Lo
 any key it does not know. See [Gateway settings](docs/configuration.md#gateway-settings), which also lists
 retired keys to remove from older files.
 
+The image comes from `--image`/`--lite`/`--full`, then `host.image`, then `LOCALCLOUD_IMAGE`, then the
+image the data volume last ran, then `agentcloud/localcloud:lite`
+([details](docs/configuration.md#which-image-runs-and-where-the-choice-comes-from)).
+
 `host.docker_socket: auto` (the default) mounts the host Docker socket only when an enabled service needs
 it — Compute Engine, Cloud Run, GKE, or Dataproc. Set `true` to always mount it, or `false` as a hard
 opt-out.
@@ -718,12 +755,16 @@ opt-out.
 | BigQuery or another service stops soon after `start` on Apple Silicon | The Docker VM runs on QEMU | `lc doctor`, then `lc doctor --fix` to switch to VZ with Rosetta |
 | `Error [docker_socket_unavailable]` | A service needs the Docker socket but it is missing or blocked | Check the socket path, or set `host.docker_socket: false` to disable Docker-backed services |
 | `Error [health_timeout]` / `runtime_readiness_timeout` | The container started but services were not ready in time | `lc logs --tail 200`; confirm at least 4 GiB is available, or raise it with `--memory 8g` |
-| `Error [services_not_ready]` | The gateway is up, but the services the error names did not answer in time, or `/readiness` gave no answer (the error says why) | `lc logs --tail 200` for those services; leave them out with `--services` if you don't need them |
+| `Error [services_not_ready]` | The gateway is up, but the services the error names were still warming up at the deadline, or `/readiness` gave no answer (the error says why). The runtime keeps running, so `status`, `logs` and `stop` find it | `lc logs --tail 200` for those services; leave them out with `--services` if you don't need them |
+| `Warning: <Service> is not available (…)` | The runtime reports that service as failed for good (for example `engine_port_unpublished`); the other services run | Follow the remedy in the warning; `lc status` repeats it |
+| `Warning: The Cloud SQL MySQL companion '…' could not start` | Its host port (`5406` by default) is held by another container or process | Free the port, or pin another with `host.environment.LOCALCLOUD_MYSQL_PORT` |
 | `Error [port_mapping_confirmation_required]` | Canonical ports are busy and the shell is non-interactive; the message names each busy port's container or process when it can tell | Free the ports, or re-run with `--accept-dynamic-ports` |
 | `Error [data_volume_collision]` | More than one compatible container uses the same volume | `lc cleanup --dry-run` to inspect, then `lc cleanup` |
 | `Error [ownership_mismatch]` / `ownership_forbidden` | A Docker resource is not CLI-managed | The CLI never removes resources it does not own — remove it manually, or use a different `--data-volume` |
 | `Error [unknown_project]` | The project does not exist in this runtime | Only `start` creates projects: `lc start --project-id NAME` |
 | `Error [mcp_connection_timeout]` | The `/mcp` endpoint was not ready in 10 s | `lc status` to confirm the runtime is up, then `lc mcp --connect-timeout 30` |
+| A failed `start` or `restart` error carries `rolled_back_to_image` | The newer image could not start on the existing data, so the runtime was recreated on its previous image | `lc logs --tail 200`; stay on the previous image, or pass `--image` to choose one |
+| `Image update` line after `start`/`restart` | A newer version of the runtime's pinned image exists; non-interactive runs only report it | Run the command it names, answer the prompt in a terminal, or set `LOCALCLOUD_IMAGE_UPDATE_CHECK=false` |
 | `Error [dry_run_pull_conflict]` | `--dry-run` was combined with `--pull` | Previews are strictly read-only — use `--dry-run --no-pull`, with the image already present locally |
 | `Error [removed_flat_config]` | `localcloud.yaml` uses a pre-1.0 flat key | The message names the replacement path — see [configuration](docs/configuration.md#removed-flat-keys) |
 | Stale containers, networks, or locks | Interrupted runs left resources behind | `lc cleanup --dry-run`, then `lc cleanup` |
@@ -739,6 +780,8 @@ and `--debug` prints the exact `docker run` the CLI would use.
 | [Configuration](docs/configuration.md) | `localcloud.yaml`, service catalog, volumes, projects, identity |
 | [Integrations](docs/integrations.md) | Python, Node, Go, Terraform/OpenTofu, and MCP client setup |
 | [MCP guide & architecture](docs/mcp.md) | Auto-start, project isolation, tool catalog, and client installers |
+| [MCP local setup guide](docs/mcp-marketplace-guide.md) | Claude, Codex, Cursor and other clients: install, plugins, connection checks, first prompt |
+| [MCP privacy](docs/mcp-privacy.md) | What the CLI and plugin handle, telemetry, and outbound traffic |
 | [MCP reproducible workflows](docs/mcp-workflows.md) | Step-by-step agent test scenarios for Storage, Pub/Sub, BigQuery |
 | [MCP listings and submissions](docs/mcp-distribution-log.md) | Marketplace, directory, awesome-list, and announcement links; status and follow-up |
 | [Lifecycle testing](docs/lifecycle-testing.md) | End-to-end container lifecycle test runbook and verification |

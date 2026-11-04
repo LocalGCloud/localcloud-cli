@@ -128,7 +128,11 @@ and may be overridden with `--data-volume`. `context.project` and
 `context.user` select invocation context and may be overridden with
 `--project-id` and `--user`; they never affect Docker identity. If
 `host.image` is omitted, `LOCALCLOUD_IMAGE` wins; if that is also unset, the
-selected active runtime's recorded image wins, then the CLI default.
+selected active runtime's recorded image wins, then the CLI default. When that
+recorded image is a version tag (such as `0.1.8-lite`) and a newer version is
+published, a non-interactive `start` or `restart` only reports it in
+`image_update`. Switching migrates the data volume forward, so leave the choice
+to the user rather than passing `--pull` to accept it.
 
 `host.docker_socket: auto` automatically mounts the Docker socket when an
 enabled service declares that runtime dependency. Set it to `true` to always

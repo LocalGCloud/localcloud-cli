@@ -13,7 +13,6 @@ context:
   user: local-developer
 host:
   data_volume: localcloud-data
-  seed: auto
   data: persistent
   memory: 4g
   environment:
@@ -41,13 +40,13 @@ A selected explicit, environment, or remembered path that is missing or unreadab
 
 CLI resource flags override corresponding `host` values. `--project-id` and `--user` override request context only; they do not replace the server's YAML-derived `context.project`. The selected file is mounted read-only at `/etc/localcloud/localcloud.yaml`; LocalCloud discovers that canonical path without `LOCALCLOUD_CONFIG`. With no file, the CLI adds neither a config mount nor a config environment variable.
 
-The container recursively merges the file over packaged `localcloud.defaults.yaml`. Omitted values inherit; a mapping member set to `null` is deleted. Existing setting-specific environment variables have higher precedence. Use `host.seed: disabled`, not `null`, to disable host-side seeding.
+The container recursively merges the file over packaged `localcloud.defaults.yaml`. Omitted values inherit; a mapping member set to `null` is deleted. Existing setting-specific environment variables have higher precedence.
 
-When no host seed file is selected, LocalCloud keeps its packaged default
-auto-seed behavior. When `host.seed` resolves to a user file, the CLI mounts it
-read-only at `/etc/localcloud/cli-seed.yaml`; that sentinel suppresses the
-packaged default seed worker, and the CLI applies the user YAML through the
-LocalCloud seed API after readiness.
+Sample data is owned by container startup (`server.auto_seed`) and the Console's Re-seed Data action.
+The CLI does not discover, mount, or apply seed files: `host.seed` is retired, and an existing
+value is accepted but ignored. Set `server.auto_seed: false` to turn off the container's sample data.
+A managed container created with the old CLI seed mount (`/etc/localcloud/cli-seed.yaml`) is
+recreated on the next `start` or `restart`, keeping its data volume.
 
 ### Which services run, and where each choice comes from
 
@@ -130,7 +129,8 @@ in the host environment or in `host.environment`, to turn the check off.
 | :--- | :--- |
 | `project`, `user` | `context.project`, `context.user` |
 | `services` | `services.enabled` |
-| `data_volume`, `seed`, `data`, `image`, `memory` | The same key under `host` |
+| `data_volume`, `data`, `image`, `memory` | The same key under `host` |
+| `seed` | Retired: sample data comes from `server.auto_seed`; `seed: null` becomes `server.auto_seed: false` |
 | `docker_socket`, `transparent_network`, `environment` | The same key under `host` |
 | `container_name`, `network_name` | The same key under `host` |
 

@@ -66,7 +66,7 @@ Inspect `lc status`. To deliberately upgrade the selected runtime while retainin
 lc restart --pull
 ```
 
-Include the same `--data-volume` and configuration file you normally use if you target a custom environment. The restart briefly interrupts clients; reconnect afterward.
+On a runtime pinned to a version tag (such as `agentcloud/localcloud:0.1.8-lite`), `--pull` also moves it to the newest version on the same lite or full channel, and the new image migrates the data volume forward. Include the same `--data-volume` and configuration file you normally use if you target a custom environment. The restart briefly interrupts clients; reconnect afterward.
 
 ### Native archives and plugin packages
 
