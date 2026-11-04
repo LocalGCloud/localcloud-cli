@@ -12,6 +12,12 @@ def _no_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOCALCLOUD_TELEMETRY", "false")
 
 
+@pytest.fixture(autouse=True)
+def _no_image_update_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Tests must never reach Docker Hub; image-update tests re-enable the check.
+    monkeypatch.setenv("LOCALCLOUD_IMAGE_UPDATE_CHECK", "false")
+
+
 _REAL_GIT_MAIN_CHECKOUT = None
 
 

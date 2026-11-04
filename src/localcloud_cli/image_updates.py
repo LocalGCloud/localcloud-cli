@@ -15,15 +15,15 @@ import platform
 import re
 import tempfile
 import time
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
 import httpx
 
-from .config import parse_image_tag
+from .config import HostPaths, LocalCloudConfig, parse_image_tag
 from .constants import LITE_TAG_SUFFIX
 
 REPOSITORY = "agentcloud/localcloud"
@@ -52,7 +52,13 @@ REGISTRY_MAX_PAGES = 3
 # Docker reports the engine's machine name; Docker Hub lists Go's names.
 _ARCHITECTURES = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 
+CHECK_ENV = "LOCALCLOUD_IMAGE_UPDATE_CHECK"
+_FALSE = {"0", "false", "no", "off"}
+
 Channel = Literal["lite", "full"]
+Action = Literal["accepted", "adopted", "declined", "reported"]
+# Shows lines and a question, returns the answer typed.
+Ask = Callable[[list[str], str], str]
 
 
 @dataclass(frozen=True)
@@ -407,3 +413,165 @@ def discover(
         return Candidate(ref, "registry", local, listed.size if listed else None)
     ref = newest(current, engine.local_image_tags(current.repository))
     return Candidate(ref, "local", True) if ref is not None else None
+
+
+# --- Decision -----------------------------------------------------------------
+
+
+def enabled(environment: Mapping[str, str] | None = None) -> bool:
+    """Off when LOCALCLOUD_IMAGE_UPDATE_CHECK is false in the host environment
+    or in host.environment."""
+    for source in (os.environ, environment or {}):
+        if str(source.get(CHECK_ENV, "")).strip().lower() in _FALSE:
+            return False
+    return True
+
+
+def consider(
+    config: LocalCloudConfig,
+    engine: Engine,
+    *,
+    pull_explicit: bool = False,
+    no_pull: bool = False,
+    dry_run: bool = False,
+    ask: Ask | None = None,
+    store: UpdateStore | None = None,
+    now: float | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> tuple[LocalCloudConfig, dict[str, Any] | None]:
+    """Before start or restart: `config`, switched to a newer image when the
+    user consents, and the `image_update` result field (None: nothing to say).
+
+    `pull_explicit` is an explicit --pull (it adopts the newest image without
+    asking), `no_pull` an explicit --no-pull (local images only), and `ask`
+    prompts the user; None means this run cannot prompt, so a newer image is
+    only reported. Never raises: a failed lookup means nothing to offer.
+    """
+    if dry_run or not enabled(config.environment):
+        return config, None
+    if config.image_source not in {"runtime", "config", "environment"}:
+        return config, None
+    current = parse_ref(config.image)
+    if current is None:
+        return config, None
+    store = store or UpdateStore(HostPaths.from_environment().home / STATE_FILE)
+    try:
+        candidate = discover(
+            current,
+            engine,
+            store,
+            registry=not no_pull,
+            fresh=pull_explicit,
+            now=now,
+            transport=transport,
+        )
+    except Exception:  # The offer is a convenience; it never fails a command.
+        return config, None
+    if candidate is None:
+        return config, None
+
+    offered = candidate.ref
+    if config.image_source != "runtime":
+        return config, _update(config, current, candidate, "reported")
+    if pull_explicit:
+        return _switched(config, offered), _update(
+            config, current, candidate, "adopted"
+        )
+    if store.declined(config.data_volume, offered.channel) == offered.tag:
+        return config, None
+    if ask is None:
+        return config, _update(config, current, candidate, "reported")
+    answer = ask(
+        offer_lines(config, current, candidate, no_pull=no_pull),
+        f"Use {offered.tag} now? [y/N] ",
+    )
+    if answer.strip().lower() in {"y", "yes"}:
+        return _switched(config, offered), _update(
+            config, current, candidate, "accepted"
+        )
+    store.remember_declined(config.data_volume, offered.channel, offered.tag)
+    return config, _update(config, current, candidate, "declined")
+
+
+def offer_lines(
+    config: LocalCloudConfig, current: ImageRef, candidate: Candidate, *, no_pull: bool = False
+) -> list[str]:
+    """The prompt's explanation, above its question."""
+    width = max(len(current.image), len(candidate.ref.image))
+    return [
+        "A newer LocalCloud image is available for this runtime.",
+        f"  Current  {current.image:<{width}}  "
+        f"(the image data volume {config.data_volume!r} last ran)",
+        f"  Offered  {candidate.ref.image:<{width}}  ({_whereabouts(candidate, no_pull)})",
+        "The runtime is recreated on the new image and its data volume is migrated "
+        "forward, so going back may not be possible.",
+    ]
+
+
+def _switched(config: LocalCloudConfig, offered: ImageRef) -> LocalCloudConfig:
+    # "upgrade" is not "default", so the controller keeps it instead of the
+    # running container's image, and the run records it for later runs.
+    return replace(config, image=offered.image, image_source="upgrade")
+
+
+def _whereabouts(candidate: Candidate, no_pull: bool) -> str:
+    if candidate.source == "local":
+        reason = "--no-pull skips Docker Hub" if no_pull else "Docker Hub could not be reached"
+        return f"found locally; {reason}"
+    if candidate.local:
+        return "Docker Hub; already available locally"
+    size = f", {_format_size(candidate.size)}" if candidate.size else ""
+    return f"Docker Hub; will be pulled{size}"
+
+
+def _update(
+    config: LocalCloudConfig, current: ImageRef, candidate: Candidate, action: Action
+) -> dict[str, Any]:
+    offered = candidate.ref
+    switch = f"lc restart --image {offered.image}"
+    reason: str | None = None
+    if config.image_source == "config":
+        where = f" in {config.config_path}" if config.config_path is not None else ""
+        reason = f"host.image{where} pins {current.tag}"
+        switch = f"set host.image to {offered.image}{where}"
+    elif config.image_source == "environment":
+        reason = f"LOCALCLOUD_IMAGE pins {current.tag}"
+        switch = f"set LOCALCLOUD_IMAGE={offered.image}"
+    if action == "adopted":
+        summary = (
+            f"switched from {current.tag} to {offered.tag}: --pull takes the newest "
+            f"{offered.channel} image"
+        )
+    elif action == "accepted":
+        summary = f"switched from {current.tag} to {offered.tag}"
+    elif action == "declined":
+        summary = (
+            f"kept {current.tag}; {offered.tag} is not offered again for data volume "
+            f"{config.data_volume!r}"
+        )
+    elif reason is not None:
+        summary = f"{offered.tag} is available, but {reason}; {switch}"
+    else:
+        summary = (
+            f"{offered.tag} is available (this runtime runs {current.tag}); "
+            f"switch with: {switch}"
+        )
+    return {
+        "current": current.image,
+        "available": offered.image,
+        "source": candidate.source,
+        "local": candidate.local,
+        "action": action,
+        "reason": reason,
+        "switch": switch,
+        "summary": summary,
+    }
+
+
+def _format_size(size: int) -> str:
+    amount = float(size)
+    for unit in ("B", "KB", "MB", "GB"):
+        if amount < 1000 or unit == "GB":
+            break
+        amount /= 1000
+    return f"{amount:.0f} {unit}" if unit in {"B", "KB"} else f"{amount:.1f} {unit}"

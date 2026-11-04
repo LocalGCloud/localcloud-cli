@@ -519,3 +519,253 @@ def test_discover_nothing_newer(hub, tmp_path) -> None:
     )
     # A channel the registry has no tag for offers nothing.
     assert image_updates.discover(_current("0.1.8"), FakeEngine(), _store(tmp_path), now=NOW) is None
+
+
+# --- Decision ---------------------------------------------------------------
+
+OFFERED = "agentcloud/localcloud:0.1.11-lite"
+
+
+@pytest.fixture
+def check_on(monkeypatch) -> None:
+    monkeypatch.delenv(image_updates.CHECK_ENV, raising=False)
+
+
+def _config(tmp_path, image="agentcloud/localcloud:0.1.8-lite", source="runtime", **changes):
+    from dataclasses import replace
+
+    from localcloud_cli.config import HostPaths, load_config
+
+    home = tmp_path / "lc-home"
+    config = load_config(
+        directory=tmp_path, paths=HostPaths(home, home / "locks"), active_runtime=None
+    )
+    return replace(config, image=image, image_source=source, **changes)
+
+
+class Prompt:
+    def __init__(self, answer: str) -> None:
+        self.answer = answer
+        self.asked: list[tuple[list[str], str]] = []
+
+    def __call__(self, lines: list[str], question: str) -> str:
+        self.asked.append((lines, question))
+        return self.answer
+
+
+def _consider(tmp_path, config, *, engine=None, store=None, **kwargs):
+    return image_updates.consider(
+        config,
+        engine or FakeEngine(tags={"0.1.8-lite"}),
+        store=store or _store(tmp_path),
+        now=NOW,
+        **kwargs,
+    )
+
+
+@pytest.fixture
+def newer_on_hub(hub):
+    return hub.get(image_updates.REGISTRY_TAGS_URL).respond(
+        json=_page(_tag("0.1.11-lite", "arm64", size=1_500_000_000), _tag("0.1.11", "arm64"))
+    )
+
+
+@pytest.mark.usefixtures("check_on")
+@pytest.mark.parametrize(
+    ("image", "source", "kwargs"),
+    [
+        # --dry-run: read-only and offline.
+        ("agentcloud/localcloud:0.1.8-lite", "runtime", {"dry_run": True}),
+        # An image chosen this run, or none chosen at all, is not second-guessed.
+        ("agentcloud/localcloud:0.1.8-lite", "flag", {}),
+        ("agentcloud/localcloud:0.1.8-lite", "default", {}),
+        ("agentcloud/localcloud:0.1.8-lite", "upgrade", {}),
+        # Floating tags, digests and other repositories are never touched.
+        ("agentcloud/localcloud:lite", "runtime", {}),
+        ("agentcloud/localcloud:latest", "runtime", {}),
+        ("agentcloud/localcloud:0.1.8-lite@sha256:abc", "runtime", {}),
+        ("example/localcloud:0.1.8-lite", "runtime", {}),
+    ],
+)
+def test_consider_makes_no_offer(tmp_path, newer_on_hub, image, source, kwargs) -> None:
+    prompt = Prompt("y")
+    config = _config(tmp_path, image=image, source=source)
+    assert _consider(tmp_path, config, ask=prompt, **kwargs) == (config, None)
+    assert not prompt.asked
+    assert not newer_on_hub.called
+
+
+@pytest.mark.parametrize(
+    "environment",
+    [{"host": {image_updates.CHECK_ENV: "false"}}, {"config": {image_updates.CHECK_ENV: "off"}}],
+)
+def test_consider_can_be_turned_off(tmp_path, monkeypatch, newer_on_hub, environment) -> None:
+    monkeypatch.delenv(image_updates.CHECK_ENV, raising=False)
+    for name, value in environment.get("host", {}).items():
+        monkeypatch.setenv(name, value)
+    config = _config(tmp_path, environment=environment.get("config", {}))
+    engine = FakeEngine(tags={"0.1.11-lite"})
+    assert _consider(tmp_path, config, engine=engine, ask=Prompt("y")) == (config, None)
+    assert not newer_on_hub.called
+    assert engine.listed == []
+
+
+@pytest.mark.usefixtures("check_on")
+def test_consider_asks_and_switches_on_yes(tmp_path, newer_on_hub) -> None:
+    prompt = Prompt("y")
+    config = _config(tmp_path)
+    chosen, update = _consider(tmp_path, config, ask=prompt)
+    assert (chosen.image, chosen.image_source) == (OFFERED, "upgrade")
+    assert chosen.config_hash != config.config_hash
+    assert update is not None
+    assert update["action"] == "accepted"
+    assert update["current"] == "agentcloud/localcloud:0.1.8-lite"
+    assert update["available"] == OFFERED
+    assert (update["source"], update["local"]) == ("registry", False)
+    [(lines, question)] = prompt.asked
+    assert question == "Use 0.1.11-lite now? [y/N] "
+    text = "\n".join(lines)
+    assert "agentcloud/localcloud:0.1.8-lite" in text and OFFERED in text
+    assert "will be pulled, 1.5 GB" in text
+    assert "migrated forward, so going back may not be possible" in text
+    assert "data volume 'localcloud-data' last ran" in text
+
+
+@pytest.mark.usefixtures("check_on")
+def test_consider_says_when_the_offered_image_is_already_local(tmp_path, newer_on_hub) -> None:
+    prompt = Prompt("yes")
+    engine = FakeEngine(tags={"0.1.8-lite", "0.1.11-lite"})
+    _chosen, update = _consider(tmp_path, _config(tmp_path), engine=engine, ask=prompt)
+    assert update is not None and update["local"] is True
+    assert "Docker Hub; already available locally" in "\n".join(prompt.asked[0][0])
+
+
+@pytest.mark.usefixtures("check_on")
+@pytest.mark.parametrize("answer", ["", "n", "no", "maybe"])
+def test_consider_keeps_the_image_on_no_and_remembers(tmp_path, newer_on_hub, answer) -> None:
+    store = _store(tmp_path)
+    config = _config(tmp_path)
+    chosen, update = _consider(tmp_path, config, store=store, ask=Prompt(answer))
+    assert chosen == config
+    assert update is not None and update["action"] == "declined"
+    assert store.declined("localcloud-data", "lite") == "0.1.11-lite"
+    # Not asked again for the same version on that data volume...
+    again = Prompt("y")
+    assert _consider(tmp_path, config, store=store, ask=again) == (config, None)
+    assert not again.asked
+    # ...but asked on another data volume.
+    other = _config(tmp_path, data_volume="other-data")
+    _consider(tmp_path, other, store=store, ask=again)
+    assert len(again.asked) == 1
+
+
+@pytest.mark.usefixtures("check_on")
+def test_consider_asks_again_when_something_newer_appears(tmp_path, hub) -> None:
+    store = _store(tmp_path)
+    store.remember_declined("localcloud-data", "lite", "0.1.11-lite")
+    hub.get(image_updates.REGISTRY_TAGS_URL).respond(json=_page(_tag("0.1.12-lite", "arm64")))
+    prompt = Prompt("n")
+    _chosen, update = _consider(tmp_path, _config(tmp_path), store=store, ask=prompt)
+    assert prompt.asked and update is not None
+    assert store.declined("localcloud-data", "lite") == "0.1.12-lite"
+
+
+@pytest.mark.usefixtures("check_on")
+def test_explicit_pull_adopts_without_asking_and_asks_the_registry_afresh(
+    tmp_path, newer_on_hub
+) -> None:
+    store = _store(tmp_path)
+    store.remember_registry("arm64", {}, NOW)  # A fresh answer listing nothing newer.
+    store.remember_declined("localcloud-data", "lite", "0.1.11-lite")
+    prompt = Prompt("n")
+    chosen, update = _consider(
+        tmp_path, _config(tmp_path), store=store, ask=prompt, pull_explicit=True
+    )
+    assert (chosen.image, chosen.image_source) == (OFFERED, "upgrade")
+    assert update is not None and update["action"] == "adopted"
+    assert "--pull takes the newest lite image" in update["summary"]
+    assert not prompt.asked
+    assert newer_on_hub.called
+
+
+@pytest.mark.usefixtures("check_on")
+def test_consider_only_reports_when_it_cannot_ask(tmp_path, newer_on_hub) -> None:
+    config = _config(tmp_path)
+    chosen, update = _consider(tmp_path, config, ask=None)
+    assert chosen == config
+    assert update is not None
+    assert update["action"] == "reported"
+    assert update["switch"] == f"lc restart --image {OFFERED}"
+    assert update["summary"] == (
+        "0.1.11-lite is available (this runtime runs 0.1.8-lite); "
+        f"switch with: lc restart --image {OFFERED}"
+    )
+
+
+@pytest.mark.usefixtures("check_on")
+@pytest.mark.parametrize("pull_explicit", [False, True])
+def test_a_config_or_environment_pin_is_only_reported(
+    tmp_path, newer_on_hub, pull_explicit
+) -> None:
+    prompt = Prompt("y")
+    pinned = _config(tmp_path, source="config", config_path=tmp_path / "localcloud.yaml")
+    chosen, update = _consider(
+        tmp_path, pinned, ask=prompt, pull_explicit=pull_explicit
+    )
+    assert chosen == pinned and not prompt.asked
+    assert update is not None and update["action"] == "reported"
+    assert update["reason"] == f"host.image in {tmp_path / 'localcloud.yaml'} pins 0.1.8-lite"
+    assert update["switch"] == f"set host.image to {OFFERED} in {tmp_path / 'localcloud.yaml'}"
+
+    environment = _config(tmp_path, source="environment")
+    chosen, update = _consider(tmp_path, environment, ask=prompt, pull_explicit=pull_explicit)
+    assert chosen == environment and not prompt.asked
+    assert update is not None
+    assert update["reason"] == "LOCALCLOUD_IMAGE pins 0.1.8-lite"
+    assert update["switch"] == f"set LOCALCLOUD_IMAGE={OFFERED}"
+    assert update["summary"].startswith("0.1.11-lite is available, but LOCALCLOUD_IMAGE pins")
+
+
+@pytest.mark.usefixtures("check_on")
+def test_no_pull_offers_local_images_without_the_registry(tmp_path, newer_on_hub) -> None:
+    prompt = Prompt("y")
+    engine = FakeEngine(tags={"0.1.8-lite", "0.1.10-lite"})
+    chosen, update = _consider(tmp_path, _config(tmp_path), engine=engine, ask=prompt, no_pull=True)
+    assert chosen.image == "agentcloud/localcloud:0.1.10-lite"
+    assert update is not None and (update["source"], update["local"]) == ("local", True)
+    assert "found locally; --no-pull skips Docker Hub" in "\n".join(prompt.asked[0][0])
+    assert not newer_on_hub.called
+
+
+@pytest.mark.usefixtures("check_on")
+def test_offline_offers_a_newer_local_image(tmp_path, hub) -> None:
+    hub.get(image_updates.REGISTRY_TAGS_URL).mock(side_effect=httpx.ConnectTimeout("slow"))
+    prompt = Prompt("y")
+    engine = FakeEngine(tags={"0.1.8-lite", "0.1.10-lite"})
+    chosen, _update = _consider(tmp_path, _config(tmp_path), engine=engine, ask=prompt)
+    assert chosen.image == "agentcloud/localcloud:0.1.10-lite"
+    assert "found locally; Docker Hub could not be reached" in "\n".join(prompt.asked[0][0])
+
+
+@pytest.mark.usefixtures("check_on")
+def test_nothing_newer_says_nothing(tmp_path, newer_on_hub) -> None:
+    prompt = Prompt("y")
+    config = _config(tmp_path, image=OFFERED)
+    assert _consider(tmp_path, config, ask=prompt) == (config, None)
+    assert not prompt.asked
+
+
+@pytest.mark.usefixtures("check_on")
+def test_a_failing_engine_never_fails_the_command(tmp_path, newer_on_hub) -> None:
+    class Broken:
+        def engine_architecture(self):
+            raise RuntimeError("daemon gone")
+
+    config = _config(tmp_path)
+    assert _consider(tmp_path, config, engine=Broken(), ask=Prompt("y")) == (config, None)
+
+
+def test_sizes_read_naturally() -> None:
+    assert image_updates._format_size(512) == "512 B"
+    assert image_updates._format_size(373_125_517) == "373.1 MB"
+    assert image_updates._format_size(1_500_000_000) == "1.5 GB"
