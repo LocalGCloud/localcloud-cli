@@ -126,7 +126,7 @@ DockerAccessMode = Literal["auto", "true", "false"]
 ProjectSource = Literal["flag", "config", "git", "default"]
 ConsoleSource = Literal["flag", "environment", "runtime", "config", "default"]
 ServicesSource = Literal["flag", "config", "default"]
-ImageSource = Literal["flag", "config", "environment", "runtime", "default"]
+ImageSource = Literal["flag", "config", "environment", "runtime", "upgrade", "default"]
 
 
 
@@ -267,7 +267,8 @@ class LocalCloudConfig:
     project_source: ProjectSource = "default"
     # Where `image` came from: "flag" (--image, --lite/--full), "config"
     # (host.image), "environment" (LOCALCLOUD_IMAGE), "runtime" (the image this
-    # data volume last ran, from the active-runtime record), or "default"
+    # data volume last ran, from the active-runtime record), "upgrade" (a newer
+    # version of the runtime's image the user accepted this run), or "default"
     # (DEFAULT_IMAGE). Not part of the runtime identity.
     image_source: ImageSource = "default"
     # Whether the gateway serves the Console: set by --ui/--no-ui,
@@ -1503,6 +1504,12 @@ def _image_tag(image: str) -> tuple[str, str] | None:
     if not colon or "/" in tag:
         return image, "latest"
     return repository, tag
+
+
+def parse_image_tag(image: str) -> tuple[str, str] | None:
+    """The repository and tag of an image named by tag (an untagged name is
+    `latest`); None for a digest pin or an image ID."""
+    return _image_tag(image)
 
 
 def _pinned_tag(image: str) -> str | None:
