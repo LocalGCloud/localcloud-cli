@@ -306,12 +306,14 @@
         "config": {
           "memory_limit": "512MB",
           "threads": 2,
-          "log_level": "info"
+          "log_level": "info",
+          "streaming_buffer_flush_seconds": 0
         },
         "config_descriptions": {
           "memory_limit": "Maximum DuckDB memory available to BigQuery queries (positive size with unit, e.g. 512MB, 2GB).",
           "threads": "Maximum worker threads used to execute BigQuery queries (positive integer).",
-          "log_level": "BigQuery emulator log verbosity (debug, info, warn, error)."
+          "log_level": "BigQuery emulator log verbosity (debug, info, warn, error).",
+          "streaming_buffer_flush_seconds": "Seconds that rows streamed with tabledata.insertAll stay in the streaming buffer. While they do, UPDATE, DELETE and MERGE over them are refused, as in BigQuery (1800 matches Google). 0 (the default) reports the buffer but lets DML change buffered rows."
         },
         "observability": {
           "logs": {

@@ -3952,3 +3952,31 @@ def test_a_stale_endpoint_with_nothing_unpublished_still_fails(
         controller.restart(config)
 
     assert raised.value.code == "stale_endpoint"
+
+
+def test_a_selection_run_reports_an_endpoint_outside_the_published_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Data a wider run created (a Cloud SQL instance) is described by the
+    environment, but a --services run publishes only its own ports."""
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths, services=["gcs"])
+    runtime.record = _record(config)
+    runtime.service_state_list = [
+        {"id": "gcs", "enabled": True, "source": "profile-env"},
+    ]
+
+    def refuse(*_args: Any, **_kwargs: Any) -> Any:
+        raise HostError(
+            "stale_endpoint",
+            "LocalCloud returned an endpoint on a port this runtime does not publish",
+            {"canonical_port": "5406"},
+        )
+
+    monkeypatch.setattr("localcloud_cli.endpoints.environment_config", refuse)
+
+    result = controller.restart(config)
+
+    assert result["sdk_env"] == {}
+    assert "endpoint on port 5406 that this runtime does not publish" in result["warning"]
+    assert "SDK environment is not exported" in result["warning"]

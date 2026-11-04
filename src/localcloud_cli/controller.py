@@ -2435,8 +2435,23 @@ class Controller:
                 # A service enabled beyond the published set has an endpoint
                 # the host cannot reach; the runtime is up, so say that
                 # instead of failing the command with an endpoint error.
-                if error.code != "stale_endpoint" or unpublished is None:
+                if error.code != "stale_endpoint":
                     raise
+                if unpublished is None:
+                    # A runtime started with --services publishes only those
+                    # services' ports, while the environment also describes
+                    # data a wider run created (a Cloud SQL instance, say).
+                    # Without a selection the runtime publishes every port,
+                    # so an endpoint outside the map is a real defect.
+                    if config.services is None:
+                        raise
+                    port = error.details.get("canonical_port")
+                    unpublished = (
+                        "The SDK environment names an endpoint"
+                        + (f" on port {port}" if port else "")
+                        + " that this runtime does not publish, usually data"
+                        " of a service outside the services this runtime was started with."
+                    )
                 sdk_env = {}
                 unpublished += " Its SDK environment is not exported."
             if not isinstance(sdk_env, dict):
