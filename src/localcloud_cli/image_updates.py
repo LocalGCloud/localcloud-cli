@@ -13,11 +13,14 @@ import json
 import os
 import re
 import tempfile
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
+
+import httpx
 
 from .config import parse_image_tag
 from .constants import LITE_TAG_SUFFIX
@@ -37,7 +40,27 @@ CACHE_SECONDS = 6 * 60 * 60
 # each paying the timeout again.
 OFFLINE_BACKOFF_SECONDS = 10 * 60
 
+REGISTRY_TAGS_URL = (
+    f"https://hub.docker.com/v2/repositories/{REPOSITORY}/tags"
+    "?page_size=100&ordering=last_updated"
+)
+REGISTRY_CONNECT_TIMEOUT = 1.5
+# The whole lookup, every page included, ends within this many seconds.
+REGISTRY_TOTAL_TIMEOUT = 3.0
+REGISTRY_MAX_PAGES = 3
+# Docker reports the engine's machine name; Docker Hub lists Go's names.
+_ARCHITECTURES = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
+
 Channel = Literal["lite", "full"]
+
+
+@dataclass(frozen=True)
+class Listed:
+    """A tag the registry lists, with the download size of its image for the
+    engine's architecture when the registry gives one."""
+
+    tag: str
+    size: int | None = None
 
 
 @dataclass(frozen=True)
@@ -112,7 +135,7 @@ class UpdateStore:
 
     # Registry answers
 
-    def cached_newest(self, arch: str, now: float) -> dict[str, str] | None:
+    def cached_newest(self, arch: str, now: float) -> dict[str, Listed] | None:
         """The newest tag per channel the registry listed for `arch`, while
         that answer is fresh; None when there is no fresh answer."""
         registry = self._load().get("registry")
@@ -124,15 +147,25 @@ class UpdateStore:
         newest = registry.get("newest")
         if not isinstance(newest, dict):
             return None
-        return {
-            channel: tag
-            for channel, tag in newest.items()
-            if channel in {"lite", "full"} and isinstance(tag, str)
-        }
+        listed: dict[str, Listed] = {}
+        for channel, entry in newest.items():
+            if channel not in {"lite", "full"} or not isinstance(entry, dict):
+                continue
+            tag, size = entry.get("tag"), entry.get("size")
+            if isinstance(tag, str):
+                listed[channel] = Listed(tag, size if isinstance(size, int) else None)
+        return listed
 
-    def remember_registry(self, arch: str, newest: dict[str, str], now: float) -> None:
+    def remember_registry(self, arch: str, newest: dict[str, Listed], now: float) -> None:
         state = self._load()
-        state["registry"] = {"checked_at": _stamp(now), "arch": arch, "newest": dict(newest)}
+        state["registry"] = {
+            "checked_at": _stamp(now),
+            "arch": arch,
+            "newest": {
+                channel: {"tag": entry.tag, "size": entry.size}
+                for channel, entry in newest.items()
+            },
+        }
         state["offline_until"] = None
         self._save(state)
 
@@ -212,3 +245,108 @@ def _seconds(value: object) -> float | None:
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=UTC)
     return moment.timestamp()
+
+
+# --- Registry -----------------------------------------------------------------
+
+
+class RegistryUnavailable(Exception):
+    """The registry gave no usable answer: offline, DNS, TLS, timeout, an HTTP
+    error status or a body that is not the tag listing."""
+
+
+def hub_architecture(machine: str | None) -> str | None:
+    """Docker Hub's name for an engine or host architecture."""
+    if not machine:
+        return None
+    return _ARCHITECTURES.get(machine.strip().lower())
+
+
+def registry_newest(
+    arch: str,
+    *,
+    transport: httpx.BaseTransport | None = None,
+    clock: Any = time.monotonic,
+) -> dict[str, Listed]:
+    """The newest `X.Y.Z` and `X.Y.Z-lite` tag Docker Hub lists with an image
+    for `arch`, by channel. Raises RegistryUnavailable."""
+    deadline = clock() + REGISTRY_TOTAL_TIMEOUT
+    newest: dict[str, tuple[tuple[int, int, int], Listed]] = {}
+    url: str | None = REGISTRY_TAGS_URL
+    try:
+        with httpx.Client(transport=transport, follow_redirects=True) as client:
+            for _page in range(REGISTRY_MAX_PAGES):
+                if url is None:
+                    break
+                remaining = deadline - clock()
+                if remaining <= 0:
+                    raise RegistryUnavailable("the registry lookup timed out")
+                response = client.get(
+                    url,
+                    timeout=httpx.Timeout(
+                        remaining, connect=min(REGISTRY_CONNECT_TIMEOUT, remaining)
+                    ),
+                )
+                response.raise_for_status()
+                page = response.json()
+                if not isinstance(page, dict) or not isinstance(page.get("results"), list):
+                    raise RegistryUnavailable("the registry answered without a tag list")
+                for entry in page["results"]:
+                    listed = _listed_for(entry, arch)
+                    if listed is None:
+                        continue
+                    ref = ref_from_tag(listed.tag)
+                    if ref is None:
+                        continue
+                    best = newest.get(ref.channel)
+                    if best is None or ref.version > best[0]:
+                        newest[ref.channel] = (ref.version, listed)
+                following = page.get("next")
+                url = following if isinstance(following, str) and following else None
+    except (httpx.HTTPError, ValueError) as error:
+        raise RegistryUnavailable(str(error) or type(error).__name__) from error
+    return {channel: listed for channel, (_version, listed) in newest.items()}
+
+
+def registry_answer(
+    store: UpdateStore,
+    arch: str,
+    *,
+    fresh: bool = False,
+    now: float | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> dict[str, Listed] | None:
+    """The registry's newest tags for `arch`: a cached answer under 6 hours old
+    unless `fresh` asks for a new one, otherwise a lookup. None when the
+    registry gave no answer, now or within the offline backoff window."""
+    now = time.time() if now is None else now
+    if not fresh:
+        cached = store.cached_newest(arch, now)
+        if cached is not None:
+            return cached
+    if store.offline(now):
+        return None
+    try:
+        answer = registry_newest(arch, transport=transport)
+    except RegistryUnavailable:
+        store.remember_offline(now)
+        return None
+    store.remember_registry(arch, answer, now)
+    return answer
+
+
+def _listed_for(entry: object, arch: str) -> Listed | None:
+    """A tag-listing entry as a version tag with an image for `arch`."""
+    if not isinstance(entry, dict):
+        return None
+    tag = entry.get("name")
+    if not isinstance(tag, str) or ref_from_tag(tag) is None:
+        return None
+    images = entry.get("images")
+    if not isinstance(images, list):
+        return None
+    for image in images:
+        if isinstance(image, dict) and image.get("architecture") == arch:
+            size = image.get("size")
+            return Listed(tag, size if isinstance(size, int) and size > 0 else None)
+    return None
