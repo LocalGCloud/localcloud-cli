@@ -122,7 +122,12 @@ class _ExecutionObserver:
             "Continue with these mappings? [y/N] ",
             input_stream=self.input_stream,
         )
-        return answer.lower() in {"y", "yes"}
+        accepted = answer.lower() in {"y", "yes"}
+        if accepted:
+            # Creating the container and waiting for readiness still follow;
+            # a "no" ends the command, so there is nothing left to animate.
+            self.reporter.resume()
+        return accepted
 
     def debug(self, message: str) -> None:
         if self.debug_enabled:

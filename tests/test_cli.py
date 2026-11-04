@@ -1425,6 +1425,8 @@ def test_port_mapping_confirmation_prompts_with_exact_mapping() -> None:
     )
 
     assert observer.confirm_port_mapping(plan) is True
+    # The start goes on after the answer, so the progress animation resumes.
+    assert reporter._thread is not None and reporter._thread.is_alive()
     reporter.close()
 
     rendered = output.getvalue()
@@ -2938,3 +2940,26 @@ def test_explicit_pull_switches_a_pinned_runtime_without_asking(
     assert FakeController.instance.pull_calls[-1] == ("restart", True)
     assert result["image_update"]["action"] == "adopted"
     assert "[y/N]" not in output.getvalue()
+
+
+def test_declined_port_mapping_leaves_the_animation_stopped() -> None:
+    from localcloud_cli.cli import _ExecutionObserver
+    from localcloud_cli.output import LifecycleReporter
+
+    class TtyBuffer(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    reporter = LifecycleReporter(
+        stream=TtyBuffer(), environ={"TERM": "xterm-256color"}, fps=1
+    )
+    reporter.start("Planning LocalCloud ports…")
+    observer = _ExecutionObserver(reporter, input_stream=TtyBuffer("n\n"))
+    plan = SimpleNamespace(
+        alternative_port_mappings=lambda: (("127.0.0.1", 5508, 5380, "tcp"),),
+        occupied_ports=({"port": 5380},),
+    )
+
+    assert observer.confirm_port_mapping(plan) is False
+    assert reporter._thread is None
+    reporter.close()
