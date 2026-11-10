@@ -1,27 +1,39 @@
-"""Lite/full and --no-ui across start and restart, against the published images.
+"""Lite/full and --no-ui across start and restart.
 
-Needs agentcloud/localcloud:lite and :latest locally; it never pulls."""
+Runs the CLI's default lite build and its full build, as --full names it (`REPO:latest` for
+`REPO:lite`, `REPO:TAG` for `REPO:TAG-lite`). LOCALCLOUD_IMAGE names another lite build, such as a
+release candidate's; the test then makes it the CLI's default rather than an explicit choice, since
+an explicit image would rightly override the runtime's build on restart. Both builds must be local;
+it never pulls."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
+import os
+
 import httpx
 import pytest
 
 from integration._support import throwaway_runtime
-from localcloud_cli.config import LocalCloudConfig
+from localcloud_cli import config as config_module
+from localcloud_cli.config import LocalCloudConfig, is_lite_image, lite_image
+from localcloud_cli.constants import DEFAULT_IMAGE
 from localcloud_cli.docker_runtime import DockerRuntime
 
 pytestmark = pytest.mark.docker
 
-_LITE = "agentcloud/localcloud:lite"
-_FULL = "agentcloud/localcloud:latest"
+_LITE = os.environ.get("LOCALCLOUD_IMAGE", DEFAULT_IMAGE)
+_FULL = lite_image(_LITE, False)
 
 
 @pytest.fixture
-def lifecycle(tmp_path: Path) -> Any:
+def lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    if not is_lite_image(_LITE):
+        pytest.fail(f"image_channel_prerequisite: LOCALCLOUD_IMAGE must name a lite build, not {_LITE}")
+    monkeypatch.delenv("LOCALCLOUD_IMAGE", raising=False)
+    monkeypatch.setattr(config_module, "DEFAULT_IMAGE", _LITE)
     # server.console.enabled: true must not undo --no-ui (S1).
     with throwaway_runtime(
         tmp_path,
