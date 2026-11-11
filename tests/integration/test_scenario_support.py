@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import copy
+import hashlib
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -12,7 +14,6 @@ from localcloud_cli.java_client import JavaMcpClient
 from integration import scenario_support
 from integration.scenario_support import (
     apply_scenario,
-    SCENARIO_ARTIFACTS_ENV,
     checkpoint_project,
     scenario_artifact,
     verify_scenario,
@@ -304,34 +305,67 @@ def test_browse_only_false_positive_fails_with_verification_id(
     assert reason in caught.value.message
 
 
-def test_scenario_artifacts_come_from_the_supplied_directory(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    definition = _scenario_definition("runtime-backed")
-    (tmp_path / "runtime-backed").mkdir()
-    (tmp_path / "runtime-backed" / "job.py").write_bytes(b"print(1)\n")
-    monkeypatch.setenv(SCENARIO_ARTIFACTS_ENV, str(tmp_path))
+_JOB = "print('spark')\n"
+_JOB_URI = "localcloud://scenarios/runtime-backed/artifacts/job.py"
 
-    assert scenario_artifact(definition, "job.py") == b"print(1)\n"
+
+def _with_artifact_files(content: dict[str, Any], **entry: Any) -> tuple[dict[str, Any], JavaMcpClient, list]:
+    definition = _scenario_definition("runtime-backed")
+    definition["artifact_files"] = [{
+        "name": "job.py", "media_type": "text/x-python", "size": len(_JOB.encode()),
+        "sha256": hashlib.sha256(_JOB.encode()).hexdigest(), "uri": _JOB_URI,
+        "path": "/admin/scenarios/runtime-backed/artifacts/job.py", **entry,
+    }]
+    client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
+    calls: list[tuple[str, Any]] = []
+
+    def rpc(method: str, params: Any = None, **_: Any) -> Any:
+        calls.append((method, params))
+        return {"contents": [{"uri": _JOB_URI, "mimeType": "text/x-python", **content}]}
+
+    client.rpc = rpc  # type: ignore[method-assign]
+    return definition, client, calls
+
+
+def test_scenario_artifact_is_read_from_its_resource_and_verified() -> None:
+    definition, client, calls = _with_artifact_files({"text": _JOB})
+
+    assert scenario_artifact(client, definition, "job.py") == _JOB.encode()
+    assert calls == [("resources/read", {"uri": _JOB_URI})]
+
+
+def test_a_binary_scenario_artifact_comes_as_a_blob() -> None:
+    blob = base64.b64encode(_JOB.encode()).decode()
+    definition, client, _calls = _with_artifact_files({"blob": blob})
+
+    assert scenario_artifact(client, definition, "job.py") == _JOB.encode()
 
 
 @pytest.mark.parametrize(
-    ("name", "supplied", "reason"),
+    ("content", "entry", "name", "reason"),
     [
-        ("other.py", True, "does not list artifact other.py"),
-        ("job.py", False, "serves no endpoint for artifact job.py"),
+        ({"text": "tampered\n"}, {}, "job.py", "does not match its sha256"),
+        ({"text": _JOB}, {"size": 3}, "job.py", "does not match its size"),
+        ({}, {}, "job.py", "neither text nor blob"),
+        ({"text": _JOB}, {}, "other.py", "no entry for other.py"),
     ],
 )
-def test_scenario_artifacts_say_what_is_missing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, supplied: bool, reason: str
+def test_scenario_artifact_refuses_what_does_not_match(
+    content: dict[str, Any], entry: dict[str, Any], name: str, reason: str
 ) -> None:
-    if supplied:
-        monkeypatch.setenv(SCENARIO_ARTIFACTS_ENV, str(tmp_path))
-    else:
-        monkeypatch.delenv(SCENARIO_ARTIFACTS_ENV, raising=False)
+    definition, client, _calls = _with_artifact_files(content, **entry)
 
     with pytest.raises(HostError) as caught:
-        scenario_artifact(_scenario_definition("runtime-backed"), name)
+        scenario_artifact(client, definition, name)
 
     assert caught.value.details["verification_id"] == "scenario-artifacts"
     assert reason in caught.value.message
+
+
+def test_a_runtime_without_artifact_files_is_too_old() -> None:
+    client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
+
+    with pytest.raises(HostError) as caught:
+        scenario_artifact(client, _scenario_definition("runtime-backed"), "job.py")
+
+    assert "runtime is too old for this test" in caught.value.message

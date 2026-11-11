@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import os
+import base64
+import hashlib
 import re
 import socket
 import sys
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -13,12 +13,6 @@ import httpx
 
 from localcloud_cli.errors import HostError
 from localcloud_cli.java_client import JavaMcpClient
-
-
-# A directory holding scenario artifacts as <scenario>/<artifact>. The runtime lists a scenario's
-# artifacts by name but serves no endpoint for their content yet, so a run that needs one supplies
-# it here; the CLI never carries a copy.
-SCENARIO_ARTIFACTS_ENV = "LOCALCLOUD_SCENARIO_ARTIFACTS"
 
 
 def _progress(message: str) -> None:
@@ -38,28 +32,55 @@ def get_scenario(client: JavaMcpClient, scenario: str) -> dict[str, Any]:
     return definition
 
 
-def scenario_artifact(definition: Mapping[str, Any], name: str) -> bytes:
-    """Read one artifact the runtime's scenario lists, from the directory the run supplies."""
+def scenario_artifact(
+    client: JavaMcpClient, definition: Mapping[str, Any], name: str
+) -> bytes:
+    """Read one artifact file the runtime's scenario declares, through MCP resources/read on the
+    entry's `uri`, and check it against the entry's sha256 and size."""
     scenario = str(definition.get("id"))
-    listed = definition.get("artifacts")
-    if not isinstance(listed, list) or name not in listed:
-        raise _verification_error(
-            scenario, "scenario-artifacts", f"the runtime does not list artifact {name}",
-            artifacts=listed,
-        )
-    root = os.environ.get(SCENARIO_ARTIFACTS_ENV)
-    if not root:
+    files = definition.get("artifact_files")
+    if not isinstance(files, list):
         raise _verification_error(
             scenario, "scenario-artifacts",
-            f"the runtime serves no endpoint for artifact {name}; set {SCENARIO_ARTIFACTS_ENV} "
-            f"to a directory holding {scenario}/{name}",
+            "the runtime is too old for this test: localcloud_get_scenario has no artifact_files "
+            "(scenario artifacts are served from runtimes newer than 0.1.17)",
         )
-    candidate = Path(root) / scenario / name
-    if not candidate.is_file():
+    entry = next(
+        (item for item in files if isinstance(item, Mapping) and item.get("name") == name), None
+    )
+    if entry is None or not isinstance(entry.get("uri"), str):
         raise _verification_error(
-            scenario, "scenario-artifacts", f"{candidate} does not exist"
+            scenario, "scenario-artifacts", f"artifact_files has no entry for {name}",
+            artifacts=[item.get("name") for item in files if isinstance(item, Mapping)],
         )
-    return candidate.read_bytes()
+    uri = entry["uri"]
+    result = client.rpc("resources/read", {"uri": uri})
+    contents = result.get("contents") if isinstance(result, Mapping) else None
+    if not isinstance(contents, list) or len(contents) != 1 or not isinstance(contents[0], Mapping):
+        raise _verification_error(
+            scenario, "scenario-artifacts", f"resources/read {uri} returned no single content",
+        )
+    content = contents[0]
+    if isinstance(content.get("text"), str):
+        data = content["text"].encode("utf-8")
+    elif isinstance(content.get("blob"), str):
+        data = base64.b64decode(content["blob"], validate=True)
+    else:
+        raise _verification_error(
+            scenario, "scenario-artifacts", f"resources/read {uri} has neither text nor blob",
+        )
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != entry.get("sha256"):
+        raise _verification_error(
+            scenario, "scenario-artifacts", f"{name} does not match its sha256",
+            expected=entry.get("sha256"), actual=digest,
+        )
+    if entry.get("size") is not None and int(entry["size"]) != len(data):
+        raise _verification_error(
+            scenario, "scenario-artifacts", f"{name} does not match its size",
+            expected=entry.get("size"), actual=len(data),
+        )
+    return data
 
 
 def checkpoint_project(client: JavaMcpClient, project: str, name: str) -> Any:

@@ -149,7 +149,7 @@ def test_full_olap_sdk_checkpoint_restore_and_cleanup(tmp_path: Path) -> None:
         # copy in this repository.
         definition = get_scenario(scenario_java, "olap-application")
         assert definition["runtime"] == {"mode": "docker", "required": True}
-        script = scenario_artifact(definition, "customer_order_summary.py")
+        script = scenario_artifact(scenario_java, definition, "customer_order_summary.py")
         applied = apply_scenario(scenario_java, "olap-application", project)
         assert applied["project"] == project
         # Apply returns once the scenario's clusters run.

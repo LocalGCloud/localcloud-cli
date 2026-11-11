@@ -822,10 +822,9 @@ LOCALCLOUD_GATEWAY_IMAGE=agentcloud/localcloud:<version> \
 ```
 
 The full OLAP acceptance test (`LOCALCLOUD_RUN_FULL_OLAP=1`, 4 GiB of Docker memory) reads the
-`olap-application` scenario from the runtime under test. The runtime lists the scenario's Spark
-script by name but does not serve it, so point `LOCALCLOUD_SCENARIO_ARTIFACTS` at a directory
-holding `olap-application/customer_order_summary.py`; without it the test fails naming what is
-missing.
+`olap-application` scenario and its Spark script from the runtime under test (`artifact_files` and
+`resources/read`, checked against the declared sha256). Runtimes that do not serve scenario
+artifacts, such as 0.1.17, fail it as too old.
 
 `lc env --identity` consumes LocalCloud's typed identity session contract. The fixtures in
 `tests/fixtures/identity/` are validated against the contract vendored in
