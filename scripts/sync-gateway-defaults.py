@@ -77,10 +77,13 @@ REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
     # Image build arguments.
     (re.compile(r"\s*The emulator build is selected at build time via \w+ in Dockerfile\."), ""),
 )
-# Words a public comment may use that look like source identifiers.
+# Words a public comment may use that look like source identifiers: product names and public
+# Google API names a user sees in responses (ErrorInfo is google.rpc.ErrorInfo, the error detail
+# that carries a reason such as CONSUMER_INVALID).
 ALLOWED_CAMEL_CASE = {
     "AlloyDB",
     "BigQuery",
+    "ErrorInfo",
     "GraphQL",
     "LocalCloud",
     "MySQL",
