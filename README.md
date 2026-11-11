@@ -422,7 +422,9 @@ lc start --full
 ```
 
 **Staying current.** A runtime keeps the image it was started with. A floating tag like `lite` is
-refreshed by `--pull`. A version tag like `agentcloud/localcloud:0.1.8-lite` never moves by itself,
+refreshed by `--pull`; when the local copy is older than Docker Hub's, `start` and `status` say so in an
+`Image update` line (`the local lite image is 0.1.16, Docker Hub's is 0.1.17-lite; add --pull to refresh
+it`) and never pull without the flag. A version tag like `agentcloud/localcloud:0.1.8-lite` never moves by itself,
 so `start` and `restart` look for a newer version on the same channel (lite or full) and, in a terminal,
 ask before switching:
 
@@ -806,18 +808,24 @@ uv run lc --help                                          # run from source
 For live container lifecycle qualification, follow the [Lifecycle test runbook](docs/lifecycle-testing.md).
 
 Tests that need a live Docker engine are marked `docker`; deselect them with `-m "not docker"`.
-Most of them start throwaway runtimes on host ports 5900-5999, but
-`tests/integration/test_agent_workflow.py` checks the runtime you already run on the default
-`localcloud-data` volume (read-only). To qualify a release image, point the tests at it; on Colima,
-add a `--basetemp` under your home directory so that Docker can bind-mount the configuration:
+Each starts a throwaway runtime with its own home and data volume on host ports 5900-5999, never
+the runtime you run yourself: an integration runtime without an explicit port range clear of
+5380-5410 fails the test before Docker is asked to publish anything. To qualify a release image,
+point the tests at it; on Colima, add a `--basetemp` under your home directory so that Docker can
+bind-mount the configuration:
 
 ```sh
 uv run python scripts/sync-gateway-defaults.py --image agentcloud/localcloud:<version> --check
 LOCALCLOUD_IMAGE=agentcloud/localcloud:<version>-lite \
 LOCALCLOUD_GATEWAY_IMAGE=agentcloud/localcloud:<version> \
-  uv run --extra test python -m pytest -q --basetemp ~/.cache/lc-pytest \
-  --deselect tests/integration/test_agent_workflow.py
+  uv run --extra test python -m pytest -q --basetemp ~/.cache/lc-pytest
 ```
+
+The full OLAP acceptance test (`LOCALCLOUD_RUN_FULL_OLAP=1`, 4 GiB of Docker memory) reads the
+`olap-application` scenario from the runtime under test. The runtime lists the scenario's Spark
+script by name but does not serve it, so point `LOCALCLOUD_SCENARIO_ARTIFACTS` at a directory
+holding `olap-application/customer_order_summary.py`; without it the test fails naming what is
+missing.
 
 `lc env --identity` consumes LocalCloud's typed identity session contract. The fixtures in
 `tests/fixtures/identity/` are validated against the contract vendored in

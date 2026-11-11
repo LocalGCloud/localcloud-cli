@@ -31,6 +31,8 @@ from integration._support import (
 from integration.scenario_support import (
     apply_scenario,
     checkpoint_project,
+    get_scenario,
+    scenario_artifact,
     verify_scenario,
 )
 from localcloud_cli.java_client import JavaMcpClient
@@ -143,8 +145,19 @@ def test_full_olap_sdk_checkpoint_restore_and_cleanup(tmp_path: Path) -> None:
 
     try:
         scenario_java = JavaMcpClient(gateway, project, user)
+        # The scenario and its artifact names come from the runtime under test, never from a
+        # copy in this repository.
+        definition = get_scenario(scenario_java, "olap-application")
+        assert definition["runtime"] == {"mode": "docker", "required": True}
+        script = scenario_artifact(definition, "customer_order_summary.py")
         applied = apply_scenario(scenario_java, "olap-application", project)
         assert applied["project"] == project
+        # Apply returns once the scenario's clusters run.
+        running = [
+            item if isinstance(item, str) else item.get("clusterName") or item.get("name")
+            for item in applied["running_clusters"]
+        ]
+        assert any(str(name).endswith("analytics-spark") for name in running), running
         verify_scenario(
             scenario_java, "olap-application", project, endpoint_map
         )
@@ -269,10 +282,6 @@ def test_full_olap_sdk_checkpoint_restore_and_cleanup(tmp_path: Path) -> None:
             .blob("orders/orders.jsonl")
             .download_as_bytes(timeout=30)
         )
-        script = Path(
-            "../localcloud-server/src/main/resources/agent-scenarios/"
-            "olap-application/customer_order_summary.py"
-        ).read_bytes()
         put_bytes(dataproc, "/localcloud/tmp/cluster/orders.jsonl", orders_jsonl)
         put_bytes(
             dataproc,

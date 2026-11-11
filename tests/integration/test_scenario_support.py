@@ -1,37 +1,69 @@
 from __future__ import annotations
 
+import copy
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
 from localcloud_cli.errors import HostError
 from localcloud_cli.java_client import JavaMcpClient
 from integration import scenario_support
 from integration.scenario_support import (
     apply_scenario,
+    SCENARIO_ARTIFACTS_ENV,
     checkpoint_project,
+    scenario_artifact,
     verify_scenario,
 )
 
 PROJECT = "agent-project"
 USER = "integration-agent"
-SCENARIO_ROOT = Path(__file__).parents[1] / "fixtures" / "agent-scenarios"
-SCENARIO_SERVICES = {
-    "analytics-smoke": ["gcs", "bigquery", "logging", "monitoring"],
-    "olap-application": [
-        "gcs",
-        "bigquery",
-        "logging",
-        "monitoring",
-        "cloudsql",
-        "pubsub",
-        "cloudfunctions",
-        "cloudscheduler",
-        "dataproc",
-    ],
+
+
+def _http(check_id: str, service: str, port: int, path: str, json_path: str, equals: Any = None):
+    expect: dict[str, Any] = {"json_path": json_path}
+    if equals is None:
+        expect["non_empty"] = True
+    else:
+        expect["equals"] = equals
+    return {
+        "id": check_id, "service": service, "type": "http_json",
+        "port": port, "path": path, "expect": expect,
+    }
+
+
+# The shapes the runtime's localcloud_get_scenario publishes. Live runs read the real definitions
+# from the runtime under test; these exercise each kind of check without copying one.
+DEFINITIONS: dict[str, dict[str, Any]] = {
+    "storage-and-warehouse": {
+        "id": "storage-and-warehouse",
+        "services": ["bigquery", "gcs"],
+        "artifacts": [],
+        "verification": [
+            _http("gcs-bucket", "gcs", 5382, "/storage/v1/b/${project}-input", "name",
+                  "${project}-input"),
+            _http("bq-dataset", "bigquery", 5388,
+                  "/bigquery/v2/projects/${project}/datasets/sales",
+                  "datasetReference.datasetId", "sales"),
+            _http("bq-rows", "bigquery", 5388,
+                  "/bigquery/v2/projects/${project}/datasets/sales/tables/t/data?maxResults=1",
+                  "rows"),
+        ],
+    },
+    "runtime-backed": {
+        "id": "runtime-backed",
+        "services": ["cloudsql", "dataproc"],
+        "artifacts": ["job.py"],
+        "runtime": {"mode": "docker", "required": True},
+        "verification": [
+            {"id": "postgres-data-plane", "service": "cloudsql", "type": "tcp", "port": 5391},
+            _http("runtime-callable", "dataproc", 5380, "/health/dataproc", "callable", True),
+            _http("cluster-consoles", "dataproc", 5380,
+                  "/v1/projects/${project}/regions/us-central1/clusters/c1/consoles", "consoles"),
+        ],
+    },
 }
 
 
@@ -65,9 +97,7 @@ class FakeHttpClient:
 
 
 def _scenario_definition(scenario: str) -> dict[str, Any]:
-    definition = yaml.safe_load((SCENARIO_ROOT / scenario / "scenario.yaml").read_text())
-    definition["services"] = SCENARIO_SERVICES[scenario]
-    return definition
+    return copy.deepcopy(DEFINITIONS[scenario])
 
 
 def _render(value: Any) -> Any:
@@ -113,20 +143,24 @@ def test_scenario_lifecycle_helpers_call_public_tool_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER)
-    calls: list[tuple[str, dict[str, Any]]] = []
+    calls: list[tuple[str, Any]] = []
     monkeypatch.setattr(
         client,
         "tool",
         lambda name, arguments: calls.append((name, arguments)) or {"ok": True},
     )
 
-    assert apply_scenario(client, "analytics-smoke", PROJECT) == {"ok": True}
+    def apply(scenario: str, project: str, **kwargs: Any) -> Any:
+        calls.append(("apply", (scenario, project, callable(kwargs.get("progress")))))
+        return {"ok": True}
+
+    monkeypatch.setattr(client, "apply_scenario", apply)
+
+    assert apply_scenario(client, "storage-and-warehouse", PROJECT) == {"ok": True}
     assert checkpoint_project(client, PROJECT, "baseline") == {"ok": True}
     assert calls == [
-        (
-            "localcloud_apply_scenario",
-            {"id": "analytics-smoke", "project": PROJECT},
-        ),
+        # Apply goes through the bounded call that reports progress, not a plain 60 s tool call.
+        ("apply", ("storage-and-warehouse", PROJECT, True)),
         (
             "localcloud_checkpoint_project",
             {"project": PROJECT, "name": "baseline"},
@@ -134,7 +168,7 @@ def test_scenario_lifecycle_helpers_call_public_tool_api(
     ]
 
 
-@pytest.mark.parametrize("scenario", ["analytics-smoke", "olap-application"])
+@pytest.mark.parametrize("scenario", sorted(DEFINITIONS))
 def test_packaged_seeded_resources_pass_concrete_checks_on_dynamic_ports(
     monkeypatch: pytest.MonkeyPatch,
     scenario: str,
@@ -170,7 +204,7 @@ def test_packaged_seeded_resources_pass_concrete_checks_on_dynamic_ports(
     result = verify_scenario(client, scenario, PROJECT, endpoint_map)
 
     assert result["verified"] == [entry["id"] for entry in definition["verification"]]
-    assert result["verified_services"] == SCENARIO_SERVICES[scenario]
+    assert result["verified_services"] == definition["services"]
     assert all("${project}" not in url for url in FakeHttpClient.calls)
     assert all(
         f":{endpoint_map[str(entry['port'])]}" in next(
@@ -179,60 +213,56 @@ def test_packaged_seeded_resources_pass_concrete_checks_on_dynamic_ports(
         for entry in definition["verification"]
         if entry["type"] == "http_json"
     )
-    if scenario == "olap-application":
-        assert tcp_calls == [("127.0.0.1", endpoint_map["5391"])]
+    assert tcp_calls == [
+        ("127.0.0.1", endpoint_map[str(entry["port"])])
+        for entry in definition["verification"]
+        if entry["type"] == "tcp"
+    ]
 
 
 def test_metadata_only_runtime_cannot_satisfy_runtime_scenario(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    definition = _scenario_definition("olap-application")
+    definition = _scenario_definition("runtime-backed")
     runtime_check = next(
-        entry
-        for entry in definition["verification"]
-        if entry["id"] == "dataproc-runtime-provider"
+        entry for entry in definition["verification"] if entry["id"] == "runtime-callable"
     )
     definition = {"services": ["dataproc"], "verification": [runtime_check]}
     FakeHttpClient.responses = {
-        "http://127.0.0.1:49080/runtime/status": {
-            "mode": "metadata-only",
-            "available": False,
-        }
+        "http://127.0.0.1:49080/health/dataproc": {"callable": False, "mode": "metadata-only"}
     }
     FakeHttpClient.calls = []
     client = _install_definition(monkeypatch, definition)
 
     with pytest.raises(HostError) as caught:
-        verify_scenario(client, "olap-application", PROJECT, {"5380": 49080})
+        verify_scenario(client, "runtime-backed", PROJECT, {"5380": 49080})
 
     assert caught.value.code == "scenario_verification_failed"
-    assert caught.value.details["verification_id"] == "dataproc-runtime-provider"
+    assert caught.value.details["verification_id"] == "runtime-callable"
 
 
 def test_empty_dataproc_child_probe_cannot_activate_scenario(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    definition = _scenario_definition("olap-application")
+    definition = _scenario_definition("runtime-backed")
     consoles_check = next(
-        entry
-        for entry in definition["verification"]
-        if entry["id"] == "dataproc-spark-consoles"
+        entry for entry in definition["verification"] if entry["id"] == "cluster-consoles"
     )
     definition = {"services": ["dataproc"], "verification": [consoles_check]}
     FakeHttpClient.responses = {
         (
             "http://127.0.0.1:49080/v1/projects/agent-project/"
-            "regions/us-central1/clusters/analytics-spark/consoles"
+            "regions/us-central1/clusters/c1/consoles"
         ): {"consoles": {}}
     }
     FakeHttpClient.calls = []
     client = _install_definition(monkeypatch, definition)
 
     with pytest.raises(HostError) as caught:
-        verify_scenario(client, "olap-application", PROJECT, {"5380": 49080})
+        verify_scenario(client, "runtime-backed", PROJECT, {"5380": 49080})
 
     assert caught.value.code == "scenario_verification_failed"
-    assert caught.value.details["verification_id"] == "dataproc-spark-consoles"
+    assert caught.value.details["verification_id"] == "cluster-consoles"
 
 
 @pytest.mark.parametrize(
@@ -266,9 +296,42 @@ def test_browse_only_false_positive_fails_with_verification_id(
     client = _install_definition(monkeypatch, definition)
 
     with pytest.raises(HostError) as caught:
-        verify_scenario(client, "analytics-smoke", PROJECT, {"5382": 49181})
+        verify_scenario(client, "storage-and-warehouse", PROJECT, {"5382": 49181})
 
     assert caught.value.code == "scenario_verification_failed"
     assert caught.value.details["verification_id"] == "gcs-concrete-bucket"
     assert "gcs-concrete-bucket" in caught.value.message
+    assert reason in caught.value.message
+
+
+def test_scenario_artifacts_come_from_the_supplied_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    definition = _scenario_definition("runtime-backed")
+    (tmp_path / "runtime-backed").mkdir()
+    (tmp_path / "runtime-backed" / "job.py").write_bytes(b"print(1)\n")
+    monkeypatch.setenv(SCENARIO_ARTIFACTS_ENV, str(tmp_path))
+
+    assert scenario_artifact(definition, "job.py") == b"print(1)\n"
+
+
+@pytest.mark.parametrize(
+    ("name", "supplied", "reason"),
+    [
+        ("other.py", True, "does not list artifact other.py"),
+        ("job.py", False, "serves no endpoint for artifact job.py"),
+    ],
+)
+def test_scenario_artifacts_say_what_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, supplied: bool, reason: str
+) -> None:
+    if supplied:
+        monkeypatch.setenv(SCENARIO_ARTIFACTS_ENV, str(tmp_path))
+    else:
+        monkeypatch.delenv(SCENARIO_ARTIFACTS_ENV, raising=False)
+
+    with pytest.raises(HostError) as caught:
+        scenario_artifact(_scenario_definition("runtime-backed"), name)
+
+    assert caught.value.details["verification_id"] == "scenario-artifacts"
     assert reason in caught.value.message

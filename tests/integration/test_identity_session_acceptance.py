@@ -163,6 +163,10 @@ def test_lc_env_identity_serves_an_unchanged_adc_application_and_stops_cleanly(t
     (home / ".config" / "gcloud").mkdir(parents=True)
     workdir = tmp_path / "work"
     workdir.mkdir()
+    # Every `lc` run below reads this range from localcloud.yaml, and `start` also gets it as a flag.
+    port_range = os.environ.get("LOCALCLOUD_IDENTITY_E2E_PORT_RANGE", "5900-5949")
+    start_port, end_port = (int(part) for part in port_range.split("-"))
+    assert start_port > 5410 or end_port < 5380, f"{port_range} overlaps 5380-5410"
     (workdir / "localcloud.yaml").write_text("\n".join([
         "version: 1",
         "context:",
@@ -175,6 +179,7 @@ def test_lc_env_identity_serves_an_unchanged_adc_application_and_stops_cleanly(t
         "  memory: 2g",
         "  docker_socket: false",
         "  transparent_network: false",
+        f"  port_range: {port_range}",
         "mcp:",
         "  write: true",
         "server:",
@@ -210,7 +215,6 @@ def test_lc_env_identity_serves_an_unchanged_adc_application_and_stops_cleanly(t
             "refresh_token": "planted-refresh-token",
         }), encoding="utf-8")
         try:
-            port_range = os.environ.get("LOCALCLOUD_IDENTITY_E2E_PORT_RANGE", "5900-5949")
             started = _lc(developer, workdir, "start", "--no-pull", "--local-only", "--port-range", port_range,
                           "--verbose", check=False)
             if started.returncode != 0:

@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import json
+import os
 import time
+from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
-from integration._support import assert_loopback_url, default_runtime_for
+from integration._support import THROWAWAY_PORT_RANGE, assert_loopback_url, throwaway_runtime
 from localcloud_cli.cli import main
-from localcloud_cli.constants import DEFAULT_DATA_VOLUME, DEFAULT_PROJECT, DEFAULT_USER
+from localcloud_cli.config import HostPaths, LocalCloudConfig
+from localcloud_cli.constants import DEFAULT_IMAGE, DEFAULT_PROJECT, DEFAULT_USER
+from localcloud_cli.controller import Controller
 from localcloud_cli.docker_runtime import DockerRuntime, RuntimeRecord
 from localcloud_cli.errors import HostError
 from localcloud_cli.java_client import JavaMcpClient, is_retryable_java_error
@@ -18,7 +23,7 @@ from localcloud_cli.java_client import JavaMcpClient, is_retryable_java_error
 
 pytestmark = pytest.mark.docker
 
-_READINESS_TIMEOUT = 60.0
+_READINESS_TIMEOUT = 120.0
 _READINESS_POLL_INTERVAL = 1.0
 _READINESS_REQUEST_TIMEOUT = 10.0
 # The image's seed.yaml seeds the default project.
@@ -26,6 +31,41 @@ _SEEDED_PROJECT = DEFAULT_PROJECT
 # What the image's seed.yaml creates; other buckets on a long-lived volume are not seed data.
 _SEEDED_GCS_BUCKETS = {"app-assets", "user-profiles"}
 _SEEDED_BIGQUERY_DATASETS = {"app_analytics"}
+
+
+@dataclass(frozen=True)
+class SeededRuntime:
+    controller: Controller
+    runtime: DockerRuntime
+    config: LocalCloudConfig
+    current: RuntimeRecord
+    paths: HostPaths
+    directory: Path
+
+
+@pytest.fixture(scope="module")
+def seeded_runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SeededRuntime]:
+    """A runtime of its own (home, data volume, ports 5960-5999) with the image's default seed,
+    started once for this module and removed afterwards."""
+    image = os.environ.get("LOCALCLOUD_IMAGE", DEFAULT_IMAGE)
+    directory = tmp_path_factory.mktemp("agent-workflow")
+    yaml = (
+        "version: 1\n"
+        "host:\n"
+        f"  port_range: {THROWAWAY_PORT_RANGE}\n"
+        "  data: ephemeral\n"
+        "services:\n"
+        "  enabled:\n"
+        "    - gcs\n"
+        "    - bigquery\n"
+    )
+    with throwaway_runtime(directory, yaml, images=(image,)) as (controller, runtime, config, paths):
+        selected = config()
+        controller.start(selected, pull=False, tail=0, confirm_port_mapping=lambda _plan: True)
+        current = runtime.resolve(selected, require=True)
+        assert current is not None and current.url is not None
+        _wait_for_default_seeded_runtime(current)
+        yield SeededRuntime(controller, runtime, selected, current, paths, directory)
 
 
 def _invoke(
@@ -51,7 +91,7 @@ def _error_text(error: Exception) -> str:
 def _request_timeout(deadline: float) -> float:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
-        raise TimeoutError("default runtime readiness deadline elapsed")
+        raise TimeoutError("runtime readiness deadline elapsed")
     return min(_READINESS_REQUEST_TIMEOUT, remaining)
 
 
@@ -248,22 +288,26 @@ def _guard_against_runtime_mutation(
         )
 
 
-def test_default_start_attaches_without_runtime_or_data_mutation(
-    tmp_path: Path,
+def test_start_attaches_to_a_running_runtime_without_runtime_or_data_mutation(
+    seeded_runtime: SeededRuntime,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    controller, runtime, config, current = default_runtime_for(tmp_path)
-    assert config.data_volume == DEFAULT_DATA_VOLUME
-    _wait_for_default_seeded_runtime(current)
+    runtime, config, current = seeded_runtime.runtime, seeded_runtime.config, seeded_runtime.current
+    volume = config.data_volume
     before = _runtime_identity_snapshot(runtime, current)
     _guard_against_runtime_mutation(monkeypatch)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("LOCALCLOUD_HOME", str(controller.paths.home))
+    monkeypatch.chdir(seeded_runtime.directory)
+    monkeypatch.setenv("LOCALCLOUD_HOME", str(seeded_runtime.paths.home))
 
-    started = _invoke(capsys, "start")
-    status = _invoke(capsys, "status")
-    environment = _invoke(capsys, "env", "--format", "json", verbose=False)
+    # The port range is explicit on every command that takes it, and in localcloud.yaml for the rest.
+    started = _invoke(
+        capsys, "start", "--data-volume", volume, "--port-range", THROWAWAY_PORT_RANGE, "--no-pull"
+    )
+    status = _invoke(capsys, "status", "--data-volume", volume)
+    environment = _invoke(
+        capsys, "env", "--data-volume", volume, "--format", "json", verbose=False
+    )
 
     resolved = runtime.resolve(
         config,
@@ -274,13 +318,13 @@ def test_default_start_attaches_without_runtime_or_data_mutation(
     after = _runtime_identity_snapshot(runtime, resolved)
 
     assert started["status"] == "already_running"
-    assert started["data_volume"] == DEFAULT_DATA_VOLUME
+    assert started["data_volume"] == volume
     assert started["container"]["id"] == current.container_id
     assert_loopback_url(started["container"]["url"])
     assert started["mcp"]["args"] == [
         "mcp",
         "--data-volume",
-        DEFAULT_DATA_VOLUME,
+        volume,
         "--project-id",
         DEFAULT_PROJECT,
         "--user",
@@ -296,12 +340,11 @@ def test_default_start_attaches_without_runtime_or_data_mutation(
     assert before == after
 
 
-def test_default_seeded_runtime_passes_read_only_operational_checks(
-    tmp_path: Path,
+def test_seeded_runtime_passes_read_only_operational_checks(
+    seeded_runtime: SeededRuntime,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _controller, runtime, config, current = default_runtime_for(tmp_path)
-    assert config.data_volume == DEFAULT_DATA_VOLUME
+    runtime, config, current = seeded_runtime.runtime, seeded_runtime.config, seeded_runtime.current
     before = _runtime_identity_snapshot(runtime, current)
     _guard_against_runtime_mutation(monkeypatch)
 

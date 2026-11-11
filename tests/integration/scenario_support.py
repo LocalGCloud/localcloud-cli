@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 import re
 import socket
+import sys
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -12,11 +15,51 @@ from localcloud_cli.errors import HostError
 from localcloud_cli.java_client import JavaMcpClient
 
 
+# A directory holding scenario artifacts as <scenario>/<artifact>. The runtime lists a scenario's
+# artifacts by name but serves no endpoint for their content yet, so a run that needs one supplies
+# it here; the CLI never carries a copy.
+SCENARIO_ARTIFACTS_ENV = "LOCALCLOUD_SCENARIO_ARTIFACTS"
+
+
+def _progress(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
 def apply_scenario(client: JavaMcpClient, scenario: str, project: str) -> Any:
-    return client.tool(
-        "localcloud_apply_scenario",
-        {"id": scenario, "project": project},
-    )
+    """Apply through the client's bounded, progress-reporting call (see java_client)."""
+    return client.apply_scenario(scenario, project, progress=_progress)
+
+
+def get_scenario(client: JavaMcpClient, scenario: str) -> dict[str, Any]:
+    """The scenario definition as the runtime under test publishes it."""
+    definition = client.tool("localcloud_get_scenario", {"id": scenario})
+    if not isinstance(definition, dict):
+        raise _verification_error(scenario, "scenario-catalog", "scenario definition is missing")
+    return definition
+
+
+def scenario_artifact(definition: Mapping[str, Any], name: str) -> bytes:
+    """Read one artifact the runtime's scenario lists, from the directory the run supplies."""
+    scenario = str(definition.get("id"))
+    listed = definition.get("artifacts")
+    if not isinstance(listed, list) or name not in listed:
+        raise _verification_error(
+            scenario, "scenario-artifacts", f"the runtime does not list artifact {name}",
+            artifacts=listed,
+        )
+    root = os.environ.get(SCENARIO_ARTIFACTS_ENV)
+    if not root:
+        raise _verification_error(
+            scenario, "scenario-artifacts",
+            f"the runtime serves no endpoint for artifact {name}; set {SCENARIO_ARTIFACTS_ENV} "
+            f"to a directory holding {scenario}/{name}",
+        )
+    candidate = Path(root) / scenario / name
+    if not candidate.is_file():
+        raise _verification_error(
+            scenario, "scenario-artifacts", f"{candidate} does not exist"
+        )
+    return candidate.read_bytes()
 
 
 def checkpoint_project(client: JavaMcpClient, project: str, name: str) -> Any:
@@ -32,11 +75,7 @@ def verify_scenario(
     project: str,
     endpoint_map: dict[str, Any],
 ) -> dict[str, Any]:
-    definition = client.tool("localcloud_get_scenario", {"id": scenario})
-    if not isinstance(definition, dict):
-        raise _verification_error(
-            scenario, "scenario-catalog", "scenario definition is missing"
-        )
+    definition = get_scenario(client, scenario)
 
     services = definition.get("services")
     if not isinstance(services, (list, tuple, set)):
