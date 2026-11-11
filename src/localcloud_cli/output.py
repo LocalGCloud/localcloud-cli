@@ -266,6 +266,7 @@ DEFAULT_FIELDS: Mapping[str, tuple[FieldSpec, ...]] = {
             *_COMMON_FIELDS[:7],
             FieldSpec("ports", "Ports", "ports"),
             *_COMMON_FIELDS[7:],
+            FieldSpec("image_update.summary", "Image update", "warning"),
         )
         if field.path
         not in {

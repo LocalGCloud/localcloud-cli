@@ -127,7 +127,8 @@ engine's architecture are offered. What happens next depends on where the image 
 | The data volume's last run, with an explicit `--pull` | `lc` switches to the newest version without asking. |
 | The data volume's last run, with no terminal (scripts, `--verbose`, `--accept-dynamic-ports`) | Nothing changes. An `Image update` line names the newer tag and the command that switches to it. |
 | `host.image` or `LOCALCLOUD_IMAGE` (ranks 2 and 3) | Nothing changes. The `Image update` line names the setting to edit, because the CLI cannot change it. |
-| `--image`, `--lite`, `--full`, a floating tag, a digest pin or another repository | Nothing is checked. |
+| A floating tag (`lite`, `latest`) | Nothing changes. When the local copy's version is older than Docker Hub's newest on that channel, `start` and `status` print an `Image update` line; `--pull` refreshes it. With `--no-pull` only an answer cached in the last 6 hours is used. |
+| `--image`, `--lite`, `--full` with a version tag, a digest pin or another repository | Nothing is checked. |
 
 Switching recreates the runtime, and the new image migrates the data volume forward. Going back to
 the older image may then be impossible. If the new image fails to start, `start` or `restart` recreates the

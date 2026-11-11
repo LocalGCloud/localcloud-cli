@@ -103,7 +103,8 @@ lc start --memory 8g --image myrepo/localcloud:dev --services gcs,pubsub,firesto
   switching; elsewhere the result carries an `Image update` line. Passing `--pull` explicitly switches
   without asking, and `--no-pull` looks only at local images. Switching migrates the data volume
   forward. The check reads Docker Hub at most once every 6 hours, and
-  `LOCALCLOUD_IMAGE_UPDATE_CHECK=false` turns it off.
+  `LOCALCLOUD_IMAGE_UPDATE_CHECK=false` turns it off. A floating tag (`lite`, `latest`) is never
+  switched, but `start` and `status` say when the local copy is older than Docker Hub's.
   See [Which image runs](configuration.md#which-image-runs-and-where-the-choice-comes-from).
 - New runtimes prefer the canonical host ports. If that complete set is unavailable,
   the CLI proposes one contiguous mapping from `5508-5539`, then `5821-5840`,

@@ -372,6 +372,9 @@ class Engine(Protocol):
 
     def engine_architecture(self) -> str | None: ...
 
+    # Optional: the `X.Y.Z` an engine's local image carries in its version label.
+    # def local_image_version(self, image: str) -> tuple[int, int, int] | None: ...
+
 
 @dataclass(frozen=True)
 class Candidate:
@@ -455,10 +458,19 @@ def consider(
     """
     if dry_run or not enabled(config.environment):
         return config, None
-    if config.image_source not in {"runtime", "config", "environment"}:
-        return config, None
     current = parse_ref(config.image)
     if current is None:
+        return config, stale_floating(
+            config,
+            engine,
+            refresh=pull_explicit,
+            registry=not no_pull,
+            store=store,
+            now=now,
+            transport=transport,
+            notify=notify,
+        )
+    if config.image_source not in {"runtime", "config", "environment"}:
         return config, None
     store = store or UpdateStore(HostPaths.from_environment().home / STATE_FILE)
     try:
@@ -498,6 +510,78 @@ def consider(
         )
     store.remember_declined(config.data_volume, offered.channel, offered.tag)
     return config, _update(config, current, candidate, "declined")
+
+
+# Floating tags the CLI selects, by channel: `lite` (the default) and `latest` (--full).
+FLOATING_CHANNELS: dict[str, Channel] = {"lite": "lite", "latest": "full"}
+
+
+def stale_floating(
+    config: LocalCloudConfig,
+    engine: Engine,
+    *,
+    refresh: bool = False,
+    registry: bool = True,
+    store: UpdateStore | None = None,
+    now: float | None = None,
+    transport: httpx.BaseTransport | None = None,
+    notify: Callable[[str], None] | None = None,
+) -> dict[str, Any] | None:
+    """The `image_update` field when the engine's copy of a floating tag
+    (`lite`, `latest`) is an older version than Docker Hub's: a floating tag
+    moves only when it is pulled, so a local copy can stay behind for months.
+
+    Compares the local image's version label with the newest version the
+    registry lists on the same channel. `refresh` (an explicit --pull) means
+    the tag is being pulled anyway, so there is nothing to say; `registry`
+    False (--no-pull) uses only an answer already cached. Never raises and
+    never pulls."""
+    if refresh or not enabled(config.environment):
+        return None
+    parts = parse_image_tag(config.image)
+    if parts is None or parts[0] not in _REPOSITORY_ALIASES:
+        return None
+    channel = FLOATING_CHANNELS.get(parts[1])
+    version_of = getattr(engine, "local_image_version", None)
+    if channel is None or not callable(version_of):
+        return None
+    try:
+        local = version_of(config.image)
+        if local is None:
+            return None
+        arch = hub_architecture(engine.engine_architecture()) or hub_architecture(
+            platform.machine()
+        )
+        if arch is None:
+            return None
+        store = store or UpdateStore(HostPaths.from_environment().home / STATE_FILE)
+        moment = time.time() if now is None else now
+        answer = (
+            registry_answer(store, arch, now=moment, transport=transport, notify=notify)
+            if registry
+            else store.cached_newest(arch, moment)
+        )
+    except Exception:  # The notice is a convenience; it never fails a command.
+        return None
+    listed = answer.get(channel) if answer else None
+    newer = ref_from_tag(listed.tag, parts[0]) if listed is not None else None
+    if newer is None or newer.version <= tuple(local):
+        return None
+    local_text = ".".join(map(str, local))
+    return {
+        "current": config.image,
+        "current_version": local_text,
+        "available": newer.image,
+        "source": "registry",
+        "local": False,
+        "action": "stale",
+        "reason": f"the local {parts[1]} image is {local_text}",
+        "switch": "--pull",
+        "summary": (
+            f"the local {parts[1]} image is {local_text}, Docker Hub's is {newer.tag}; "
+            "add --pull to refresh it"
+        ),
+    }
 
 
 def offer_lines(

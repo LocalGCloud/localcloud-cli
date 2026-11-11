@@ -693,7 +693,9 @@ def _execute(args: argparse.Namespace, observer: _ExecutionObserver | None = Non
                 dry_run=args.dry_run,
             )
         if args.command == "status":
-            return controller.status(config)
+            return _with_image_update(
+                controller.status(config), _stale_image_notice(controller, config)
+            )
         if args.command == "logs":
             return controller.logs(config, tail=args.tail)
         if args.command == "env" and getattr(args, "identity", False):
@@ -794,6 +796,19 @@ def _offer_newer_image(
             else None
         ),
     )
+
+
+def _stale_image_notice(
+    controller: Any, config: LocalCloudConfig
+) -> dict[str, Any] | None:
+    """For status: say when the engine's copy of the floating tag the runtime
+    uses (`lite`, `latest`) is older than Docker Hub's. Never pulls."""
+    from . import image_updates
+
+    engine = getattr(controller, "runtime", None)
+    if engine is None:
+        return None
+    return image_updates.stale_floating(config, engine)
 
 
 def _with_image_update(result: Any, image_update: dict[str, Any] | None) -> Any:

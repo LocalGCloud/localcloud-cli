@@ -1198,6 +1198,18 @@ def test_image_update_row_is_absent_without_an_offer() -> None:
     assert "Image update" not in render_summary("start", PAYLOAD)
 
 
-@pytest.mark.parametrize("command", ["stop", "status", "reset"])
+@pytest.mark.parametrize("command", ["stop", "reset"])
 def test_other_commands_keep_their_rows(command: str) -> None:
     assert all(field.path != "image_update.summary" for field in DEFAULT_FIELDS[command])
+
+
+def test_status_says_when_the_local_floating_tag_is_behind() -> None:
+    payload = {
+        **PAYLOAD,
+        "image_update": {
+            "action": "stale",
+            "summary": "the local lite image is 0.1.16, Docker Hub's is 0.1.17-lite; "
+            "add --pull to refresh it",
+        },
+    }
+    assert "Image update  the local lite image is 0.1.16" in render_summary("status", payload)

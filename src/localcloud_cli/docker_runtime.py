@@ -2167,6 +2167,22 @@ class DockerRuntime:
                     tags.add(tag)
         return tags
 
+    def local_image_version(self, image: str) -> tuple[int, int, int] | None:
+        """The `X.Y.Z` in the version label of `image` in the engine's image
+        store; None when it is not local or carries no such label."""
+        try:
+            labels = self.client.images.get(image).labels or {}
+        except Exception:
+            return None
+        match = re.fullmatch(
+            r"(\d+)\.(\d+)\.(\d+)",
+            str(labels.get("org.opencontainers.image.version") or "").strip(),
+        )
+        if match is None:
+            return None
+        major, minor, patch = (int(part) for part in match.groups())
+        return major, minor, patch
+
     def engine_architecture(self) -> str | None:
         """The machine architecture the Docker engine reports (`aarch64`,
         `x86_64`); None when Docker cannot say."""

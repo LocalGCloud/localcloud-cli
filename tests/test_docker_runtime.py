@@ -4253,3 +4253,26 @@ def test_engine_architecture_is_none_when_docker_cannot_say() -> None:
 
     runtime = DockerRuntime(client=SimpleNamespace(info=broken))
     assert runtime.engine_architecture() is None
+
+
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        ({"org.opencontainers.image.version": "0.1.16"}, (0, 1, 16)),
+        ({"org.opencontainers.image.version": "0.1.17-lite"}, None),
+        ({}, None),
+        (None, None),
+    ],
+)
+def test_local_image_version_reads_the_version_label(labels: Any, expected: Any) -> None:
+    image = SimpleNamespace(labels=labels)
+    client = SimpleNamespace(images=SimpleNamespace(get=lambda _name: image))
+    assert DockerRuntime(client=client).local_image_version("agentcloud/localcloud:lite") == expected
+
+
+def test_local_image_version_is_none_for_an_image_that_is_not_local() -> None:
+    def missing(_name: str) -> Any:
+        raise RuntimeError("No such image")
+
+    client = SimpleNamespace(images=SimpleNamespace(get=missing))
+    assert DockerRuntime(client=client).local_image_version("agentcloud/localcloud:lite") is None

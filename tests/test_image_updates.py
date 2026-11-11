@@ -769,3 +769,85 @@ def test_sizes_read_naturally() -> None:
     assert image_updates._format_size(512) == "512 B"
     assert image_updates._format_size(373_125_517) == "373.1 MB"
     assert image_updates._format_size(1_500_000_000) == "1.5 GB"
+
+
+# --- A floating tag behind the registry ---------------------------------------
+
+
+class VersionedEngine(FakeEngine):
+    """An engine whose local copy of every image carries `version` in its label."""
+
+    def __init__(self, version: tuple[int, int, int] | None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.version = version
+
+    def local_image_version(self, image: str) -> tuple[int, int, int] | None:
+        return self.version
+
+
+@pytest.fixture
+def hub_017(hub):
+    return hub.get(image_updates.REGISTRY_TAGS_URL).respond(
+        json=_page(_tag("0.1.17-lite", "arm64"), _tag("0.1.17", "arm64"))
+    )
+
+
+@pytest.mark.usefixtures("check_on")
+@pytest.mark.parametrize(
+    ("image", "available"),
+    [("agentcloud/localcloud:lite", "0.1.17-lite"), ("agentcloud/localcloud:latest", "0.1.17")],
+)
+def test_a_local_floating_tag_older_than_the_registry_is_reported(
+    tmp_path, hub_017, image, available
+) -> None:
+    config = _config(tmp_path, image=image, source="default")
+
+    selected, update = _consider(tmp_path, config, engine=VersionedEngine((0, 1, 16)))
+
+    assert selected == config  # never pulls or switches on its own
+    assert update is not None and update["action"] == "stale"
+    assert update["available"] == f"agentcloud/localcloud:{available}"
+    assert update["summary"].startswith(f"the local {image.rpartition(':')[2]} image is 0.1.16")
+    assert "--pull" in update["summary"]
+
+
+@pytest.mark.usefixtures("check_on")
+@pytest.mark.parametrize(
+    ("version", "kwargs"),
+    [
+        ((0, 1, 17), {}),  # up to date
+        ((0, 1, 18), {}),  # a newer local build
+        (None, {}),  # not local yet: start pulls it anyway
+        ((0, 1, 16), {"pull_explicit": True}),  # --pull refreshes it
+        ((0, 1, 16), {"dry_run": True}),
+    ],
+)
+def test_a_floating_tag_is_not_reported_when_there_is_nothing_to_do(
+    tmp_path, hub_017, version, kwargs
+) -> None:
+    config = _config(tmp_path, image="agentcloud/localcloud:lite", source="default")
+    assert _consider(tmp_path, config, engine=VersionedEngine(version), **kwargs) == (config, None)
+
+
+@pytest.mark.usefixtures("check_on")
+def test_no_pull_reports_a_stale_floating_tag_only_from_a_cached_answer(tmp_path, hub_017) -> None:
+    config = _config(tmp_path, image="agentcloud/localcloud:lite", source="default")
+    store = _store(tmp_path)
+    engine = VersionedEngine((0, 1, 16))
+
+    assert _consider(tmp_path, config, engine=engine, store=store, no_pull=True) == (config, None)
+    assert not hub_017.called
+
+    _consider(tmp_path, config, engine=engine, store=store)  # caches the registry's answer
+    _selected, update = _consider(tmp_path, config, engine=engine, store=store, no_pull=True)
+    assert update is not None and update["action"] == "stale"
+    assert hub_017.call_count == 1
+
+
+@pytest.mark.usefixtures("check_on")
+def test_status_reports_a_stale_floating_tag(tmp_path, hub_017) -> None:
+    config = _config(tmp_path, image="agentcloud/localcloud:lite", source="runtime")
+    update = image_updates.stale_floating(
+        config, VersionedEngine((0, 1, 16)), store=_store(tmp_path), now=NOW
+    )
+    assert update is not None and update["current_version"] == "0.1.16"
