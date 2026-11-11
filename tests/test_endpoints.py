@@ -244,6 +244,39 @@ def test_transform_endpoint_payload_still_checks_what_localcloud_generates(
     assert caught.value.code == code
 
 
+def test_a_disabled_service_on_an_unpublished_port_has_no_endpoint() -> None:
+    # localcloud_list_services lists every catalog service. Off the canonical ports a runtime
+    # publishes only its enabled services' ports, so a disabled one's endpoint is dropped
+    # rather than pointing at a port another runtime may hold; the result is still served.
+    endpoint_map = {"5380": 5900, "5382": 5901}
+    services = {
+        "services": [
+            {"id": "gcs", "enabled": True, "endpoint": "http://localhost:5382",
+             "env_var": "STORAGE_EMULATOR_HOST"},
+            {"id": "firestore", "enabled": False, "endpoint": "localhost:5384",
+             "env_value": "localhost:5384", "env_var": "FIRESTORE_EMULATOR_HOST"},
+            {"id": "sheets", "enabled": False, "endpoint": "http://localhost:5380",
+             "env_var": "SHEETS_EMULATOR_HOST"},
+        ]
+    }
+
+    transformed = transform_endpoint_payload(services, endpoint_map)["services"]
+
+    assert transformed[0]["endpoint"] == "http://127.0.0.1:5901"
+    assert transformed[1]["endpoint"] is None and transformed[1]["env_value"] is None
+    assert transformed[2]["endpoint"] == "http://127.0.0.1:5900"
+
+
+def test_an_enabled_service_on_an_unpublished_port_is_still_refused() -> None:
+    record = {"id": "firestore", "enabled": True, "endpoint": "localhost:5384",
+              "env_var": "FIRESTORE_EMULATOR_HOST"}
+
+    with pytest.raises(HostError) as caught:
+        transform_endpoint_payload(record, {"5380": 5900})
+
+    assert caught.value.code == "stale_endpoint"
+
+
 def test_transform_endpoint_payload_checks_localclouds_records_inside_user_content() -> None:
     # A diagnostics bundle: captured requests are the user's, service rows are LocalCloud's.
     diagnostics = {

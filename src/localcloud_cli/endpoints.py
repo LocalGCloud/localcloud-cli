@@ -399,15 +399,25 @@ def transform_endpoint_payload(
     generated_record = endpoint_context or _is_endpoint_record(
         value, user_content=user_content
     )
+    # A service the runtime lists as disabled (localcloud_list_services and
+    # localcloud_check_readiness list every catalog service) keeps its endpoint
+    # only when this runtime publishes its port.
+    disabled_service = generated_record and value.get("enabled") is False
     env_mapping = any(_is_endpoint_env_key(str(key)) for key in value)
     transformed: dict[Any, Any] = {}
     for key, child in value.items():
         normalized_key = str(key).lower()
         if generated_record and _is_endpoint_value_key(normalized_key):
-            transformed[key] = _rewrite_endpoint_value(child, endpoint_map)
+            transformed[key] = (
+                _published_endpoint_or_none(child, endpoint_map)
+                if disabled_service
+                else _rewrite_endpoint_value(child, endpoint_map)
+            )
         elif generated_record and normalized_key == "port":
-            transformed[key] = _rewrite_endpoint_value(
-                child, endpoint_map, port=True
+            transformed[key] = (
+                _published_endpoint_or_none(child, endpoint_map, port=True)
+                if disabled_service
+                else _rewrite_endpoint_value(child, endpoint_map, port=True)
             )
         elif env_mapping and _is_endpoint_env_key(str(key)):
             # Any mapping with such a key gets here, a function's own variables included.
@@ -497,6 +507,23 @@ def _rewrite_endpoint_value(
     # (e.g. descriptive text mentioning a real hostname).
     validate_local_endpoints(rewritten, scheme_less=generated)
     return rewritten
+
+
+def _published_endpoint_or_none(
+    value: Any,
+    endpoint_map: dict[str, Any],
+    *,
+    port: bool = False,
+) -> Any:
+    """A disabled service's endpoint on this runtime, or None when the runtime
+    does not publish its port: the service cannot be reached through this
+    runtime, and that canonical port may belong to another one."""
+    try:
+        return _rewrite_endpoint_value(value, endpoint_map, port=port)
+    except HostError as error:
+        if error.code != "stale_endpoint":
+            raise
+        return None
 
 
 def _rewrite_nested_generated_value(
