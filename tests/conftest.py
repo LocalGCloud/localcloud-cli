@@ -18,6 +18,14 @@ def _no_image_update_check(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOCALCLOUD_IMAGE_UPDATE_CHECK", "false")
 
 
+@pytest.fixture(autouse=True)
+def _no_host_image(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    # LOCALCLOUD_IMAGE names the image the integration tests run (a release candidate, say);
+    # the unit tests check the CLI's own image selection and must not see it.
+    if "integration" not in request.node.path.parts:
+        monkeypatch.delenv("LOCALCLOUD_IMAGE", raising=False)
+
+
 _REAL_GIT_MAIN_CHECKOUT = None
 
 

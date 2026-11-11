@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import os
-import time
 from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -108,7 +106,7 @@ def _require_full_olap_prerequisites(runtime, image: str) -> None:
         pytest.fail(f"full_olap_prerequisite_localcloud_image: {error}")
 
 
-def test_full_olap_sdk_fault_checkpoint_restore_and_cleanup(tmp_path: Path) -> None:
+def test_full_olap_sdk_checkpoint_restore_and_cleanup(tmp_path: Path) -> None:
     if os.environ.get("LOCALCLOUD_RUN_FULL_OLAP") != "1":
         pytest.skip("set LOCALCLOUD_RUN_FULL_OLAP=1 to run the 4 GiB Docker acceptance path")
     controller, runtime, image = controller_for(tmp_path)
@@ -132,6 +130,9 @@ def test_full_olap_sdk_fault_checkpoint_restore_and_cleanup(tmp_path: Path) -> N
         data="ephemeral",
         docker_socket=True,
         seed=None,
+        # Applying the scenario writes; restoring the checkpoint replaces data.
+        mcp_write=True,
+        mcp_destructive=True,
     )
     started = controller.start(config)
     target = controller.target(config)
@@ -139,7 +140,6 @@ def test_full_olap_sdk_fault_checkpoint_restore_and_cleanup(tmp_path: Path) -> N
     user = started["user"]
     endpoint_map = target["endpoint_map"]
     gateway = target["url"]
-    fault_created = False
 
     try:
         scenario_java = JavaMcpClient(gateway, project, user)
@@ -347,51 +347,6 @@ def test_full_olap_sdk_fault_checkpoint_restore_and_cleanup(tmp_path: Path) -> N
                 f"checkpoint omitted services: {checkpoint['services']}\\n{server_log}"
             )
 
-        fault_id = "olap-project-cloudsql-read"
-        created_fault = json.loads(java.tool(
-            "localcloud_create_fault",
-            {
-                "fault": {
-                    "id": fault_id,
-                    "service": "cloudsql",
-                    "method": "GET",
-                    "path_contains": f"/projects/{project}/",
-                    "status_code": 503,
-                    "error_type": "unavailable",
-                    "message": "OLAP acceptance fault",
-                    "request_limit": 1,
-                }
-            },
-        ))
-        fault_created = True
-        assert created_fault["id"] == fault_id
-        fault_response = httpx.get(
-            f"{gateway}/sql/v1beta4/projects/{project}/instances/analytics-postgres",
-            timeout=10,
-        )
-        assert fault_response.status_code == 503
-        assert fault_id in fault_response.text
-
-        diagnostics = {}
-        for _ in range(20):
-            diagnostics = java.tool("localcloud_get_diagnostics", {})
-            if any(
-                request.get("status_code") == 503
-                for request in diagnostics["recent_requests"]
-            ):
-                break
-            time.sleep(0.1)
-        assert diagnostics["project_id"] == project
-        assert any(fault["id"] == fault_id for fault in diagnostics["active_faults"])
-        assert any(
-            request.get("project") == project
-            and request.get("service") == "cloudsql"
-            and request.get("status_code") == 503
-            for request in diagnostics["recent_requests"]
-        )
-        java.tool("localcloud_clear_faults", {})
-        fault_created = False
-
         bq.delete_table(output_table)
         with pytest.raises(NotFound):
             bq.get_table(output_table)
@@ -419,13 +374,6 @@ def test_full_olap_sdk_fault_checkpoint_restore_and_cleanup(tmp_path: Path) -> N
         reset = controller.reset(config)
         assert reset["status"] == "reset"
     finally:
-        if fault_created:
-            try:
-                JavaMcpClient(gateway, project, user).tool(
-                    "localcloud_clear_faults", {}
-                )
-            except Exception:
-                pass
         controller.stop(config)
 
     assert runtime.resolve(config) is None

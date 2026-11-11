@@ -133,6 +133,8 @@ def write_config(
     docker_socket: bool = False,
     seed: str | None = "seed.yaml",
     name: str = "localcloud.yaml",
+    mcp_write: bool = False,
+    mcp_destructive: bool = False,
 ) -> LocalCloudConfig:
     seed_value = "disabled" if seed is None else seed
     path = directory / name
@@ -151,7 +153,11 @@ def write_config(
                 "  memory: 4g",
                 f"  docker_socket: {str(docker_socket).lower()}",
                 "  transparent_network: false",
+                f"  port_range: {THROWAWAY_PORT_RANGE}",
                 "  environment: {}",
+                "mcp:",
+                f"  write: {str(mcp_write).lower()}",
+                f"  destructive: {str(mcp_destructive).lower()}",
                 "services:",
                 "  enabled:",
                 *[f"    - {service}" for service in services],

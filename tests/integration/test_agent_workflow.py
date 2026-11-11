@@ -21,7 +21,8 @@ pytestmark = pytest.mark.docker
 _READINESS_TIMEOUT = 60.0
 _READINESS_POLL_INTERVAL = 1.0
 _READINESS_REQUEST_TIMEOUT = 10.0
-_SEEDED_PROJECT = "local-project"
+# The image's seed.yaml seeds the default project.
+_SEEDED_PROJECT = DEFAULT_PROJECT
 # What the image's seed.yaml creates; other buckets on a long-lived volume are not seed data.
 _SEEDED_GCS_BUCKETS = {"app-assets", "user-profiles"}
 _SEEDED_BIGQUERY_DATASETS = {"app_analytics"}
@@ -59,63 +60,51 @@ def _read_seeded_data(
     *,
     deadline: float,
 ) -> dict[str, Any]:
-    gcs = JavaMcpClient(
-        current.url,
-        _SEEDED_PROJECT,
-        DEFAULT_USER,
-        timeout=_request_timeout(deadline),
-    ).tool(
-        "localcloud_browse_resources",
-        {"service": "gcs", "project": _SEEDED_PROJECT},
-    )
-    bigquery = JavaMcpClient(
-        current.url,
-        _SEEDED_PROJECT,
-        DEFAULT_USER,
-        timeout=_request_timeout(deadline),
-    ).tool(
-        "localcloud_browse_resources",
-        {"service": "bigquery", "project": _SEEDED_PROJECT},
-    )
-    buckets = {
-        str(bucket.get("name"))
-        for bucket in gcs.get("buckets", [])
-        if isinstance(bucket, dict)
-    }
-    datasets = {
-        str(dataset.get("datasetReference", {}).get("datasetId"))
-        for dataset in bigquery.get("datasets", [])
-        if isinstance(dataset, dict)
-    }
-    missing_buckets = _SEEDED_GCS_BUCKETS - buckets
-    missing_datasets = _SEEDED_BIGQUERY_DATASETS - datasets
-    if missing_buckets or missing_datasets:
-        raise RuntimeError(
-            "seeded data is incomplete: "
-            f"missing_buckets={sorted(missing_buckets)!r}, "
-            f"missing_datasets={sorted(missing_datasets)!r}"
-        )
-
+    # Read through the services' own APIs: the runtime's localcloud_browse_resources lists
+    # only Cloud Tasks queues.
     headers = {
         "X-LocalCloud-Project": _SEEDED_PROJECT,
         "X-LocalCloud-User": DEFAULT_USER,
     }
-    gcs_url = (
-        f"http://127.0.0.1:{int(current.endpoint_map['5382'])}"
-        "/storage/v1/b/app-assets"
-    )
-    bigquery_url = (
-        f"http://127.0.0.1:{int(current.endpoint_map['5388'])}"
-        f"/bigquery/v2/projects/{_SEEDED_PROJECT}/datasets/app_analytics"
-    )
+    gcs_endpoint = f"http://127.0.0.1:{int(current.endpoint_map['5382'])}"
+    bigquery_endpoint = f"http://127.0.0.1:{int(current.endpoint_map['5388'])}"
     with httpx.Client(headers=headers) as client:
+        bucket_list = client.get(
+            f"{gcs_endpoint}/storage/v1/b",
+            params={"project": _SEEDED_PROJECT},
+            timeout=_request_timeout(deadline),
+        )
+        bucket_list.raise_for_status()
+        dataset_list = client.get(
+            f"{bigquery_endpoint}/bigquery/v2/projects/{_SEEDED_PROJECT}/datasets",
+            timeout=_request_timeout(deadline),
+        )
+        dataset_list.raise_for_status()
+        buckets = {
+            str(bucket.get("name"))
+            for bucket in bucket_list.json().get("items", [])
+            if isinstance(bucket, dict)
+        }
+        datasets = {
+            str(dataset.get("datasetReference", {}).get("datasetId"))
+            for dataset in dataset_list.json().get("datasets", [])
+            if isinstance(dataset, dict)
+        }
+        missing_buckets = _SEEDED_GCS_BUCKETS - buckets
+        missing_datasets = _SEEDED_BIGQUERY_DATASETS - datasets
+        if missing_buckets or missing_datasets:
+            raise RuntimeError(
+                "seeded data is incomplete: "
+                f"missing_buckets={sorted(missing_buckets)!r}, "
+                f"missing_datasets={sorted(missing_datasets)!r}"
+            )
         gcs_response = client.get(
-            gcs_url,
+            f"{gcs_endpoint}/storage/v1/b/app-assets",
             timeout=_request_timeout(deadline),
         )
         gcs_response.raise_for_status()
         bigquery_response = client.get(
-            bigquery_url,
+            f"{bigquery_endpoint}/bigquery/v2/projects/{_SEEDED_PROJECT}/datasets/app_analytics",
             timeout=_request_timeout(deadline),
         )
         bigquery_response.raise_for_status()

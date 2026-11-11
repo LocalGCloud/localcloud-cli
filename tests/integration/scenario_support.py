@@ -43,32 +43,9 @@ def verify_scenario(
         raise _verification_error(
             scenario, "scenario-catalog", "scenario services are malformed"
         )
-    verified_services: list[str] = []
-    for service_value in services:
-        service = str(service_value)
-        inventory_id = f"inventory-{service}"
-        try:
-            inventory = client.tool(
-                "localcloud_browse_resources",
-                {"service": service, "project": project},
-            )
-        except Exception as error:
-            raise _verification_error(
-                scenario,
-                inventory_id,
-                "authoritative inventory browse failed",
-                service=service,
-                cause=str(error),
-            ) from error
-        if isinstance(inventory, Mapping) and inventory.get("error") is True:
-            raise _verification_error(
-                scenario,
-                inventory_id,
-                "authoritative inventory browse returned an error",
-                service=service,
-                inventory=dict(inventory),
-            )
-        verified_services.append(service)
+    # The runtime lists inventory only for Cloud Tasks queues, so each service is verified through
+    # the concrete checks the scenario declares below, not through localcloud_browse_resources.
+    verified_services = [str(service) for service in services]
 
     declarations = definition.get("verification")
     if not isinstance(declarations, list) or not declarations:
