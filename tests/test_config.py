@@ -1823,3 +1823,74 @@ def test_workspace_project_reads_the_workspace_config_then_git(tmp_path: Path) -
     )
     assert config_module.workspace_project(repository) == ("ledger-local", "config")
     assert config_module.workspace_project(tmp_path) is None
+
+
+# A schema 3 state file without last_active, as found on a machine where `lc start` then failed
+# with invalid_active_runtime after the container was already up.
+_STATE_WITHOUT_LAST_ACTIVE = {
+    "runtimes": {
+        "localcloud-data": {
+            "container_id": "...",
+            "container_name": "localcloud",
+            "data_volume": "localcloud-data",
+            "image": "agentcloud/localcloud:0.1.8-lite",
+            "network_name": "localcloud",
+        }
+    },
+    "schema_version": 3,
+}
+
+
+def test_a_state_file_without_last_active_is_read_as_its_only_runtime(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    paths.home.mkdir(parents=True)
+    paths.active_runtime.write_text(json.dumps(_STATE_WITHOUT_LAST_ACTIVE), encoding="utf-8")
+    diagnostics: list[dict[str, object]] = []
+
+    active = load_active_runtime(paths, diagnostics)
+
+    assert diagnostics == []
+    assert active is not None
+    assert (active.data_volume, active.image) == ("localcloud-data", "agentcloud/localcloud:0.1.8-lite")
+
+
+def test_saving_over_a_state_file_without_last_active_keeps_its_runtimes(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    paths.home.mkdir(parents=True)
+    paths.active_runtime.write_text(json.dumps(_STATE_WITHOUT_LAST_ACTIVE), encoding="utf-8")
+    runtime = _active(data_volume="localcloud-data", image="agentcloud/localcloud:0.1.17-lite")
+
+    assert save_active_runtime(paths, runtime) is None
+
+    saved = json.loads(paths.active_runtime.read_text(encoding="utf-8"))
+    assert saved["last_active"] == "localcloud-data"
+    assert saved["runtimes"]["localcloud-data"]["image"] == "agentcloud/localcloud:0.1.17-lite"
+
+
+def test_a_state_file_without_last_active_and_several_runtimes_selects_none(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    paths.home.mkdir(parents=True)
+    state = json.loads(json.dumps(_STATE_WITHOUT_LAST_ACTIVE))
+    state["runtimes"]["other"] = {**state["runtimes"]["localcloud-data"], "data_volume": "other"}
+    paths.active_runtime.write_text(json.dumps(state), encoding="utf-8")
+
+    assert load_active_runtime(paths) is None
+    assert load_active_runtime(paths, data_volume="other") is not None
+
+
+@pytest.mark.parametrize(
+    "contents",
+    ["{not-json", '{"schema_version":3,"runtimes":{},"stray":1}', '{"schema_version":99}'],
+)
+def test_saving_over_an_unreadable_state_file_replaces_it_with_a_notice(
+    tmp_path: Path, contents: str
+) -> None:
+    paths = _paths(tmp_path)
+    paths.home.mkdir(parents=True)
+    paths.active_runtime.write_text(contents, encoding="utf-8")
+    runtime = _active()
+
+    notice = save_active_runtime(paths, runtime)
+
+    assert notice is not None and "Replaced the unreadable runtime state" in notice
+    assert load_active_runtime(paths) == runtime

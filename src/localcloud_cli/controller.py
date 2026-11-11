@@ -387,8 +387,8 @@ class Controller:
                 console_check,
                 _console_inheritance_warning(requested, config),
                 self._companion_warning(config),
+                self._record_active(environment, config),
             )
-            self._record_active(environment, config)
 
             def payload() -> dict[str, Any]:
                 return _with_console_warning(
@@ -612,8 +612,8 @@ class Controller:
                 console_check,
                 _console_inheritance_warning(requested, config),
                 self._companion_warning(config),
+                self._record_active(environment, config),
             )
-            self._record_active(environment, config)
 
             def payload() -> dict[str, Any]:
                 return _with_console_warning(
@@ -2304,8 +2304,9 @@ class Controller:
 
     def _record_active(
         self, environment: RuntimeRecord, config: LocalCloudConfig
-    ) -> None:
-        save_active_runtime(
+    ) -> str | None:
+        """Record the runtime; a notice when a stale state file was replaced."""
+        return save_active_runtime(
             self.paths,
             ActiveRuntime(
                 schema_version=ACTIVE_RUNTIME_SCHEMA_VERSION,

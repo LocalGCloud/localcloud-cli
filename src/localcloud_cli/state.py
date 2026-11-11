@@ -169,7 +169,12 @@ def _decode_runtime_entry(raw: dict[str, Any]) -> ActiveRuntime:
 
 def _decode_active_state(
     raw: Any,
-) -> tuple[dict[str, ActiveRuntime], str]:
+) -> tuple[dict[str, ActiveRuntime], str | None]:
+    """The persisted runtimes and the last active data volume.
+
+    `last_active` is optional: a file without it (one written by hand or by a
+    tool other than this CLI) still names its runtimes, and the last active
+    one is the only runtime when there is one, else unknown (None)."""
     if not isinstance(raw, dict):
         raise ValueError("state must be a JSON object")
     schema_version = raw.get("schema_version")
@@ -207,9 +212,13 @@ def _decode_active_state(
         return {volume: runtime}, volume
     if schema_version != ACTIVE_RUNTIME_SCHEMA_VERSION:
         raise ValueError(f"unsupported schema version {schema_version!r}")
-    if set(raw) != {"schema_version", "last_active", "runtimes"}:
+    if not {"schema_version", "runtimes"} <= set(raw) <= {
+        "schema_version",
+        "last_active",
+        "runtimes",
+    }:
         raise ValueError(
-            "state fields must be exactly last_active, runtimes, schema_version"
+            "state fields must be runtimes, schema_version and optionally last_active"
         )
     runtimes_raw = raw["runtimes"]
     if not isinstance(runtimes_raw, dict) or not runtimes_raw:
@@ -225,6 +234,8 @@ def _decode_active_state(
                 f"runtime key does not match data_volume: {validated_volume}"
             )
         runtimes[validated_volume] = runtime
+    if raw.get("last_active") is None:
+        return runtimes, next(iter(runtimes)) if len(runtimes) == 1 else None
     last_active = validate_data_volume(raw["last_active"])
     if last_active not in runtimes:
         raise ValueError("last_active must identify a persisted runtime")
@@ -266,7 +277,7 @@ def load_active_runtime(
             if data_volume is not None
             else last_active
         )
-        return runtimes.get(selected)
+        return runtimes.get(selected) if selected is not None else None
     except (HostError, TypeError, ValueError, json.JSONDecodeError) as exc:
         _record_active_diagnostic(
             diagnostics,
@@ -279,7 +290,12 @@ def load_active_runtime(
         return None
 
 
-def save_active_runtime(paths: Any, runtime: ActiveRuntime) -> None:
+def save_active_runtime(paths: Any, runtime: ActiveRuntime) -> str | None:
+    """Record `runtime` as the last active one.
+
+    Returns a notice when the existing state file could not be read as this
+    CLI's state and was replaced: the runtime is already up by then, so a stale
+    or foreign file must not fail the command that started it."""
     if runtime.schema_version != ACTIVE_RUNTIME_SCHEMA_VERSION:
         raise HostError(
             "invalid_active_runtime",
@@ -302,6 +318,7 @@ def save_active_runtime(paths: Any, runtime: ActiveRuntime) -> None:
             "network_name", runtime.network_name or names["network"]
         ),
     )
+    notice: str | None = None
     with _active_runtime_lock(paths):
         runtimes: dict[str, ActiveRuntime] = {}
         try:
@@ -317,12 +334,12 @@ def save_active_runtime(paths: Any, runtime: ActiveRuntime) -> None:
                 f"Could not read active runtime state: {paths.active_runtime}",
                 {"path": str(paths.active_runtime), "cause": str(error)},
             ) from error
-        except (json.JSONDecodeError, ValueError) as error:
-            raise HostError(
-                "invalid_active_runtime",
-                f"Existing active runtime state is invalid: {paths.active_runtime}",
-                {"path": str(paths.active_runtime), "cause": str(error)},
-            ) from error
+        except (HostError, json.JSONDecodeError, ValueError) as error:
+            runtimes = {}
+            notice = (
+                f"Replaced the unreadable runtime state {paths.active_runtime} "
+                f"({error}); it now records only data volume {volume!r}."
+            )
         runtimes[volume] = selected
         payload = {
             "schema_version": ACTIVE_RUNTIME_SCHEMA_VERSION,
@@ -339,6 +356,7 @@ def save_active_runtime(paths: Any, runtime: ActiveRuntime) -> None:
             },
         }
         _write_active_state_file(paths, payload)
+    return notice
 
 
 def _write_active_state_file(paths: Any, payload: dict[str, Any]) -> None:
@@ -431,7 +449,9 @@ def clear_active_runtime(paths: Any, data_volume: str | None = None) -> None:
             return
 
         new_last_active = (
-            next(iter(runtimes)) if last_active == selected_volume else last_active
+            next(iter(runtimes))
+            if last_active in (selected_volume, None)
+            else last_active
         )
         payload = {
             "schema_version": ACTIVE_RUNTIME_SCHEMA_VERSION,

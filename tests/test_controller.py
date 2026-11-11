@@ -4052,3 +4052,19 @@ def test_a_failed_upgrade_with_other_changes_is_not_restored(tmp_path: Path) -> 
         controller.restart(replace(_upgraded(config), memory="8g"))
 
     assert runtime.restore_calls == []
+
+
+def test_start_succeeds_over_a_stale_state_file_and_says_it_replaced_it(tmp_path: Path) -> None:
+    # The container is up by the time the state is written: a state file this CLI cannot
+    # read must not fail the start.
+    controller, _runtime, paths = _controller(tmp_path)
+    paths.home.mkdir(parents=True)
+    paths.active_runtime.write_text('{"schema_version": 3, "stray": true}', encoding="utf-8")
+    config = _config(tmp_path, paths=paths)
+
+    result = controller.start(config)
+
+    assert result["status"] == "started"
+    assert "Replaced the unreadable runtime state" in result["warning"]
+    active = load_active_runtime(paths)
+    assert active is not None and active.container_id == "container-1"
