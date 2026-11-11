@@ -363,6 +363,7 @@ called without its setting is refused whether or not it was listed.
 | `localcloud_browse_resources` | `service`, `resourceType` | Lists resources of a service. Only Cloud Tasks queues (`cloudtasks`) can be listed; anything else answers `NOT_SUPPORTED`. |
 | `localcloud_get_diagnostics` | | LocalCloud diagnostics. |
 | `localcloud_get_recent_requests` | | Recent HTTP and gRPC requests. |
+| `localcloud_get_usage` | | Gets a project's usage meters as `GET /usage` reports them, in Google's billing units without prices: per service, each meter's unit, kind, basis, total and sdk/console origin split, and what Google bills that LocalCloud does not measure. `service` limits the answer to one service. |
 | `localcloud_get_logs` | `service` | An emulator's runtime logs. Use `lc logs` for the container's stdout and stderr. |
 | `localcloud_identity_check` | | Identity readiness, active keys and sessions, or verifies a `token` (`audience`, `expected_type`). |
 
