@@ -414,7 +414,8 @@ start. `--services` outranks them for that start without clearing them, and `sta
 every service above, but BigQuery's lite edition (no BigQuery ML, JavaScript UDFs, or `EXTERNAL_QUERY` on
 Cloud SQL; Spanner's still works), and GKE creates metadata-only clusters. `--full` runs the full image
 (`:latest`, or `<version>` instead of `<version>-lite`); the runtime keeps it on later starts and restarts
-until `--lite`.
+until `--lite`. See [image tags](docs/configuration.md#which-image-runs-and-where-the-choice-comes-from)
+for every published tag, including `0.1` and the CI channel `ci`.
 
 ```sh
 lc start --full
@@ -643,7 +644,7 @@ Use `claude-code` explicitly for Claude Code; `claude` is a Claude Desktop alias
 
 Prompt your agent to use LocalCloud emulators:
 
-> You have access to the `localcloud` MCP server. Follow its `use-localcloud-instead-of-gcp` prompt. Run `localcloud guide` or use `localcloud_get_env` to direct all Google Cloud client libraries and Terraform to local loopback emulators.
+> You have access to the `localcloud` MCP server. Run `localcloud guide` or use `localcloud_get_env` to direct all Google Cloud client libraries and Terraform to local loopback emulators.
 
 You can also run `lc guide` in your terminal: it prints authoritative, copy-pasteable workflow guidance generated from the runtime's own service catalog, so it cannot drift from what the image actually ships.
 
@@ -654,10 +655,10 @@ The MCP bridge exposes the running runtime's tools, resources, and prompts. Disc
 | Capability | Tools & Resources | What the agent does |
 | :--- | :--- | :--- |
 | **Service discovery & health** | `localcloud_list_services`<br>`localcloud_check_readiness` | Discovers running services, assigned loopback ports, and verifies emulator readiness before sending requests. |
-| **API catalog & schemas** | `localcloud_get_api_catalog`<br>`localcloud_browse_resources` | Inspects full Google Cloud REST OpenAPI schemas, method parameters, and browses buckets, tables, and topics. |
-| **Data querying & SQL** | `localcloud_query_data` | Runs real SQL queries against local BigQuery, Cloud Spanner, and Cloud SQL databases without requiring client SDKs. |
+| **Management API** | `localcloud_get_api_catalog`<br>`localcloud_call_api` | Searches LocalCloud's management REST operations and calls one by its operation ID. |
+| **Data querying & SQL** | `localcloud_query_data` | Runs SQL text against local AlloyDB, BigQuery, Bigtable, Cloud SQL, Cloud Storage files (through BigQuery external tables), Memorystore and Spanner, as the Console SQL Editor does. Write and destructive SQL need the runtime's `mcp.write` and `mcp.destructive` settings. |
 | **SDK & Terraform wiring** | `localcloud_get_env`<br>`localcloud_generate_terraform_env` | Generates environment export commands (`STORAGE_EMULATOR_HOST`, etc.) and Terraform provider overrides. |
-| **Testing & scenarios** | `localcloud_list_recipes`<br>`localcloud_export_state` | Seeds test data scenarios, creates project state checkpoints, and diffs state changes. |
+| **Testing & scenarios** | `localcloud_list_scenarios`<br>`localcloud_diff_project`<br>`localcloud_export_state` | Reads recipes and scenarios, exports project state and diffs it against a checkpoint. Seeding, applying scenarios and creating checkpoints are write tools, listed only with `mcp.write`. |
 
 ### Reproducible cloud workflows
 
@@ -805,6 +806,18 @@ uv run lc --help                                          # run from source
 For live container lifecycle qualification, follow the [Lifecycle test runbook](docs/lifecycle-testing.md).
 
 Tests that need a live Docker engine are marked `docker`; deselect them with `-m "not docker"`.
+Most of them start throwaway runtimes on host ports 5900-5999, but
+`tests/integration/test_agent_workflow.py` checks the runtime you already run on the default
+`localcloud-data` volume (read-only). To qualify a release image, point the tests at it; on Colima,
+add a `--basetemp` under your home directory so that Docker can bind-mount the configuration:
+
+```sh
+uv run python scripts/sync-gateway-defaults.py --image agentcloud/localcloud:<version> --check
+LOCALCLOUD_IMAGE=agentcloud/localcloud:<version>-lite \
+LOCALCLOUD_GATEWAY_IMAGE=agentcloud/localcloud:<version> \
+  uv run --extra test python -m pytest -q --basetemp ~/.cache/lc-pytest \
+  --deselect tests/integration/test_agent_workflow.py
+```
 
 `lc env --identity` consumes LocalCloud's typed identity session contract. The fixtures in
 `tests/fixtures/identity/` are validated against the contract vendored in

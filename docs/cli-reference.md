@@ -139,9 +139,6 @@ missing local socket fails preflight before an existing runtime is replaced.
 
 `LOCALCLOUD_DOCKER_ACCESS` is an optional `auto`, `true`, or `false` environment
 override and is normally unset. It takes precedence over `host.docker_socket`.
-Socket access does not enable the generic workload runtime:
-`LOCALCLOUD_RUNTIME_EMBEDDED_DOCKER` remains an independent, explicit setting
-that defaults to `false`.
 
 ### `status`
 

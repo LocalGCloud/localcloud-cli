@@ -9,7 +9,7 @@ LocalCloud MCP gives an agent the service catalog, readiness information, and SD
 From this repository, start a separate runtime for the examples:
 
 ```sh
-lc start --image agentcloud/localcloud:0.1.5 \
+lc start --image agentcloud/localcloud:0.1.17 \
   --data-volume localcloud-mcp-demo \
   --services gcs,pubsub,bigquery --local-only --accept-dynamic-ports
 ```
@@ -58,7 +58,7 @@ The example creates `bigquery.Client` with the discovered API endpoint and check
 
 ## Demonstrated output
 
-The example produced these results against the full packaged runtime 0.1.5 candidate on Linux ARM64, through the published macOS ARM64 CLI 0.1.9:
+The example produced these results against the published runtime `agentcloud/localcloud:0.1.17` (full) on Linux ARM64, through the CLI built from this repository (it first produced them against runtime 0.1.5 through the published macOS ARM64 CLI 0.1.9):
 
 ```text
 PASS MCP: localcloud_list_services

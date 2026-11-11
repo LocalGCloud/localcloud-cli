@@ -187,7 +187,7 @@ claude mcp add --scope user localcloud -- "$(command -v localcloud)" mcp
 
 Instruct your coding agent to use LocalCloud emulators:
 
-> You have access to the `localcloud` MCP server. Follow its `use-localcloud-instead-of-gcp` prompt. Use `localcloud_get_env` or `eval "$(lc env)"` to direct Google Cloud SDKs and Terraform to local emulators.
+> You have access to the `localcloud` MCP server. Use `localcloud_get_env` or `eval "$(lc env)"` to direct Google Cloud SDKs and Terraform to local emulators.
 
 You can also run:
 ```sh

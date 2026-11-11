@@ -16,7 +16,7 @@ host:
   data: persistent
   memory: 4g
   environment:
-    LOCALCLOUD_LOG_VERBOSITY: debug
+    LOCALCLOUD_MCP_WRITE: "true"
 services:
   enabled:
     - gcs
@@ -102,6 +102,18 @@ A runtime therefore stays on the image it was started with. That includes a vers
 `agentcloud/localcloud:0.1.8-lite`, which never moves by itself. Floating tags (`lite`, `latest`)
 are refreshed by `--pull` when the registry has a newer image under the same tag.
 
+The published tags of `agentcloud/localcloud` are:
+
+| Tag | Build | Moves |
+| :--- | :--- | :--- |
+| `lite` (the CLI's default) | Lite | To each new release |
+| `latest`, `0.1` | Full | To each new release (`0.1` within the 0.1 series) |
+| `X.Y.Z`, `X.Y.Z-lite` (for example `0.1.17`, `0.1.17-lite`) | Full, lite | Never; one release each |
+| `ci` | Full | Only after a release has passed the CI qualification of the setup-localcloud GitHub Action, which uses this tag by default; it can lag `latest` |
+
+The lite build leaves out BigQuery's full edition (BigQuery ML, JavaScript UDFs, `EXTERNAL_QUERY` on
+Cloud SQL) and runs GKE as metadata-only clusters.
+
 **Newer versions of a pinned image.** Before `lc start` and `lc restart`, the CLI looks for a
 newer `X.Y.Z` version on the runtime's channel: `-lite` tags move only to newer `-lite` tags,
 full only to full. It asks Docker Hub first, which takes at most 3 seconds, and keeps the
@@ -156,7 +168,7 @@ differ.
 | `server.control_token` | off | Token that protects the control plane (admin API, MCP, admin SQL, identity minting). Off by default on a local gateway. `enabled: true` (or `LOCALCLOUD_CONTROL_TOKEN_ENABLED=true`) turns it on with the token the gateway keeps in its data directory; `value` (or `LOCALCLOUD_CONTROL_TOKEN`) turns it on with your own token of at least 32 printable characters. Remote access (`mcp.allow_remote` or `server.allowed_hosts`) turns it on unless `enabled: false` is set. When it is on, clients send it in the `X-LocalCloud-Control-Token` header. |
 | `server.allowed_origins`, `server.allowed_hosts` | `[]` | Browser origins and host names the gateway serves beyond loopback, IP literals, and its own names, for example a LAN device's dev app at `http://192.168.1.20:3000`. Requests without browser headers (SDKs, gcloud, Terraform, the CLI) are not affected. Also `LOCALCLOUD_ALLOWED_ORIGINS` and `LOCALCLOUD_ALLOWED_HOSTS`, comma-separated. |
 | `server.auto_seed` | `true` | Seeds sample data when the container starts. |
-| `server.auto_provision_projects` | `true` | Creates a project the first time a request names it. |
+| `server.unknown_project` | `provision` | What a request that names a project with no record gets. `provision` records the project the first time an authorized request names it; `allow` serves the request without recording it; `reject` answers as Google does for a project that does not exist or that the caller cannot see (403 `PERMISSION_DENIED` with the `ErrorInfo` reason `CONSUMER_INVALID`). Projects created through Resource Manager, the Console, the admin API, MCP or a seed work in every mode. `server.auto_provision_projects: false` is the older spelling of `allow`. |
 | `server.query_max_rows`, `server.query_max_bytes` | `10000`, `8388608` | Largest admin SQL result; a larger one is cut and marked truncated. |
 | `server.query_history_keep_rows`, `server.migration_run_keep_rows` | `0` | Admin query history and migration runs kept; `0` keeps all of them. |
 | `server.operation_retention_hours` | `0` | Hours a finished long-running operation (KMS, Workflows, Cloud Run, Dataproc) stays readable; `0` keeps it. |
@@ -171,7 +183,8 @@ LocalCloud keeps data until you delete it unless you set a limit. Each service's
 | :--- | :--- |
 | `alloydb`, `cloudsql` | `operation_retention_hours` (`0`) |
 | `cloudscheduler` | `executions_keep_per_job` (`0`) |
-| `cloudtasks` | `activity_retention_days` (`0`), `task_name_reuse_window_seconds` (`0`; Google uses up to `86400`) |
+| `cloudtasks` | `activity_retention_days` (`0`), `task_name_reuse_window_seconds` (`0`; Google uses up to `86400`), `queue_name_reuse_window_seconds` (`0`; Google documents up to `259200`, valid up to `777600`) |
+| `gcs` | `lifecycle_interval_seconds` (`0`: bucket lifecycle rules never run on a timer; `POST /mutate/gcs/lifecycle/run` runs them once. Cloud Storage applies them about once a day) |
 | `logging` | `application_retention_days`, `runtime_retention_days`, `raw_retention_hours` (all `0`: entries stay until the `*_max_size_mb` budgets trim them) |
 | `pubsub` | `enforce_subscription_retention` (`false`: no message expires), `subscription_retention_days` (`7`, used when enforcement is on) |
 | `vertexai` | `request_log_keep_per_project` (`0`) |
@@ -203,8 +216,8 @@ LocalCloud refuses these keys, and its error says the key is retired. Remove the
 
 ## Available Services
 
-The catalog ships **27 services**, 22 of them enabled by default. Tier gating is
-enforced by the container at startup, not by the CLI.
+The catalog ships **27 services**, 22 of them enabled by default. The Tier column is catalog
+metadata (`minTier`): no license key is required and no service is gated by tier.
 
 | Service ID | Google Cloud service | Default | Tier |
 | :--- | :--- | :--- | :--- |
@@ -294,20 +307,13 @@ eval "$(lc env --project-id project-beta)"
 ## Telemetry
 
 Runtime commands (`start`, `restart`, `reset`, `stop`, `status`, `logs`, `console`, `env`, `mcp`)
-record anonymous usage. Only `start`, `restart`, `reset`, and `stop` send it, to the same PostHog
-project and key as the LocalCloud server, the Console (whose summaries the server forwards), and
-the website. The other commands only update local counts, so they never wait on the network.
+record anonymous usage. Only `start`, `restart`, `reset`, and `stop` send it, to LocalCloud's
+PostHog project. The other commands only update local counts, so they never wait on the network.
+The LocalCloud runtime image itself collects and sends no usage telemetry, and its Console sends no
+analytics; this section is about the CLI only.
 
-Every CLI event can be told apart from those sources in three ways:
-
-| Marker | CLI | Server and Console |
-| :--- | :--- | :--- |
-| Event name | `cli_` prefix | `heartbeat`, `server_started`, `service_error`, `console_summary`, … |
-| `source` / `$lib` | `cli` / `localcloud-cli` | no `source` / `localcloud-java` |
-| `distinct_id` | `lcc_` + 16 hex digits | `lc_` + 16 hex digits |
-
-Properties that mean the same thing as a server property use its name and type: `services_enabled`,
-`services_enabled_count`, `error_type`, `error_message`, `version`, and `commit_id`.
+Every CLI event is marked three ways: its name has the `cli_` prefix, `source` / `$lib` are `cli` /
+`localcloud-cli`, and `distinct_id` is `lcc_` followed by 16 hex digits.
 
 - `cli_startup_error`: sent when `start`, `restart`, or `reset` fails, or when the startup log
   shows `[FAILED]`/`ERROR` lines. Errors that only need your input are not sent: an unconfirmed or
@@ -317,8 +323,7 @@ Properties that mean the same thing as a server property use its name and type: 
   unexpected errors; and up to ten error lines from the current run's log, each cut to 240
   characters.
 - `cli_heartbeat`: sent at most once an hour. It carries per-command counts and the number of
-  startup errors since the last heartbeat. The running container reports its own service and usage
-  metrics separately.
+  startup errors since the last heartbeat.
 
 Every event also carries the enabled services and their count, memory, TLS, Docker socket mode,
 image tag (`custom` for any other registry), CLI version and commit, OS and architecture, Python
@@ -342,7 +347,7 @@ Turn it off with any of these. Turning it off also deletes buffered events and t
 | :--- | :--- |
 | `LOCALCLOUD_TELEMETRY=false` in the shell | Disables CLI telemetry |
 | `DO_NOT_TRACK=1` in the shell | Disables CLI telemetry |
-| `host.environment.LOCALCLOUD_TELEMETRY: "false"` in `localcloud.yaml` | Disables CLI telemetry and is passed to the container, so it disables server telemetry too. `telemetry.json` keeps only `{"disabled": true}` so runs that cannot reach Docker still honor it |
+| `host.environment.LOCALCLOUD_TELEMETRY: "false"` in `localcloud.yaml` | Disables CLI telemetry. `telemetry.json` keeps only `{"disabled": true}` so runs that cannot reach Docker still honor it. The container receives the variable too, but the image ignores it, since it sends no telemetry |
 
 `LOCALCLOUD_EVENT_API_KEY` and `LOCALCLOUD_POSTHOG_URL`, in the shell or in `host.environment`,
 point events at a different PostHog project or proxy. Events go to `/batch/` under the URL's path,

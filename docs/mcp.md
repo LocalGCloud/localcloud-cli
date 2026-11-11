@@ -93,7 +93,7 @@ Run the [three reproducible MCP and SDK workflows](mcp-workflows.md), or start w
 
 ## Permissions and local data
 
-Write and destructive MCP management operations are controlled by the runtime settings `LOCALCLOUD_MCP_WRITE` and `LOCALCLOUD_MCP_DESTRUCTIVE`, both disabled by default. These are **runtime** settings, not permissions enabled by `lc mcp install`. The installed client starts the bridge; it does not grant extra runtime privileges. SDK operations can still change local application data, so use test-owned resources and explicit cleanup.
+Write and destructive MCP management operations are controlled by the runtime settings `mcp.write` and `mcp.destructive` in `localcloud.yaml` (or the environment variables `LOCALCLOUD_MCP_WRITE` and `LOCALCLOUD_MCP_DESTRUCTIVE`, which take precedence), both disabled by default and applied when the runtime starts. These are **runtime** settings, not permissions enabled by `lc mcp install`. The installed client starts the bridge; it does not grant extra runtime privileges. SDK operations can still change local application data, so use test-owned resources and explicit cleanup.
 
 The default data volume is shared across clients and repositories. A project ID selects a logical project; it is not a hard security boundary between agents. Use a separate data volume when an independent runtime is needed. Review [privacy and outbound behavior](https://local.cloud/docs/privacy/) and the [applicable license](https://local.cloud/docs/licensing/) for the artifact you install. LocalCloud is free to use for the documented local development workflows; it is not described here as open source or as a hardened execution sandbox.
 
@@ -332,83 +332,89 @@ CLI and runtime releases are independent. Available tools, resources, templates 
 While the runtime is starting or unavailable, the bridge lists only its own `localcloud_runtime_status` tool (see [The handshake never waits for Docker](#the-handshake-never-waits-for-docker)).
 
 ### Tools
-1. **API Discovery & Invocation**:
-   - `localcloud_get_api_catalog`: Discovers methods and schemas exposed by LocalCloud's management API catalog.
-   - `localcloud_call_api`: Invokes a catalogued local management operation using its operation ID and typed parameters.
-2. **Service & Project Inspection**:
-   - `localcloud_list_services`: List configured services with endpoints, status, protocol and compatibility metadata.
-   - `localcloud_get_service`: Get detailed endpoints, ports, and configuration for a specific service.
-   - `localcloud_list_projects`: List all logical GCP projects currently initialized in the container.
-   - `localcloud_get_project`: Get details for a specific project.
-3. **Resource Browsing & Data Access**:
-   - `localcloud_browse_resources`: Browse buckets, datasets, tables, topics, subscriptions, and queues.
-   - `localcloud_read_resource`: Read metadata or content for a browsed resource.
-   - `localcloud_query_data`: Query data across emulated databases (BigQuery, Spanner, Cloud SQL).
-4. **Environment & SDK Generation**:
-   - `localcloud_get_env`: Get SDK environment variables for shell, JSON, or Terraform.
-   - `localcloud_generate_sdk_env`: Generate environment export code for client SDKs.
-   - `localcloud_generate_gcloud_env`: Generate `gcloud` CLI configuration commands.
-   - `localcloud_generate_terraform_env`: Generate provider configuration for Terraform / OpenTofu.
-   - `localcloud_validate_agent_config`: Validate that agent SDK settings match LocalCloud endpoints.
-5. **Readiness & Compatibility**:
-   - `localcloud_check_readiness`: Check health and readiness across all services or a specific service.
-   - `localcloud_check_compatibility`: Check Google Cloud API compatibility and supported feature parity.
-6. **Diagnostics & Logging**:
-   - `localcloud_get_diagnostics`: Retrieve recent diagnostic findings and health events.
-   - `localcloud_get_recent_requests`: Inspect recent HTTP requests received by the LocalCloud gateway.
-   - `localcloud_get_logs`: Get log-oriented diagnostics from LocalCloud's request log. Use `lc logs` for container stdout/stderr.
-7. **Scenarios, Recipes & State**:
-   - `localcloud_list_recipes`: List pre-configured scenario recipes.
-   - `localcloud_get_recipe`: Get definition and seed actions for a recipe.
-   - `localcloud_list_scenarios`: List test scenarios.
-   - `localcloud_get_scenario`: Get definition of a test scenario.
-   - `localcloud_get_seed_schema`: Inspect seed data schemas.
-   - `localcloud_export_state`: Export runtime project state.
-   - `localcloud_list_checkpoints`: List saved project checkpoints.
-   - `localcloud_diff_project`: Compare current project state against a checkpoint.
-8. **Local Identity**:
-   - `localcloud_identity_check`: Inspect the local identity issuer or verify LocalCloud-issued tokens without returning credentials.
+
+Runtime `agentcloud/localcloud:0.1.17` lists 25 tools by default. The runtime settings `mcp.write`
+and `mcp.destructive` (environment `LOCALCLOUD_MCP_WRITE` and `LOCALCLOUD_MCP_DESTRUCTIVE`, both
+`false` by default) add the write and destructive tools; with both on, `tools/list` holds 37. A tool
+called without its setting is refused whether or not it was listed.
+
+**Read tools** (always listed):
+
+| Tool | Required arguments | What it does |
+| :--- | :--- | :--- |
+| `localcloud_list_services` | | Lists the configured services with their endpoints, enabled state and callable state. |
+| `localcloud_get_status` | | Overall gateway health and uptime. |
+| `localcloud_list_projects` | | Lists the projects. |
+| `localcloud_get_project` | `project` | Project details. |
+| `localcloud_get_env` | | SDK environment variables (`format`) or database profiles. |
+| `localcloud_generate_terraform_env` | | Terraform shell environment variables. |
+| `localcloud_validate_agent_config` | | Checks an agent's environment (`env` or `text`) against LocalCloud's endpoints. |
+| `localcloud_check_readiness` | | Readiness of every service, or of one (`service`). |
+| `localcloud_check_compatibility` | `service` | Compatibility and isolation caveats of a service. |
+| `localcloud_list_recipes`, `localcloud_get_recipe` | `id` (get) | Agent recipes. |
+| `localcloud_list_scenarios`, `localcloud_get_scenario` | `id` (get) | Packaged agent scenarios. |
+| `localcloud_get_seed_schema` | | Seed YAML JSON schemas and example templates, for all services or one (`service`). |
+| `localcloud_list_checkpoints` | `project` | Lists a project's checkpoints. |
+| `localcloud_diff_project` | `project`, `name` | Diffs the project's state against a checkpoint. |
+| `localcloud_export_state` | `project` | Exports the project's resource state as YAML, optionally for some `services`. |
+| `localcloud_get_api_catalog` | | Searches the management REST operations (`text`, `method`, `path`, `safety`, `limit`). |
+| `localcloud_call_api` | `operation_id` | Calls a management operation with `path_parameters`, `query_parameters`, `headers`, `body` and `content_type`. Write and destructive operations need the matching setting. |
+| `localcloud_query_data` | `service`, `sql` | Runs SQL text as the Console SQL Editor does. See below. |
+| `localcloud_browse_resources` | `service`, `resourceType` | Lists resources of a service. Only Cloud Tasks queues (`cloudtasks`) can be listed; anything else answers `NOT_SUPPORTED`. |
+| `localcloud_get_diagnostics` | | LocalCloud diagnostics. |
+| `localcloud_get_recent_requests` | | Recent HTTP and gRPC requests. |
+| `localcloud_get_logs` | `service` | An emulator's runtime logs. Use `lc logs` for the container's stdout and stderr. |
+| `localcloud_identity_check` | | Identity readiness, active keys and sessions, or verifies a `token` (`audience`, `expected_type`). |
+
+Most tools also take `project`, which overrides the project the bridge selected.
+
+`localcloud_query_data` takes `service`, one of `alloydb`, `bigquery`, `bigtable`, `cloudsql`, `gcs`,
+`memorystore` and `spanner`, and `sql`, plus:
+
+- `instance` and `database` for `cloudsql` (or `instance.database.table` names in the SQL) and
+  `spanner` (a Spanner read without them uses the first instance and database; a change needs both);
+- `cluster` (or `instance`) and `database` for `alloydb`, which is read-only;
+- `table_definitions` for `gcs`: BigQuery external table definitions (`sourceUris`, `sourceFormat`,
+  `autodetect`) keyed by the table name the SQL reads.
+
+`bigquery` runs the text as one query job, `bigtable` runs Bigtable GoogleSQL, and `memorystore` runs
+`SELECT * FROM dbN [WHERE key = | LIKE '...'] [LIMIT n]`. Read SQL always runs; write SQL needs
+`mcp.write`, and destructive SQL also `mcp.destructive`. Results stop at `server.query_max_rows` and
+`server.query_max_bytes` (BigQuery and Cloud Storage at their first 100-row page) and are then marked
+truncated.
+
+**Write tools** (`mcp.write`): `localcloud_create_project`, `localcloud_seed_project`,
+`localcloud_apply_scenario`, `localcloud_checkpoint_project`, `localcloud_identity_setup`,
+`localcloud_identity_mint`.
+
+**Destructive tools** (`mcp.destructive`): `localcloud_delete_project`, `localcloud_reset_project`,
+`localcloud_restore_project`, `localcloud_delete_checkpoint`, `localcloud_reset_service`.
+`localcloud_import_state` needs both settings, and so do `localcloud_apply_scenario` with `replace`
+and `localcloud_checkpoint_project` with `replace_existing`.
 
 ### Resources
-- `localcloud://api/catalog`: LocalCloud management API operations and schemas.
-- `localcloud://api/openapi`: OpenAPI specifications for LocalCloud management facades.
-- `localcloud://services`: Enabled services and assigned loopback ports.
-- `localcloud://env/shell`: Shell environment variable exports (`export STORAGE_EMULATOR_HOST=...`).
-- `localcloud://env/json`: Structured JSON representation of all emulator endpoints.
-- `localcloud://env/terraform`: Terraform provider endpoint overrides.
-- `localcloud://env/databases`: Database connection strings (PostgreSQL, MySQL, Redis, Spanner).
-- `localcloud://readiness`: Live readiness report across all services.
-- `localcloud://compatibility`: Service feature compatibility matrices.
-- `localcloud://diagnostics/latest`: Latest health check diagnostics.
-- `localcloud://recipes`: Available data-seeding recipes.
-- `localcloud://scenarios`: Available integration test scenarios.
-- `localcloud://terraform/readiness`: Terraform provider readiness checks.
-- `localcloud://schema/seed`: Seed schemas for emulated services.
+- `localcloud://env/json`: Environment variables for every enabled service, as JSON.
+- `localcloud://env/databases`: Database connection profiles.
+- `localcloud://readiness`: Readiness across all services.
+- `localcloud://diagnostics/latest`: Latest diagnostics.
+- `localcloud://api/catalog`: Management API operations and their schemas.
+- `localcloud://api/openapi`: The management API's OpenAPI contract.
+- `localcloud://schema/seed`: Seed schema catalog.
+- `localcloud://recipes/<id>`: One resource per recipe: `analytics-core`, `database-postgres`,
+  `database-alloydb`, `database-spanner`, `streaming`, `batch-spark`, `cache` and `secrets`.
 
 ### Resource Templates
-- `localcloud://schema/seed/{service}`
-- `localcloud://readiness/{service}`
-- `localcloud://compatibility/{service}`
 - `localcloud://recipes/{id}`
-- `localcloud://scenarios/{id}`
-- `localcloud://browse/{service}/{resourceType}`
-- `localcloud://browse/{service}/{resourceType}/{resourceId}`
 
 ### Prompts
-- `use-localcloud-instead-of-gcp`: Instructs coding agents to direct all Google Cloud client libraries, SDKs, and Terraform configurations to LocalCloud emulators rather than real GCP.
-- `debug-localcloud-service`: Guidance for diagnosing service health and connectivity.
-- `write-localcloud-integration-test`: Template and best practices for writing integration tests against LocalCloud.
-- `seed-localcloud-scenario`: Instructions for seeding test fixtures and test data.
-- `terraform-with-localcloud`: Directing Terraform / OpenTofu providers to LocalCloud loopback ports.
-- `compatibility-aware-implementation`: Designing code aware of LocalCloud's emulated API surface.
+- `terraform-with-localcloud`: Terraform configuration instructions for LocalCloud.
 
 ---
 
 ## 6. Coding Agent Best Practices
 
-1. **Use the built-in MCP Prompt**:
-   Instruct the agent to use the server's prompt:
-   > Follow the `use-localcloud-instead-of-gcp` prompt from the `localcloud` MCP server. Always check local endpoints using `localcloud_get_env` or `localcloud://env/shell` before making cloud calls.
+1. **Point the agent at LocalCloud's endpoints**:
+   > Use the `localcloud` MCP server. Always check local endpoints using `localcloud_get_env` or `localcloud://env/json` before making cloud calls, and never fall back to real Google Cloud.
 
 2. **Data access via SDKs**:
    Data operations (uploading files to GCS, publishing messages to Pub/Sub, querying Firestore) should be executed using standard Google Cloud client libraries (`google-cloud-storage`, `@google-cloud/pubsub`, etc.) directed to the emulator endpoints exported by `localcloud_get_env` or `eval "$(lc env)"`.
