@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import itertools
+import os
+import threading
+import time
+from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import quote
 
@@ -51,6 +55,34 @@ def _transport_error(
     if isinstance(status_code, int):
         details["status_code"] = status_code
     return HostError(code, message, details)
+
+
+# Applying a scenario can start Dataproc clusters, and their first start pulls an image, which
+# takes minutes. The bound is the caller's, in seconds.
+SCENARIO_APPLY_TIMEOUT_ENV = "LOCALCLOUD_SCENARIO_APPLY_TIMEOUT"
+DEFAULT_SCENARIO_APPLY_TIMEOUT = 900.0
+_PROGRESS_INTERVAL = 15.0
+_TASK_POLL_INTERVAL = 2.0
+_TASK_DONE = {"completed", "failed", "cancelled"}
+
+
+def scenario_apply_timeout(environ: Mapping[str, str] | None = None) -> float:
+    """The seconds a scenario apply may take: LOCALCLOUD_SCENARIO_APPLY_TIMEOUT,
+    else 15 minutes."""
+    raw = (os.environ if environ is None else environ).get(SCENARIO_APPLY_TIMEOUT_ENV, "")
+    if not str(raw).strip():
+        return DEFAULT_SCENARIO_APPLY_TIMEOUT
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if not value > 0:
+        raise HostError(
+            "invalid_scenario_apply_timeout",
+            f"{SCENARIO_APPLY_TIMEOUT_ENV} must be a positive number of seconds",
+            {"value": raw},
+        )
+    return value
 
 
 _ORIGINAL_HTTPX_GET = httpx.get
@@ -110,14 +142,20 @@ class JavaMcpClient:
     ) -> dict[str, Any] | None:
         return self._post_mcp(message, allow_empty=True, timeout=timeout)
 
-    def rpc(self, method: str, params: dict[str, Any] | None = None) -> Any:
+    def rpc(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout: float | httpx.Timeout | None = None,
+    ) -> Any:
         payload = {
             "jsonrpc": "2.0",
             "id": next(self._ids),
             "method": method,
             "params": params or {},
         }
-        body = self._post_mcp(payload, allow_empty=False)
+        body = self._post_mcp(payload, allow_empty=False, timeout=timeout)
         assert body is not None
         if "error" in body:
             rpc_error = body["error"]
@@ -206,6 +244,9 @@ class JavaMcpClient:
         if "project" not in values:
             values["project"] = self.project
         result = self.rpc("tools/call", {"name": name, "arguments": values})
+        return self._tool_result(name, result)
+
+    def _tool_result(self, name: str, result: Any) -> Any:
         if not isinstance(result, dict):
             raise HostError(
                 "java_mcp_invalid_response",
@@ -222,6 +263,99 @@ class JavaMcpClient:
             return structured["result"]
         content = result.get("content", [])
         return content[0].get("text") if content else None
+
+    def apply_scenario(
+        self,
+        scenario: str,
+        project: str | None = None,
+        *,
+        replace: bool = False,
+        timeout: float | None = None,
+        progress: Callable[[str], None] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> Any:
+        """`localcloud_apply_scenario`, allowed `timeout` seconds (default
+        scenario_apply_timeout()) instead of the client's request timeout.
+
+        The call asks for an MCP task, so it works either way a runtime answers
+        a long apply: with the result once the apply finishes (the request then
+        stays open up to the bound), or at once with a task that is polled with
+        tasks/get until it finishes. `progress` hears how long it has waited."""
+        budget = scenario_apply_timeout() if timeout is None else float(timeout)
+        started = clock()
+        deadline = started + budget
+        arguments: dict[str, Any] = {"id": scenario, "project": project or self.project}
+        if replace:
+            arguments["replace"] = True
+        params = {
+            "name": "localcloud_apply_scenario",
+            "arguments": arguments,
+            "task": {"ttl": int(budget * 1000)},
+        }
+
+        def report(state: str) -> None:
+            if progress is not None:
+                progress(
+                    f"Applying scenario {scenario}: {state}, "
+                    f"{clock() - started:.0f}s of up to {budget:.0f}s"
+                )
+
+        def timed_out(cause: str) -> HostError:
+            return HostError(
+                "scenario_apply_timeout",
+                (
+                    f"Scenario {scenario} did not finish applying within {budget:.0f} seconds. "
+                    "A first apply can pull a Dataproc image, which takes minutes; the runtime "
+                    "may still be applying it. Set "
+                    f"{SCENARIO_APPLY_TIMEOUT_ENV} to a larger number of seconds to wait longer."
+                ),
+                {"scenario": scenario, "timeout_seconds": budget, "cause": cause},
+            )
+
+        finished = threading.Event()
+
+        def ticker() -> None:
+            while not finished.wait(_PROGRESS_INTERVAL):
+                report("waiting for the runtime")
+
+        if progress is not None:
+            threading.Thread(target=ticker, daemon=True).start()
+        try:
+            result = self.rpc(
+                "tools/call", params, timeout=httpx.Timeout(budget, connect=5.0)
+            )
+        except HostError as error:
+            if isinstance(error.__cause__, httpx.TimeoutException):
+                raise timed_out(str(error.__cause__)) from error
+            raise
+        finally:
+            finished.set()
+        task = result.get("task") if isinstance(result, dict) else None
+        if isinstance(task, dict) and "content" not in result:
+            task_id = task.get("taskId")
+            status = task.get("status")
+            while status not in _TASK_DONE:
+                if status == "input_required":
+                    raise HostError(
+                        "scenario_apply_input_required",
+                        f"Scenario {scenario}'s apply task asks for input this client cannot give",
+                        {"scenario": scenario, "task": task},
+                    )
+                if clock() >= deadline:
+                    raise timed_out(f"task {task_id} is still {status}")
+                report(f"task {status}")
+                sleep(_TASK_POLL_INTERVAL)
+                task = self.rpc("tasks/get", {"taskId": task_id})
+                status = task.get("status") if isinstance(task, dict) else None
+            remaining = max(deadline - clock(), self.timeout)
+            result = self.rpc(
+                "tasks/result",
+                {"taskId": task_id},
+                timeout=httpx.Timeout(remaining, connect=5.0),
+            )
+        report("done")
+        return self._tool_result("localcloud_apply_scenario", result)
 
     def _project_api(
         self, method: str, payload: dict[str, Any] | None = None

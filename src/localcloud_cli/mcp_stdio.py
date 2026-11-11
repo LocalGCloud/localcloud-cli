@@ -18,7 +18,7 @@ from .config import LocalCloudConfig, workspace_project
 from .controller import Controller
 from .errors import HostError
 from .endpoints import transform_endpoint_payload
-from .java_client import JavaMcpClient
+from .java_client import JavaMcpClient, scenario_apply_timeout
 from .output import terminal_capabilities
 
 
@@ -637,6 +637,9 @@ class McpAdapter:
     ) -> dict[str, Any]:
         request_id = message.get("id")
         method = str(message.get("method"))
+        if timeout is None and _applies_scenario(message):
+            # Applying a scenario can start clusters and pull their images; it gets its own bound.
+            timeout = httpx.Timeout(scenario_apply_timeout(), connect=5.0)
         if timeout is None and method in _LONG_METHODS:
             timeout = _LONG_REQUEST_TIMEOUT
         try:
@@ -699,6 +702,15 @@ class McpAdapter:
             return _error(request_id, -32000, error.message, {"code": error.code})
         except Exception as error:
             return _error(request_id, -32603, "LocalCloud MCP adapter failed", str(error))
+
+
+def _applies_scenario(message: dict[str, Any]) -> bool:
+    params = message.get("params")
+    return (
+        message.get("method") == "tools/call"
+        and isinstance(params, dict)
+        and params.get("name") == "localcloud_apply_scenario"
+    )
 
 
 def _holds_user_content(message: dict[str, Any]) -> bool:

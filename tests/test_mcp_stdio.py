@@ -890,6 +890,28 @@ def test_the_handshake_gives_a_connected_runtime_a_short_time_to_answer() -> Non
     assert mcp_module._HANDSHAKE_WAIT + mcp_module._REPLY_WAIT < 10
 
 
+def test_applying_a_scenario_waits_for_the_scenario_apply_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOCALCLOUD_SCENARIO_APPLY_TIMEOUT", "1500")
+    FakeJava.responses = {"tools/call": {"jsonrpc": "2.0", "result": {"content": []}}}
+    adapter = McpAdapter(CONFIG, controller=RunningController())
+    timeouts: list[Any] = []
+
+    class RecordingJava(FakeJava):
+        def forward(self, message: dict[str, Any], **kwargs: Any) -> dict[str, Any] | None:
+            timeouts.append(kwargs.get("timeout"))
+            return super().forward(message)
+
+    adapter.java = RecordingJava("http://127.0.0.1:49080", PROJECT, USER)
+
+    adapter.handle(_request(2, "tools/call", name="localcloud_apply_scenario"))
+    adapter.handle(_request(3, "tools/call", name="localcloud_get_env"))
+
+    assert timeouts[0].read == 1500
+    assert timeouts[1] == mcp_module._LONG_REQUEST_TIMEOUT
+
+
 def test_the_handshake_is_answered_when_the_runtime_is_slow_to_answer_it() -> None:
     adapter = McpAdapter(CONFIG, controller=RunningController())
 

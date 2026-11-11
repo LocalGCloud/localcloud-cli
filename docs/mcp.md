@@ -392,6 +392,11 @@ truncated.
 `localcloud_import_state` needs both settings, and so do `localcloud_apply_scenario` with `replace`
 and `localcloud_checkpoint_project` with `replace_existing`.
 
+A scenario that runs Spark (`olap-application`) can take minutes to apply the first time, while the
+Dataproc image is pulled. The bridge waits up to `LOCALCLOUD_SCENARIO_APPLY_TIMEOUT` seconds (default
+900) for `localcloud_apply_scenario` instead of the usual 600, and a client that sends the call as an
+MCP task gets the task back at once and polls it.
+
 ### Resources
 - `localcloud://env/json`: Environment variables for every enabled service, as JSON.
 - `localcloud://env/databases`: Database connection profiles.

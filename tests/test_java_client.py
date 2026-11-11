@@ -604,3 +604,138 @@ def test_shared_client_closes_each_connection_after_its_reply(
         java_client_module.get_shared_http_client().close()
         server.shutdown()
         server.server_close()
+
+
+# --- Scenario apply ---------------------------------------------------------------------------
+
+_APPLIED = {
+    "content": [{"type": "text", "text": "{}"}],
+    "structuredContent": {"result": {"id": "olap-application", "running_clusters": ["analytics-spark"]}},
+    "isError": False,
+}
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _replying(monkeypatch: pytest.MonkeyPatch, replies: list[Any]) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+
+    def post(url: str, **kwargs: Any) -> FakeResponse:
+        calls.append(kwargs)
+        reply = replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return FakeResponse({"jsonrpc": "2.0", "id": kwargs["json"]["id"], "result": reply})
+
+    monkeypatch.setattr(java_client_module.httpx, "post", post)
+    return calls
+
+
+def test_scenario_apply_waits_for_a_runtime_that_answers_when_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _replying(monkeypatch, [_APPLIED])
+
+    result = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER).apply_scenario(
+        "olap-application", timeout=1200
+    )
+
+    assert result["running_clusters"] == ["analytics-spark"]
+    sent = calls[0]
+    assert sent["json"]["params"]["name"] == "localcloud_apply_scenario"
+    assert sent["json"]["params"]["arguments"] == {"id": "olap-application", "project": PROJECT}
+    assert sent["json"]["params"]["task"] == {"ttl": 1_200_000}
+    # The request may stay open for the whole bound, not the client's 60 seconds.
+    assert sent["timeout"].read == 1200
+
+
+def test_scenario_apply_polls_a_task_until_it_finishes(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _replying(
+        monkeypatch,
+        [
+            {"task": {"taskId": "task-1", "status": "working"}},
+            {"taskId": "task-1", "status": "working"},
+            {"taskId": "task-1", "status": "completed"},
+            _APPLIED,
+        ],
+    )
+    clock = Clock()
+    progress: list[str] = []
+
+    result = JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER).apply_scenario(
+        "olap-application", timeout=600, progress=progress.append, clock=clock, sleep=clock.sleep
+    )
+
+    assert result["running_clusters"] == ["analytics-spark"]
+    assert [call["json"]["method"] for call in calls] == [
+        "tools/call", "tasks/get", "tasks/get", "tasks/result",
+    ]
+    assert calls[1]["json"]["params"] == {"taskId": "task-1"}
+    assert progress[0].startswith("Applying scenario olap-application: task working")
+    assert progress[-1].startswith("Applying scenario olap-application: done")
+
+
+def test_scenario_apply_says_how_to_wait_longer_when_the_request_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _replying(monkeypatch, [java_client_module.httpx.ReadTimeout("timed out")])
+
+    with pytest.raises(HostError) as caught:
+        JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER).apply_scenario(
+            "olap-application", timeout=90
+        )
+
+    assert caught.value.code == "scenario_apply_timeout"
+    assert "within 90 seconds" in caught.value.message
+    assert "LOCALCLOUD_SCENARIO_APPLY_TIMEOUT" in caught.value.message
+
+
+def test_scenario_apply_gives_up_on_a_task_at_the_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    _replying(
+        monkeypatch,
+        [{"task": {"taskId": "task-1", "status": "working"}}]
+        + [{"taskId": "task-1", "status": "working"}] * 100,
+    )
+    clock = Clock()
+
+    with pytest.raises(HostError) as caught:
+        JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER).apply_scenario(
+            "olap-application", timeout=10, clock=clock, sleep=clock.sleep
+        )
+
+    assert caught.value.code == "scenario_apply_timeout"
+    assert caught.value.details["cause"] == "task task-1 is still working"
+
+
+def test_scenario_apply_reports_a_refusal_as_a_tool_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _replying(
+        monkeypatch,
+        [{"isError": True, "content": [{"type": "text", "text": "needs Docker"}]}],
+    )
+    with pytest.raises(HostError) as caught:
+        JavaMcpClient("http://127.0.0.1:49080", PROJECT, USER).apply_scenario("olap-application")
+    assert caught.value.code == "java_tool_error" and "needs Docker" in caught.value.message
+
+
+@pytest.mark.parametrize(("value", "expected"), [("", 900.0), ("1800", 1800.0), ("45.5", 45.5)])
+def test_scenario_apply_timeout_comes_from_the_environment(value: str, expected: float) -> None:
+    environ = {java_client_module.SCENARIO_APPLY_TIMEOUT_ENV: value}
+    assert java_client_module.scenario_apply_timeout(environ) == expected
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "soon"])
+def test_scenario_apply_timeout_must_be_positive(value: str) -> None:
+    with pytest.raises(HostError) as caught:
+        java_client_module.scenario_apply_timeout(
+            {java_client_module.SCENARIO_APPLY_TIMEOUT_ENV: value}
+        )
+    assert caught.value.code == "invalid_scenario_apply_timeout"
