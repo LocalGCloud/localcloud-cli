@@ -173,6 +173,7 @@ differ.
 | `server.query_max_rows`, `server.query_max_bytes` | `10000`, `8388608` | Largest admin SQL result; a larger one is cut and marked truncated. |
 | `server.query_history_keep_rows`, `server.migration_run_keep_rows` | `0` | Admin query history and migration runs kept; `0` keeps all of them. |
 | `server.operation_retention_hours` | `0` | Hours a finished long-running operation (KMS, Workflows, Cloud Run, Dataproc) stays readable; `0` keeps it. |
+| `server.usage.sample_interval_seconds` | `900` | How often the gateway samples what Google bills by amount over time (stored bytes, active secret and key versions, scheduler jobs, provisioned capacity) for the usage report. `0` turns sampling off; a positive value is at least `60`. |
 | `server.identity` | enabled | Local workload identity: issuer, token lifetimes, clock skew, gateway metadata, and the relay image. |
 
 ### Retention

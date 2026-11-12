@@ -51,6 +51,9 @@
     "query_history_keep_rows": 0,
     "migration_run_keep_rows": 0,
     "operation_retention_hours": 0,
+    "usage": {
+      "sample_interval_seconds": 900
+    },
     "identity": {
       "enabled": true,
       "issuer_url": "auto",
@@ -176,7 +179,6 @@
         "gatewayObservable": true,
         "defaultEnabled": false,
         "config": {
-          "compatibilityProfile": "java",
           "rulesFile": ""
         },
         "minTier": "community",
@@ -641,7 +643,7 @@
           "log_warnings": true
         },
         "config_descriptions": {
-          "mode": "IAM mode — 'open' silently allows requests, 'permissive' allows requests with decision logging, 'strict' enforces local policy and needs an identity (X-LocalCloud-User or a LocalCloud token) on every route except the admin plane and the Cloud Storage, Firestore and Cloud Functions trigger routes, which enforce their own access; Cloud KMS and Cloud Tasks check each call against their own IAM policies, so the policy file does not bind them. 'gcp-live' is meant to delegate authorization to real GCP IAM, but this build does not call Google, so gcp-live refuses every bearer token it cannot verify and fails closed. In 'strict', a LocalCloud-signed token decides the caller alone; without one, the X-LocalCloud-User header (when the request carries no credential) or the developer token names the caller, and that identity is self-asserted, since any client can write it, until a signed developer credential exists. In 'gcp-live', LocalCloud credentials are refused and the IAM policy, token minting and session routes fail closed.",
+          "mode": "IAM mode — 'open' silently allows requests, 'permissive' allows requests with decision logging, 'strict' enforces local policy and needs an identity (X-LocalCloud-User or a LocalCloud token) on every route except the admin plane and the Cloud Storage, Firestore and Cloud Functions trigger routes, which enforce their own access; Cloud KMS and Cloud Tasks check each call against their own IAM policies, so the policy file does not bind them. 'gcp-live' is meant to delegate authorization to real GCP IAM, but this build does not call Google, so gcp-live refuses every bearer token it cannot verify and fails closed. In 'strict', a LocalCloud-signed token decides the caller alone; without one, the X-LocalCloud-User header (when the request carries no credential) or the developer token names the caller, and that identity is self-asserted, since any client can write it, until a signed developer credential exists. In 'gcp-live', LocalCloud credentials are refused and the IAM policy, token minting and session routes fail closed. LOCALCLOUD_IAM_MODE, when set, overrides this setting for every component.",
           "policy_file": "Optional IAM policy JSON file. In strict mode with no file, or a file with no bindings, every identified caller is admitted and anonymous requests are refused; a file with bindings admits only the identities and paths it lists; a file that cannot be read or parsed refuses every identified caller until it loads.",
           "log_warnings": "Log Cloud IAM operation warnings when enabled, each kind once per IAM settings change and later calls at DEBUG; suppressed in open mode (boolean)."
         },
