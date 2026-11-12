@@ -177,12 +177,9 @@ def test_full_olap_sdk_checkpoint_restore_and_cleanup(tmp_path: Path) -> None:
             for item in clusters
             if item["clusterName"] == "analytics-spark"
         )
-        metrics_mapping = cluster["portMappings"]["metrics"]
-        metrics_host_port = int(metrics_mapping["host"])
-        metrics_container_port = int(metrics_mapping["container"])
-        assert metrics_host_port > 0
-        assert metrics_host_port != metrics_container_port
-
+        assert cluster["status"]["state"] == "RUNNING"
+        # clusters.get and list return the public Cluster resource; the host
+        # port the metrics server is published on is the metrics console's.
         consoles_response = httpx.get(
             f"{gateway}/v1/projects/{project}/regions/us-central1/"
             "clusters/analytics-spark/consoles",
@@ -191,7 +188,9 @@ def test_full_olap_sdk_checkpoint_restore_and_cleanup(tmp_path: Path) -> None:
         consoles_response.raise_for_status()
         metrics_console_url = consoles_response.json()["consoles"]["metrics"]
         assert_loopback_url(metrics_console_url)
-        assert urlparse(metrics_console_url).port == metrics_host_port
+        metrics_host_port = urlparse(metrics_console_url).port
+        assert metrics_host_port is not None and metrics_host_port > 0
+        assert metrics_host_port != 9999
 
         metrics_url = f"http://127.0.0.1:{metrics_host_port}/metrics"
         metrics_response = httpx.get(metrics_url, timeout=10)
