@@ -2224,6 +2224,96 @@ def test_replacing_a_runtime_removes_only_its_mysql_companion(
     assert cluster.removed == []
 
 
+def _dataproc_children(
+    client: Client, data_volume: str, *, prefix: str = "", state: str = "running"
+) -> tuple[Resource, Resource]:
+    """A Dataproc cluster container and its identity relay, labelled as the
+    server labels them: the child labels every child carries, and no
+    Dataproc-specific label the CLI reads."""
+    child_labels = {
+        MANAGED_LABEL: "true",
+        "localcloud.managed": "true",
+        VOLUME_NAME_LABEL: data_volume,
+    }
+    cluster = client.containers.add(
+        Resource(
+            f"{prefix}localcloud-dataproc-{data_volume}-p-us-central1-analytics",
+            {
+                **child_labels,
+                "com.localcloud.service": "dataproc",
+                "localcloud.service": "dataproc",
+                "localcloud.cluster": "analytics",
+            },
+            state=state,
+        )
+    )
+    relay = client.containers.add(
+        Resource(
+            f"{prefix}lc-relay-0123456789ab",
+            {
+                **child_labels,
+                "localcloud.relay": "true",
+                "localcloud.service": "identity-relay",
+                "localcloud.dataproc-cluster": "analytics",
+            },
+            state=state,
+        )
+    )
+    return cluster, relay
+
+
+def test_stop_stops_dataproc_clusters_and_relays_of_its_data_volume_only(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    runtime.create(config)
+    cluster, relay = _dataproc_children(client, config.data_volume)
+    other_cluster, other_relay = _dataproc_children(
+        client, "another-volume", prefix="other-"
+    )
+    record = runtime.resolve(config)
+    assert record is not None
+
+    runtime.stop(config, record)
+
+    assert (cluster.stopped, relay.stopped) == (1, 1)
+    assert cluster.removed == [] and relay.removed == []
+    assert (other_cluster.stopped, other_relay.stopped) == (0, 0)
+
+
+def test_removing_a_runtime_removes_its_dataproc_children(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    created = runtime.create(config)
+    cluster, relay = _dataproc_children(client, config.data_volume)
+
+    runtime.remove(config, created, remove_volume=True)
+
+    assert cluster.removed == [{"force": True, "v": True}]
+    assert relay.removed == [{"force": True, "v": True}]
+
+
+def test_doctor_accepts_the_ownership_of_labelled_dataproc_children(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    runtime.create(config)
+    cluster, relay = _dataproc_children(client, config.data_volume)
+
+    report = runtime.doctor()
+
+    malformed = {entry["name"] for entry in report["invalid_ownership"]}
+    assert cluster.name not in malformed and relay.name not in malformed
+    assert report["orphaned_children"] == []
+
+
 def test_incomplete_new_child_ownership_blocks_parent_cleanup(
     tmp_path: Path,
     ready_runtime: tuple[DockerRuntime, Client],

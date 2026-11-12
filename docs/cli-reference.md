@@ -299,10 +299,12 @@ lc restart --accept-dynamic-ports
 Declining, or omitting that flag without an interactive terminal, leaves the
 existing container unchanged.
 
-`restart` keeps the runtime's companion containers, such as Dataproc clusters,
-which LocalCloud resumes. The Cloud SQL MySQL companion is the exception: it is
-removed with the old container and recreated on demand with the new runtime's
-port and name. Its data stays on the volume.
+`restart` stops the runtime's companion containers as `stop` does and keeps
+them, and LocalCloud brings them back when it starts: each Dataproc cluster that
+was `RUNNING` is started again with a new identity relay. The Cloud SQL MySQL
+companion is the exception when the container is recreated: it is removed with
+the old container and recreated on demand with the new runtime's port and name.
+Its data stays on the volume.
 
 ### `reset`
 
@@ -337,8 +339,16 @@ lc stop
 lc stop --data-volume isolated-data
 ```
 
-Companion containers, such as Dataproc clusters and the Cloud SQL MySQL server,
-are stopped rather than deleted, and LocalCloud resumes them on the next `start`.
+`stop` also stops the runtime's companion containers: every container labelled
+`localcloud.managed=true` with the runtime's data volume
+(`com.localcloud.volume-name`), such as Dataproc clusters and their identity
+relays, the Cloud SQL MySQL server and Cloud Run workloads. They are stopped,
+not deleted. On the next `start`, LocalCloud starts again each Dataproc cluster
+that was `RUNNING`, with a new identity relay; a cluster stopped with
+`clusters.stop` stays `STOPPED` until `clusters.start`. A job that was running
+on a cluster ends in `ERROR`, since its driver stopped with the cluster. The
+MySQL server starts again when an instance needs it. A stop that removes the
+runtime (an ephemeral runtime) removes its companion containers too.
 
 ### `doctor`
 

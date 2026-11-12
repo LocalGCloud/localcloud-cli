@@ -66,8 +66,9 @@ _DEFAULT_READINESS_TIMEOUT = 120.0
 # Once /health answers, enabled services get at least this long to report
 # ready (/readiness): BigQuery, for one, warms up after the gateway is up.
 _SERVICE_READINESS_TIMEOUT = 60.0
-# Docker sends SIGKILL after this. LocalCloud's shutdown stops its Dataproc and
-# MySQL companions and then Postgres; 20s was not always enough (exit 137).
+# Docker sends SIGKILL after this. LocalCloud's shutdown stops its services and
+# then Postgres; 20s was not always enough (exit 137). Its child containers keep
+# running through it: `stop` stops them afterwards (see `_stop_children`).
 STOP_TIMEOUT_SECONDS = 30
 _DOCKER_SOCKET_PATH = "/var/run/docker.sock"
 _FALLBACK_TCP_PORT_RANGES = (
@@ -1259,8 +1260,11 @@ class DockerRuntime:
         container, current = self._mutation_target(config, runtime)
         self._stop_container(config, container, current, observer)
         if current.ownership.get("container") == "managed":
-            # Keep children: the server stops them on shutdown and resumes
-            # them on the next start (Dataproc clusters, the MySQL companion).
+            # The server leaves its children running when it shuts down, so
+            # every child labelled for this data volume is stopped here, not
+            # removed (Dataproc clusters and their relays, the MySQL
+            # companion, Cloud Run workloads). On the next start the server
+            # starts again the ones it brings back.
             failures: list[dict[str, Any]] = []
             self._stop_children(config.data_volume, container, current, failures)
             if failures:
@@ -3240,7 +3244,10 @@ class DockerRuntime:
         runtime: RuntimeRecord | None,
         failures: list[dict[str, Any]],
     ) -> None:
-        """Stop children the server left running, e.g. after a forced stop."""
+        """Stop the running children of this data volume, by their labels.
+
+        Children carry `localcloud.managed=true` and the data volume label;
+        which ones come back on the next start is the server's decision."""
         for child, _expected in self._owned_children(
             data_volume, parent, runtime, failures
         ):
@@ -4246,8 +4253,9 @@ def _replaced_child_services(
 
     All of them (None) when their volume or network goes too. Otherwise only
     the MySQL companion, whose data stays on the volume and whose name and port
-    must follow the replacement; Dataproc clusters keep running state that the
-    server resumes from the same containers.
+    must follow the replacement; the other children, such as Dataproc clusters,
+    are kept for the replacement's server, which brings back the clusters that
+    were running from the same containers.
     """
     if (
         remove_volume and runtime.ownership["data_volume"] == "managed"
