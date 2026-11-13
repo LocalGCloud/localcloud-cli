@@ -440,3 +440,4 @@ def test_debug_prints_diagnostics_on_stderr_only(
     else:
         assert len(lines) == 1
 
+

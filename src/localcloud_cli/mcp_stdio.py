@@ -784,6 +784,13 @@ def error_diagnostics(error: HostError) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
     selected: dict[str, Any] = {"cli_version": __version__}
+    last = error.details.get("data_last_ready_on")
+    if isinstance(last, dict):
+        selected["data_last_ready_on"] = {
+            key: redact_secrets(value)
+            for key in ("image", "image_id", "version")
+            if isinstance(value := last.get(key), str)
+        }
     for key in _DIAGNOSTIC_KEYS:
         value = raw.get(key)
         if key == "cli_version" or value is None:
@@ -825,6 +832,12 @@ def _diagnostic_lines(diagnostics: Any) -> list[str]:
         facts.append(f"image {image}")
     facts.append(f"CLI {diagnostics.get('cli_version', __version__)}")
     lines = ["Container: " + ", ".join(facts) + "."]
+    last = diagnostics.get("data_last_ready_on")
+    if isinstance(last, dict) and last.get("image"):
+        image = str(last["image"])
+        if last.get("image_id"):
+            image += f" ({last['image_id']})"
+        lines.append(f"This data volume last became ready on image {image}.")
     tail = diagnostics.get("logs_tail")
     if isinstance(tail, str) and tail.strip():
         lines.append("Last log lines:")
@@ -892,12 +905,19 @@ def _recovery(error: HostError, *, auto_start: bool) -> str:
             f"`lc restart` to recreate the runtime, {retry}."
         )
     if error.code == "container_start_failed":
+        steps = error.details.get("steps")
+        step = (
+            steps[0]
+            if isinstance(steps, list) and steps and isinstance(steps[0], str)
+            else "lc restart --pull"
+        )
         return (
             "The LocalCloud container exited while starting; error.diagnostics "
             "has its exit code, OOM flag, image and last log lines. If it was "
-            "killed for memory, ask the user to give Docker more memory; "
-            "otherwise ask the user to run `lc logs`, then `lc restart --pull`, "
-            f"which keeps persistent data and runs the current image, {retry}."
+            "killed for memory, ask the user to give Docker more memory. "
+            f"Otherwise ask the user to run `{step}`, which keeps persistent "
+            f"data, {retry}. A log line saying the image does not know the data "
+            "means a newer image wrote it."
         )
     if error.code in {
         "runtime_starting",

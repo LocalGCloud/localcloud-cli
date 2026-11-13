@@ -26,7 +26,7 @@ from .config import (
     save_active_runtime,
     with_console_environment,
 )
-from .constants import DEFAULTS_CONFIG_LABEL, DEFAULT_IMAGE
+from .constants import DEFAULTS_CONFIG_LABEL, DEFAULT_DATA_VOLUME, DEFAULT_IMAGE
 from .docker_runtime import (
     IDENTITY_SESSION_LABEL,
     identity_relay_variables,
@@ -36,11 +36,14 @@ from .docker_runtime import (
     RuntimeRecord,
 )
 from .errors import HostError
+from .state import forget_volume_image, load_volume_image, record_volume_image
 from .service_sources import describe_service_sources, unpublished_services
 from .java_client import JavaMcpClient, is_retryable_java_error
 from .output import describe_port_owners
 
 _START_READINESS_TIMEOUT = 60.0
+_OCI_VERSION_LABEL = "org.opencontainers.image.version"
+_OCI_REVISION_LABEL = "org.opencontainers.image.revision"
 _READINESS_REQUEST_TIMEOUT = 5.0
 _READINESS_POLL_INTERVAL = 1.0
 _IDENTITY_RELAY_TIMEOUT = 45.0
@@ -369,6 +372,7 @@ class Controller:
                     environment = current
             except HostError as error:
                 self._record_runtime_whose_services_lag(error, config)
+                self._explain_start_failure(error, config)
                 raise
 
             if ensure_project:
@@ -597,6 +601,7 @@ class Controller:
                     )
             except HostError as error:
                 self._record_runtime_whose_services_lag(error, config)
+                self._explain_start_failure(error, config)
                 raise
             if action != "replace":
                 self._emit_runtime_logs(observer, config, environment)
@@ -872,6 +877,7 @@ class Controller:
                     observer=observer,
                 )
                 clear_active_runtime(self.paths, data_volume=config.data_volume)
+                self._forget_volume_image(config.data_volume)
                 removed = replace(
                     current,
                     state="removed",
@@ -1973,6 +1979,8 @@ class Controller:
             remove_network=remove_network,
             observer=observer,
         )
+        if not preserve_volume:
+            self._forget_volume_image(config.data_volume)
         # The graceful stop inside remove() can take up to its timeout, so the
         # new container's readiness budget starts only once it is gone.
         readiness_deadline = (
@@ -2306,6 +2314,18 @@ class Controller:
         self, environment: RuntimeRecord, config: LocalCloudConfig
     ) -> str | None:
         """Record the runtime; a notice when a stale state file was replaced."""
+        if environment.image_id:
+            try:
+                record_volume_image(
+                    self.paths,
+                    config.data_volume,
+                    image=environment.actual_image or config.image,
+                    image_id=environment.image_id,
+                    version=environment.labels.get(_OCI_VERSION_LABEL),
+                    revision=environment.labels.get(_OCI_REVISION_LABEL),
+                )
+            except (HostError, OSError):
+                pass  # Only error messages read it; never fail a start over it.
         return save_active_runtime(
             self.paths,
             ActiveRuntime(
@@ -2316,6 +2336,56 @@ class Controller:
                 container_name=environment.name,
                 network_name=environment.network_name,
             ),
+        )
+
+    def _forget_volume_image(self, data_volume: str) -> None:
+        try:
+            forget_volume_image(self.paths, data_volume)
+        except (HostError, OSError):
+            pass
+
+    def _explain_start_failure(
+        self, error: HostError, config: LocalCloudConfig
+    ) -> None:
+        """Name the image the data volume last ran when a different one exited.
+
+        A LocalCloud image refuses data that a newer image wrote, and the
+        container then exits while starting. The CLI cannot tell that refusal
+        from another crash, but it knows which image the volume last became
+        ready on: when that is not the image that just exited, the error says
+        so and gives the command that starts the runtime on it again. Nothing
+        is changed: the container selection and the data stay as they are."""
+        diagnostics = error.details.get("diagnostics")
+        if (
+            error.code != "container_start_failed"
+            or not isinstance(diagnostics, dict)
+            or error.details.get("previous_runtime_restored")
+        ):
+            return
+        started_id = diagnostics.get("image_id")
+        try:
+            last = load_volume_image(self.paths, config.data_volume)
+        except Exception:  # noqa: BLE001 - an explanation must not hide the error
+            return
+        if last is None or not started_id or last["image_id"] == started_id:
+            return
+        error.details["data_last_ready_on"] = dict(last)
+        volume = (
+            ""
+            if config.data_volume == DEFAULT_DATA_VOLUME
+            else f" --data-volume {config.data_volume}"
+        )
+        error.details["steps"] = [
+            f"lc restart{volume} --image {last['image']}"
+            if last["image"] != diagnostics.get("image")
+            else f"lc restart{volume} --pull"
+        ]
+        version = f", version {last['version']}" if last.get("version") else ""
+        error.message = (
+            f"{error.message}. This data volume last became ready on another image, "
+            f"{last['image']} ({_short_image_id(last['image_id'])}{version}); if the "
+            "log says this image does not know the data, an image newer than this "
+            "one wrote it: start the runtime on that image again"
         )
 
     def _preferred_container_id(self, config: LocalCloudConfig) -> str | None:

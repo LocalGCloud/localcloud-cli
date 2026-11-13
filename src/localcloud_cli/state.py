@@ -359,12 +359,15 @@ def save_active_runtime(paths: Any, runtime: ActiveRuntime) -> str | None:
     return notice
 
 
-def _write_active_state_file(paths: Any, payload: dict[str, Any]) -> None:
+def _write_active_state_file(
+    paths: Any, payload: dict[str, Any], target: Path | None = None
+) -> None:
+    target = paths.active_runtime if target is None else target
     try:
         paths.home.mkdir(mode=0o700, parents=True, exist_ok=True)
         descriptor, temporary_name = tempfile.mkstemp(
             dir=paths.home,
-            prefix=f".{ACTIVE_RUNTIME_FILE}.",
+            prefix=f".{target.name}.",
             suffix=".tmp",
         )
     except OSError as error:
@@ -387,7 +390,7 @@ def _write_active_state_file(paths: Any, payload: dict[str, Any]) -> None:
                 state_file.write("\n")
                 state_file.flush()
                 os.fsync(state_file.fileno())
-            os.replace(temporary, paths.active_runtime)
+            os.replace(temporary, target)
             directory_fd = os.open(paths.home, os.O_RDONLY)
             try:
                 os.fsync(directory_fd)
@@ -396,11 +399,103 @@ def _write_active_state_file(paths: Any, payload: dict[str, Any]) -> None:
         except OSError as error:
             raise HostError(
                 "active_runtime_write_failed",
-                f"Could not persist LocalCloud active runtime state: {paths.active_runtime}",
-                {"path": str(paths.active_runtime), "cause": str(error)},
+                f"Could not persist LocalCloud active runtime state: {target}",
+                {"path": str(target), "cause": str(error)},
             ) from error
     finally:
         temporary.unlink(missing_ok=True)
+
+
+# The image each data volume last became ready on. It lives beside
+# active-runtime.json rather than in it, so CLIs that read that file's exact
+# schema keep reading it.
+VOLUME_IMAGES_FILE = "volume-images.json"
+VOLUME_IMAGES_SCHEMA_VERSION = 1
+_VOLUME_IMAGE_FIELDS = ("image", "image_id", "version", "revision")
+
+
+def _volume_images_path(paths: Any) -> Path:
+    return Path(paths.home) / VOLUME_IMAGES_FILE
+
+
+def _read_volume_images(paths: Any) -> dict[str, dict[str, str]]:
+    """The recorded images by data volume; empty when the file is missing or
+    is not one this CLI wrote."""
+    try:
+        raw = json.loads(_volume_images_path(paths).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return {}
+    if (
+        not isinstance(raw, dict)
+        or raw.get("schema_version") != VOLUME_IMAGES_SCHEMA_VERSION
+        or not isinstance(raw.get("volumes"), dict)
+    ):
+        return {}
+    volumes: dict[str, dict[str, str]] = {}
+    for volume, entry in raw["volumes"].items():
+        if not isinstance(volume, str) or not isinstance(entry, dict):
+            continue
+        selected = {
+            key: entry[key]
+            for key in _VOLUME_IMAGE_FIELDS
+            if isinstance(entry.get(key), str) and entry[key].strip()
+        }
+        if "image" in selected and "image_id" in selected:
+            volumes[volume] = selected
+    return volumes
+
+
+def load_volume_image(paths: Any, data_volume: str) -> dict[str, str] | None:
+    """The image `data_volume` last became ready on, if this CLI recorded one:
+    `image` (the reference it ran), `image_id`, and the image's OCI `version`
+    and `revision` labels when it has them."""
+    return _read_volume_images(paths).get(data_volume)
+
+
+def record_volume_image(
+    paths: Any,
+    data_volume: str,
+    *,
+    image: str,
+    image_id: str,
+    version: str | None = None,
+    revision: str | None = None,
+) -> None:
+    """Remember that `data_volume` became ready on `image`."""
+    entry = {"image": image, "image_id": image_id}
+    if version:
+        entry["version"] = version
+    if revision:
+        entry["revision"] = revision
+    with _file_lock(paths, "volume-images", "volume-images.lock"):
+        volumes = _read_volume_images(paths)
+        if volumes.get(data_volume) == entry:
+            return
+        volumes[data_volume] = entry
+        _write_active_state_file(
+            paths,
+            {
+                "schema_version": VOLUME_IMAGES_SCHEMA_VERSION,
+                "volumes": dict(sorted(volumes.items())),
+            },
+            _volume_images_path(paths),
+        )
+
+
+def forget_volume_image(paths: Any, data_volume: str) -> None:
+    """Drop the record of `data_volume`, whose data is gone."""
+    with _file_lock(paths, "volume-images", "volume-images.lock"):
+        volumes = _read_volume_images(paths)
+        if volumes.pop(data_volume, None) is None:
+            return
+        _write_active_state_file(
+            paths,
+            {
+                "schema_version": VOLUME_IMAGES_SCHEMA_VERSION,
+                "volumes": dict(sorted(volumes.items())),
+            },
+            _volume_images_path(paths),
+        )
 
 
 def clear_active_runtime(paths: Any, data_volume: str | None = None) -> None:
