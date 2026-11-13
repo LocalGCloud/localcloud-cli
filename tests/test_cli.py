@@ -714,16 +714,39 @@ def test_main_env_json_prints_valid_json(
     assert "Processing" in captured.err
 
 
+def test_mcp_dispatch_passes_debug_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    debug_flags: list[bool] = []
+
+    def run(config: Any, *, debug: bool, **_: Any) -> None:
+        debug_flags.append(debug)
+
+    monkeypatch.setattr("localcloud_cli.mcp_stdio.run", run)
+
+    _execute(_parser().parse_args(["mcp", "--debug"]))
+
+    assert debug_flags == [True]
+
+
 def test_mcp_dispatch_passes_full_runtime_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
     calls: list[tuple[Any, float, bool, Any]] = []
+    debug_flags: list[bool] = []
 
     def run(
-        config: Any, *, connect_timeout: float, auto_start: bool, prepare: Any
+        config: Any,
+        *,
+        connect_timeout: float,
+        auto_start: bool,
+        prepare: Any,
+        debug: bool,
     ) -> None:
         calls.append((config, connect_timeout, auto_start, prepare))
+        debug_flags.append(debug)
 
     monkeypatch.setattr("localcloud_cli.mcp_stdio.run", run)
 
@@ -750,6 +773,7 @@ def test_mcp_dispatch_passes_full_runtime_config(
     assert config.user == "alice"
     assert connect_timeout == 2.5
     assert auto_start is True
+    assert debug_flags == [False]
     # The bridge connects to Docker itself and resolves the same config there.
     controller, prepared = prepare()
     assert isinstance(controller, FakeController)

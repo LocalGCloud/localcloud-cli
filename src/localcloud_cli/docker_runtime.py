@@ -22,8 +22,10 @@ import httpx
 
 from .config import LocalCloudConfig, runtime_settings, validate_data_volume
 from .constants import DEFAULTS_CONFIG_LABEL, DEFAULT_DATA_VOLUME, DEFAULT_TLS_PORT
+from . import __version__
 from .errors import HostError
 from .java_client import get_shared_http_client
+from .redaction import LOG_TAIL_LINES, redact_secrets, redacted_log_tail
 
 _ORIGINAL_HTTPX_GET = httpx.get
 
@@ -1139,14 +1141,35 @@ class DockerRuntime:
             try:
                 container.start()
             except Exception as error:
+                try:
+                    container.reload()
+                except Exception:
+                    pass  # Report what the last inspection saw.
+                diagnostics = start_failure_diagnostics(container)
+                if _is_port_conflict(error):
+                    # The stopped container publishes fixed host ports, and
+                    # another process now holds one of them.
+                    raise HostError(
+                        "port_no_longer_available",
+                        "A host port the LocalCloud runtime container publishes "
+                        "is in use by another process",
+                        {
+                            "data_volume": config.data_volume,
+                            "container_id": current.container_id,
+                            "cause": redact_secrets(str(error)),
+                            "image": diagnostics["image"],
+                            "diagnostics": diagnostics,
+                        },
+                    ) from error
                 raise HostError(
                     "container_start_failed",
                     "LocalCloud runtime container could not be started",
                     {
                         "data_volume": config.data_volume,
                         "container_id": current.container_id,
-                        "cause": str(error),
-                        "logs": _container_logs(container),
+                        "cause": redact_secrets(str(error)),
+                        "image": diagnostics["image"],
+                        "diagnostics": diagnostics,
                     },
                 ) from error
         updated = self.resolve(
@@ -2349,13 +2372,16 @@ class DockerRuntime:
                     state = "unknown"
                     last_error = f"container inspection failed: {error}"
                 if state in {"dead", "exited", "removing"}:
+                    diagnostics = start_failure_diagnostics(container)
                     raise HostError(
                         "container_start_failed",
                         "LocalCloud runtime container exited before becoming healthy",
                         {
-                            "container": _resource_name(container),
+                            "container": diagnostics["container"],
                             "state": state,
-                            "logs": _container_logs(container),
+                            "exit_code": diagnostics["exit_code"],
+                            "image": diagnostics["image"],
+                            "diagnostics": diagnostics,
                         },
                     )
             _emit_logs()
@@ -4280,6 +4306,74 @@ def _logs_failed(
             "cause": str(error),
         },
     )
+
+
+_DIAGNOSTIC_IMAGE_LABELS = (
+    "org.opencontainers.image.version",
+    "org.opencontainers.image.revision",
+)
+
+
+def start_failure_diagnostics(container: Any) -> dict[str, Any]:
+    """What a runtime container that failed to start tells about why.
+
+    Docker's own record of the attempt (state, exit code, OOM kill, error), the
+    image it ran and its ownership labels, and a short redacted log tail: enough
+    to tell a crash, an out-of-memory kill and an image that refuses its data
+    volume apart without reading the full logs. Secrets never appear."""
+    attrs = getattr(container, "attrs", None)
+    attrs = attrs if isinstance(attrs, Mapping) else {}
+    state = attrs.get("State") if isinstance(attrs.get("State"), Mapping) else {}
+    config = attrs.get("Config") if isinstance(attrs.get("Config"), Mapping) else {}
+    labels = _resource_labels(container)
+    if not labels and isinstance(config.get("Labels"), Mapping):
+        labels = dict(config["Labels"])
+    exit_code = state.get("ExitCode")
+    diagnostics: dict[str, Any] = {
+        "cli_version": __version__,
+        "container": _resource_name(container),
+        "container_id": str(getattr(container, "id", "") or "") or None,
+        "state": str(
+            state.get("Status") or getattr(container, "status", None) or "unknown"
+        ),
+        "exit_code": exit_code if isinstance(exit_code, int) else None,
+        "oom_killed": (
+            state.get("OOMKilled")
+            if isinstance(state.get("OOMKilled"), bool)
+            else None
+        ),
+        "docker_error": redact_secrets(str(state.get("Error") or "")) or None,
+        "image": str(config.get("Image") or "") or None,
+        "image_id": str(attrs.get("Image") or "") or None,
+        "image_digest": _container_image_digest(container),
+        "labels": {
+            key: value
+            for key, value in sorted(labels.items())
+            if (
+                key.startswith("com.localcloud.")
+                and key not in {CONFIG_LABEL, CONFIG_PATH_LABEL}
+            )
+            or key in _DIAGNOSTIC_IMAGE_LABELS
+        },
+        "logs_tail": redacted_log_tail(
+            _container_logs(container, tail=LOG_TAIL_LINES)
+        ),
+    }
+    return diagnostics
+
+
+def _container_image_digest(container: Any) -> str | None:
+    """The registry digest of the image the container runs, when Docker has one."""
+    try:
+        image = getattr(container, "image", None)
+    except Exception:
+        return None
+    attrs = getattr(image, "attrs", None)
+    digests = attrs.get("RepoDigests") if isinstance(attrs, Mapping) else None
+    for digest in digests if isinstance(digests, list) else []:
+        if isinstance(digest, str) and "@sha256:" in digest:
+            return digest
+    return None
 
 
 def _container_logs(container: Any, *, tail: int = 200) -> str:

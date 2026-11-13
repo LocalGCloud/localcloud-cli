@@ -40,6 +40,7 @@ from . import __release_commit__, __version__
 from .constants import DEFAULT_DATA_VOLUME, DEFAULT_IMAGE, DEFAULT_PROJECT, DEFAULT_USER
 from .errors import HostError
 from .output import strip_ansi
+from .redaction import GENERIC_SCRUBBERS, SECRET_SCRUBBERS
 
 if TYPE_CHECKING:
     from .config import LocalCloudConfig
@@ -88,27 +89,8 @@ _ELAPSED = re.compile(r"\s+in \d+(?:\.\d+)?s$")
 _ERROR_LINE = re.compile(
     r"\[FAILED\]|\bERROR\b|\bFATAL\b|\bstate=failed\b|\b\w+(?:Exception|Error):"
 )
-_SECRET_NAME = (
-    r"[\w.-]{0,40}(?:token|secret(?!manager)|passw(?:or)?d|pwd|api[_-]?key"
-    r"|access[_-]?key|private[_-]?key|authorization|credentials?)[\w.-]{0,40}"
-)
-_SECRET_SCRUBBERS = (
-    (re.compile(r"://[^/\s:@]+:[^/\s@]+@"), "://<credentials>@"),
-    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+"), "<email>"),
-    (
-        re.compile(
-            rf"(?i)\b({_SECRET_NAME}[\"']?\s*[=:]\s*)"
-            r"(?:(?:bearer|basic|token)\s+)?(?:\"[^\"]*\"|'[^']*'|[^\s\"',;&)}\]]+)"
-        ),
-        r"\1<redacted>",
-    ),
-    (re.compile(r"(?i)\b(bearer)\s+[\w.~+/=-]{8,}"), r"\1 <redacted>"),
-)
-_GENERIC_SCRUBBERS = (
-    (re.compile(r"(?:/Users|/home)/[^/\s]+|/root\b"), "~"),
-    (re.compile(r"[A-Za-z]:\\Users\\[^\\\s]+"), "~"),
-    (re.compile(r"[A-Za-z0-9_+=-]{32,}"), "<redacted>"),
-)
+_SECRET_SCRUBBERS = SECRET_SCRUBBERS
+_GENERIC_SCRUBBERS = GENERIC_SCRUBBERS
 
 
 def enabled(environment: Mapping[str, str] | None = None) -> bool:
@@ -313,7 +295,18 @@ class Telemetry:
     def _log_errors(self, error: BaseException | None, result: Any) -> list[str]:
         """Error lines the startup logged since this run began."""
         if isinstance(error, HostError):
-            self.observe_logs(str(error.details.get("logs") or ""))
+            diagnostics = error.details.get("diagnostics")
+            self.observe_logs(
+                str(
+                    error.details.get("logs")
+                    or (
+                        diagnostics.get("logs_tail")
+                        if isinstance(diagnostics, dict)
+                        else None
+                    )
+                    or ""
+                )
+            )
         elif isinstance(result, dict):
             self.observe_logs(str(result.get("logs") or ""))
         since = self._since()

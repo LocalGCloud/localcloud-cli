@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import replace
 from pathlib import Path
 import signal
@@ -20,6 +21,7 @@ from .errors import HostError
 from .endpoints import transform_endpoint_payload
 from .java_client import JavaMcpClient, scenario_apply_timeout
 from .output import terminal_capabilities
+from .redaction import redact_secrets, redacted_log_tail
 
 
 # Requests that last as long as the service work they start.
@@ -96,6 +98,19 @@ _RESOURCE_TOOL = "localcloud_read_resource"
 _USER_CONTENT_RESOURCES = ("localcloud://browse/", "localcloud://diagnostics/")
 # Projects a client's workspace may replace: ones the bridge chose by itself.
 _WORKSPACE_PROJECT_SOURCES = {"git", "default"}
+# What an error's diagnostics may tell an MCP client about a runtime container
+# that failed to start. Anything else in them (labels, container names and ids,
+# Docker's own error text) stays on this machine.
+_DIAGNOSTIC_KEYS = (
+    "cli_version",
+    "image",
+    "image_id",
+    "image_digest",
+    "exit_code",
+    "oom_killed",
+    "state",
+    "logs_tail",
+)
 
 
 Prepare = Callable[[], "tuple[Any, LocalCloudConfig]"]
@@ -120,8 +135,10 @@ class McpAdapter:
         auto_start: bool = True,
         prepare: Prepare | None = None,
         connect: bool = True,
+        debug: bool = False,
     ):
         self.config = config
+        self.debug = debug
         self.controller = controller
         self.connect_timeout = connect_timeout
         self.on_connecting = on_connecting
@@ -238,6 +255,14 @@ class McpAdapter:
                 file=sys.stderr,
                 flush=True,
             )
+            diagnostics = error_diagnostics(error)
+            if self.debug and diagnostics is not None:
+                print(
+                    "[localcloud mcp] diagnostics: "
+                    + json.dumps(diagnostics, sort_keys=True),
+                    file=sys.stderr,
+                    flush=True,
+                )
 
     def _prepared(self) -> tuple[Any, LocalCloudConfig]:
         if self._prepare is not None and (self.controller is None or self.config is None):
@@ -590,6 +615,9 @@ class McpAdapter:
             return result
         problem = error if state == "failed" and error is not None else _starting()
         result["error"] = {"code": problem.code, "message": problem.message}
+        diagnostics = error_diagnostics(problem)
+        if diagnostics is not None:
+            result["error"]["diagnostics"] = diagnostics
         result["next_step"] = _recovery(problem, auto_start=self.auto_start)
         return result
 
@@ -604,6 +632,7 @@ class McpAdapter:
             )
         if "error" in status:
             lines.append(status["error"]["message"])
+            lines.extend(_diagnostic_lines(status["error"].get("diagnostics")))
         lines.append(status["next_step"])
         return {
             "jsonrpc": "2.0",
@@ -619,14 +648,21 @@ class McpAdapter:
         with self._lock:
             state, error = self._state, self._error
         problem = error if state == "failed" and error is not None else _starting()
-        text = f"{problem.message}\n{_recovery(problem, auto_start=self.auto_start)}"
+        diagnostics = error_diagnostics(problem)
+        text = "\n".join(
+            [
+                problem.message,
+                *_diagnostic_lines(diagnostics),
+                _recovery(problem, auto_start=self.auto_start),
+            ]
+        )
         if message["method"] == "tools/call":
             return {
                 "jsonrpc": "2.0",
                 "id": message["id"],
                 "result": {"content": [{"type": "text", "text": text}], "isError": True},
             }
-        return _error(message["id"], -32000, text, {"code": problem.code})
+        return _error(message["id"], -32000, text, _error_data(problem, diagnostics))
 
     def _forward(
         self,
@@ -696,10 +732,15 @@ class McpAdapter:
                             annotations["title"] = title
             return response
         except HostError as error:
-            # Only the error code crosses the wire - `details` may carry
-            # upstream RPC bodies, container ids, or other internals that
-            # shouldn't be forwarded to MCP clients verbatim.
-            return _error(request_id, -32000, error.message, {"code": error.code})
+            # Only the error code and allowlisted diagnostics cross the wire -
+            # `details` may carry upstream RPC bodies, container ids, or other
+            # internals that shouldn't be forwarded to MCP clients verbatim.
+            return _error(
+                request_id,
+                -32000,
+                error.message,
+                _error_data(error, error_diagnostics(error)),
+            )
         except Exception as error:
             return _error(request_id, -32603, "LocalCloud MCP adapter failed", str(error))
 
@@ -735,6 +776,60 @@ def _error(request_id: Any, code: int, message: str, data: Any) -> dict[str, Any
         "id": request_id,
         "error": {"code": code, "message": message, "data": data},
     }
+
+
+def error_diagnostics(error: HostError) -> dict[str, Any] | None:
+    """The allowlisted diagnostics of `error`, redacted, or None if it has none."""
+    raw = error.details.get("diagnostics")
+    if not isinstance(raw, dict):
+        return None
+    selected: dict[str, Any] = {"cli_version": __version__}
+    for key in _DIAGNOSTIC_KEYS:
+        value = raw.get(key)
+        if key == "cli_version" or value is None:
+            continue
+        if key == "logs_tail":
+            value = redacted_log_tail(str(value))
+        elif isinstance(value, str):
+            value = redact_secrets(value)
+        elif not isinstance(value, (bool, int)):
+            continue
+        selected[key] = value
+    return selected
+
+
+def _error_data(
+    error: HostError, diagnostics: dict[str, Any] | None
+) -> dict[str, Any]:
+    data: dict[str, Any] = {"code": error.code}
+    if diagnostics is not None:
+        data["diagnostics"] = diagnostics
+    return data
+
+
+def _diagnostic_lines(diagnostics: Any) -> list[str]:
+    """A tool result's text for `diagnostics`: one summary line, then the log tail."""
+    if not isinstance(diagnostics, dict):
+        return []
+    facts = []
+    if diagnostics.get("state") is not None:
+        facts.append(f"state {diagnostics['state']}")
+    if diagnostics.get("exit_code") is not None:
+        facts.append(f"exit code {diagnostics['exit_code']}")
+    if diagnostics.get("oom_killed") is not None:
+        facts.append(f"OOM killed: {'yes' if diagnostics['oom_killed'] else 'no'}")
+    if diagnostics.get("image"):
+        image = str(diagnostics["image"])
+        if diagnostics.get("image_id"):
+            image += f" ({diagnostics['image_id']})"
+        facts.append(f"image {image}")
+    facts.append(f"CLI {diagnostics.get('cli_version', __version__)}")
+    lines = ["Container: " + ", ".join(facts) + "."]
+    tail = diagnostics.get("logs_tail")
+    if isinstance(tail, str) and tail.strip():
+        lines.append("Last log lines:")
+        lines.extend(tail.splitlines())
+    return lines
 
 
 def _starting() -> HostError:
@@ -790,6 +885,20 @@ def _recovery(error: HostError, *, auto_start: bool) -> str:
             "This LocalCloud MCP server runs with --no-start. Ask the user to run "
             f"`lc start` in the project, {retry}."
         )
+    if error.code == "port_no_longer_available":
+        return (
+            "Another process holds a host port this LocalCloud runtime publishes. "
+            "Ask the user to stop whatever now holds that port, or to run "
+            f"`lc restart` to recreate the runtime, {retry}."
+        )
+    if error.code == "container_start_failed":
+        return (
+            "The LocalCloud container exited while starting; error.diagnostics "
+            "has its exit code, OOM flag, image and last log lines. If it was "
+            "killed for memory, ask the user to give Docker more memory; "
+            "otherwise ask the user to run `lc logs`, then `lc restart --pull`, "
+            f"which keeps persistent data and runs the current image, {retry}."
+        )
     if error.code in {
         "runtime_starting",
         "mcp_connection_timeout",
@@ -833,6 +942,7 @@ def run(
     connect_timeout: float = 10.0,
     auto_start: bool = True,
     prepare: Prepare | None = None,
+    debug: bool = False,
 ) -> None:
     def report_connecting(mcp_url: str) -> None:
         if terminal_capabilities(sys.stderr).interactive:
@@ -846,7 +956,13 @@ def run(
     previous_sigint = signal.signal(signal.SIGINT, _raise_keyboard_interrupt)
     try:
         anyio.run(
-            _run_sdk, config, connect_timeout, report_connecting, auto_start, prepare
+            _run_sdk,
+            config,
+            connect_timeout,
+            report_connecting,
+            auto_start,
+            prepare,
+            debug,
         )
     finally:
         signal.signal(signal.SIGINT, previous_sigint)
@@ -858,6 +974,7 @@ async def _run_sdk(
     on_connecting: Callable[[str], None] | None = None,
     auto_start: bool = True,
     prepare: Prepare | None = None,
+    debug: bool = False,
 ) -> None:
     from mcp import types
     from mcp.server.stdio import stdio_server
@@ -877,6 +994,7 @@ async def _run_sdk(
         auto_start=auto_start,
         prepare=prepare,
         connect=False,
+        debug=debug,
     )
     adapter.start_connecting()
 

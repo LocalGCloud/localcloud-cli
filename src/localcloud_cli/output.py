@@ -774,6 +774,7 @@ _CONCISE_ERROR_FIELDS = {
     "data",
     "data_volume",
     "docker_host",
+    "exit_code",
     "field",
     "fields",
     "image",
@@ -885,7 +886,48 @@ def render_error(error: HostError, *, color: ColorMode = ColorMode.NONE) -> str:
         else:
             rendered = truncate_visible(formatted, 160)
             lines.append(f"{label}: {style_text(rendered, 'muted', color)}")
+    diagnostics = error.details.get("diagnostics")
+    if isinstance(diagnostics, Mapping):
+        lines.extend(_render_start_diagnostics(error.details, diagnostics, color))
     return "\n".join(lines)
+
+
+# Diagnostics of a runtime container that failed to start, in the order shown.
+_DIAGNOSTIC_FIELDS = (
+    ("exit_code", "Exit Code"),
+    ("oom_killed", "OOM Killed"),
+    ("docker_error", "Docker Error"),
+    ("image", "Image"),
+    ("image_id", "Image Id"),
+    ("image_digest", "Image Digest"),
+    ("cli_version", "CLI Version"),
+)
+_DIAGNOSTIC_LOG_LINES = 10
+
+
+def _render_start_diagnostics(
+    details: Mapping[str, Any], diagnostics: Mapping[str, Any], color: ColorMode
+) -> list[str]:
+    """The diagnostics fields the details did not already show, then the
+    newest log lines (`--verbose` prints the whole redacted tail)."""
+    lines: list[str] = []
+    for key, label_text in _DIAGNOSTIC_FIELDS:
+        value = diagnostics.get(key)
+        if value is None or value == "" or details.get(key) == value:
+            continue
+        label = style_text(label_text, "label", color, bold=True)
+        rendered = truncate_visible(_format_value(value).replace("\n", " "), 160)
+        lines.append(f"{label}: {style_text(rendered, 'muted', color)}")
+    tail = diagnostics.get("logs_tail")
+    if isinstance(tail, str) and tail.strip():
+        newest = tail.splitlines()[-_DIAGNOSTIC_LOG_LINES:]
+        label = style_text("Last Log Lines", "label", color, bold=True)
+        lines.append(f"{label}:")
+        lines.extend(
+            f"  {style_text(truncate_visible(line, 200), 'muted', color)}"
+            for line in newest
+        )
+    return lines
 
 
 def render_cloud(

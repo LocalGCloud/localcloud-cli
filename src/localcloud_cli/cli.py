@@ -846,6 +846,7 @@ def _run_mcp_bridge(
         connect_timeout=args.connect_timeout,
         auto_start=not args.no_start,
         prepare=prepare,
+        debug=bool(getattr(args, "debug", False)),
     )
 
 
