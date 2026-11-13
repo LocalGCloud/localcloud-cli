@@ -66,6 +66,10 @@ def _psql(container, database: str, sql: str) -> list[str]:
     output = exec_checked(
         container,
         [
+            # Loopback TCP asks for the bundled role's password, which the runtime takes from its own environment.
+            "sh",
+            "-c",
+            'PGPASSWORD="${LOCALCLOUD_PG_PASSWORD:-localcloud}" exec psql "$@"',
             "psql",
             "-h",
             "127.0.0.1",
