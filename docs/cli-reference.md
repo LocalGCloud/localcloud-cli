@@ -610,6 +610,13 @@ error names the recorded image (`details.data_last_ready_on`) and gives the
 command that starts the runtime on it again (`details.steps`). The CLI does not
 switch images, pull, or touch the data by itself.
 
+A LocalCloud image that refuses its data says so: the container prints
+`LOCALCLOUD_START_REFUSED reason=data_newer_than_build` and exits with code 78.
+The CLI reads that as `details.diagnostics.start_refused`, states that the image
+is older than the data on the volume, and gives `lc restart --image …` for the
+recorded image or `lc restart --pull` when none is recorded or the same tag now
+names another image. Images that do not print the line are handled as above.
+
 A port that another process took before Docker started a stopped runtime is
 reported as `port_no_longer_available`.
 

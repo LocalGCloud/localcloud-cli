@@ -441,3 +441,72 @@ def test_debug_prints_diagnostics_on_stderr_only(
         assert len(lines) == 1
 
 
+
+
+REFUSAL_LOG = (
+    "gateway starting\n"
+    "LOCALCLOUD_START_REFUSED reason=data_newer_than_build\n"
+    "ERROR: stopping the container\n"
+)
+
+
+def _refused_container(logs: str = REFUSAL_LOG, exit_code: int = 78) -> Any:
+    container = _failed_container(ExitCode=exit_code)
+    container.logs = lambda **_kwargs: logs.encode()  # type: ignore[assignment]
+    return container
+
+
+def test_a_container_that_refuses_to_start_names_its_reason() -> None:
+    diagnostics = start_failure_diagnostics(_refused_container())
+
+    assert diagnostics["exit_code"] == 78
+    assert diagnostics["start_refused"] == "data_newer_than_build"
+    # The line itself survives redaction, so a reader of the tail sees it too.
+    assert "LOCALCLOUD_START_REFUSED reason=data_newer_than_build" in diagnostics["logs_tail"]
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "logs", "reason"),
+    [
+        (78, "no line was captured\n", "unspecified"),
+        (1, REFUSAL_LOG, "data_newer_than_build"),
+        (78, REFUSAL_LOG + "LOCALCLOUD_START_REFUSED reason=other_reason\n", "other_reason"),
+        (1, "an ordinary crash\n", None),
+        (1, "text LOCALCLOUD_START_REFUSED reason=data_newer_than_build in a sentence\n", None),
+        (None, "", None),
+    ],
+)
+def test_start_refusal_reason(exit_code: Any, logs: str, reason: str | None) -> None:
+    assert runtime_module.start_refusal_reason(exit_code, logs) == reason
+
+
+def test_an_ordinary_failed_start_is_not_a_refusal() -> None:
+    assert "start_refused" not in start_failure_diagnostics(_failed_container())
+
+
+def _refused_failure() -> HostError:
+    diagnostics = start_failure_diagnostics(_refused_container())
+    return HostError(
+        "container_start_failed",
+        "LocalCloud runtime container exited before becoming healthy",
+        {
+            "container": diagnostics["container"],
+            "state": "exited",
+            "exit_code": diagnostics["exit_code"],
+            "image": diagnostics["image"],
+            "diagnostics": diagnostics,
+        },
+    )
+
+
+def test_a_refused_start_is_shown_in_plain_output_and_to_mcp_clients() -> None:
+    error = _refused_failure()
+
+    assert "Start Refused: data_newer_than_build" in render_error(error)
+    diagnostics = error_diagnostics(error)
+    assert diagnostics is not None
+    assert diagnostics["start_refused"] == "data_newer_than_build"
+    assert (
+        "The container refused to start: its image is older than the data on this volume."
+        in mcp_module._diagnostic_lines(diagnostics)
+    )

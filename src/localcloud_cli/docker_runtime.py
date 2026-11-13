@@ -4329,6 +4329,7 @@ def start_failure_diagnostics(container: Any) -> dict[str, Any]:
     if not labels and isinstance(config.get("Labels"), Mapping):
         labels = dict(config["Labels"])
     exit_code = state.get("ExitCode")
+    logs = _container_logs(container, tail=LOG_TAIL_LINES)
     diagnostics: dict[str, Any] = {
         "cli_version": __version__,
         "container": _resource_name(container),
@@ -4355,11 +4356,38 @@ def start_failure_diagnostics(container: Any) -> dict[str, Any]:
             )
             or key in _DIAGNOSTIC_IMAGE_LABELS
         },
-        "logs_tail": redacted_log_tail(
-            _container_logs(container, tail=LOG_TAIL_LINES)
-        ),
+        "logs_tail": redacted_log_tail(logs),
     }
+    refusal = start_refusal_reason(
+        diagnostics["exit_code"], logs
+    )
+    if refusal:
+        diagnostics["start_refused"] = refusal
     return diagnostics
+
+
+# A LocalCloud container that will not start on the data it was given exits
+# with this code and prints one line naming why (the image's documented start
+# refusal). Any other failed start exits with another code.
+START_REFUSED_EXIT_CODE = 78
+_START_REFUSED_LINE = re.compile(
+    r"^LOCALCLOUD_START_REFUSED reason=([a-z_]+)\s*$", re.MULTILINE
+)
+# The data volume was written by a newer image than the one that started.
+REFUSED_DATA_NEWER_THAN_IMAGE = "data_newer_than_build"
+
+
+def start_refusal_reason(exit_code: Any, logs: str) -> str | None:
+    """Why the container refused to start, or None when it did not refuse.
+
+    The reason is the one the container printed last; a refusal exit code with
+    no such line in the captured output is reported as "unspecified"."""
+    reasons = _START_REFUSED_LINE.findall(logs or "")
+    if reasons:
+        return str(reasons[-1])
+    if exit_code == START_REFUSED_EXIT_CODE:
+        return "unspecified"
+    return None
 
 
 def _container_image_digest(container: Any) -> str | None:

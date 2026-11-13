@@ -23,7 +23,7 @@ from localcloud_cli.state import (
 )
 
 from test_controller import _config, _controller, _record, fake_java  # noqa: F401 - fixture
-from test_start_diagnostics import _start_failure
+from test_start_diagnostics import _refused_failure, _start_failure
 
 
 
@@ -163,3 +163,52 @@ def test_start_failures_are_left_alone_without_another_recorded_image(
     assert "data_last_ready_on" not in caught.value.details
     assert "steps" not in caught.value.details
     assert caught.value.message == message
+
+
+def test_a_refused_start_says_the_image_is_older_than_the_data(tmp_path: Path) -> None:
+    # No image is recorded for the volume: the container's own reason is enough.
+    controller, runtime, config = _controller_with_failed_start(tmp_path)
+    runtime.wait_error = _refused_failure()
+
+    with pytest.raises(HostError) as caught:
+        controller.start(config)
+
+    error = caught.value
+    assert error.code == "container_start_failed"
+    assert error.details["start_refused"] == "data_newer_than_build"
+    assert "data_last_ready_on" not in error.details
+    assert error.details["steps"] == ["lc restart --pull"]
+    assert "older than the data on this volume" in error.message
+    assert "if the log says" not in error.message
+    # Nothing was replaced or removed.
+    assert runtime.creates == 0 and runtime.removes == []
+
+    recovery = mcp_module._recovery(error, auto_start=True)
+    assert "older than the data on this volume" in recovery
+    assert "`lc restart --pull`" in recovery
+    assert "Do not reset or delete the data" in recovery
+
+
+def test_a_refused_start_names_the_recorded_newer_image(tmp_path: Path) -> None:
+    controller, runtime, config = _controller_with_failed_start(
+        tmp_path, data_volume="team-data"
+    )
+    record_volume_image(
+        controller.paths,
+        "team-data",
+        image="custom/localcloud:dev",
+        image_id="sha256:" + "d" * 64,
+        version="0.1.18",
+    )
+    runtime.wait_error = _refused_failure()
+
+    with pytest.raises(HostError) as caught:
+        controller.start(config)
+
+    error = caught.value
+    assert error.details["start_refused"] == "data_newer_than_build"
+    assert error.details["data_last_ready_on"]["image"] == "custom/localcloud:dev"
+    assert error.details["steps"] == [
+        "lc restart --data-volume team-data --image custom/localcloud:dev"
+    ]
+    assert "It last became ready on custom/localcloud:dev (dddddddddddd, version 0.1.18)" in error.message

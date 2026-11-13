@@ -109,6 +109,7 @@ _DIAGNOSTIC_KEYS = (
     "exit_code",
     "oom_killed",
     "state",
+    "start_refused",
     "logs_tail",
 )
 
@@ -832,6 +833,15 @@ def _diagnostic_lines(diagnostics: Any) -> list[str]:
         facts.append(f"image {image}")
     facts.append(f"CLI {diagnostics.get('cli_version', __version__)}")
     lines = ["Container: " + ", ".join(facts) + "."]
+    if diagnostics.get("start_refused") == "data_newer_than_build":
+        lines.append(
+            "The container refused to start: its image is older than the data "
+            "on this volume."
+        )
+    elif diagnostics.get("start_refused"):
+        lines.append(
+            f"The container refused to start ({diagnostics['start_refused']})."
+        )
     last = diagnostics.get("data_last_ready_on")
     if isinstance(last, dict) and last.get("image"):
         image = str(last["image"])
@@ -911,6 +921,14 @@ def _recovery(error: HostError, *, auto_start: bool) -> str:
             if isinstance(steps, list) and steps and isinstance(steps[0], str)
             else "lc restart --pull"
         )
+        if error.details.get("start_refused") == "data_newer_than_build":
+            return (
+                "The LocalCloud image that started is older than the data on this "
+                "volume: a newer image wrote the data, and the container refused "
+                f"to run it. Ask the user to run `{step}`, which starts the newer "
+                f"image and keeps persistent data, {retry}. Do not reset or "
+                "delete the data."
+            )
         return (
             "The LocalCloud container exited while starting; error.diagnostics "
             "has its exit code, OOM flag, image and last log lines. If it was "

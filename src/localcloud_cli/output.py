@@ -895,6 +895,7 @@ def render_error(error: HostError, *, color: ColorMode = ColorMode.NONE) -> str:
 # Diagnostics of a runtime container that failed to start, in the order shown.
 _DIAGNOSTIC_FIELDS = (
     ("exit_code", "Exit Code"),
+    ("start_refused", "Start Refused"),
     ("oom_killed", "OOM Killed"),
     ("docker_error", "Docker Error"),
     ("image", "Image"),

@@ -29,6 +29,7 @@ from .config import (
 from .constants import DEFAULTS_CONFIG_LABEL, DEFAULT_DATA_VOLUME, DEFAULT_IMAGE
 from .docker_runtime import (
     IDENTITY_SESSION_LABEL,
+    REFUSED_DATA_NEWER_THAN_IMAGE,
     identity_relay_variables,
     STOP_TIMEOUT_SECONDS,
     DockerRunPlan,
@@ -2363,18 +2364,52 @@ class Controller:
         ):
             return
         started_id = diagnostics.get("image_id")
-        try:
-            last = load_volume_image(self.paths, config.data_volume)
-        except Exception:  # noqa: BLE001 - an explanation must not hide the error
-            return
-        if last is None or not started_id or last["image_id"] == started_id:
-            return
-        error.details["data_last_ready_on"] = dict(last)
         volume = (
             ""
             if config.data_volume == DEFAULT_DATA_VOLUME
             else f" --data-volume {config.data_volume}"
         )
+        refused = diagnostics.get("start_refused")
+        try:
+            last = load_volume_image(self.paths, config.data_volume)
+        except Exception:  # noqa: BLE001 - an explanation must not hide the error
+            last = None
+        other_image = (
+            last is not None and bool(started_id) and last["image_id"] != started_id
+        )
+        if refused == REFUSED_DATA_NEWER_THAN_IMAGE:
+            # The container itself said why: no guess from the log is needed.
+            error.details["start_refused"] = refused
+            if other_image:
+                assert last is not None
+                error.details["data_last_ready_on"] = dict(last)
+            use_recorded = (
+                other_image
+                and last is not None
+                and last["image"] != diagnostics.get("image")
+            )
+            error.details["steps"] = [
+                f"lc restart{volume} --image {last['image']}"
+                if use_recorded and last is not None
+                else f"lc restart{volume} --pull"
+            ]
+            ready_on = ""
+            if other_image and last is not None:
+                version = f", version {last['version']}" if last.get("version") else ""
+                ready_on = (
+                    f" It last became ready on {last['image']} "
+                    f"({_short_image_id(last['image_id'])}{version})."
+                )
+            error.message = (
+                "The LocalCloud image that started is older than the data on this "
+                "volume: a newer image wrote it, and this one will not run it."
+                f"{ready_on} Start the runtime on the newer image again; the data "
+                "is left as it is"
+            )
+            return
+        if not other_image or last is None:
+            return
+        error.details["data_last_ready_on"] = dict(last)
         error.details["steps"] = [
             f"lc restart{volume} --image {last['image']}"
             if last["image"] != diagnostics.get("image")
