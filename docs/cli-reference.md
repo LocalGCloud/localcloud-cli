@@ -477,6 +477,13 @@ becomes ready the bridge tells the client its tool, resource and prompt lists
 changed. `--no-start` never starts a runtime: the bridge reports
 `runtime_not_running` until `lc start` is run.
 
+When the runtime container fails to start, `localcloud_runtime_status`, calls
+made meanwhile, and forwarded errors carry `error.diagnostics`: the CLI version,
+the image (reference, ID and registry digest), the exit code, whether Docker
+killed it for memory, and the newest log lines with credentials redacted. They
+never carry container names or IDs, labels, or Docker's own error text.
+`lc mcp --debug` also writes them to stderr.
+
 Requests run concurrently, and a request refused because the runtime restarted
 or moved is sent again once after reconnecting.
 
@@ -583,6 +590,28 @@ Each command's `--help` output lists its valid field paths. Invalid input report
 - `NO_COLOR=1` or a dumb terminal disables ANSI color escapes.
 - TrueColor, ANSI-256, and ANSI-16 palettes degrade according to terminal capabilities.
 - Symbols and text continue to carry status when color is unavailable.
+
+### Start failures
+
+When the runtime container exits before it becomes healthy, or `docker start`
+fails, the error is `container_start_failed`. It shows the exit code, whether
+Docker killed the container for memory, Docker's error text, the image
+(reference, ID and registry digest), the CLI version and the newest log lines.
+`--verbose` prints them as `details.diagnostics`, with the newest 40 log lines
+(at most 4 KB). ANSI codes are stripped; credentials in URLs, tokens, passwords,
+private keys and e-mail addresses are redacted.
+
+A LocalCloud image refuses data that a newer image wrote, so a runtime started
+on an older image than the one that last ran its data volume exits while
+starting. After each successful `start` or `restart`, the CLI records the image
+the data volume became ready on in `volume-images.json`, beside
+`active-runtime.json`. When a different image then exits while starting, the
+error names the recorded image (`details.data_last_ready_on`) and gives the
+command that starts the runtime on it again (`details.steps`). The CLI does not
+switch images, pull, or touch the data by itself.
+
+A port that another process took before Docker started a stopped runtime is
+reported as `port_no_longer_available`.
 
 ## Exit codes
 

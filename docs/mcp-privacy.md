@@ -4,7 +4,7 @@ Effective and last reviewed: 2026-10-09. This policy describes data handled by t
 
 ## MCP and local application data
 
-The plugin launcher finds the installed LocalCloud CLI and starts its stdio MCP bridge. It does not add an account, collect a conversation history, or forward the host's unrelated credentials. MCP requests and results pass between the agent client and the selected local runtime. Requested resource contents, queries, and diagnostics can therefore be visible to the agent client; request only data appropriate for that client.
+The plugin launcher finds the installed LocalCloud CLI and starts its stdio MCP bridge. It does not add an account, collect a conversation history, or forward the host's unrelated credentials. MCP requests and results pass between the agent client and the selected local runtime. Requested resource contents, queries, and diagnostics can therefore be visible to the agent client; request only data appropriate for that client. When the runtime container fails to start, the bridge also gives the client the image, exit code and the newest runtime log lines, with credentials, tokens, private keys and e-mail addresses redacted.
 
 Persistent runtime data is stored in its configured Docker volume and can remain until deliberately removed. Runtime storage modes and service configuration determine other data lifetimes. Removing the plugin does not remove that volume. Plugins, client settings, and local CLI state remain until removed through their respective configuration mechanisms.
 
