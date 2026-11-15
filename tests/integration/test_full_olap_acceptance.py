@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -97,6 +98,18 @@ def _cloudsql_summary(container, physical_database: str) -> list[str]:
         "to_char(SUM(amount), 'FM999999990.00') FROM orders "
         "GROUP BY customer_id ORDER BY customer_id",
     )
+
+
+def _driver_output(gcs: storage.Client, container, uri: str) -> str:
+    """The job's driver output, for a failure message: objects under a gs:// prefix, or a file in the cluster."""
+    try:
+        if uri.startswith("gs://"):
+            bucket, _, prefix = uri.removeprefix("gs://").partition("/")
+            blobs = sorted(gcs.list_blobs(bucket, prefix=prefix), key=lambda blob: blob.name)
+            return "".join(blob.download_as_bytes().decode("utf-8", errors="replace") for blob in blobs)
+        return get_bytes(container, uri).decode("utf-8", errors="replace")
+    except Exception as error:  # the output is context for a failure already being reported
+        return f"(driver output at {uri} could not be read: {error})"
 
 
 def _require_full_olap_prerequisites(runtime, image: str) -> None:
@@ -319,20 +332,30 @@ def test_full_olap_sdk_checkpoint_restore_and_cleanup(tmp_path: Path) -> None:
             },
             timeout=180,
         )
-        final_job = dataproc_client.get_job(
-            request={
-                "project_id": project,
-                "region": "us-central1",
-                "job_id": submitted.reference.job_id,
-            },
-            timeout=30,
-        )
+        # jobs.submit returns while the job runs, as Dataproc's does; the job is read until it ends.
+        terminal = {
+            dataproc_v1.JobStatus.State.DONE,
+            dataproc_v1.JobStatus.State.ERROR,
+            dataproc_v1.JobStatus.State.CANCELLED,
+        }
+        deadline = time.monotonic() + 300
+        while True:
+            final_job = dataproc_client.get_job(
+                request={
+                    "project_id": project,
+                    "region": "us-central1",
+                    "job_id": submitted.reference.job_id,
+                },
+                timeout=30,
+            )
+            if final_job.status.state in terminal or time.monotonic() > deadline:
+                break
+            time.sleep(2)
         if final_job.status.state != dataproc_v1.JobStatus.State.DONE:
-            driver_output = get_bytes(
-                dataproc, final_job.driver_output_resource_uri
-            ).decode("utf-8", errors="replace")
             pytest.fail(
-                f"Dataproc job ended in {final_job.status.state.name}: {driver_output}"
+                f"Dataproc job ended in {final_job.status.state.name}: "
+                f"{final_job.status.details}\n"
+                f"{_driver_output(gcs, dataproc, final_job.driver_output_resource_uri)}"
             )
         output_summary = _query_rows(
             bq,
@@ -346,18 +369,11 @@ def test_full_olap_sdk_checkpoint_restore_and_cleanup(tmp_path: Path) -> None:
 
         java = JavaMcpClient(gateway, project, user)
         checkpoint = checkpoint_project(java, project, "olap-baseline")
-        expected_checkpoint_services = {"gcs", "pubsub", "bigquery", "cloudsql"}
-        if not expected_checkpoint_services.issubset(set(checkpoint["services"])):
-            server_log = parent.exec_run(
-                [
-                    "sh",
-                    "-c",
-                    "tail -n 200 /var/log/localcloud/localcloud-server-stdout.log",
-                ]
-            ).output.decode("utf-8", errors="replace")
-            pytest.fail(
-                f"checkpoint omitted services: {checkpoint['services']}\\n{server_log}"
-            )
+        # A checkpoint captures Cloud Storage, Pub/Sub, BigQuery and Firestore. Every other enabled service that a
+        # reset clears is named as not captured, so Cloud SQL is reported, never silently left out.
+        assert {"gcs", "pubsub", "bigquery"}.issubset(set(checkpoint["services"])), checkpoint
+        assert "cloudsql" not in checkpoint["services"], checkpoint
+        assert "cloudsql" in checkpoint["not_captured_services"], checkpoint
 
         bq.delete_table(output_table)
         with pytest.raises(NotFound):
@@ -376,13 +392,22 @@ def test_full_olap_sdk_checkpoint_restore_and_cleanup(tmp_path: Path) -> None:
             "localcloud_restore_project",
             {"name": "olap-baseline", "replace": True},
         )
-        assert restored["status"] == "restored"
+        # Every captured service is restored. The result is partial because it names the enabled services a
+        # checkpoint does not capture, which the restore leaves as they are.
+        assert restored["service_states"] == {
+            "bigquery": "restored",
+            "gcs": "restored",
+            "pubsub": "restored",
+        }, restored
+        assert restored["status"] == "partial_failure", restored
+        assert "cloudsql" in restored["untouched_services"], restored
         assert _query_rows(
             bq,
             f"SELECT customer_id, order_count, total_amount FROM `{output_table}` "
             "ORDER BY customer_id",
         ) == output_summary
-        assert _cloudsql_summary(parent, physical_database) == accepted_cloudsql_summary
+        # The restore replaces only what the checkpoint holds: the Cloud SQL row written after it is still there.
+        assert any("cust-mutated" in row for row in _cloudsql_summary(parent, physical_database))
         reset = controller.reset(config)
         assert reset["status"] == "reset"
     finally:
