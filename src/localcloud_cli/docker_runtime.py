@@ -3332,6 +3332,12 @@ class DockerRuntime:
                 labels.get(VOLUME_NAME_LABEL) == data_volume
                 and labels.get(_CHILD_MANAGED_LABEL) == "true"
             )
+            default_volume_claim = (
+                data_volume == DEFAULT_DATA_VOLUME
+                and VOLUME_NAME_LABEL not in labels
+                and INSTANCE_LABEL not in labels
+                and labels.get(_CHILD_MANAGED_LABEL) == "true"
+            )
             legacy_claim = bool(
                 legacy_instance
                 and legacy_hash
@@ -3339,7 +3345,7 @@ class DockerRuntime:
                 and labels.get(CONFIG_HASH_LABEL) == legacy_hash
                 and labels.get(_CHILD_MANAGED_LABEL) == "true"
             )
-            if not new_claim and not legacy_claim:
+            if not new_claim and not default_volume_claim and not legacy_claim:
                 continue
             expected = {
                 MANAGED_LABEL: "true",
@@ -3876,7 +3882,7 @@ def _container_environment(
         environment.pop("LOCALCLOUD_SERVICES", None)
     if config.data_volume != DEFAULT_DATA_VOLUME or network_name != "localcloud":
         environment["LOCALCLOUD_RUNTIME_NETWORK"] = network_name
-        environment["LOCALCLOUD_DATA_VOLUME"] = config.data_volume
+    environment["LOCALCLOUD_DATA_VOLUME"] = config.data_volume
     environment["LOCALCLOUD_DOCKER_ACCESS"] = config.docker_socket_mode
     environment.pop("LOCALCLOUD_INSTANCE", None)
     if config.mysql_port is not None:

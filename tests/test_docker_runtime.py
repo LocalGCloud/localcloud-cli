@@ -437,7 +437,10 @@ def test_managed_create_uses_only_controller_owned_bootstrap_environment(
     assert labels[NETWORK_NAME_LABEL] == "localcloud"
     assert SERVICES_LABEL not in labels
     assert labels[DATA_LABEL] == "persistent"
-    assert environment == {"LOCALCLOUD_DOCKER_ACCESS": "auto"}
+    assert environment == {
+        "LOCALCLOUD_DATA_VOLUME": "localcloud-data",
+        "LOCALCLOUD_DOCKER_ACCESS": "auto",
+    }
     network_labels = client.networks.values["localcloud"].labels
     assert network_labels[MANAGED_LABEL] == "true"
     assert network_labels[RESOURCE_ROLE_LABEL] == "network"
@@ -2283,6 +2286,61 @@ def test_stop_stops_dataproc_clusters_and_relays_of_its_data_volume_only(
     assert (other_cluster.stopped, other_relay.stopped) == (0, 0)
 
 
+def test_stop_stops_default_volume_dataproc_children_created_without_volume_label(
+    tmp_path: Path,
+    ready_runtime: tuple[DockerRuntime, Client],
+) -> None:
+    runtime, client = ready_runtime
+    config = _config(tmp_path)
+    runtime.create(config)
+    cluster = client.containers.add(
+        Resource(
+            "localcloud-dataproc-local-gcp-project-us-central1-default",
+            {
+                MANAGED_LABEL: "true",
+                "localcloud.managed": "true",
+                "com.localcloud.service": "dataproc",
+                "localcloud.service": "dataproc",
+                "localcloud.cluster": "default",
+            },
+            state="running",
+        )
+    )
+    relay = client.containers.add(
+        Resource(
+            "lc-relay-0123456789ab",
+            {
+                MANAGED_LABEL: "true",
+                "localcloud.managed": "true",
+                "localcloud.relay": "true",
+                "localcloud.service": "identity-relay",
+                "localcloud.dataproc-cluster": "default",
+            },
+            state="running",
+        )
+    )
+    other_config = _config(tmp_path, data_volume="another-volume")
+    runtime.create(other_config)
+    other_cluster, other_relay = _dataproc_children(
+        client, other_config.data_volume, prefix="other-"
+    )
+    other_record = runtime.resolve(other_config)
+    assert other_record is not None
+
+    runtime.stop(other_config, other_record)
+
+    assert (other_cluster.stopped, other_relay.stopped) == (1, 1)
+    assert (cluster.stopped, relay.stopped) == (0, 0)
+
+    record = runtime.resolve(config)
+    assert record is not None
+
+    runtime.stop(config, record)
+
+    assert (cluster.stopped, relay.stopped) == (1, 1)
+    assert cluster.removed == [] and relay.removed == []
+
+
 def test_removing_a_runtime_removes_its_dataproc_children(
     tmp_path: Path,
     ready_runtime: tuple[DockerRuntime, Client],
@@ -3825,6 +3883,7 @@ def test_inspected_run_plan_is_copyable_and_collapses_port_ranges(
     assert "-m 4g" in command
     assert "-v localcloud-data:/var/lib/localcloud" in command
     assert "-p 0.0.0.0:5380-5405:5380-5405/tcp" in command
+    assert "-e LOCALCLOUD_DATA_VOLUME=localcloud-data" in command
     assert "-e LOCALCLOUD_DOCKER_ACCESS=auto" in command
     assert " -l " not in command
     assert command.endswith(config.image)
