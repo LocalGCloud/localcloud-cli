@@ -4036,6 +4036,8 @@ def test_restart_restores_the_previous_runtime_when_the_upgrade_fails(
         controller.restart(_upgraded(config))
 
     assert [record.image_id for record in runtime.restore_calls] == ["sha256:old"]
+    assert runtime.record is not None
+    assert runtime.record.configured_image == _PINNED
     assert raised.value.details["previous_runtime_restored"] is True
     # The failed upgrade is not recorded, so the next run offers it again.
     active = load_active_runtime(paths)

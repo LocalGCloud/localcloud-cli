@@ -37,6 +37,7 @@ from .docker_runtime import (
     RuntimeRecord,
 )
 from .errors import HostError
+from .redaction import redacted_log_tail
 from .state import forget_volume_image, load_volume_image, record_volume_image
 from .service_sources import describe_service_sources, unpublished_services
 from .java_client import JavaMcpClient, is_retryable_java_error
@@ -1327,7 +1328,7 @@ class Controller:
                 raise HostError(
                     "identity_relay_failed",
                     f"The identity relay is {state} before it became ready",
-                    {"container": relay["container"], "logs": logs},
+                    {"container": relay["container"], "logs": redacted_log_tail(logs)},
                 )
             try:
                 # Each request stays inside the wait's own budget.
@@ -1367,7 +1368,11 @@ class Controller:
         raise HostError(
             "identity_relay_timeout",
             f"The identity relay did not become ready within {int(timeout)}s: {last_problem}",
-            {"container": relay["container"], "host_port": relay["host_port"], "logs": logs},
+            {
+                "container": relay["container"],
+                "host_port": relay["host_port"],
+                "logs": redacted_log_tail(logs),
+            },
         )
 
     def setup_report(self) -> tuple[Any, list[Any]]:
@@ -2033,20 +2038,19 @@ class Controller:
         too, so it is compared with the previous image put back."""
         restore = getattr(self.runtime, "restore_previous_runtime", None)
         new_image_id = getattr(new_image, "id", None)
+        previous_config = _with_previous_image(previous, config)
         if (
             # The new image started and is running; only its services lag.
             error.code == "services_not_ready"
             or not callable(restore)
             or not preserve_volume
-            or self._requires_managed_replacement(
-                previous, _with_previous_image(previous, config)
-            )
+            or self._requires_managed_replacement(previous, previous_config)
             or not previous.image_id
             or previous.image_id == new_image_id
         ):
             return
         try:
-            restored = restore(config, previous, observer=observer)
+            restored = restore(previous_config, previous, observer=observer)
         except Exception as restore_error:  # noqa: BLE001
             error.details["rollback_error"] = str(restore_error)
             return

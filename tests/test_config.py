@@ -1894,3 +1894,31 @@ def test_saving_over_an_unreadable_state_file_replaces_it_with_a_notice(
 
     assert notice is not None and "Replaced the unreadable runtime state" in notice
     assert load_active_runtime(paths) == runtime
+
+
+def test_empty_yaml_mapping_values_parse_as_null(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    (tmp_path / "localcloud.yaml").write_text(
+        "version: 1\nhost:\nservices:\n  enabled: default\n", encoding="utf-8"
+    )
+
+    selected = load_config(directory=tmp_path, paths=paths, active_runtime=None)
+
+    assert selected.data_volume == DEFAULT_DATA_VOLUME
+    assert selected.services is None
+
+
+def test_lite_and_full_flags_mark_switched_image_source_as_flag(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    (tmp_path / "localcloud.yaml").write_text(
+        "host:\n  image: agentcloud/localcloud:0.1.8-lite\n", encoding="utf-8"
+    )
+
+    selected = load_config(
+        directory=tmp_path, paths=paths, lite=False, active_runtime=None
+    )
+
+    assert selected.image == "agentcloud/localcloud:0.1.8"
+    assert selected.image_source == "flag"

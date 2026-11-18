@@ -1234,8 +1234,8 @@ class DockerRuntime:
                 {
                     "data_volume": config.data_volume,
                     "container_id": current.container_id,
-                    "cause": str(error),
-                    "logs": _container_logs(container),
+                    "cause": redact_secrets(str(error)),
+                    "logs": redacted_log_tail(_container_logs(container)),
                 },
             ) from error
         updated = self.resolve(
@@ -2452,7 +2452,11 @@ class DockerRuntime:
             remaining = deadline - time.monotonic()
             if remaining > 0:
                 time.sleep(min(1.0, remaining))
-        logs = _container_logs(container) if container is not None else ""
+        logs = (
+            redacted_log_tail(_container_logs(container))
+            if container is not None
+            else ""
+        )
         if health is not None:
             names = ", ".join(str(item["id"]) for item in not_ready)
             raise HostError(
@@ -3614,7 +3618,16 @@ class DockerRuntime:
         return _container_state(container), _container_logs(container, tail=20)
 
     def identity_relay_host_port(self, container: Any) -> int | None:
-        return self._identity_relay_port(container, IDENTITY_RELAY_METADATA_PORT)
+        port = self._identity_relay_port(container, IDENTITY_RELAY_METADATA_PORT)
+        if port is not None:
+            return port
+        for port_spec, bindings in _published_ports(container).items():
+            if not port_spec.endswith("/tcp"):
+                continue
+            for _host_ip, host_port in bindings:
+                if host_port is not None:
+                    return host_port
+        return None
 
     def remove_identity_relay(self, container: Any) -> None:
         """Remove one relay after checking it is an identity relay of a LocalCloud volume."""

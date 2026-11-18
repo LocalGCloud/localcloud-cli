@@ -971,34 +971,31 @@ def _command_config(controller: Any, args: argparse.Namespace) -> LocalCloudConf
         "project_from_git": args.command == "mcp",
     }
     paths = getattr(controller, "paths", None) or HostPaths.from_environment()
-    active_diagnostics: list[dict[str, Any]] = []
-    active = load_active_runtime(paths, active_diagnostics)
-    snapshot = {
-        "paths": paths,
-        "active_runtime": active,
-        "active_diagnostics": tuple(active_diagnostics),
-    }
-    preliminary = load_config(explicit=explicit, **overrides, **snapshot)
+    preliminary = load_config(explicit=explicit, paths=paths, **overrides)
     if preliminary.config_path is not None:
         return preliminary
 
     remembered = controller.remembered_config(preliminary)
+    # When no config file or --data-volume selected a volume, load_config used
+    # last_active; if no container holds that volume, drop it and try the default.
     implicit_active = (
         explicit is None
         and overrides["data_volume"] is None
-        and active is not None
+        and load_active_runtime(paths) is not None
     )
+    extra: dict[str, Any] = {}
     if remembered is None and implicit_active:
-        snapshot["active_runtime"] = None
-        preliminary = load_config(explicit=explicit, **overrides, **snapshot)
+        extra["active_runtime"] = None
+        preliminary = load_config(explicit=explicit, paths=paths, **overrides, **extra)
         remembered = controller.remembered_config(preliminary)
     if remembered is None:
         return preliminary
     return load_config(
         explicit=explicit,
         remembered=remembered,
+        paths=paths,
         **overrides,
-        **snapshot,
+        **extra,
     )
 
 
@@ -1198,9 +1195,16 @@ def _success_message(args: argparse.Namespace, result: Any) -> str:
                 f"{', '.join(result.get('sessions_ended') or []) or 'none'}"
             )
         session = result.get("session") or {}
+        environment = result.get("environment") or {}
+        endpoint_vars = result.get("endpoint_variables") or []
+        endpoint = next(
+            (environment[name] for name in endpoint_vars if name in environment),
+            environment.get("GCE_METADATA_HOST")
+            or f"127.0.0.1:{(result.get('relay') or {}).get('host_port', '')}",
+        )
         return (
             f"Identity session {session.get('id')} serves {session.get('service_account')} at "
-            f"{result['environment']['GCE_METADATA_HOST']} until {session.get('expires_at')}"
+            f"{endpoint} until {session.get('expires_at')}"
         )
     if command == "env":
         return "SDK configuration generated"

@@ -153,8 +153,8 @@ _StrictLoader.add_implicit_resolver(
 )
 _StrictLoader.add_implicit_resolver(
     "tag:yaml.org,2002:null",
-    re.compile(r"^(?:null|~)$"),
-    ["n", "~"],
+    re.compile(r"^(?:null|~|)$"),
+    ["n", "~", None],
 )
 
 
@@ -784,8 +784,10 @@ def load_config(
             image = DEFAULT_IMAGE
             image_source = "default"
     if lite is not None:
-        image = lite_image(image, lite)
-        image_source = "flag" if image_source == "default" else image_source
+        switched = lite_image(image, lite)
+        if switched != image or image_source == "default":
+            image_source = "flag"
+        image = switched
 
     memory = _memory_limit(
         "--memory" if memory is not None else "host.memory",

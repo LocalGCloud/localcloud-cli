@@ -514,7 +514,13 @@ class McpAdapter:
             )
             if "result" in response:
                 return _compatible_initialize(response)
-        self._degraded = True
+            with self._lock:
+                self._degraded = True
+        else:
+            with self._lock:
+                self._degraded = True
+                if self._state == "connected":
+                    self._tell_lists_changed()
         requested = params.get("protocolVersion")
         return {
             "jsonrpc": "2.0",
@@ -577,14 +583,18 @@ class McpAdapter:
         return None
 
     def _list(self, message: dict[str, Any]) -> dict[str, Any]:
-        response: dict[str, Any] | None = {}
         if self.ensure_connected(_LIST_WAIT):
             response = self._list_reply(message)
             if response is not None and "result" in response:
                 return response
-        if response is not None:
-            # A list that is still on its way was noted by _list_reply.
-            self._degraded = True
+            if response is not None:
+                with self._lock:
+                    self._degraded = True
+        else:
+            with self._lock:
+                self._degraded = True
+                if self._state == "connected":
+                    self._tell_lists_changed()
         method = message["method"]
         items = [_STATUS_TOOL_DEFINITION] if method == "tools/list" else []
         return {"jsonrpc": "2.0", "id": message["id"], "result": {_LIST_KEYS[method]: items}}

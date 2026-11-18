@@ -1648,3 +1648,25 @@ def test_a_failing_handler_does_not_end_the_bridge(monkeypatch: pytest.MonkeyPat
 
     assert [message["id"] for message in written] == [1, 2]
     assert written[0]["error"]["code"] == -32603
+
+
+def test_list_emits_list_changed_if_connection_finishes_right_as_wait_expires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = McpAdapter(CONFIG, controller=RunningController(), connect=False)
+    adapter.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def just_connected(_wait: float, *, retry_now: bool = False) -> bool:
+        adapter._state = "connected"
+        return False
+
+    monkeypatch.setattr(adapter, "ensure_connected", just_connected)
+
+    response = adapter.handle(_request(1, "tools/list"))
+
+    assert response == {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {"tools": [mcp_module._STATUS_TOOL_DEFINITION]},
+    }
+    assert [m["method"] for m in adapter.drain_outbox()] == list(mcp_module._LIST_CHANGED)

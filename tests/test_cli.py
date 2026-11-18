@@ -2987,3 +2987,71 @@ def test_declined_port_mapping_leaves_the_animation_stopped() -> None:
     assert observer.confirm_port_mapping(plan) is False
     assert reporter._thread is None
     reporter.close()
+
+
+def test_command_config_loads_active_runtime_for_selected_volume_not_last_active(
+    tmp_path: Path,
+) -> None:
+    from localcloud_cli.config import HostPaths
+    from localcloud_cli.state import ActiveRuntime, save_active_runtime
+
+    home = tmp_path / "home"
+    home.mkdir()
+    paths = HostPaths(home=home, locks=home / "locks")
+    save_active_runtime(
+        paths,
+        ActiveRuntime(
+            schema_version=3,
+            data_volume="vol-a",
+            image="agentcloud/localcloud:0.1.8-lite",
+            container_id="container-a",
+            container_name="localcloud-a",
+            network_name="net-a",
+        ),
+    )
+    save_active_runtime(
+        paths,
+        ActiveRuntime(
+            schema_version=3,
+            data_volume="vol-b",
+            image="agentcloud/localcloud:0.1.10-lite",
+            container_id="container-b",
+            container_name="localcloud-b",
+            network_name="net-b",
+        ),
+    )
+    controller = FakeController()
+    controller.paths = paths
+    controller.remembered_by_volume["vol-a"] = DEFAULTS_CONFIG_LABEL
+
+    selected = _command_config(
+        controller, _parser().parse_args(["start", "--data-volume", "vol-a"])
+    )
+
+    assert selected.data_volume == "vol-a"
+    assert (selected.image, selected.image_source) == (
+        "agentcloud/localcloud:0.1.8-lite",
+        "runtime",
+    )
+    assert selected.container_name == "localcloud-a"
+    assert selected.network_name == "net-a"
+
+
+def test_success_message_for_identity_env_uses_dynamic_endpoint_variable() -> None:
+    from localcloud_cli.cli import _success_message
+
+    args = _parser().parse_args(["env", "--identity"])
+    result = {
+        "session": {
+            "id": "wib-1",
+            "service_account": "svc@local.iam.gserviceaccount.com",
+            "expires_at": "2026-01-01T00:00:00Z",
+        },
+        "environment": {"CUSTOM_METADATA_HOST": "127.0.0.1:49123"},
+        "endpoint_variables": ["CUSTOM_METADATA_HOST"],
+    }
+
+    message = _success_message(args, result)
+
+    assert "127.0.0.1:49123" in message
+    assert "wib-1" in message

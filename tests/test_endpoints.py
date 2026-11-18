@@ -454,6 +454,17 @@ def test_identity_environment_refuses_a_non_loopback_relay_address() -> None:
     assert caught.value.code == "nonlocal_endpoint"
 
 
+def test_rewrite_endpoints_handles_case_insensitive_localhost() -> None:
+    from localcloud_cli.endpoints import transform_endpoint_payload
+
+    transformed = transform_endpoint_payload(
+        {"endpoint": "http://LOCALHOST:5382/storage/v1", "env_var": "STORAGE_EMULATOR_HOST"},
+        {"5382": 49082},
+    )
+
+    assert transformed["endpoint"] == "http://127.0.0.1:49082/storage/v1"
+
+
 def test_identity_stop_unsets_the_session_variables() -> None:
     from localcloud_cli.endpoints import render_identity_stop
 

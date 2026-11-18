@@ -11,7 +11,10 @@ from .errors import HostError
 from .java_client import JavaMcpClient
 
 
-HOST_PORT = re.compile(r"(?P<host>localhost|127\.0\.0\.1|\[::1\])(?P<separator>:)(?P<port>\d{1,5})")
+HOST_PORT = re.compile(
+    r"(?P<host>localhost|127\.0\.0\.1|\[::1\])(?P<separator>:)(?P<port>\d{1,5})",
+    re.IGNORECASE,
+)
 # Every port a runtime publishes at its own number when it holds the canonical ports.
 _CANONICAL_PORTS = range(5380, 5407)
 REAL_GOOGLE = re.compile(r"(?:^|[/:.])(?:googleapis\.com|gcr\.io|pkg\.dev)(?:$|[/.:])", re.IGNORECASE)
