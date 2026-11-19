@@ -607,7 +607,7 @@
             "resourceType": "localcloud_service",
             "sources": [
               {
-                "id": "java-runtime",
+                "id": "dataproc",
                 "component": "dataproc",
                 "strategy": "direct",
                 "fallback": "raw-only",
