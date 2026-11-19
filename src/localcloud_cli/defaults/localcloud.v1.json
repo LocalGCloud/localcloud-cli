@@ -144,7 +144,7 @@
           "subscription_retention_days": 7
         },
         "config_descriptions": {
-          "enforce_subscription_retention": "Expire subscription messages by age, as Pub/Sub does. Off (the default), no message expires: unacknowledged messages, and the acknowledged ones a subscription retains, stay until they are acknowledged, purged or their subscription is deleted, whatever message_retention_duration the subscription names, and the resource still reports the retention it was given. Retained messages are held in memory and loaded at startup, so a backlog that is never consumed grows both: purge it, or turn this on. Set true to test retention: a message then expires past its subscription's message_retention_duration, or past subscription_retention_days when it names none. Applies from the next start.",
+          "enforce_subscription_retention": "Expire subscription messages by age, as Pub/Sub does. Off (the default), no message expires by age, and the resource still reports the retention it was given. A backlog that is never consumed grows persistent storage and startup memory. Set true to expire a message after the longer of the topic retention and the subscription retention. The subscription uses message_retention_duration when set and subscription_retention_days otherwise. Applies from the next start.",
           "subscription_retention_days": "Days a subscription keeps its messages when it sets no message_retention_duration, while enforce_subscription_retention is on. The default is Google's 7 days; 0 keeps them until they are acknowledged or purged. A subscription's message_retention_duration, when set, always wins. Applies to every subscription that sets none, from the next start."
         },
         "observability": {
