@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 
 
-__version__ = "0.1.15"
+__version__ = "0.1.16"
 
 
 def _load_release_metadata() -> tuple[str | None, str | None]:
