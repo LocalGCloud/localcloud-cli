@@ -3936,6 +3936,28 @@ def test_start_reports_unpublished_services_instead_of_failing_on_their_endpoint
     assert "SDK environment is not exported" in result["warning"]
 
 
+def test_start_reports_unpublished_services_on_fallback_ports_without_explicit_services(
+    tmp_path: Path,
+) -> None:
+    controller, runtime, paths = _controller(tmp_path)
+    config = _config(tmp_path, paths=paths)
+    assert config.services is None
+    runtime.record = replace(
+        _record(config),
+        published_ports={"5380/tcp": (("127.0.0.1", 6000),)},
+    )
+    assert not runtime.has_canonical_ports(config, runtime.record)
+    runtime.service_state_list = [
+        {"id": "gcs", "enabled": True, "source": "persisted"},
+        {"id": "cloudrun", "enabled": True, "source": "console"},
+    ]
+
+    result = controller.status(config)
+
+    assert "warning" in result
+    assert "Enabled but not published by this runtime: cloudrun" in result["warning"]
+
+
 def test_a_stale_endpoint_with_nothing_unpublished_still_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

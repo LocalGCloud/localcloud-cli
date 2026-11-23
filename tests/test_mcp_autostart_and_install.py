@@ -285,6 +285,52 @@ def test_cline_uses_its_override_or_an_unmigrated_extension_file(
     assert get_client_config_path("cline") == home / "custom.json"
 
 
+def test_cline_linux_path_honors_xdg_config_home(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mcp_install.sys, "platform", "linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / "custom_xdg"))
+    legacy = (
+        home
+        / "custom_xdg"
+        / "Code"
+        / "User"
+        / "globalStorage"
+        / "saoudrizwan.claude-dev"
+        / "settings"
+        / "cline_mcp_settings.json"
+    )
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("{}", encoding="utf-8")
+    assert get_client_config_path("cline") == legacy
+
+
+def test_cline_detection_checks_override_file_and_parent(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    override_file = home / "custom_mcp" / "cline.json"
+    monkeypatch.setenv("CLINE_MCP_SETTINGS_PATH", str(override_file))
+    assert not mcp_install.is_client_installed("cline")
+
+    override_file.parent.mkdir(parents=True)
+    assert mcp_install.is_client_installed("cline")
+
+    override_file.write_text("{}", encoding="utf-8")
+    assert mcp_install.is_client_installed("cline")
+
+
+def test_cline_detection_checks_which_cline(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("CLINE_MCP_SETTINGS_PATH", raising=False)
+    monkeypatch.setattr(
+        mcp_install.shutil,
+        "which",
+        lambda cmd: "/usr/local/bin/cline" if cmd == "cline" else None,
+    )
+    assert mcp_install.is_client_installed("cline")
+
+
 def test_unknown_client_is_rejected() -> None:
     with pytest.raises(HostError) as caught:
         get_client_config_path("notepad")

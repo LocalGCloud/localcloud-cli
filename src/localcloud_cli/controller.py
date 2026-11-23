@@ -458,15 +458,13 @@ class Controller:
             prepared_image: tuple[Any, bool] | None = None
             run_plan: DockerRunPlan | None = None
             image_changed = bool(
-                current is not None
-                and current.ownership["container"] == "managed"
+                is_managed
                 and current.configured_image_id
                 and current.image_id
                 and current.configured_image_id != current.image_id
             )
             port_layout_changed = bool(
-                current is not None
-                and current.ownership["container"] == "managed"
+                is_managed
                 and not self.runtime.has_canonical_ports(config, current)
             )
             if current is None:
@@ -2524,6 +2522,13 @@ class Controller:
             drift = dict(environment.drift)
             recorded_config_path = environment.config_path
 
+        needs_unpublished_check = (
+            config.services is not None
+            or (
+                environment is not None
+                and not self.runtime.has_canonical_ports(config, environment)
+            )
+        )
         unpublished = (
             unpublished_services(
                 states,
@@ -2531,7 +2536,7 @@ class Controller:
                 data_volume=data_volume,
                 config_path=recorded_config_path,
             )
-            if environment is not None and states and config.services is not None
+            if environment is not None and states and needs_unpublished_check
             else None
         )
         sdk_env: Any = {}

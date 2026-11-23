@@ -207,7 +207,9 @@ def _cline_paths() -> list[Path]:
     elif sys.platform == "win32":
         code = _appdata() / "Code"
     else:
-        code = home / ".config" / "Code"
+        config_home = os.environ.get("XDG_CONFIG_HOME")
+        base = Path(config_home) if config_home else home / ".config"
+        code = base / "Code"
     return [
         home / ".cline" / "data" / "settings" / "cline_mcp_settings.json",
         code / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json",
@@ -245,7 +247,10 @@ def is_client_installed(client: str) -> bool:
             or any(path.parent.is_dir() for path in _windsurf_paths()[:2])
             or app("Windsurf", "Devin")
         )
-    return any(path.parent.parent.is_dir() for path in _cline_paths())
+    if os.environ.get("CLINE_MCP_SETTINGS_PATH"):
+        override_path = _cline_paths()[0]
+        return override_path.is_file() or override_path.parent.is_dir()
+    return bool(which("cline")) or any(path.parent.parent.is_dir() for path in _cline_paths())
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:
